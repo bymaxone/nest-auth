@@ -29,6 +29,7 @@
 18. [Dependências](#18-dependências)
 19. [Fases de Implementação](#19-fases-de-implementação)
 20. [Limitações Conhecidas](#20-limitações-conhecidas)
+21. [Integração Frontend](#21-integração-frontend)
 
 ---
 
@@ -36,7 +37,15 @@
 
 ### 1.1 O que é o `@bymax-one/nest-auth`
 
-O `@bymax-one/nest-auth` é um **pacote npm público** que fornece um módulo NestJS reutilizável e completo de autenticação e autorização para o ecossistema Bymax SaaS. Ele encapsula toda a lógica de autenticação — registro, login, JWT, refresh tokens, MFA, sessões, OAuth, password reset, convites e administração de plataforma — em um único módulo dinâmico configurável.
+O `@bymax-one/nest-auth` é um **pacote npm público full-stack** de autenticação e autorização para o ecossistema Bymax SaaS. Ele encapsula toda a lógica de autenticação — registro, login, JWT, refresh tokens, MFA, sessões, OAuth, password reset, convites e administração de plataforma — em um único pacote com **subpath exports** que cobrem backend (NestJS), client framework-agnostic (fetch nativo), hooks React e integração Next.js 16 (proxy, route handlers, JWT helpers).
+
+Seguindo o padrão do Better Auth, o pacote é distribuído como um único `npm install` com múltiplos entry points:
+
+- `@bymax-one/nest-auth` — Módulo NestJS backend (guards, services, controllers)
+- `@bymax-one/nest-auth/shared` — Tipos e constantes compartilhados (zero deps)
+- `@bymax-one/nest-auth/client` — Auth client fetch-based (zero deps)
+- `@bymax-one/nest-auth/react` — Hooks React (useSession, useAuth, AuthProvider)
+- `@bymax-one/nest-auth/nextjs` — Proxy factory, route handlers, JWT helpers para Next.js 16
 
 ### 1.2 Por que existe
 
@@ -53,6 +62,7 @@ Em uma arquitetura SaaS multi-tenant, cada aplicação do ecossistema Bymax prec
 - **Aplicações SaaS do ecossistema Bymax** (dashboards de tenant, APIs internas)
 - **Painel de administração da plataforma** (super-admins que gerenciam tenants)
 - **Qualquer aplicação NestJS** que precise de autenticação completa e configurável
+- **Aplicações frontend** (React, Next.js) que consomem os subpaths `./client`, `./react` e `./nextjs`
 
 ### 1.4 Modelo de distribuição
 
@@ -62,15 +72,18 @@ Em uma arquitetura SaaS multi-tenant, cada aplicação do ecossistema Bymax prec
 | Custo     | Zero — pacote open source            |
 | Licença   | MIT                                  |
 | Runtime   | Node.js 24+                          |
-| Framework | NestJS 11+                           |
+| Framework | NestJS 11+ (server), Next.js 16+ (nextjs), React 19+ (react) |
+| Subpaths  | `.` (server), `./shared`, `./client`, `./react`, `./nextjs` |
 
 ### 1.5 Princípios de design
 
 1. **Configuração sobre convenção**: Tudo é configurável, mas defaults sensatos estão presentes
 2. **Inversão de dependência**: O pacote define interfaces; a aplicação host fornece implementações
 3. **Separação de responsabilidades**: Autenticação no pacote, persistência e email na aplicação
-4. **Segurança por padrão**: Bcrypt, AES-256-GCM, HttpOnly cookies, blacklist de tokens, brute-force protection
+4. **Segurança por padrão**: scrypt (`node:crypto`), AES-256-GCM, HttpOnly cookies, blacklist de tokens, brute-force protection
 5. **Zero opinião sobre persistência**: O pacote define contratos (interfaces TypeScript) e nunca importa nenhum ORM. O app consumidor implementa os repositórios com a tecnologia de sua escolha. Desenvolvido e testado com Prisma — compatível com TypeORM, Drizzle e outros ORMs SQL por design. ORMs de documento (Mongoose) requerem mapeamento extra para o contrato `AuthUser`
+6. **Full-stack por design**: Server e client compartilham tipos e constantes de cookies via `./shared`, eliminando sincronização manual e garantindo consistência end-to-end entre backend e frontend
+7. **Zero dependências externas de criptografia**: Todas as funcionalidades de hash (scrypt), TOTP (HMAC-SHA1), criptografia (AES-256-GCM) e OAuth usam `node:crypto` e `fetch` nativos — sem pacotes terceiros com bindings C++ ou risco de supply chain
 
 ### 1.6 Categorização de módulos
 
@@ -83,7 +96,7 @@ Funcionalidades que são registradas automaticamente e não podem ser desabilita
 | Módulo                   | Responsabilidade                                                    |
 | ------------------------ | ------------------------------------------------------------------- |
 | **AuthService**          | Registro, login, logout, refresh, me                                |
-| **PasswordService**      | Hash e comparação de senhas (bcrypt)                                |
+| **PasswordService**      | Hash e comparação de senhas (scrypt nativo)                                |
 | **TokenManagerService**  | Emissão e verificação de JWT                                        |
 | **TokenDeliveryService** | Entrega de tokens (cookies, body ou ambos) conforme `tokenDelivery` |
 | **BruteForceService**    | Proteção contra força bruta por email                               |
@@ -203,217 +216,265 @@ Resposta HTTP
 
 ### 3.1 Árvore de diretórios completa
 
+O pacote é organizado em 5 subpaths com responsabilidades distintas:
+
 ```
 @bymax-one/nest-auth/
 ├── package.json
 ├── tsconfig.json
 ├── tsconfig.build.json
 ├── src/
-│   ├── index.ts                              # Public API barrel export
-│   ├── bymax-one-nest-auth.module.ts                  # Root dynamic module
-│   ├── bymax-one-nest-auth.constants.ts               # Injection tokens
+│   ├── server/                              # Backend NestJS
+│   │   ├── index.ts                         # Barrel export (server)
+│   │   ├── bymax-one-nest-auth.module.ts    # Root dynamic module
+│   │   ├── bymax-one-nest-auth.constants.ts # Injection tokens
+│   │   ├── interfaces/
+│   │   │   ├── auth-module-options.interface.ts
+│   │   │   ├── user-repository.interface.ts
+│   │   │   ├── platform-user-repository.interface.ts
+│   │   │   ├── email-provider.interface.ts
+│   │   │   ├── auth-hooks.interface.ts
+│   │   │   ├── oauth-provider.interface.ts  # Interface com fetch nativo
+│   │   │   ├── jwt-payload.interface.ts
+│   │   │   ├── auth-result.interface.ts
+│   │   │   └── authenticated-request.interface.ts
+│   │   ├── config/
+│   │   │   ├── default-options.ts
+│   │   │   └── resolved-options.ts
+│   │   ├── services/
+│   │   │   ├── auth.service.ts
+│   │   │   ├── password.service.ts          # scrypt (node:crypto)
+│   │   │   ├── token-manager.service.ts
+│   │   │   ├── session.service.ts
+│   │   │   ├── mfa.service.ts               # TOTP nativo (node:crypto HMAC-SHA1)
+│   │   │   ├── password-reset.service.ts
+│   │   │   ├── otp.service.ts
+│   │   │   ├── brute-force.service.ts
+│   │   │   ├── platform-auth.service.ts
+│   │   │   ├── invitation.service.ts
+│   │   │   └── token-delivery.service.ts
+│   │   ├── constants/
+│   │   │   ├── index.ts
+│   │   │   ├── throttle-configs.ts
+│   │   │   └── error-codes.ts
+│   │   ├── redis/
+│   │   │   ├── auth-redis.service.ts
+│   │   │   └── auth-redis.module.ts
+│   │   ├── controllers/
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── mfa.controller.ts
+│   │   │   ├── password-reset.controller.ts
+│   │   │   ├── session.controller.ts
+│   │   │   ├── platform-auth.controller.ts
+│   │   │   └── invitation.controller.ts
+│   │   ├── guards/                          # Guards JWT nativos (sem Passport)
+│   │   │   ├── jwt-auth.guard.ts
+│   │   │   ├── jwt-platform.guard.ts
+│   │   │   ├── roles.guard.ts
+│   │   │   ├── platform-roles.guard.ts
+│   │   │   ├── user-status.guard.ts
+│   │   │   ├── mfa-required.guard.ts
+│   │   │   ├── ws-jwt.guard.ts
+│   │   │   ├── self-or-admin.guard.ts
+│   │   │   └── optional-auth.guard.ts
+│   │   ├── decorators/
+│   │   │   ├── current-user.decorator.ts
+│   │   │   ├── roles.decorator.ts
+│   │   │   ├── platform-roles.decorator.ts
+│   │   │   ├── public.decorator.ts
+│   │   │   └── skip-mfa.decorator.ts
+│   │   ├── oauth/
+│   │   │   ├── oauth.module.ts
+│   │   │   ├── oauth.service.ts
+│   │   │   └── google/
+│   │   │       └── google-oauth.plugin.ts   # fetch nativo (sem Passport)
+│   │   ├── providers/
+│   │   │   └── no-op-email.provider.ts
+│   │   ├── hooks/
+│   │   │   └── no-op-auth.hooks.ts
+│   │   ├── dto/
+│   │   │   ├── register.dto.ts
+│   │   │   ├── login.dto.ts
+│   │   │   ├── forgot-password.dto.ts
+│   │   │   ├── reset-password.dto.ts
+│   │   │   ├── mfa-verify.dto.ts
+│   │   │   ├── mfa-challenge.dto.ts
+│   │   │   ├── mfa-disable.dto.ts
+│   │   │   ├── platform-login.dto.ts
+│   │   │   ├── accept-invitation.dto.ts
+│   │   │   └── create-invitation.dto.ts
+│   │   ├── crypto/
+│   │   │   ├── aes-gcm.ts                  # Criptografia AES-256-GCM
+│   │   │   ├── secure-token.ts             # Geração de tokens seguros
+│   │   │   ├── scrypt.ts                   # Hash de senhas (node:crypto)
+│   │   │   └── totp.ts                     # TOTP/HOTP nativo (RFC 4226/6238)
+│   │   └── errors/
+│   │       ├── auth-error-codes.ts
+│   │       └── auth-exception.ts
 │   │
-│   ├── interfaces/
-│   │   ├── auth-module-options.interface.ts   # Opções de configuração
-│   │   ├── user-repository.interface.ts       # Contrato do repositório de usuários
-│   │   ├── platform-user-repository.interface.ts  # Contrato do repo de admins
-│   │   ├── email-provider.interface.ts        # Contrato do provider de email
-│   │   ├── auth-hooks.interface.ts            # Hooks de ciclo de vida
-│   │   ├── oauth-provider.interface.ts        # Plugin de OAuth
-│   │   ├── jwt-payload.interface.ts           # Tipagem dos claims JWT
-│   │   ├── auth-result.interface.ts           # AuthResult, PlatformAuthResult, MfaChallengeResult
-│   │   └── authenticated-request.interface.ts # Request com usuário autenticado
-│   │
-│   ├── config/
-│   │   ├── default-options.ts                 # Valores padrão para todas as opções
-│   │   └── resolved-options.ts                # Opções resolvidas (merge de defaults + user)
-│   │
-│   ├── services/
-│   │   ├── auth.service.ts                    # Registro, login, logout, refresh, me
-│   │   ├── password.service.ts                # Hash e comparação bcrypt
-│   │   ├── token-manager.service.ts           # Emissão e verificação de JWTs
-│   │   ├── session.service.ts                 # Gerenciamento de sessões
-│   │   ├── mfa.service.ts                     # Autenticação multi-fator (TOTP)
-│   │   ├── password-reset.service.ts          # Reset de senha (token/OTP)
-│   │   ├── otp.service.ts                     # Geração e verificação de OTPs
-│   │   ├── brute-force.service.ts             # Proteção contra brute-force
-│   │   ├── platform-auth.service.ts           # Autenticação de admins da plataforma
-│   │   ├── invitation.service.ts              # Sistema de convites
-│   │   └── token-delivery.service.ts           # Entrega de tokens (cookie, bearer ou ambos)
-│   │
-│   ├── constants/
+│   ├── shared/                              # Tipos e constantes (zero deps)
 │   │   ├── index.ts
-│   │   ├── throttle-configs.ts              # Configurações de rate limiting recomendadas
-│   │   └── error-codes.ts                   # Re-export dos error codes
+│   │   ├── types/
+│   │   │   ├── auth-user.types.ts           # AuthUser subset para client
+│   │   │   ├── auth-result.types.ts         # Shapes de response
+│   │   │   ├── auth-error.types.ts          # Error codes e error shapes
+│   │   │   ├── jwt-payload.types.ts         # DashboardJwtPayload, PlatformJwtPayload
+│   │   │   └── auth-config.types.ts         # Cookie names, paths, role types
+│   │   └── constants/
+│   │       ├── error-codes.ts               # AUTH_ERROR_CODES
+│   │       ├── cookie-defaults.ts           # Nomes e paths padrão dos cookies
+│   │       └── routes.ts                    # Paths dos endpoints auth
 │   │
-│   ├── redis/
-│   │   ├── auth-redis.service.ts              # Wrapper sobre ioredis
-│   │   └── auth-redis.module.ts               # Módulo Redis interno
+│   ├── client/                              # Client fetch nativo (zero deps)
+│   │   ├── index.ts
+│   │   ├── createAuthClient.ts              # Factory principal
+│   │   ├── createAuthFetch.ts               # Fetch wrapper com refresh automático
+│   │   └── types.ts                         # AuthClientConfig, AuthSession
 │   │
-│   ├── controllers/
-│   │   ├── auth.controller.ts                 # Endpoints principais de auth
-│   │   ├── mfa.controller.ts                  # Endpoints de MFA
-│   │   ├── password-reset.controller.ts       # Endpoints de reset de senha
-│   │   ├── session.controller.ts              # Endpoints de sessões
-│   │   ├── platform-auth.controller.ts        # Endpoints de admin da plataforma
-│   │   └── invitation.controller.ts           # Endpoints de convites
+│   ├── react/                               # Hooks React
+│   │   ├── index.ts
+│   │   ├── AuthProvider.tsx                  # Context provider
+│   │   ├── useSession.ts                    # Hook: session data, loading, error
+│   │   ├── useAuth.ts                       # Hook: login(), logout(), register()
+│   │   └── useAuthStatus.ts                 # Hook: isAuthenticated, isLoading
 │   │
-│   ├── strategies/
-│   │   ├── jwt.strategy.ts                    # Passport JWT para dashboard
-│   │   └── jwt-platform.strategy.ts           # Passport JWT para plataforma
-│   │
-│   ├── guards/
-│   │   ├── jwt-auth.guard.ts                  # Guard JWT padrão
-│   │   ├── jwt-platform.guard.ts              # Guard JWT para admins
-│   │   ├── roles.guard.ts                     # Guard de roles com hierarquia
-│   │   ├── platform-roles.guard.ts            # Guard de roles da plataforma
-│   │   ├── user-status.guard.ts               # Verificação de status do usuário
-│   │   ├── mfa-required.guard.ts              # Exige MFA completado
-│   │   ├── ws-jwt.guard.ts                    # Guard JWT para WebSockets
-│   │   ├── self-or-admin.guard.ts             # Acesso próprio ou admin
-│   │   └── optional-auth.guard.ts             # Autenticação opcional
-│   │
-│   ├── decorators/
-│   │   ├── current-user.decorator.ts          # @CurrentUser()
-│   │   ├── roles.decorator.ts                 # @Roles()
-│   │   ├── platform-roles.decorator.ts        # @PlatformRoles()
-│   │   ├── public.decorator.ts                # @Public()
-│   │   └── skip-mfa.decorator.ts              # @SkipMfa()
-│   │
-│   ├── oauth/
-│   │   ├── oauth.module.ts                    # Módulo OAuth dinâmico
-│   │   ├── oauth.service.ts                   # Serviço central de OAuth
-│   │   └── google/
-│   │       ├── google-oauth.plugin.ts         # Plugin Google OAuth
-│   │       ├── google.strategy.ts             # Passport Google Strategy
-│   │       └── google-auth.guard.ts           # Guard para rota Google
-│   │
-│   ├── providers/
-│   │   └── no-op-email.provider.ts          # Email provider para desenvolvimento (logs only)
-│   │
-│   ├── hooks/
-│   │   └── no-op-auth.hooks.ts              # Hooks padrão (no-op)
-│   │
-│   ├── dto/
-│   │   ├── register.dto.ts                    # DTO de registro
-│   │   ├── login.dto.ts                       # DTO de login
-│   │   ├── forgot-password.dto.ts             # DTO de esqueci minha senha
-│   │   ├── reset-password.dto.ts              # DTO de reset de senha
-│   │   ├── mfa-verify.dto.ts                  # DTO de verificação MFA
-│   │   ├── mfa-challenge.dto.ts               # DTO de desafio MFA
-│   │   ├── mfa-disable.dto.ts                 # DTO de desativação MFA
-│   │   ├── platform-login.dto.ts              # DTO de login da plataforma
-│   │   ├── accept-invitation.dto.ts           # DTO de aceite de convite
-│   │   └── create-invitation.dto.ts           # DTO de criação de convite
-│   │
-│   ├── crypto/
-│   │   ├── aes-gcm.ts                         # Criptografia AES-256-GCM
-│   │   └── secure-token.ts                    # Geração de tokens seguros
-│   │
-│   └── errors/
-│       ├── auth-error-codes.ts                # Constantes de códigos de erro
-│       └── auth-exception.ts                  # Classe AuthException
+│   └── nextjs/                              # Integração Next.js 16
+│       ├── index.ts
+│       ├── createAuthProxy.ts               # Factory para proxy.ts
+│       ├── createSilentRefreshHandler.ts    # GET /api/auth/silent-refresh
+│       ├── createClientRefreshHandler.ts    # POST /api/auth/client-refresh
+│       ├── createLogoutHandler.ts           # POST /api/auth/logout
+│       └── helpers/
+│           ├── buildSilentRefreshUrl.ts
+│           ├── isBackgroundRequest.ts
+│           ├── dedupeSetCookieHeaders.ts
+│           └── jwt.ts                       # decodeJwtToken, verifyJwtToken
 ```
 
-### 3.2 Barrel export (`src/index.ts`)
+**Grafo de dependências entre subpaths:**
 
-O arquivo `index.ts` exporta toda a API publica do pacote:
+```
+   shared (zero deps — types + constants)
+   ↗    ↖
+server    client (depende de shared)
+            ↑
+          react (depende de client + shared)
+            ↑
+         nextjs (depende de client + shared, peerDep: next)
+```
+
+### 3.2 Subpath exports
+
+O pacote usa o campo `exports` do `package.json` para expor múltiplos entry points com tree-shaking automático:
+
+| Subpath | Entry point | Descrição | Dependências |
+|---------|-------------|-----------|--------------|
+| `.` (server) | `dist/server/index.js` | Módulo NestJS, guards, decorators, services | NestJS, ioredis |
+| `./shared` | `dist/shared/index.js` | Tipos, constantes, error codes | Zero |
+| `./client` | `dist/client/index.js` | Auth client fetch-based | Zero (fetch nativo) |
+| `./react` | `dist/react/index.js` | React hooks e AuthProvider | react ^19 |
+| `./nextjs` | `dist/nextjs/index.js` | Proxy factory, route handlers, JWT helpers | next ^16, react ^19 |
+
+```json
+{
+  "exports": {
+    ".": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.mjs",
+      "require": "./dist/server/index.cjs"
+    },
+    "./shared": {
+      "types": "./dist/shared/index.d.ts",
+      "import": "./dist/shared/index.mjs",
+      "require": "./dist/shared/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.mjs",
+      "require": "./dist/client/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.mjs",
+      "require": "./dist/react/index.cjs"
+    },
+    "./nextjs": {
+      "types": "./dist/nextjs/index.d.ts",
+      "import": "./dist/nextjs/index.mjs",
+      "require": "./dist/nextjs/index.cjs"
+    }
+  }
+}
+```
+
+### 3.3 Exports por subpath
+
+**Server (`@bymax-one/nest-auth`):**
 
 ```typescript
 // Módulo principal
-export { BymaxAuthModule } from "./bymax-one-nest-auth.module";
-
+export { BymaxAuthModule } from './bymax-one-nest-auth.module'
 // Constantes de injeção
-export {
-  BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_USER_REPOSITORY,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_EMAIL_PROVIDER,
-  BYMAX_AUTH_HOOKS,
-  BYMAX_AUTH_REDIS_CLIENT,
-} from "./bymax-one-nest-auth.constants";
-
-// Interfaces
-export type { BymaxAuthModuleOptions } from "./interfaces/auth-module-options.interface";
-export type {
-  IUserRepository,
-  AuthUser,
-} from "./interfaces/user-repository.interface";
-export type {
-  IPlatformUserRepository,
-  AuthPlatformUser,
-} from "./interfaces/platform-user-repository.interface";
-export type { IEmailProvider } from "./interfaces/email-provider.interface";
-export type {
-  IAuthHooks,
-  HookContext,
-  BeforeRegisterResult,
-  OAuthLoginResult,
-  OAuthProfile,
-} from "./interfaces/auth-hooks.interface";
-export type { OAuthProviderPlugin } from "./interfaces/oauth-provider.interface";
-export type {
-  DashboardJwtPayload,
-  PlatformJwtPayload,
-  MfaTempPayload,
-} from "./interfaces/jwt-payload.interface";
-export type {
-  AuthenticatedRequest,
-  PlatformAuthenticatedRequest,
-} from "./interfaces/authenticated-request.interface";
-
+export { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
+  BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT } from './bymax-one-nest-auth.constants'
+// Interfaces (types)
+export type { BymaxAuthModuleOptions, IUserRepository, AuthUser, IPlatformUserRepository,
+  AuthPlatformUser, IEmailProvider, IAuthHooks, OAuthProviderPlugin, DashboardJwtPayload,
+  PlatformJwtPayload, AuthenticatedRequest } from './interfaces'
 // Guards
-export { JwtAuthGuard } from "./guards/jwt-auth.guard";
-export { JwtPlatformGuard } from "./guards/jwt-platform.guard";
-export { RolesGuard } from "./guards/roles.guard";
-export { PlatformRolesGuard } from "./guards/platform-roles.guard";
-export { UserStatusGuard } from "./guards/user-status.guard";
-export { MfaRequiredGuard } from "./guards/mfa-required.guard";
-export { WsJwtGuard } from "./guards/ws-jwt.guard";
-export { SelfOrAdminGuard } from "./guards/self-or-admin.guard";
-export { OptionalAuthGuard } from "./guards/optional-auth.guard";
-
+export { JwtAuthGuard, JwtPlatformGuard, RolesGuard, PlatformRolesGuard, UserStatusGuard,
+  MfaRequiredGuard, WsJwtGuard, SelfOrAdminGuard, OptionalAuthGuard } from './guards'
 // Decorators
-export { CurrentUser } from "./decorators/current-user.decorator";
-export { Roles } from "./decorators/roles.decorator";
-export { PlatformRoles } from "./decorators/platform-roles.decorator";
-export { Public } from "./decorators/public.decorator";
-export { SkipMfa } from "./decorators/skip-mfa.decorator";
+export { CurrentUser, Roles, PlatformRoles, Public, SkipMfa } from './decorators'
+// Services (apenas API pública)
+export { AuthService } from './services/auth.service'
+// Erros, DTOs, providers
+export { AuthException, AUTH_ERROR_CODES, AUTH_THROTTLE_CONFIGS } from './constants'
+export { NoOpEmailProvider } from './providers/no-op-email.provider'
+export { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
+```
 
-// Serviços (apenas API pública)
-export { AuthService } from "./services/auth.service";
+**Shared (`@bymax-one/nest-auth/shared`):**
 
-// Tipos de retorno (para uso em hooks, testes e extensões)
-export type {
-  AuthResult,
-  MfaChallengeResult,
-  PlatformAuthResult,
-} from "./interfaces/auth-result.interface";
-export type { SessionInfo } from "./services/session.service";
-export type { MfaSetupResult } from "./services/mfa.service";
+```typescript
+// Tipos compartilhados (zero deps)
+export type { DashboardJwtPayload, PlatformJwtPayload, MfaTempPayload } from './types/jwt-payload.types'
+export type { AuthUserClient, AuthResult, MfaChallengeResult } from './types/auth-result.types'
+export type { AuthErrorResponse } from './types/auth-error.types'
+// Constantes
+export { AUTH_ERROR_CODES } from './constants/error-codes'
+export { AUTH_ACCESS_COOKIE_NAME, AUTH_REFRESH_COOKIE_NAME, AUTH_HAS_SESSION_COOKIE_NAME,
+  AUTH_REFRESH_COOKIE_PATH } from './constants/cookie-defaults'
+export { AUTH_ROUTES } from './constants/routes'
+```
 
-// Erros
-export { AuthException } from "./errors/auth-exception";
-export { AUTH_ERROR_CODES } from "./errors/auth-error-codes";
+**Client (`@bymax-one/nest-auth/client`):**
 
-// Rate limiting configs
-export { AUTH_THROTTLE_CONFIGS } from "./constants/throttle-configs";
+```typescript
+export { createAuthClient } from './createAuthClient'
+export { createAuthFetch } from './createAuthFetch'
+export type { AuthClientConfig, AuthSession } from './types'
+```
 
-// DTOs (para uso em testes ou extensões)
-export { RegisterDto } from "./dto/register.dto";
-export { LoginDto } from "./dto/login.dto";
-export { ForgotPasswordDto } from "./dto/forgot-password.dto";
-export { ResetPasswordDto } from "./dto/reset-password.dto";
-export { MfaVerifyDto } from "./dto/mfa-verify.dto";
-export { MfaChallengeDto } from "./dto/mfa-challenge.dto";
-export { MfaDisableDto } from "./dto/mfa-disable.dto";
-export { PlatformLoginDto } from "./dto/platform-login.dto";
-export { AcceptInvitationDto } from "./dto/accept-invitation.dto";
-export { CreateInvitationDto } from "./dto/create-invitation.dto";
+**React (`@bymax-one/nest-auth/react`):**
 
-// Providers para desenvolvimento
-export { NoOpEmailProvider } from "./providers/no-op-email.provider";
-export { NoOpAuthHooks } from "./hooks/no-op-auth.hooks";
+```typescript
+export { AuthProvider } from './AuthProvider'
+export { useSession } from './useSession'
+export { useAuth } from './useAuth'
+export { useAuthStatus } from './useAuthStatus'
+```
+
+**Next.js (`@bymax-one/nest-auth/nextjs`):**
+
+```typescript
+export { createAuthProxy } from './createAuthProxy'
+export { createSilentRefreshHandler } from './createSilentRefreshHandler'
+export { createClientRefreshHandler } from './createClientRefreshHandler'
+export { createLogoutHandler } from './createLogoutHandler'
+export { decodeJwtToken, verifyJwtToken } from './helpers/jwt'
+export { dedupeSetCookieHeaders, parseSetCookieHeader } from './helpers/dedupeSetCookieHeaders'
+export type { AuthProxyConfig } from './createAuthProxy'
 ```
 
 > **API publica vs interna:** Apenas os services abaixo sao exportados para uso direto pela aplicacao host. Os demais services sao internos e nao devem ser acessados diretamente.
@@ -470,7 +531,7 @@ export interface BymaxAuthModuleOptions {
    * Configuração de hashing de senha.
    */
   password?: {
-    /** Número de salt rounds para bcrypt. Padrão: 12 */
+    /** Fator de custo N para scrypt. Padrão: 2^15 (32768) */
     saltRounds?: number;
   };
 
@@ -727,7 +788,7 @@ export interface BymaxAuthModuleOptions {
 | `jwt.refreshExpiresInDays`        | `number`                         | Não         | `7`                                   | Expiração do refresh token em dias                |
 | `jwt.algorithm`                   | `'HS256'`                        | Não         | `'HS256'`                             | Algoritmo de assinatura JWT                       |
 | `jwt.refreshGraceWindowSeconds`   | `number`                         | Não         | `30`                                  | Grace window da rotação de refresh                |
-| `password.saltRounds`             | `number`                         | Não         | `12`                                  | Salt rounds do bcrypt                             |
+| `password.saltRounds`             | `number`                         | Não         | `12`                                  | Fator de custo N do scrypt                             |
 | `cookies.accessTokenName`         | `string`                         | Não         | `'access_token'`                      | Nome do cookie de access                          |
 | `cookies.refreshTokenName`        | `string`                         | Não         | `'refresh_token'`                     | Nome do cookie de refresh                         |
 | `cookies.sessionSignalName`       | `string`                         | Não         | `'has_session'`                       | Nome do cookie sinal                              |
@@ -972,7 +1033,7 @@ export interface AuthUser {
   email: string;
 
   /**
-   * Hash bcrypt da senha. Null para usuários que registraram via OAuth.
+   * Hash scrypt da senha. Null para usuários que registraram via OAuth.
    * Quando null, login por senha e bloqueado.
    */
   passwordHash: string | null;
@@ -993,7 +1054,7 @@ export interface AuthUser {
 
   mfaSecret?: string | null; // Opcional — TOTP secret encriptado (AES-256-GCM)
 
-  mfaRecoveryCodes?: string[] | null; // Opcional — Recovery codes com hash bcrypt
+  mfaRecoveryCodes?: string[] | null; // Opcional — Recovery codes com hash scrypt
 
   /** Timestamp do ultimo login */
   lastLoginAt: Date | null;
@@ -1136,7 +1197,7 @@ export interface AuthPlatformUser {
   /** Email do admin */
   email: string;
 
-  /** Hash bcrypt da senha */
+  /** Hash scrypt da senha */
   passwordHash: string;
 
   /** Nome completo */
@@ -1324,7 +1385,7 @@ class AuthService {
    * Fluxo:
    * 1. Executa hook beforeRegister (pode modificar dados ou rejeitar)
    * 2. Verifica se email já existe no tenant
-   * 3. Faz hash da senha com bcrypt
+   * 3. Faz hash da senha com scrypt
    * 4. Cria usuário via IUserRepository.create()
    * 5. Se emailVerification.required, envia OTP de verificação
    * 6. Gera tokens JWT (access + refresh)
@@ -1355,7 +1416,7 @@ class AuthService {
    * Fluxo:
    * 1. Verifica brute-force lockout
    * 2. Busca usuário por email e tenant
-   * 3. Compara senha com bcrypt (constant-time)
+   * 3. Compara senha com scrypt + timingSafeEqual (constant-time)
    * 4. Se falhar, registra tentativa e retorna erro genérico
    * 5. Se usuário tem MFA habilitado:
    *    a. Emite mfaToken (JWT de 5 min)
@@ -1465,28 +1526,77 @@ interface MfaChallengeResult {
 
 ### 6.2 PasswordService
 
-Serviço responsável por hashing e comparação de senhas.
+Serviço responsável por hashing e comparação de senhas usando `node:crypto` scrypt nativo.
+
+> **OWASP 2026** recomenda Argon2id > scrypt > bcrypt para novos sistemas. scrypt é nativo do Node.js (`node:crypto`), eliminando dependências com bindings C++ nativos e riscos de supply chain. Diferente do bcrypt, scrypt **não trunca senhas longas** (bcrypt truncava silenciosamente acima de 72 bytes).
+
+**Parâmetros scrypt:**
+
+| Parâmetro | Config key | Default | Descrição |
+| --------- | ---------- | ------- | --------- |
+| N (cost factor) | `password.costFactor` | 2^15 (32768) | Fator de custo de memória/CPU |
+| r (block size) | `password.blockSize` | 8 | Tamanho do bloco |
+| p (parallelization) | `password.parallelization` | 1 | Fator de paralelismo |
+| keyLen | — | 64 | Tamanho da chave derivada em bytes |
+| salt | — | 16 bytes (`crypto.randomBytes`) | Sal aleatório por senha |
+
+**Formato de armazenamento:** `scrypt:{salt_hex}:{derived_hex}`
 
 ```typescript
 class PasswordService {
   /**
-   * Gera hash bcrypt da senha.
-   * Usa o número de salt rounds configurado (padrão: 12).
+   * Gera hash scrypt da senha usando node:crypto.
+   * Salt: 16 bytes aleatórios. Formato: scrypt:{salt}:{hash}
    *
    * @param plainPassword Senha em texto plano
-   * @returns Hash bcrypt
+   * @returns Hash scrypt no formato scrypt:{salt_hex}:{derived_hex}
    */
   hash(plainPassword: string): Promise<string>;
 
   /**
-   * Compara senha em texto plano com hash bcrypt.
-   * Usa comparação constant-time para prevenir timing attacks.
+   * Compara senha em texto plano com hash scrypt armazenado.
+   * Extrai salt do hash, deriva chave com mesmos parâmetros e compara
+   * usando crypto.timingSafeEqual para prevenir timing attacks.
    *
    * @param plainPassword Senha em texto plano
-   * @param hash Hash bcrypt armazenado
+   * @param hash Hash scrypt armazenado
    * @returns true se correspondem
    */
   compare(plainPassword: string, hash: string): Promise<boolean>;
+}
+```
+
+**Implementação de referência:**
+
+```typescript
+import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto'
+import { promisify } from 'node:util'
+
+const scryptAsync = promisify(scrypt)
+
+async hash(plainPassword: string): Promise<string> {
+  const salt = randomBytes(16)
+  const derived = await scryptAsync(plainPassword, salt, 64, {
+    N: this.options.password.costFactor,   // default: 2^15
+    r: this.options.password.blockSize,     // default: 8
+    p: this.options.password.parallelization // default: 1
+  }) as Buffer
+  return `scrypt:${salt.toString('hex')}:${derived.toString('hex')}`
+}
+
+async compare(plainPassword: string, storedHash: string): Promise<boolean> {
+  const [prefix, saltHex, hashHex] = storedHash.split(':')
+  if (prefix !== 'scrypt' || !saltHex || !hashHex) return false
+
+  const salt = Buffer.from(saltHex, 'hex')
+  const stored = Buffer.from(hashHex, 'hex')
+  const derived = await scryptAsync(plainPassword, salt, 64, {
+    N: this.options.password.costFactor,
+    r: this.options.password.blockSize,
+    p: this.options.password.parallelization
+  }) as Buffer
+
+  return timingSafeEqual(stored, derived)
 }
 ```
 
@@ -1696,7 +1806,69 @@ interface SessionInfo {
 
 ### 6.5 MfaService
 
-Serviço de autenticação multi-fator baseado em TOTP (Time-based One-Time Password).
+Serviço de autenticação multi-fator baseado em TOTP (Time-based One-Time Password) com implementação nativa usando `node:crypto` HMAC-SHA1, seguindo RFC 4226 (HOTP) e RFC 6238 (TOTP). Não utiliza dependências externas — a geração e verificação de códigos TOTP é feita inteiramente com APIs nativas do Node.js.
+
+**Implementação nativa de TOTP (referência):**
+
+```typescript
+import { createHmac, randomBytes } from 'node:crypto'
+
+/** Decodifica uma string Base32 (RFC 4648) para Buffer. */
+function base32Decode(encoded: string): Buffer {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  const stripped = encoded.replace(/=+$/, '').toUpperCase()
+  let bits = ''
+  for (const char of stripped) {
+    const val = alphabet.indexOf(char)
+    if (val === -1) throw new Error(`Invalid base32 character: ${char}`)
+    bits += val.toString(2).padStart(5, '0')
+  }
+  const bytes = new Uint8Array(Math.floor(bits.length / 8))
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2)
+  }
+  return Buffer.from(bytes)
+}
+
+/** Gera um código HOTP (RFC 4226) a partir de um secret e counter. */
+function generateHOTP(secret: Buffer, counter: number, digits = 6): string {
+  const buf = Buffer.alloc(8)
+  buf.writeBigUInt64BE(BigInt(counter))
+
+  const hmac = createHmac('sha1', secret).update(buf).digest()
+  const offset = hmac[hmac.length - 1] & 0xf
+  const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % (10 ** digits)
+  return code.toString().padStart(digits, '0')
+}
+
+/** Gera um código TOTP (RFC 6238) para o momento atual. */
+function generateTOTP(secret: Buffer, period = 30, digits = 6): string {
+  const counter = Math.floor(Date.now() / 1000 / period)
+  return generateHOTP(secret, counter, digits)
+}
+
+/** Verifica um código TOTP com janela de tolerância. */
+function verifyTOTP(
+  secret: Buffer,
+  code: string,
+  window = 1,
+  period = 30,
+  digits = 6,
+): boolean {
+  const counter = Math.floor(Date.now() / 1000 / period)
+  for (let i = -window; i <= window; i++) {
+    if (generateHOTP(secret, counter + i, digits) === code) return true
+  }
+  return false
+}
+
+/** Gera URI para QR code (padrão otpauth://) */
+function buildTotpUri(secret: string, account: string, issuer: string): string {
+  const encodedIssuer = encodeURIComponent(issuer)
+  const encodedAccount = encodeURIComponent(account)
+  return `otpauth://totp/${encodedIssuer}:${encodedAccount}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`
+}
+```
 
 ```typescript
 class MfaService {
@@ -1821,7 +1993,7 @@ class MfaService {
 // - TokenManagerService (emitir tokens após MFA completado)
 // - SessionService (criar sessão após MFA, quando sessions.enabled)
 // - BruteForceService (lockout por userId em caso de falhas consecutivas)
-// - PasswordService (hash de recovery codes com bcrypt)
+// - PasswordService (hash de recovery codes com scrypt)
 // - IEmailProvider (notificações de MFA habilitado/desabilitado)
 // - IAuthHooks (afterMfaEnabled, afterMfaDisabled)
 ```
@@ -2319,7 +2491,7 @@ export class RegisterDto {
 
   @IsString()
   @MinLength(8)
-  @MaxLength(72) // bcrypt trunca silenciosamente acima de 72 bytes
+  @MaxLength(128) // Limite prático para senhas
   password: string;
 
   @IsString()
@@ -2336,7 +2508,7 @@ export class LoginDto {
   email: string;
 
   @IsString()
-  @MaxLength(72) // bcrypt trunca silenciosamente acima de 72 bytes
+  @MaxLength(128) // Limite prático para senhas
   password: string;
 
   @IsString()
@@ -2371,7 +2543,7 @@ export class MfaChallengeDto {
   mfaTempToken: string;
 
   @IsString()
-  @MaxLength(128) // TOTP tem 6 chars; recovery codes têm ~32 chars; limite previne bcrypt bombing
+  @MaxLength(128) // TOTP tem 6 chars; recovery codes têm ~32 chars; limite previne hash bombing
   code: string; // TOTP de 6 digitos ou recovery code
 }
 
@@ -2413,7 +2585,7 @@ export class ResetPasswordDto {
 
   @IsString()
   @MinLength(8)
-  @MaxLength(72) // bcrypt trunca silenciosamente acima de 72 bytes
+  @MaxLength(128) // Limite prático para senhas
   newPassword: string;
 
   @IsOptional()
@@ -2494,7 +2666,7 @@ export class PlatformLoginDto {
   email: string;
 
   @IsString()
-  @MaxLength(72) // bcrypt trunca silenciosamente acima de 72 bytes
+  @MaxLength(128) // Limite prático para senhas
   password: string;
 }
 ```
@@ -2522,7 +2694,7 @@ export class AcceptInvitationDto {
 
   @IsString()
   @MinLength(8)
-  @MaxLength(72) // bcrypt trunca silenciosamente acima de 72 bytes
+  @MaxLength(128) // Limite prático para senhas
   password: string;
 }
 
@@ -2557,6 +2729,66 @@ export class CreateInvitationDto {
 | `WsJwtGuard`         | Guard para conexões WebSocket. Extrai JWT do handshake via header `Authorization`. **Não usa query param** (tokens em query params são logados em plaintext por proxies/CDNs). Valida e popula `client.data.user`.                                                                                                                                                                                                                 | Gateways WebSocket                                         |
 | `SelfOrAdminGuard`   | Permite acesso se o usuário está acessando seus próprios recursos (`:userId` == JWT sub) ou se tem role de admin na hierarquia. A comparação `params.userId === user.sub` é a proteção primária contra IDOR — o `ParseUUIDPipe` é uma defesa em profundidade para aplicações que usam UUIDs. Se a aplicação host usa IDs de outro formato (numérico, slug, etc.), substituir `ParseUUIDPipe` pela validação apropriada ao formato. | Endpoints como `GET /users/:userId`                        |
 | `OptionalAuthGuard`  | Tenta autenticar via JWT, mas não falha se token ausente. Popula `request.user` se presente, ou null se ausente.                                                                                                                                                                                                                                                                                                                   | Endpoints públicos que mostram conteúdo extra para logados |
+
+### 8.1.1 Implementação nativa dos guards JWT (sem Passport)
+
+Os guards JWT são implementados diretamente usando `@nestjs/jwt` JwtService, sem dependência do Passport.js. Isso elimina 3 dependências (`passport`, `passport-jwt`, `@nestjs/passport`) e torna o fluxo de autenticação mais transparente e debugável.
+
+```typescript
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly jwtService: JwtService,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    private readonly authRedis: AuthRedisService,
+    private readonly tokenDelivery: TokenDeliveryService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 1. Verificar se o endpoint é @Public()
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ])
+    if (isPublic) return true
+
+    // 2. Extrair token do cookie ou header Authorization
+    const request = context.switchToHttp().getRequest()
+    const token = this.tokenDelivery.extractAccessToken(request)
+    if (!token) throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_MISSING)
+
+    try {
+      // 3. Verificar assinatura com algoritmo fixado em HS256
+      // SEGURANÇA: O pinning de algoritmo previne ataques de confusão
+      // (CVE-2015-9235) onde um atacante envia alg:none ou alg:RS256
+      const payload = this.jwtService.verify(token, {
+        secret: this.options.jwt.secret,
+        algorithms: ['HS256'],
+      })
+
+      // 4. Validar tipo do token (dashboard vs platform vs mfa_challenge)
+      if (payload.type !== 'dashboard') {
+        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      }
+
+      // 5. Verificar blacklist via jti (token pode ter sido revogado no logout)
+      if (payload.jti && await this.authRedis.isBlacklisted(payload.jti)) {
+        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
+      }
+
+      // 6. Popular request.user com payload verificado
+      request.user = payload
+      return true
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error
+      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+  }
+}
+```
+
+O `JwtPlatformGuard` segue a mesma implementação, mas valida `payload.type === 'platform'` e rejeita tokens dashboard com `AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED`.
 
 ### 8.2 Detalhamento do RolesGuard com hierarquia
 
@@ -3365,74 +3597,105 @@ export class ResendEmailProvider implements IEmailProvider {
 
 ### 11.1 Interface `OAuthProviderPlugin`
 
-O sistema de OAuth é extensível via plugins. Cada provider implementa esta interface:
+O sistema de OAuth é extensível via plugins. Cada provider implementa esta interface usando `fetch` nativo — sem dependência do Passport.js:
 
 ```typescript
 export interface OAuthProviderPlugin {
   /** Nome único do provider (ex: 'google', 'github') */
-  name: string;
-
-  /** Passport Strategy do provider */
-  strategy: Type<PassportStrategy>;
-
-  /** Guard do Passport para o provider */
-  guard: Type<AuthGuard>;
+  name: string
 
   /**
-   * Função para extrair o perfil padronizado do resultado do Passport.
-   * Cada provider retorna dados em formatos diferentes.
+   * Constrói a URL de autorização para redirecionar o usuário.
+   * @param state Token CSRF armazenado no Redis
+   * @param redirectUri URL de callback registrada no provider
+   * @returns URL completa de autorização
    */
-  extractProfile(passportUser: any): OAuthProfile;
+  authorizeUrl(state: string, redirectUri: string): string
+
+  /**
+   * Troca o authorization code por tokens OAuth usando fetch nativo.
+   * @param code Authorization code recebido no callback
+   * @param redirectUri Mesma URL de callback usada na autorização
+   * @returns Tokens OAuth (access_token, id_token, etc.)
+   */
+  exchangeCode(code: string, redirectUri: string): Promise<OAuthTokens>
+
+  /**
+   * Busca o perfil do usuário usando o access token via fetch nativo.
+   * @param accessToken Token de acesso obtido via exchangeCode
+   * @returns Perfil padronizado do usuário
+   */
+  fetchProfile(accessToken: string): Promise<OAuthProfile>
+}
+
+interface OAuthTokens {
+  access_token: string
+  token_type: string
+  id_token?: string
+  refresh_token?: string
+  expires_in?: number
 }
 ```
 
 ### 11.2 Google OAuth (built-in)
 
-O pacote inclui suporte built-in para Google OAuth:
+O pacote inclui suporte built-in para Google OAuth usando `fetch` nativo:
 
 ```typescript
-// google-oauth.plugin.ts
 export class GoogleOAuthPlugin implements OAuthProviderPlugin {
-  name = "google";
-  strategy = GoogleStrategy;
-  guard = GoogleAuthGuard;
+  name = 'google'
 
-  extractProfile(passportUser: any): OAuthProfile {
+  constructor(
+    private readonly clientId: string,
+    private readonly clientSecret: string,
+    private readonly scopes: string[] = ['email', 'profile'],
+  ) {}
+
+  authorizeUrl(state: string, redirectUri: string): string {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: this.scopes.join(' '),
+      state,
+      access_type: 'offline',
+      prompt: 'consent',
+    })
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+  }
+
+  async exchangeCode(code: string, redirectUri: string): Promise<OAuthTokens> {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: this.clientId,
+        client_secret: this.clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    })
+    if (!res.ok) throw new Error(`Google token exchange failed: ${res.status}`)
+    return res.json()
+  }
+
+  async fetchProfile(accessToken: string): Promise<OAuthProfile> {
+    const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!res.ok) throw new Error(`Google profile fetch failed: ${res.status}`)
+    const data = await res.json()
     return {
-      provider: "google",
-      providerId: passportUser.id,
-      email: passportUser.emails[0].value,
-      name: passportUser.displayName,
-      picture: passportUser.photos?.[0]?.value,
-      raw: passportUser,
-    };
+      provider: 'google',
+      providerId: data.sub,
+      email: data.email,
+      name: data.name,
+      avatarUrl: data.picture,
+      raw: data,
+    }
   }
 }
-
-// google.strategy.ts
-@Injectable()
-export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
-  constructor(@Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions) {
-    super({
-      clientID: options.oauth.google.clientId,
-      clientSecret: options.oauth.google.clientSecret,
-      callbackURL: options.oauth.google.callbackUrl,
-      scope: ["email", "profile"],
-    });
-  }
-
-  async validate(
-    accessToken: string,
-    refreshToken: string,
-    profile: unknown,
-  ): Promise<unknown> {
-    return profile;
-  }
-}
-
-// google-auth.guard.ts
-@Injectable()
-export class GoogleAuthGuard extends AuthGuard("google") {}
 ```
 
 ### 11.3 Fluxo completo de OAuth
@@ -3441,20 +3704,25 @@ export class GoogleAuthGuard extends AuthGuard("google") {}
 1. Usuário clica "Entrar com Google"
    │
    ▼
-2. GET /auth/google?tenantId=xxx → GoogleAuthGuard → Redireciona para Google
-   (tenantId é incluído no state parameter armazenado no Redis)
+2. GET /auth/google?tenantId=xxx
+   → OAuthService gera state (32 bytes hex), armazena no Redis com tenantId
+   → plugin.authorizeUrl(state, callbackUrl) constrói URL do Google
+   → Redireciona para Google
    │
    ▼
 3. Usuário autoriza no Google
    │
    ▼
-4. Google redireciona para callback
+4. Google redireciona para callback com ?code=xxx&state=yyy
    │
    ▼
-5. GET /auth/google/callback → GoogleAuthGuard → GoogleStrategy.validate()
+5. GET /auth/google/callback
+   → OAuthService verifica state no Redis (single-use, deleta após verificação)
+   → plugin.exchangeCode(code, callbackUrl) troca code por tokens via fetch
+   → plugin.fetchProfile(accessToken) busca perfil do usuário via fetch
    │
    ▼
-6. OAuthService.handleCallback(profile)
+6. OAuthService.handleCallback(profile, tenantId)
    │
    ├─ 6a. Busca usuário existente: userRepo.findByOAuthId('google', googleId)
    │
@@ -3775,6 +4043,22 @@ Transporte:
 | Session Signal | `has_session`   | `/`     | Não      | Sim (prod) | `Lax`    | Igual ao refresh                             | Cookie não-HttpOnly legível pelo JavaScript/proxy. Indica que existe sessão ativa. **Não contém dados sensíveis** — apenas `"1"`. Útil para middleware de proxy ou frontend decidir se deve tentar refresh. |
 
 > **Nota:** Se `routePrefix` for alterado do padrão `'auth'`, o `cookies.refreshCookiePath` deve ser atualizado para corresponder (ex: `routePrefix: 'api/v1/auth'` → `refreshCookiePath: '/api/v1/auth'`). Caso contrário, o browser não enviará o cookie de refresh para o endpoint correto.
+
+### 14.1.1 Constantes compartilhadas (`./shared`)
+
+Os nomes e paths dos cookies são exportados pelo subpath `@bymax-one/nest-auth/shared` para garantir sincronização entre server e client:
+
+```typescript
+// @bymax-one/nest-auth/shared
+export const AUTH_ACCESS_COOKIE_NAME = 'access_token'
+export const AUTH_REFRESH_COOKIE_NAME = 'refresh_token'
+export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'
+export const AUTH_REFRESH_COOKIE_PATH = '/auth' // deve corresponder ao routePrefix
+```
+
+Esses valores são os defaults do pacote. Se a aplicação host alterar os nomes via `BymaxAuthModuleOptions.cookies`, os mesmos valores devem ser passados para `createAuthProxy()` e `createAuthClient()` no frontend para manter a consistência.
+
+Os subpaths `./client`, `./react` e `./nextjs` importam essas constantes internamente, eliminando a necessidade de sincronização manual entre backend e frontend.
 
 ### 14.2 Resolução de domínios
 
@@ -4154,7 +4438,7 @@ export const AUTH_ERROR_CODES = {
 
 2. **Mascarar PII em logs**: Emails e tokens nunca são logados em texto plano. Usa-se `sha256(email).substring(0, 8)` para referência em logs.
 
-3. **Comparação constant-time**: Senhas, tokens e OTPs são sempre comparados usando `timingSafeEqual` ou equivalente do bcrypt para prevenir timing attacks.
+3. **Comparação constant-time**: Senhas, tokens e OTPs são sempre comparados usando `crypto.timingSafeEqual` para prevenir timing attacks.
 
 4. **Respostas consistentes**: Todos os erros seguem o mesmo formato JSON, independente do tipo de erro. Isso dificulta fingerprinting.
 
@@ -4327,7 +4611,7 @@ O `@bymax-one/nest-auth` foi projetado com fronteiras claras. Os seguintes itens
 | **Campos adicionais de perfil**         | Alem dos campos de `AuthUser`, perfis são responsabilidade da aplicação.                            | Tabela de perfis da aplicação host.                                  |
 | **Tenant resolution middleware**        | Como determinar o tenant da requisição (subdomain, header, path) e específico da aplicação.         | Middleware ou interceptor da aplicação host.                         |
 | **Validação customizada de senha**      | O pacote verifica apenas comprimento mínimo (8 chars). Regras adicionais ficam na aplicação.        | Via hook `beforeRegister` ou validação no DTO da aplicação.          |
-| **Componentes frontend**                | O pacote e backend-only (NestJS).                                                                   | Framework frontend da escolha (React, Vue, etc.).                    |
+| **Componentes frontend adicionais**     | O pacote fornece subpaths `./client`, `./react` e `./nextjs` (ver seção 21). Componentes de UI específicos (formulários, modais) ficam na aplicação. | UI library da escolha (Chakra, Material, etc.).                      |
 | **Gerenciamento de estado OAuth**       | O `state` parameter do OAuth (CSRF protection) é gerenciado pelo pacote via Redis (ver seção 11.5). | Automático no fluxo OAuth do pacote.                                 |
 | **Fluxo de alteração de email**         | Requer re-verificação do novo email, notificação no email antigo — fluxo complexo e específico      | Implementar na aplicação host usando `IEmailProvider` e `OtpService` |
 | **Exclusão de conta (GDPR erasure)**    | Direito ao esquecimento requer anonimização de dados financeiros — lógica de negócio                | Implementar na aplicação host; usar hooks para limpeza de auth       |
@@ -4336,56 +4620,78 @@ O `@bymax-one/nest-auth` foi projetado com fronteiras claras. Os seguintes itens
 
 ## 18. Dependências
 
-### 18.1 Peer Dependencies
+### 18.1 Peer Dependencies (Server subpath)
 
-Estas dependências devem estar instaladas na aplicação host. O pacote não as inclui — ele espera que já existam.
+Estas dependências devem estar instaladas na aplicação host que usa o subpath server. O pacote não as inclui — ele espera que já existam.
 
 | Pacote               | Versão    | Motivo                                                                       |
 | -------------------- | --------- | ---------------------------------------------------------------------------- |
 | `@nestjs/common`     | `^11.0.0` | Framework core — decorators, exceptions, providers                           |
 | `@nestjs/core`       | `^11.0.0` | Framework core — module system, DI container                                 |
 | `@nestjs/jwt`        | `^11.0.0` | Emissão e verificação de JWTs                                                |
-| `@nestjs/passport`   | `^11.0.0` | Integração Passport.js com NestJS                                            |
 | `@nestjs/throttler`  | `^6.0.0`  | Rate limiting via decorators                                                 |
-| `@nestjs/websockets` | `^11.0.0` | Suporte a WebSocket guards (opcional — necessário apenas se usar WsJwtGuard) |
-| `bcrypt`             | `^5.0.0`  | Hashing de senhas (bcrypt)                                                   |
 | `class-transformer`  | `^0.5.0`  | Transformação de DTOs                                                        |
 | `class-validator`    | `^0.14.0` | Validação de DTOs                                                            |
 | `ioredis`            | `^5.0.0`  | Cliente Redis                                                                |
-| `passport`           | `^0.7.0`  | Framework de autenticação                                                    |
-| `passport-jwt`       | `^4.0.0`  | Estratégia JWT para Passport                                                 |
 | `reflect-metadata`   | `^0.2.0`  | Metadata reflection para decorators                                          |
 
 ### 18.2 Dependencies
 
-Dependências incluidas diretamente no pacote:
-
-| Pacote    | Versão   | Motivo                              |
-| --------- | -------- | ----------------------------------- |
-| `otpauth` | `^9.0.0` | Geração e verificação de TOTP (MFA) |
+O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as funcionalidades de criptografia (scrypt, TOTP, AES-256-GCM) e OAuth usam `node:crypto` e `fetch` nativos do Node.js 24+, eliminando riscos de supply chain.
 
 ### 18.3 Optional Peer Dependencies
 
-Dependências opcionais que so precisam ser instaladas se a funcionalidade correspondente for usada.
-São declaradas em `peerDependencies` com `peerDependenciesMeta: { optional: true }` — o npm/yarn
-informa ao consumidor sobre sua existência mas não instala automaticamente:
+| Pacote               | Versão    | Quando necessário                                                    |
+| -------------------- | --------- | -------------------------------------------------------------------- |
+| `@nestjs/websockets` | `^11.0.0` | Apenas se usar `WsJwtGuard` para WebSocket authentication           |
 
-| Pacote                    | Versão   | Quando necessário                      |
-| ------------------------- | -------- | -------------------------------------- |
-| `passport-google-oauth20` | `^2.0.0` | Quando `oauth.google` está configurado |
+### 18.4 Peer Dependencies por Subpath
 
-### 18.4 Exemplo de `package.json`
+| Subpath | Peer Dependencies |
+|---------|-------------------|
+| `.` (server) | `@nestjs/common ^11`, `@nestjs/core ^11`, `@nestjs/jwt ^11`, `@nestjs/throttler ^6`, `ioredis ^5`, `class-transformer ^0.5`, `class-validator ^0.14`, `reflect-metadata ^0.2` |
+| `./shared` | Nenhuma |
+| `./client` | Nenhuma |
+| `./react` | `react ^19` |
+| `./nextjs` | `next ^16`, `react ^19` |
+
+### 18.5 Exemplo de `package.json`
 
 ```json
 {
   "name": "@bymax-one/nest-auth",
   "version": "1.0.0",
-  "description": "Módulo NestJS reutilizável de autenticação para o ecossistema Bymax SaaS",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Pacote full-stack de autenticação para o ecossistema Bymax SaaS",
   "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.mjs",
+      "require": "./dist/server/index.cjs"
+    },
+    "./shared": {
+      "types": "./dist/shared/index.d.ts",
+      "import": "./dist/shared/index.mjs",
+      "require": "./dist/shared/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.mjs",
+      "require": "./dist/client/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.mjs",
+      "require": "./dist/react/index.cjs"
+    },
+    "./nextjs": {
+      "types": "./dist/nextjs/index.d.ts",
+      "import": "./dist/nextjs/index.mjs",
+      "require": "./dist/nextjs/index.cjs"
+    }
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsup",
     "lint": "eslint src",
     "test": "jest",
     "test:cov": "jest --coverage",
@@ -4395,44 +4701,38 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/jwt": "^11.0.0",
-    "@nestjs/passport": "^11.0.0",
     "@nestjs/throttler": "^6.0.0",
     "@nestjs/websockets": "^11.0.0",
-    "bcrypt": "^5.0.0",
     "class-transformer": "^0.5.0",
     "class-validator": "^0.14.0",
     "ioredis": "^5.0.0",
-    "passport": "^0.7.0",
-    "passport-jwt": "^4.0.0",
-    "passport-google-oauth20": "^2.0.0",
+    "react": "^19.0.0",
+    "next": "^16.0.0",
     "reflect-metadata": "^0.2.0"
   },
-  "dependencies": {
-    "otpauth": "^9.0.0"
-  },
   "peerDependenciesMeta": {
+    "@nestjs/common": { "optional": true },
+    "@nestjs/core": { "optional": true },
+    "@nestjs/jwt": { "optional": true },
+    "@nestjs/throttler": { "optional": true },
     "@nestjs/websockets": { "optional": true },
-    "passport-google-oauth20": { "optional": true }
+    "class-transformer": { "optional": true },
+    "class-validator": { "optional": true },
+    "ioredis": { "optional": true },
+    "reflect-metadata": { "optional": true },
+    "react": { "optional": true },
+    "next": { "optional": true }
   },
   "devDependencies": {
     "@nestjs/testing": "^11.0.0",
-    "@types/bcrypt": "^5.0.0",
-    "@types/passport-jwt": "^4.0.0",
-    "@types/passport-google-oauth20": "^2.0.0",
     "jest": "^29.0.0",
     "ts-jest": "^29.0.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.5.0"
   },
   "keywords": [
-    "nestjs",
-    "auth",
-    "authentication",
-    "jwt",
-    "mfa",
-    "totp",
-    "oauth",
-    "saas",
-    "multi-tenant"
+    "nestjs", "auth", "authentication", "jwt", "mfa", "totp",
+    "oauth", "saas", "multi-tenant", "nextjs", "react"
   ],
   "license": "MIT",
   "repository": {
@@ -4441,6 +4741,8 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
   }
 }
 ```
+
+> **Nota sobre peerDependenciesMeta:** Todas as peerDeps são marcadas como `optional: true` porque o consumidor só precisa instalar as deps do subpath que usa. Quem usa apenas `./client` não precisa de NestJS; quem usa apenas o server não precisa de React/Next.js.
 
 ---
 
@@ -4458,8 +4760,11 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
 | 4    | Semana 3-4 | 1 semana | Sessões + Password Reset          | Session service/controller, password reset service/controller, OTP, verificação de email + testes unitários                  |
 | 5    | Semana 4-5 | 1 semana | Platform Admin + OAuth + Convites | PlatformAuth, OAuth module, Google plugin, Invitation service/controller + testes unitários                                  |
 | 6    | Semana 5-6 | 1 semana | Integração + Polimento            | WsJwtGuard, testes de integração E2E, error codes completos, JSDoc, README                                                   |
+| 7    | Semana 6-7 | 1 semana | Shared + Client Subpath           | Extrair tipos/constantes shared, implementar createAuthClient com fetch nativo, testes                                        |
+| 8    | Semana 7   | 0.5 sem  | React Subpath                     | AuthProvider, useSession, useAuth, useAuthStatus, testes com React Testing Library                                            |
+| 9    | Semana 7-8 | 1 semana | Next.js Subpath                   | createAuthProxy, route handlers, JWT helpers, cookie utils, testes de proxy e redirect loop                                   |
 
-> **Estimativa:** ~6 semanas para 1 desenvolvedor + agente de IA. Com revisão humana rigorosa, adicionar 20% de buffer (~7 semanas total).
+> **Estimativa:** ~9 semanas para 1 desenvolvedor + agente de IA (6 semanas server + 3 semanas frontend). Com revisão humana rigorosa, adicionar 20% de buffer (~11 semanas total).
 
 ### 19.2 Fase 1: Fundação do Core (Semana 1)
 
@@ -4492,7 +4797,7 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
    - `redis/auth-redis.module.ts` — Módulo Redis interno
 
 5. **Serviços fundamentais**
-   - `services/password.service.ts` — Hash e comparação bcrypt
+   - `services/password.service.ts` — Hash e comparação scrypt (node:crypto)
    - `services/token-manager.service.ts` — Emissão e verificação de JWTs
    - `services/token-delivery.service.ts` — Entrega de tokens (cookie/bearer/both)
    - `services/brute-force.service.ts` — Proteção contra brute-force
@@ -4517,7 +4822,7 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
 **Entregaveis:**
 
 1. **JWT Strategy**
-   - `strategies/jwt.strategy.ts` — Passport strategy para dashboard
+   - `strategies/jwt.strategy.ts` — Guard JWT nativo para dashboard
    - Extração do JWT de cookie + header Authorization
    - Validação e população de `request.user`
 
@@ -4559,7 +4864,7 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
 
 2. **MFA Service**
    - `services/mfa.service.ts` — setup, verifyAndEnable, challenge, disable
-   - Geração de recovery codes com hash bcrypt
+   - Geração de recovery codes com hash scrypt
    - Criptografia/descriptografia de secrets TOTP
 
 3. **MFA Controller**
@@ -4642,7 +4947,7 @@ informa ao consumidor sobre sua existência mas não instala automaticamente:
 4. **Testes unitários**
    - Testes para `PlatformAuthService`
    - Testes para `InvitationService`
-   - Testes para `OAuthService` e Google plugin (mock Passport)
+   - Testes para `OAuthService` e Google plugin (mock fetch para OAuth)
    - Cobertura mínima: 80%
 
 ### 19.7 Fase 6: Integração + Polimento (Semana 5-6)
@@ -4701,7 +5006,9 @@ Esta seção documenta limitações técnicas e arquiteturais do pacote que deve
 | **Apenas HS256 (simétrico)**               | Não suporta RS256/ES256 para verificação distribuída sem compartilhar secret | Planejado para versão futura                            |
 | **Sem WebAuthn/passkeys**                  | Não suporta autenticação por biometria ou chaves de segurança                | Fora do escopo v1                                       |
 | **Sem magic links/passwordless**           | Não suporta login por link enviado por email                                 | Fora do escopo v1                                       |
-| **bcrypt trunca senhas acima de 72 bytes** | Senhas muito longas são silenciosamente truncadas                            | Documentar requisito de senha máxima 128 chars nos DTOs |
+| **scrypt não é o mais forte**              | Argon2id é mais resistente a GPU attacks mas requer pacote nativo           | scrypt é nativo no Node.js — trade-off aceitável para zero deps             |
+| **React 19+ apenas**                       | Subpath `./react` requer React 19 com hooks                                | Sem plano para versões anteriores                                           |
+| **Next.js 16+ apenas**                     | Subpath `./nextjs` usa Proxy API (renomeado de Middleware no Next.js 16)    | Sem suporte para Next.js 15 ou anterior                                     |
 
 ### 20.3 Infraestrutura
 
@@ -4908,10 +5215,10 @@ Usuário          Controller        AuthService         TokenDeliveryService  Re
 
 | Item                                     | Implementação                                                           |
 | ---------------------------------------- | ----------------------------------------------------------------------- |
-| Senhas hasheadas com bcrypt (12 rounds)  | `PasswordService.hash()`                                                |
-| Comparação constant-time de senhas       | `bcrypt.compare()` internamente usa constant-time                       |
+| Senhas hasheadas com scrypt (N=2^15, r=8, p=1) | `PasswordService.hash()` via `node:crypto`                         |
+| Comparação constant-time de senhas       | `crypto.timingSafeEqual()` para prevenir timing attacks                 |
 | Secrets TOTP criptografados em repouso   | AES-256-GCM em `MfaService.encryptSecret()`                             |
-| Recovery codes hasheados individualmente | Bcrypt hash de cada code                                                |
+| Recovery codes hasheados individualmente | scrypt hash de cada code via `PasswordService`                          |
 | Refresh tokens opacos (não JWT)          | UUID v4, armazenados no Redis                                           |
 | Rotação de refresh tokens                | Novo token a cada refresh, antigo invalidado                            |
 | Grace window para rotação                | 30s ponteiro `rp:` para requisições concorrentes                        |
@@ -4932,4 +5239,493 @@ Usuário          Controller        AuthService         TokenDeliveryService  Re
 
 ---
 
-_Fim da específicacao tecnica do `@bymax-one/nest-auth`._
+## 21. Integração Frontend
+
+O pacote fornece subpaths frontend que encapsulam toda a lógica de autenticação client-side, incluindo gerenciamento de sessão, refresh automático de tokens, proteção contra redirect loops e integração com Next.js 16. Atualmente suporta React e Next.js, com estrutura preparada para futuros subpaths (Vue, Svelte, Expo).
+
+### 21.1 Subpath `./shared`
+
+Tipos e constantes compartilhados entre server e client com **zero dependências externas**.
+
+**Exports:**
+
+```typescript
+// Tipos JWT (compartilhados com server)
+export interface DashboardJwtPayload {
+  sub: string        // User ID
+  jti: string        // Token ID (para blacklist)
+  tenantId: string
+  role: string
+  type: 'dashboard'
+  status: string
+  mfaVerified: boolean
+  iat: number
+  exp: number
+}
+
+export interface PlatformJwtPayload {
+  sub: string
+  jti: string
+  role: string       // SUPER_ADMIN | ADMIN | SUPPORT
+  type: 'platform'
+  mfaVerified: boolean
+  iat: number
+  exp: number
+}
+
+// Subset do AuthUser para consumo client-side (sem campos sensíveis)
+export interface AuthUserClient {
+  id: string
+  email: string
+  name: string
+  role: string
+  tenantId?: string
+  status: string
+  mfaEnabled: boolean
+  avatarUrl?: string
+}
+
+// Shapes de response
+export interface AuthResult {
+  user: AuthUserClient
+  accessToken?: string   // Presente apenas em modo bearer/both
+  refreshToken?: string  // Presente apenas em modo bearer/both
+}
+
+export interface MfaChallengeResult {
+  mfaRequired: true
+  mfaToken: string
+}
+
+// Error response padronizado
+export interface AuthErrorResponse {
+  message: string
+  error: string
+  statusCode: number
+  code?: string  // AUTH_ERROR_CODES key
+}
+
+// Constantes de cookies
+export const AUTH_ACCESS_COOKIE_NAME = 'access_token'
+export const AUTH_REFRESH_COOKIE_NAME = 'refresh_token'
+export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'
+export const AUTH_REFRESH_COOKIE_PATH = '/auth'
+
+// Error codes (mesmo objeto do server)
+export const AUTH_ERROR_CODES = { /* ... */ } as const
+
+// Paths dos endpoints auth
+export const AUTH_ROUTES = {
+  SIGN_IN: '/auth/sign-in',
+  SIGN_UP: '/auth/sign-up',
+  REFRESH: '/auth/refresh',
+  LOGOUT: '/auth/logout',
+  ME: '/auth/me',
+  FORGOT_PASSWORD: '/auth/forgot-password',
+  RESET_PASSWORD: '/auth/reset-password',
+  VERIFY_EMAIL: '/auth/verify-email',
+  MFA_CHALLENGE: '/auth/mfa/challenge',
+} as const
+```
+
+---
+
+### 21.2 Subpath `./client`
+
+Client de autenticação framework-agnostic usando `fetch` nativo — **zero dependências externas** (sem axios).
+
+#### 21.2.1 `createAuthClient(config)`
+
+```typescript
+interface AuthClientConfig {
+  /** URL base do backend (ex: 'https://api.example.com') */
+  baseUrl: string
+  /** Endpoint same-origin para refresh. Default: '/api/auth/client-refresh' */
+  refreshEndpoint?: string
+  /** Credentials policy para fetch. Default: 'include' */
+  credentials?: RequestCredentials
+  /** Headers extras em cada request */
+  defaultHeaders?: Record<string, string>
+  /** Callback quando sessão expira definitivamente (refresh falhou) */
+  onSessionExpired?: () => void
+  /** Timeout em ms. Default: 15000 */
+  timeout?: number
+}
+```
+
+**Métodos retornados:**
+
+```typescript
+interface AuthClient {
+  login(email: string, password: string, options?: { tenantId?: string }): Promise<AuthResult>
+  register(data: RegisterData): Promise<AuthResult>
+  logout(): Promise<void>
+  refresh(): Promise<boolean>
+  getMe(): Promise<AuthUserClient>
+  mfaChallenge(tempToken: string, code: string): Promise<AuthResult>
+  forgotPassword(email: string, tenantId?: string): Promise<void>
+  resetPassword(token: string, otp: string, newPassword: string): Promise<void>
+  /** Fetch wrapper com refresh automático para chamadas genéricas */
+  fetch: typeof fetch
+}
+```
+
+#### 21.2.2 `createAuthFetch` — Fetch wrapper com refresh automático
+
+Core interno do client que implementa interceptação de 401 com single-flight refresh:
+
+```typescript
+function createAuthFetch(config: AuthClientConfig) {
+  /** Single in-flight refresh para que 401s concorrentes compartilhem uma request */
+  let refreshPromise: Promise<boolean> | null = null
+
+  /** URLs de endpoints de auth que NÃO devem triggerar refresh em caso de 401 */
+  const AUTH_PATHS = [
+    '/auth/sign-in', '/auth/sign-up', '/auth/refresh',
+    '/api/auth/client-refresh', '/api/auth/silent-refresh',
+    '/auth/forgot-password', '/auth/verify', '/auth/reset-password',
+  ]
+
+  function shouldSkipRefreshOnUrl(url: string): boolean {
+    return AUTH_PATHS.some(path => url.includes(path))
+  }
+
+  async function refreshSession(): Promise<boolean> {
+    const res = await fetch(config.refreshEndpoint ?? '/api/auth/client-refresh', {
+      method: 'POST',
+      credentials: 'include',
+    })
+    return res.ok
+  }
+
+  async function authFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    const url = typeof input === 'string'
+      ? (input.startsWith('http') ? input : `${config.baseUrl}${input}`)
+      : input.toString()
+
+    const response = await fetch(url, {
+      ...init,
+      credentials: config.credentials ?? 'include',
+      headers: { ...config.defaultHeaders, ...init?.headers },
+    })
+
+    // Não é 401, ou é endpoint de auth — retorna como está
+    if (response.status !== 401 || shouldSkipRefreshOnUrl(url)) {
+      return response
+    }
+
+    // 401 em endpoint não-auth — tenta refresh (single-flight)
+    if (!refreshPromise) {
+      refreshPromise = refreshSession().finally(() => { refreshPromise = null })
+    }
+    const refreshed = await refreshPromise
+
+    if (refreshed) {
+      // Retry com cookies renovados
+      return fetch(url, {
+        ...init,
+        credentials: config.credentials ?? 'include',
+        headers: { ...config.defaultHeaders, ...init?.headers },
+      })
+    }
+
+    // Refresh falhou — sessão expirada
+    config.onSessionExpired?.()
+    return response
+  }
+
+  return { fetch: authFetch, get, post, put, patch, delete: del }
+}
+```
+
+**DX — Exemplo de uso:**
+
+```typescript
+import { createAuthClient } from '@bymax-one/nest-auth/client'
+
+const auth = createAuthClient({
+  baseUrl: process.env.NEXT_PUBLIC_API_URL!,
+  onSessionExpired: () => {
+    window.location.href = '/auth/login'
+  },
+})
+
+// Login
+const result = await auth.login('user@example.com', 'password123')
+
+// Chamadas autenticadas (refresh automático em caso de 401)
+const me = await auth.getMe()
+const users = await auth.fetch('/api/users').then(r => r.json())
+```
+
+---
+
+### 21.3 Subpath `./react`
+
+Hooks React e context provider para gerenciamento de estado de autenticação.
+
+#### `AuthProvider`
+
+```typescript
+interface AuthProviderProps {
+  children: React.ReactNode
+  /** Client criado via createAuthClient */
+  client: AuthClient
+  /** Callback quando sessão expira */
+  onSessionExpired?: () => void
+  /** Intervalo de revalidação em ms. Default: 300000 (5 min) */
+  revalidateInterval?: number
+}
+```
+
+#### `useSession()`
+
+```typescript
+function useSession(): {
+  user: AuthUserClient | null
+  status: 'authenticated' | 'unauthenticated' | 'loading'
+  isLoading: boolean
+  refresh: () => Promise<void>
+  lastValidation: number | null
+}
+```
+
+#### `useAuth()`
+
+```typescript
+function useAuth(): {
+  login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthResult>
+  register: (data: RegisterData) => Promise<AuthResult>
+  logout: () => Promise<void>
+  forgotPassword: (email: string) => Promise<void>
+  resetPassword: (token: string, otp: string, newPassword: string) => Promise<void>
+}
+```
+
+#### `useAuthStatus()`
+
+```typescript
+function useAuthStatus(): {
+  isAuthenticated: boolean
+  isLoading: boolean
+}
+```
+
+**DX — Exemplo de uso:**
+
+```typescript
+// layout.tsx
+import { AuthProvider } from '@bymax-one/nest-auth/react'
+import { createAuthClient } from '@bymax-one/nest-auth/client'
+
+const client = createAuthClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL! })
+
+export default function Layout({ children }) {
+  return <AuthProvider client={client}>{children}</AuthProvider>
+}
+
+// Profile.tsx
+import { useSession, useAuth } from '@bymax-one/nest-auth/react'
+
+function Profile() {
+  const { user, isLoading } = useSession()
+  const { logout } = useAuth()
+  if (isLoading) return <Spinner />
+  return <Button onClick={logout}>{user?.name}</Button>
+}
+```
+
+Peer dependencies: `react ^19`
+
+---
+
+### 21.4 Subpath `./nextjs`
+
+Integração completa com Next.js 16 incluindo proxy factory, route handlers, JWT helpers e cookie utilities. Encapsula toda a lógica de proteção de rotas, refresh de sessão e prevenção de redirect loops.
+
+> **Baseado na implementação battle-tested do bymax-fitness-ai**, onde um bug de redirect loop infinito foi identificado e corrigido. Todos os edge cases estão documentados e resolvidos nos factories abaixo.
+
+#### 21.4.1 `createAuthProxy(config)`
+
+Factory que retorna uma função `proxy` e um objeto `config` prontos para exportar de `proxy.ts`.
+
+```typescript
+interface AuthProxyConfig {
+  /** Rotas públicas (sem autenticação necessária) */
+  publicRoutes?: string[] | ((pathname: string) => boolean)
+  /** Rotas públicas que redirecionam para dashboard se já autenticado */
+  publicRoutesRedirectIfAuthenticated?: string[]
+  /** Rotas protegidas com roles permitidas */
+  protectedRoutes: Array<{
+    pattern: RegExp
+    allowedRoles: string[]
+    redirectPath: string
+  }>
+  /** Path da página de login. Default: '/auth/login' */
+  loginPath?: string
+  /** Função que retorna o dashboard padrão para cada role */
+  getDefaultDashboard: (role: string) => string
+  /** URL base do backend. Default: process.env.NEXT_PUBLIC_API_URL */
+  apiBase?: string
+  /** Secret JWT para verificação HS256 no proxy. Default: process.env.JWT_SECRET */
+  jwtSecret?: string
+  /** Máximo de tentativas de silent-refresh. Default: 2 */
+  maxRefreshAttempts?: number
+  /** Nomes dos cookies. Default: valores de ./shared */
+  cookieNames?: {
+    access?: string
+    refresh?: string
+    hasSession?: string
+  }
+  /** Nomes dos headers propagados para server components */
+  userHeaders?: {
+    userId?: string      // default: 'x-user-id'
+    userRole?: string    // default: 'x-user-role'
+    tenantId?: string    // default: 'x-tenant-id'
+    tenantDomain?: string // default: 'x-tenant-domain'
+  }
+  /** Status de usuário bloqueados no proxy. Default: ['BANNED', 'INACTIVE', 'EXPIRED'] */
+  blockedUserStatuses?: string[]
+}
+```
+
+**Retorna:** `{ proxy, config }` prontos para exportar.
+
+**Padrões de segurança implementados:**
+
+**1. `isBackgroundRequest(request)` — Detecção de requests paralelos do Next.js:**
+
+Detecta RSC payload fetches, prefetches e router state updates via headers:
+- `RSC: 1` — RSC payload request
+- `Next-Router-Prefetch: 1` — link prefetch
+- `Next-Router-State-Tree` — client-side navigation RSC fetch
+
+Retorna `new NextResponse(null, { status: 401 })` em vez de redirect. **Razão:** esses requests rodam em paralelo com a navegação principal. Redirecionar causaria race conditions — o refresh token seria consumido pela navegação principal e o request paralelo encontraria o token já usado.
+
+**2. Contador `_r` para prevenção de redirect loop:**
+
+O browser pode não processar `Set-Cookie` headers de um redirect antes de seguir o redirect. Quando o cookie `has_session` não é limpo a tempo:
+
+- Contador numérico em `url.searchParams`
+- Incrementado a cada tentativa de silent-refresh
+- Em `_r >= maxRefreshAttempts` (default 2): desiste e mostra a página pública ou redireciona para login
+- Limpo da URL após autenticação bem-sucedida
+
+> **Bugs do Next.js que motivam este padrão:** [vercel/next.js#49442](https://github.com/vercel/next.js/issues/49442), [vercel/next.js#72170](https://github.com/vercel/next.js/discussions/72170)
+
+**3. `reason=expired` guard:**
+
+Em rotas públicas, se `url.searchParams.get('reason') === 'expired'`, um silent-refresh anterior já falhou — não tenta novamente. Funciona como guard primário; o contador `_r` funciona como backup. Defesa em profundidade: dois mecanismos independentes contra o mesmo loop.
+
+**4. Cookie `has_session` signal:**
+
+Cookie não-sensível (valor `"1"`) que indica existência de sessão. O proxy usa para decidir se tenta silent-refresh sem ter acesso ao refresh token real (que tem path restrito a `/api/auth`).
+
+**5. Bloqueio por status do usuário:**
+
+Verifica `tokenData.status` contra `blockedUserStatuses`. Bloqueia BANNED, INACTIVE, EXPIRED no proxy antes do request chegar ao backend.
+
+**6. RBAC no proxy:**
+
+Verifica `tokenData.role` contra `protectedRoutes[].allowedRoles`. Redireciona para dashboard padrão da role se não permitido.
+
+**7. Headers de usuário para Server Components:**
+
+Após verificação HS256, propaga `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain`.
+
+> **AVISO:** Estes headers existem para conveniência de UI. **Nunca** devem ser usados para autorização — toda decisão de acesso deve passar pelo backend NestJS.
+
+**DX:**
+
+```typescript
+// proxy.ts
+import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
+
+const { proxy, config } = createAuthProxy({
+  publicRoutes: ['/', '/welcome', '/auth/*', '/privacy'],
+  publicRoutesRedirectIfAuthenticated: [
+    '/', '/welcome', '/auth/login', '/auth/register',
+    '/auth/forgot-password', '/auth/reset-password', '/auth/verify-otp',
+  ],
+  protectedRoutes: [
+    { pattern: /^\/admin\/.*/, allowedRoles: ['admin'], redirectPath: '/app/dashboard' },
+    { pattern: /^\/app\/.*/, allowedRoles: ['user', 'admin'], redirectPath: '/auth/login' },
+  ],
+  getDefaultDashboard: (role) => role === 'admin' ? '/admin/dashboard' : '/app/dashboard',
+})
+
+export { proxy, config }
+```
+
+#### 21.4.2 Route Handlers
+
+**`createSilentRefreshHandler(config?)`** — Handler GET para `/api/auth/silent-refresh`
+
+Chamado pelo proxy via redirect quando o access token expirou mas `has_session` indica que um refresh token pode existir.
+
+Fluxo:
+1. Forwards cookies para backend `POST /auth/refresh` com headers `Cookie`, `X-Tenant-Domain`, `Content-Type`
+2. **Sucesso:** Redirect para destino (`redirect` param) com Set-Cookie headers propagados via `dedupeSetCookieHeaders()`
+3. **Falha:** Redirect para `/auth/login?reason=expired` com limpeza explícita dos 3 cookies (access, refresh, has_session) com paths corretos
+4. **Defesa open redirect:** Valida que `redirect` começa com `/`, não começa com `//`, e após resolução o origin é o mesmo do request
+
+```typescript
+// app/api/auth/silent-refresh/route.ts
+import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
+export const GET = createSilentRefreshHandler()
+```
+
+**`createClientRefreshHandler(config?)`** — Handler POST para `/api/auth/client-refresh`
+
+Bridge same-origin para refresh client-side. Necessário porque:
+1. O cookie `refresh_token` tem `Path=/api/auth` — o browser só o envia para requests neste path
+2. O backend pode estar em outro domínio (cross-origin)
+3. Cookies HTTP-only cross-origin podem ser bloqueados por ITP (Safari) ou ETP (Firefox)
+
+```typescript
+// app/api/auth/client-refresh/route.ts
+import { createClientRefreshHandler } from '@bymax-one/nest-auth/nextjs'
+export const POST = createClientRefreshHandler()
+```
+
+#### 21.4.3 JWT Helpers
+
+**`decodeJwtToken(token)`** — Decodifica sem verificação de assinatura (UX client-side).
+
+**`verifyJwtToken(token)`** — Verificação HS256 via Web Crypto API (`crypto.subtle`). Fixa algoritmo em HS256 para prevenir ataques de confusão de algoritmo. Falls back to decode se `JWT_SECRET` não disponível.
+
+#### 21.4.4 Cookie Utilities
+
+**`dedupeSetCookieHeaders(headers: string[]): string[]`** — Deduplica por `(name + domain)`, last writer wins. Essencial porque o backend envia pares clear-then-set para cookies rotacionados. Em setups multi-domínio, o mesmo cookie é enviado para múltiplos domínios — deduplicar por name sozinho descartaria variantes de domínio.
+
+**`parseSetCookieHeader(str: string): ParsedSetCookie | null`** — Parse de raw Set-Cookie em objeto estruturado.
+
+#### 21.4.5 Integração client-side refresh (fluxo completo)
+
+```
+Browser (SPA)              Next.js Route Handler       Backend (NestJS)
+     │                            │                         │
+     │── GET /api/users ──────────│─── GET /users ─────────>│
+     │<─ 401 ─────────────────────│<── 401 ─────────────────│
+     │                            │                         │
+     │  [Interceptor ativa]       │                         │
+     │  1. shouldSkipRefreshOnUrl → não                     │
+     │  2. refreshPromise? não → cria nova                  │
+     │                            │                         │
+     │── POST /api/auth/          │                         │
+     │   client-refresh ─────────>│── POST /auth/refresh ──>│
+     │                            │<── 200 + Set-Cookie ────│
+     │<── 200 + Set-Cookie ───────│                         │
+     │                            │                         │
+     │  [Retry original request]  │                         │
+     │── GET /api/users ──────────│─── GET /users ─────────>│
+     │<── 200 + data ─────────────│<── 200 + data ──────────│
+```
+
+**O delay de 500ms no redirect:** Após refresh falhar, o client agenda redirect para login com `setTimeout(500ms)` em vez de navegar imediatamente. Isso resolve uma race condition: se o proxy (server-side) renovou a sessão via redirect 302, o browser navega para o destino destruindo o contexto JS e cancelando o timeout — o redirect para login **nunca acontece**. Sem o delay, o `window.location.href = '/auth/login'` executaria antes do 302 do proxy completar.
+
+Peer dependencies: `next ^16`, `react ^19`
+
+---
+
+_Fim da especificação técnica do `@bymax-one/nest-auth`._
