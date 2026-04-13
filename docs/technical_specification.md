@@ -536,7 +536,6 @@ export interface BymaxAuthModuleOptions {
    */
   password?: {
     /** Fator de custo N para scrypt. Padrão: 2^15 (32768) */
-    /** Fator de custo N para scrypt. Padrão: 2^15 (32768) */
     costFactor?: number;
     /** Tamanho do bloco r para scrypt. Padrão: 8 */
     blockSize?: number;
@@ -1432,8 +1431,8 @@ class AuthService {
    * 3. Compara senha com scrypt + timingSafeEqual (constant-time)
    * 4. Se falhar, registra tentativa e retorna erro genérico
    * 5. Se usuário tem MFA habilitado:
-   *    a. Emite mfaToken (JWT de 5 min)
-   *    b. Retorna { mfaRequired: true, mfaToken }
+   *    a. Emite mfaTempToken (JWT de 5 min)
+   *    b. Retorna { mfaRequired: true, mfaTempToken }
    * 6. Se não tem MFA:
    *    a. Reseta contador de brute-force
    *    b. Gera tokens JWT (access + refresh)
@@ -1531,7 +1530,7 @@ interface AuthResult {
 
 interface MfaChallengeResult {
   mfaRequired: true;
-  mfaToken: string;
+  mfaTempToken: string;
 }
 ```
 
@@ -2537,7 +2536,7 @@ export class LoginDto {
 | ------ | ------------ | ----------------- | -------------- | ----------------- | ---------------------------------------- |
 | `POST` | `/setup`     | JWT               | `JwtAuthGuard` | —                 | Inicia configuração MFA, retorna QR code |
 | `POST` | `/verify`    | JWT               | `JwtAuthGuard` | `MfaVerifyDto`    | Verifica código e habilita MFA           |
-| `POST` | `/challenge` | Public + mfaToken | —              | `MfaChallengeDto` | Completa desafio MFA durante login       |
+| `POST` | `/challenge` | Public + mfaTempToken | —              | `MfaChallengeDto` | Completa desafio MFA durante login       |
 | `POST` | `/disable`   | JWT               | `JwtAuthGuard` | `MfaDisableDto`   | Desabilita MFA                           |
 
 **DTOs:**
@@ -2662,7 +2661,7 @@ export class ResetPasswordDto {
 | Método   | Rota             | Auth              | Guards             | Body                | Descrição                                                           |
 | -------- | ---------------- | ----------------- | ------------------ | ------------------- | ------------------------------------------------------------------- |
 | `POST`   | `/login`         | Public            | —                  | `PlatformLoginDto`  | Autentica admin da plataforma                                       |
-| `POST`   | `/mfa/challenge` | Public + mfaToken | —                  | `MfaChallengeDto`   | Completa desafio MFA para admins de plataforma                      |
+| `POST`   | `/mfa/challenge` | Public + mfaTempToken | —                  | `MfaChallengeDto`   | Completa desafio MFA para admins de plataforma                      |
 | `GET`    | `/me`            | Platform JWT      | `JwtPlatformGuard` | —                   | Retorna dados do admin                                              |
 | `POST`   | `/logout`        | Platform JWT      | `JwtPlatformGuard` | —                   | Desloga admin, revoga tokens                                        |
 | `POST`   | `/refresh`       | Cookie/Bearer     | —                  | `{ refreshToken? }` | Renova tokens do admin da plataforma                                |
@@ -4018,6 +4017,7 @@ export interface MfaTempPayload {
 ```json
 {
   "sub": "clx1abc2def3ghi4jkl",
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
   "type": "mfa_challenge",
   "context": "dashboard",
   "iat": 1712678400,
@@ -4823,7 +4823,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Testes para `AuthRedisService` (mock Redis)
    - Cobertura mínima: 80%
 
-### 19.3 Fase 2: Autenticação Core (Semana 2)
+### 19.3 Fase 2 — Autenticação Core (Semana 2)
 
 **Objetivo:** Implementar o fluxo completo de autenticação (registro, login, logout, refresh).
 
@@ -4859,7 +4859,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Testes para guards (JwtAuthGuard, RolesGuard, UserStatusGuard)
    - Cobertura mínima: 80%
 
-### 19.4 Fase 3: MFA (Semana 3)
+### 19.4 Fase 3 — Autenticação Multi-Fator (MFA) (Semana 3)
 
 **Objetivo:** Implementar autenticação multi-fator completa com TOTP.
 
@@ -4892,7 +4892,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Testes para `MfaRequiredGuard`
    - Cobertura mínima: 80%
 
-### 19.5 Fase 4: Sessões + Password Reset (Semana 3-4)
+### 19.5 Fase 4 — Sessões e Reset de Senha (Semana 3-4)
 
 **Objetivo:** Implementar gerenciamento de sessões e fluxo de reset de senha.
 
@@ -4992,7 +4992,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Logs estruturados com `Logger` do NestJS
    - Publicação no npm
 
-### 19.8 Fase 7: Shared + Client Subpath (Semana 6-7)
+### 19.8 Fase 7 — Shared + Client Subpath (Semana 6-7)
 
 **Objetivo:** Extrair tipos e constantes compartilhados para `src/shared/` e implementar client de autenticação framework-agnostic com `fetch` nativo.
 
@@ -5002,7 +5002,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 3. Zero dependências externas em ambos subpaths
 4. Testes unitários com mock de fetch
 
-### 19.9 Fase 8: React Subpath (Semana 7)
+### 19.9 Fase 8 — React Subpath (Semana 7)
 
 **Objetivo:** Implementar hooks React e context provider para gerenciamento de estado de autenticação.
 
@@ -5011,7 +5011,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 2. Testes com React Testing Library
 3. Peer dependency: `react ^19`
 
-### 19.10 Fase 9: Next.js Subpath (Semana 7-8)
+### 19.10 Fase 9 — Next.js Subpath (Semana 7-8)
 
 **Objetivo:** Implementar integração completa com Next.js 16 incluindo proxy, route handlers e JWT helpers.
 
@@ -5331,7 +5331,7 @@ export interface AuthClientResponse {
 
 export interface MfaChallengeResult {
   mfaRequired: true
-  mfaToken: string
+  mfaTempToken: string
 }
 
 // Error response padronizado
@@ -5500,7 +5500,8 @@ function createAuthFetch(config: AuthClientConfig) {
 import { createAuthClient } from '@bymax-one/nest-auth/client'
 
 const auth = createAuthClient({
-  baseUrl: process.env.NEXT_PUBLIC_API_URL!,
+  // Fallback to localhost for local development when env var is not set
+  baseUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000',
   onSessionExpired: () => {
     window.location.href = '/auth/login'
   },
@@ -5574,7 +5575,8 @@ function useAuthStatus(): {
 import { AuthProvider } from '@bymax-one/nest-auth/react'
 import { createAuthClient } from '@bymax-one/nest-auth/client'
 
-const client = createAuthClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL! })
+// Fallback to localhost for local development when env var is not set
+const client = createAuthClient({ baseUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000' })
 
 export default function Layout({ children }) {
   return <AuthProvider client={client}>{children}</AuthProvider>

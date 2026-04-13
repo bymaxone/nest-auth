@@ -1399,7 +1399,7 @@ Adicionar ao `index.ts`:
 | Arquivo                           | Conteúdo                                                                                                  |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `src/shared/types/auth-user.types.ts`       | `AuthUserClient` — representação do usuário autenticado no client-side                                    |
-| `src/shared/types/auth-result.types.ts`     | `AuthResult`, `MfaChallengeResult`, `AuthErrorResponse` — tipos de resultado da API                      |
+| `src/shared/types/auth-result.types.ts`     | `AuthClientResponse`, `MfaChallengeResult`, `AuthErrorResponse` — tipos de resultado da API              |
 | `src/shared/types/jwt-payload.types.ts`     | `DashboardJwtPayload`, `PlatformJwtPayload`, `MfaTempPayload` — tipos de payload JWT                     |
 | `src/shared/constants/cookie-defaults.ts`   | `AUTH_ACCESS_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_NAME`, `AUTH_HAS_SESSION_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_PATH` |
 | `src/shared/constants/error-codes.ts`       | `AUTH_ERROR_CODES` — códigos de erro usados pelo client para tratar respostas                             |
@@ -1410,7 +1410,7 @@ Adicionar ao `index.ts`:
 
 1. **Extrair tipos do server para shared (estrutura por subdiretório `types/`):**
    - `types/jwt-payload.types.ts`: Mover interfaces de payload JWT (`DashboardJwtPayload`, `PlatformJwtPayload`, `MfaTempPayload`) que são usadas tanto pelo server quanto pelo client
-   - `types/auth-result.types.ts`: Mover tipos de resultado (`AuthResult`, `MfaChallengeResult`, `AuthErrorResponse`) — o client precisa tipar as respostas
+   - `types/auth-result.types.ts`: Mover tipos de resultado (`AuthClientResponse`, `MfaChallengeResult`, `AuthErrorResponse`) — o client precisa tipar as respostas
    - `types/auth-user.types.ts`: Mover `AuthUserClient` — representação do usuário autenticado no client-side
    - Atualizar imports no server para referenciar `../shared/types/` em vez das definições locais
 
@@ -1726,6 +1726,7 @@ Fase 1 (Fundação)
 | Versão | Data       | Descrição                                                                                                                                                                                                                 |
 | ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v1.0.0 | 2026-04-10 | Versão inicial do plano — Fases 1-6 (server completo)                                                                                                                                                                    |
+| v1.1.0 | 2026-04-10 | Versão inicial pós-auditoria de 4 agentes especialistas. Correções de segurança, tipagem e consistência                                                                                                                  |
 | v1.2.0 | 2026-04-13 | Adição de Fases 7-9 (frontend subpaths: shared, client, react, nextjs). Remoção de Passport/bcrypt/otpauth — guards JWT nativos via `@nestjs/jwt`, criptografia via `node:crypto`. Build tool alterado para `tsup ^8.0.0` |
 
 ---

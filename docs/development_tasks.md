@@ -651,17 +651,17 @@
 
 ---
 
-### ⬜ NEST-044: Guard - JwtAuthGuard tests
+### ⬜ NEST-044: Utility - assertTokenType helper
 - **Fase:** 2
 - **Status:** TODO
 - **Prioridade:** Media
-- **Dependencias:** NEST-043
-- **Agente:** tester
-- **Estimativa:** ~30min
-- **Descricao:** Testes unitários para JwtAuthGuard cobrindo tokens válidos, rejeição por tipo, blacklist, jti ausente e @Public().
+- **Dependencias:** NEST-021
+- **Agente:** code-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Implementar helper reutilizável `assertTokenType` que valida o claim `type` de um JWT payload. Usado por JwtAuthGuard (aceita 'dashboard') e JwtPlatformGuard (aceita 'platform') para evitar duplicação de lógica de validação de tipo de token.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/jwt-auth.guard.spec.ts. Mock JwtService, AuthRedisService e TokenDeliveryService. Tests: (1) Token dashboard válido passa validação e popula request.user. (2) Token sem jti lança TOKEN_INVALID. (3) Token com type 'platform' é rejeitado. (4) Token com type 'mfa_challenge' é rejeitado. (5) Token com jti na blacklist lança TOKEN_REVOKED. (6) Token não na blacklist passa. (7) Algoritmo pinado em HS256 (verificar chamada jwtService.verify). (8) Rota com @Public() retorna true sem validação.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/utils/assert-token-type.ts. Implement export function assertTokenType(payload: { type?: string }, expectedType: string): void. If payload.type !== expectedType, throw AuthException with AUTH_ERROR_CODES.TOKEN_INVALID and 401 status. Add JSDoc explaining this is a shared guard utility to centralize token type validation. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/utils/assert-token-type.spec.ts with tests: (1) Matching type does not throw. (2) Mismatched type throws TOKEN_INVALID. (3) Missing type field throws TOKEN_INVALID. (4) Null payload.type throws TOKEN_INVALID.
 
 ---
 
