@@ -308,6 +308,9 @@ O pacote é organizado em 5 subpaths com responsabilidades distintas:
 │   │   │   ├── secure-token.ts             # Geração de tokens seguros
 │   │   │   ├── scrypt.ts                   # Hash de senhas (node:crypto)
 │   │   │   └── totp.ts                     # TOTP/HOTP nativo (RFC 4226/6238)
+│   │   ├── utils/
+│   │   │   ├── sleep.ts                     # Utilitário de delay para timing normalization
+│   │   │   └── roles.util.ts               # hasRole() helper para hierarquia de roles
 │   │   └── errors/
 │   │       ├── auth-error-codes.ts
 │   │       └── auth-exception.ts
@@ -333,6 +336,7 @@ O pacote é organizado em 5 subpaths com responsabilidades distintas:
 │   │
 │   ├── react/                               # Hooks React
 │   │   ├── index.ts
+│   │   ├── types.ts                         # AuthProviderProps, SessionState, AuthContextValue
 │   │   ├── AuthProvider.tsx                  # Context provider
 │   │   ├── useSession.ts                    # Hook: session data, loading, error
 │   │   ├── useAuth.ts                       # Hook: login(), logout(), register()
@@ -439,7 +443,7 @@ export { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 ```typescript
 // Tipos compartilhados (zero deps)
 export type { DashboardJwtPayload, PlatformJwtPayload, MfaTempPayload } from './types/jwt-payload.types'
-export type { AuthUserClient, AuthResult, MfaChallengeResult } from './types/auth-result.types'
+export type { AuthUserClient, AuthClientResponse, MfaChallengeResult } from './types/auth-result.types'
 export type { AuthErrorResponse } from './types/auth-error.types'
 // Constantes
 export { AUTH_ERROR_CODES } from './constants/error-codes'
@@ -532,7 +536,12 @@ export interface BymaxAuthModuleOptions {
    */
   password?: {
     /** Fator de custo N para scrypt. Padrão: 2^15 (32768) */
-    saltRounds?: number;
+    /** Fator de custo N para scrypt. Padrão: 2^15 (32768) */
+    costFactor?: number;
+    /** Tamanho do bloco r para scrypt. Padrão: 8 */
+    blockSize?: number;
+    /** Fator de paralelismo p para scrypt. Padrão: 1 */
+    parallelization?: number;
   };
 
   /**
@@ -788,7 +797,9 @@ export interface BymaxAuthModuleOptions {
 | `jwt.refreshExpiresInDays`        | `number`                         | Não         | `7`                                   | Expiração do refresh token em dias                |
 | `jwt.algorithm`                   | `'HS256'`                        | Não         | `'HS256'`                             | Algoritmo de assinatura JWT                       |
 | `jwt.refreshGraceWindowSeconds`   | `number`                         | Não         | `30`                                  | Grace window da rotação de refresh                |
-| `password.saltRounds`             | `number`                         | Não         | `12`                                  | Fator de custo N do scrypt                             |
+| `password.costFactor`             | `number`                         | Não         | `32768`                               | Fator de custo N do scrypt                             |
+| `password.blockSize`              | `number`                         | Não         | `8`                                   | Tamanho do bloco r para scrypt                         |
+| `password.parallelization`        | `number`                         | Não         | `1`                                   | Fator de paralelismo p para scrypt                     |
 | `cookies.accessTokenName`         | `string`                         | Não         | `'access_token'`                      | Nome do cookie de access                          |
 | `cookies.refreshTokenName`        | `string`                         | Não         | `'refresh_token'`                     | Nome do cookie de refresh                         |
 | `cookies.sessionSignalName`       | `string`                         | Não         | `'has_session'`                       | Nome do cookie sinal                              |
@@ -867,7 +878,9 @@ import { RedisService } from "./redis/redis.service";
           refreshExpiresInDays: 7,
         },
         password: {
-          saltRounds: 12,
+          costFactor: 32768,
+          blockSize: 8,
+          parallelization: 1,
         },
         cookies: {
           resolveDomains: (domain: string) => {
@@ -3143,7 +3156,7 @@ export interface OAuthProfile {
   providerId: string;
   email: string;
   name: string;
-  picture?: string;
+  avatarUrl?: string;
   raw: Record<string, unknown>;
 }
 ```
@@ -3931,7 +3944,7 @@ export interface DashboardJwtPayload {
 }
 ```
 
-> **Pinagem de algoritmo (segurança obrigatória):** O Passport JWT Strategy DEVE ser configurado com `algorithms: ['HS256']` explicitamente. Nunca confiar no header `alg` do token recebido. Isso previne ataques de algorithm confusion (CVE-2015-9235) onde um atacante envia um token com `alg: 'none'` ou `alg: 'RS256'` usando o secret como chave pública. Esta validação é implementada internamente pelo pacote na `jwt.strategy.ts`.
+> **Pinagem de algoritmo (segurança obrigatória):** O `JwtService.verify()` DEVE ser chamado com `algorithms: ['HS256']` explicitamente. Nunca confiar no header `alg` do token recebido. Isso previne ataques de algorithm confusion (CVE-2015-9235) onde um atacante envia um token com `alg: 'none'` ou `alg: 'RS256'` usando o secret como chave pública. Esta validação é implementada internamente pelo pacote nos guards JWT.
 
 ### 13.2 Platform JWT (Admin Token)
 
@@ -3982,6 +3995,9 @@ Token temporário emitido durante o fluxo de login quando MFA é obrigatório:
 export interface MfaTempPayload {
   /** Subject — ID do usuário que precisa completar MFA */
   sub: string;
+
+  /** JWT ID — identificador único do token */
+  jti: string;
 
   /** Tipo do token — sempre 'mfa_challenge' */
   type: "mfa_challenge";
@@ -4711,15 +4727,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
     "reflect-metadata": "^0.2.0"
   },
   "peerDependenciesMeta": {
-    "@nestjs/common": { "optional": true },
-    "@nestjs/core": { "optional": true },
-    "@nestjs/jwt": { "optional": true },
-    "@nestjs/throttler": { "optional": true },
     "@nestjs/websockets": { "optional": true },
-    "class-transformer": { "optional": true },
-    "class-validator": { "optional": true },
-    "ioredis": { "optional": true },
-    "reflect-metadata": { "optional": true },
     "react": { "optional": true },
     "next": { "optional": true }
   },
@@ -4742,7 +4750,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 }
 ```
 
-> **Nota sobre peerDependenciesMeta:** Todas as peerDeps são marcadas como `optional: true` porque o consumidor só precisa instalar as deps do subpath que usa. Quem usa apenas `./client` não precisa de NestJS; quem usa apenas o server não precisa de React/Next.js.
+> **Nota sobre peerDependenciesMeta:** Apenas `@nestjs/websockets`, `react` e `next` são marcadas como `optional: true` — são dependências de subpaths específicos. As demais peerDeps do server (`@nestjs/common`, `@nestjs/core`, `@nestjs/jwt`, etc.) são obrigatórias para quem importa o subpath principal.
 
 ---
 
@@ -4764,9 +4772,9 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 | 8    | Semana 7   | 0.5 sem  | React Subpath                     | AuthProvider, useSession, useAuth, useAuthStatus, testes com React Testing Library                                            |
 | 9    | Semana 7-8 | 1 semana | Next.js Subpath                   | createAuthProxy, route handlers, JWT helpers, cookie utils, testes de proxy e redirect loop                                   |
 
-> **Estimativa:** ~9 semanas para 1 desenvolvedor + agente de IA (6 semanas server + 3 semanas frontend). Com revisão humana rigorosa, adicionar 20% de buffer (~11 semanas total).
+> **Estimativa:** ~8-9 semanas para 1 desenvolvedor + agente de IA (6 semanas server + 3 semanas frontend). Com revisão humana rigorosa, adicionar 20% de buffer (~11 semanas total).
 
-### 19.2 Fase 1: Fundação do Core (Semana 1)
+### 19.2 Fase 1 — Fundação e Infraestrutura (Semana 1)
 
 **Objetivo:** Criar a estrutura base do pacote com todos os blocos fundamentais.
 
@@ -4822,8 +4830,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 **Entregaveis:**
 
 1. **JWT Strategy**
-   - `strategies/jwt.strategy.ts` — Guard JWT nativo para dashboard
-   - Extração do JWT de cookie + header Authorization
+   - `guards/jwt-auth.guard.ts` — Guard JWT nativo para dashboard com extração de cookie + header Authorization
    - Validação e população de `request.user`
 
 2. **Guards**
@@ -4913,18 +4920,17 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
 6. **Testes unitários**
    - Testes para `SessionService` (create, list, revoke, FIFO eviction)
    - Testes para `PasswordResetService` (token e OTP methods)
-   - Testes para `OtpService`
+   - Testes para `OtpService` (movido para Fase 2)
    - Cobertura mínima: 80%
 
-### 19.6 Fase 5: Platform Admin + OAuth + Convites (Semana 4-5)
+### 19.6 Fase 5 — Plataforma, OAuth e Convites (Semana 4-5)
 
 **Objetivo:** Implementar autenticação de plataforma, OAuth e sistema de convites.
 
 **Entregaveis:**
 
 1. **Platform Auth**
-   - `strategies/jwt-platform.strategy.ts` — Strategy separada para JWTs de plataforma
-   - `guards/jwt-platform.guard.ts`
+   - `guards/jwt-platform.guard.ts` — Guard separado para JWTs de plataforma
    - `guards/platform-roles.guard.ts`
    - `decorators/platform-roles.decorator.ts`
    - `services/platform-auth.service.ts`
@@ -4950,7 +4956,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Testes para `OAuthService` e Google plugin (mock fetch para OAuth)
    - Cobertura mínima: 80%
 
-### 19.7 Fase 6: Integração + Polimento (Semana 5-6)
+### 19.7 Fase 6 — Integração, Polimento e Publicação (Semana 5-6)
 
 **Objetivo:** Finalizar o pacote com WebSocket support, documentação e testes.
 
@@ -4985,6 +4991,37 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - Validação de opções na inicialização do módulo
    - Logs estruturados com `Logger` do NestJS
    - Publicação no npm
+
+### 19.8 Fase 7: Shared + Client Subpath (Semana 6-7)
+
+**Objetivo:** Extrair tipos e constantes compartilhados para `src/shared/` e implementar client de autenticação framework-agnostic com `fetch` nativo.
+
+**Entregáveis:**
+1. Subpath `./shared` — tipos (`AuthUserClient`, `AuthClientResponse`, `AuthErrorResponse`, JWT payloads) e constantes (cookie names, error codes, auth routes)
+2. Subpath `./client` — `createAuthClient` factory, `createAuthFetch` wrapper com single-flight refresh dedup e `shouldSkipRefreshOnUrl`
+3. Zero dependências externas em ambos subpaths
+4. Testes unitários com mock de fetch
+
+### 19.9 Fase 8: React Subpath (Semana 7)
+
+**Objetivo:** Implementar hooks React e context provider para gerenciamento de estado de autenticação.
+
+**Entregáveis:**
+1. `AuthProvider`, `useSession`, `useAuth`, `useAuthStatus`
+2. Testes com React Testing Library
+3. Peer dependency: `react ^19`
+
+### 19.10 Fase 9: Next.js Subpath (Semana 7-8)
+
+**Objetivo:** Implementar integração completa com Next.js 16 incluindo proxy, route handlers e JWT helpers.
+
+**Entregáveis:**
+1. `createAuthProxy` com proteção contra redirect loop (`_r` counter + `reason=expired`), detecção de background requests, RBAC e bloqueio por status
+2. `createSilentRefreshHandler`, `createClientRefreshHandler`, `createLogoutHandler`
+3. JWT helpers com verificação HS256 via Web Crypto API
+4. Cookie utilities com `dedupeSetCookieHeaders`
+5. Testes com 90%+ cobertura nos caminhos críticos do proxy
+6. Peer dependencies: `next ^16`, `react ^19`
 
 ---
 
@@ -5286,7 +5323,7 @@ export interface AuthUserClient {
 }
 
 // Shapes de response
-export interface AuthResult {
+export interface AuthClientResponse {
   user: AuthUserClient
   accessToken?: string   // Presente apenas em modo bearer/both
   refreshToken?: string  // Presente apenas em modo bearer/both
@@ -5357,12 +5394,12 @@ interface AuthClientConfig {
 
 ```typescript
 interface AuthClient {
-  login(email: string, password: string, options?: { tenantId?: string }): Promise<AuthResult>
-  register(data: RegisterData): Promise<AuthResult>
+  login(email: string, password: string, options?: { tenantId?: string }): Promise<AuthClientResponse>
+  register(data: RegisterData): Promise<AuthClientResponse>
   logout(): Promise<void>
   refresh(): Promise<boolean>
   getMe(): Promise<AuthUserClient>
-  mfaChallenge(tempToken: string, code: string): Promise<AuthResult>
+  mfaChallenge(tempToken: string, code: string): Promise<AuthClientResponse>
   forgotPassword(email: string, tenantId?: string): Promise<void>
   resetPassword(token: string, otp: string, newPassword: string): Promise<void>
   /** Fetch wrapper com refresh automático para chamadas genéricas */
@@ -5434,6 +5471,25 @@ function createAuthFetch(config: AuthClientConfig) {
     return response
   }
 
+  // Convenience methods que delegam para authFetch com method/headers pré-configurados
+  const get = (url: string, init?: RequestInit) => authFetch(url, { ...init, method: 'GET' })
+  const post = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
+    ...init, method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const put = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
+    ...init, method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const patch = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
+    ...init, method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const del = (url: string, init?: RequestInit) => authFetch(url, { ...init, method: 'DELETE' })
+
   return { fetch: authFetch, get, post, put, patch, delete: del }
 }
 ```
@@ -5494,8 +5550,8 @@ function useSession(): {
 
 ```typescript
 function useAuth(): {
-  login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthResult>
-  register: (data: RegisterData) => Promise<AuthResult>
+  login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthClientResponse>
+  register: (data: RegisterData) => Promise<AuthClientResponse>
   logout: () => Promise<void>
   forgotPassword: (email: string) => Promise<void>
   resetPassword: (token: string, otp: string, newPassword: string) => Promise<void>
@@ -5648,10 +5704,10 @@ const { proxy, config } = createAuthProxy({
     '/auth/forgot-password', '/auth/reset-password', '/auth/verify-otp',
   ],
   protectedRoutes: [
-    { pattern: /^\/admin\/.*/, allowedRoles: ['admin'], redirectPath: '/app/dashboard' },
-    { pattern: /^\/app\/.*/, allowedRoles: ['user', 'admin'], redirectPath: '/auth/login' },
+    { pattern: /^\/admin\/.*/, allowedRoles: ['ADMIN'], redirectPath: '/app/dashboard' },
+    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' },
   ],
-  getDefaultDashboard: (role) => role === 'admin' ? '/admin/dashboard' : '/app/dashboard',
+  getDefaultDashboard: (role) => role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard',
 })
 
 export { proxy, config }

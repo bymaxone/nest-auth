@@ -2,7 +2,7 @@
 
 > Gerado em: 2026-04-11
 > Baseado em: [development_plan.md](./development_plan.md) e [technical_specification.md](./technical_specification.md)
-> Total de tasks: 184
+> Total de tasks: 185
 
 ---
 
@@ -57,7 +57,7 @@
 - **Descricao:** Initialize the npm package with scope @bymax-one, configure package.json with name, version, peer dependencies, scripts (build, lint, test, test:cov, prepublishOnly), and "files": ["dist"].
 
 **Prompt para o agente:**
-> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `npm init` with scope @bymax-one. Configure scripts: "build": "tsc -p tsconfig.build.json", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "npm run build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/throttler, ioredis, class-validator, class-transformer, express. Sem dependencies diretas (`"dependencies": {}`). Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/node, @types/express. Verify npm install succeeds.
+> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `npm init` with scope @bymax-one. Configure scripts: "build": "tsup", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "npm run build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/throttler, ioredis, class-validator, class-transformer, reflect-metadata ^0.2.0. Sem dependencies diretas (`"dependencies": {}`). Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/node, @types/express, tsup ^8.0.0. Verify npm install succeeds.
 
 ---
 
@@ -71,7 +71,7 @@
 - **Descricao:** Create tsconfig.json and tsconfig.build.json with strict mode, ES2022 target, decorator support, and declaration output.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/tsconfig.json with: target ES2022, module commonjs, strict true, experimentalDecorators true, emitDecoratorMetadata true, declaration true, declarationMap true, sourceMap true, outDir "./dist", rootDir "./src", esModuleInterop true, skipLibCheck true. Create /Users/maximiliano/Documents/My Apps/nest-auth/tsconfig.build.json that extends ./tsconfig.json and excludes ["**/*.spec.ts", "test/", "node_modules/"]. Verify tsc --noEmit succeeds after creating a minimal src/index.ts.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/tsconfig.json with: target ES2022, module commonjs, strict true, experimentalDecorators true, emitDecoratorMetadata true, declaration true, declarationMap true, sourceMap true, outDir "./dist", rootDir "./src", esModuleInterop true, skipLibCheck true. Create /Users/maximiliano/Documents/My Apps/nest-auth/tsconfig.build.json that extends ./tsconfig.json and excludes ["**/*.spec.ts", "test/", "node_modules/"]. Verify tsc --noEmit succeeds after creating a minimal src/server/index.ts.
 
 ---
 
@@ -85,7 +85,7 @@
 - **Descricao:** Configure ESLint with @typescript-eslint, Jest with ts-jest preset and 80% coverage thresholds, .gitignore, LICENSE (MIT), and empty CHANGELOG.md.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 80% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/index.ts as empty barrel export. Verify `npm run build` compiles without errors.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 80% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/server/index.ts as empty barrel export. Verify `npm run build` compiles without errors.
 
 ---
 
@@ -113,7 +113,7 @@
 - **Descricao:** Implement the main module options interface with all 15 configuration groups as specified in section 4.1 of the technical specification.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/auth-module-options.interface.ts. Implement interface BymaxAuthModuleOptions with all 15 groups from section 4.1 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: jwt (secret, algorithm, accessExpiresIn, refreshExpiresInDays, refreshGraceWindowSeconds), password (saltRounds, minLength, maxLength), tokenDelivery ('cookie'|'bearer'|'both'), cookies (accessTokenName, refreshTokenName, sessionSignalName, secure, sameSite, httpOnly, refreshCookiePath, resolveDomains), mfa (encryptionKey, issuer, totpWindow, recoveryCodeCount), sessions (enabled, maxSessions, maxSessionsResolver, newSessionAlert), bruteForce (maxAttempts, windowSeconds), passwordReset (method, otpLength, otpTtlSeconds, tokenTtlSeconds), emailVerification (required, otpTtlSeconds), platformAdmin (enabled, platformHierarchy), invitations (enabled, tokenTtlDays, maxPendingPerTenant), roles (hierarchy), blockedStatuses, oauth (google, github, etc.), controllers (auth, mfa, sessions, passwordReset, platform, oauth, invitations). Type tenantIdResolver as (req: import('express').Request) => string | Promise<string>. Add routePrefix (default 'auth'), namespace for Redis. Add JSDoc to every property. All groups except jwt should be optional.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/auth-module-options.interface.ts. Implement interface BymaxAuthModuleOptions with all 15 groups from section 4.1 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: jwt (secret, algorithm, accessExpiresIn, refreshExpiresInDays, refreshGraceWindowSeconds), password (saltRounds, minLength, maxLength), tokenDelivery ('cookie'|'bearer'|'both'), cookies (accessTokenName, refreshTokenName, sessionSignalName, secure, sameSite, httpOnly, refreshCookiePath, resolveDomains), mfa (encryptionKey, issuer, totpWindow, recoveryCodeCount), sessions (enabled, maxSessions, maxSessionsResolver, newSessionAlert), bruteForce (maxAttempts, windowSeconds), passwordReset (method, otpLength, otpTtlSeconds, tokenTtlSeconds), emailVerification (required, otpTtlSeconds), platformAdmin (enabled, platformHierarchy), invitations (enabled, tokenTtlDays, maxPendingPerTenant), roles (hierarchy), blockedStatuses, oauth (google, github, etc.), controllers (auth, mfa, sessions, passwordReset, platform, oauth, invitations). Type tenantIdResolver as (req: import('express').Request) => string | Promise<string>. Add routePrefix (default 'auth'), namespace for Redis. Add JSDoc to every property. All groups except jwt should be optional.
 
 ---
 
@@ -127,7 +127,7 @@
 - **Descricao:** Implement AuthUser interface (15 fields) and IUserRepository interface (11 methods) per the spec.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/user-repository.interface.ts. Implement AuthUser with 15 fields: id, email, name, passwordHash (string|null for OAuth users), role, status, tenantId, emailVerified, mfaEnabled (optional), mfaSecret (optional), mfaRecoveryCodes (optional string[]), lastLoginAt (Date|null), oauthProvider (optional), oauthId (optional), createdAt. Implement IUserRepository with 11 methods: findById(id, tenantId?): Promise<AuthUser|null>, findByEmail(email, tenantId): Promise<AuthUser|null>, create(data) where data accepts passwordHash: string|null, updatePassword(id, hash), updateMfa(id, data: {mfaEnabled, mfaSecret, mfaRecoveryCodes}), updateLastLogin(id), updateStatus(id, status), updateEmailVerified(id, verified), findByOAuthId(provider, oauthId, tenantId), linkOAuth(userId, provider, oauthId), createWithOAuth(data). Add JSDoc on every method.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/user-repository.interface.ts. Implement AuthUser with 15 fields: id, email, name, passwordHash (string|null for OAuth users), role, status, tenantId, emailVerified, mfaEnabled (optional), mfaSecret (optional), mfaRecoveryCodes (optional string[]), lastLoginAt (Date|null), deletedAt (Date|null), updatedAt (Date), createdAt. Implement IUserRepository with 11 methods: findById(id, tenantId?): Promise<AuthUser|null>, findByEmail(email, tenantId): Promise<AuthUser|null>, create(data) where data accepts passwordHash: string|null, updatePassword(id, hash), updateMfa(id, data: {mfaEnabled, mfaSecret, mfaRecoveryCodes}), updateLastLogin(id), updateStatus(id, status), updateEmailVerified(id, verified), findByOAuthId(provider, oauthId, tenantId), linkOAuth(userId, provider, oauthId), createWithOAuth(data). Add JSDoc on every method.
 
 ---
 
@@ -141,7 +141,7 @@
 - **Descricao:** Implement AuthPlatformUser interface (13 fields) and IPlatformUserRepository interface (6 methods).
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/platform-user-repository.interface.ts. Implement AuthPlatformUser with 13 fields as specified in the spec. Implement IPlatformUserRepository with 6 methods: findById, findByEmail, updateLastLogin, updateMfa, updatePassword, updateStatus. Add JSDoc on every method. Reference section 11 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/platform-user-repository.interface.ts. Implement AuthPlatformUser with 13 fields as specified in the spec. Implement IPlatformUserRepository with 6 methods: findById, findByEmail, updateLastLogin, updateMfa, updatePassword, updateStatus. Add JSDoc on every method. Reference section 11 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md.
 
 ---
 
@@ -155,7 +155,7 @@
 - **Descricao:** Implement IEmailProvider with 7 email methods, each accepting optional locale parameter.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/email-provider.interface.ts. Implement IEmailProvider with 7 methods: sendPasswordResetToken(email, token, locale?), sendPasswordResetOtp(email, otp, locale?), sendEmailVerificationOtp(email, otp, locale?), sendMfaEnabledNotification(email, locale?), sendMfaDisabledNotification(email, locale?), sendNewSessionAlert(email, sessionInfo, locale?), sendInvitation(email, inviteData, locale?). All methods return Promise<void>. Add JSDoc with parameter descriptions. Reference section 10 of the technical spec.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/email-provider.interface.ts. Implement IEmailProvider with 7 methods: sendPasswordResetToken(email, token, locale?), sendPasswordResetOtp(email, otp, locale?), sendEmailVerificationOtp(email, otp, locale?), sendMfaEnabledNotification(email, locale?), sendMfaDisabledNotification(email, locale?), sendNewSessionAlert(email, sessionInfo, locale?), sendInvitation(email, inviteData, locale?). All methods return Promise<void>. Add JSDoc with parameter descriptions. Reference section 10 of the technical spec.
 
 ---
 
@@ -169,7 +169,7 @@
 - **Descricao:** Implement IAuthHooks interface with 12 optional hooks, HookContext, BeforeRegisterResult, OAuthLoginResult, and OAuthProfile types.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/auth-hooks.interface.ts. Implement HookContext with { userId?, email?, tenantId?, ip: string, userAgent: string, headers: Record<string, string> } where headers are sanitized. Implement BeforeRegisterResult { allowed: boolean, reason?: string, modifiedData?: { role?, status?, emailVerified? } }. Implement OAuthLoginResult { action: 'link'|'create'|'reject', reason?: string }. Implement OAuthProfile { provider, providerId, email, name?, avatar? }. Implement IAuthHooks with 12 OPTIONAL methods (all with ?): beforeRegister, afterRegister, beforeLogin, afterLogin, afterLogout, afterMfaEnabled, afterMfaDisabled, onNewSession, afterEmailVerified, afterPasswordReset, onOAuthLogin, afterInvitationAccepted. Add JSDoc. Also implement sanitizeHeaders(headers: Record<string,string>): Record<string,string> function that blocklists ['authorization','cookie','x-api-key','x-auth-token','x-csrf-token','x-session-id'] plus pattern /^x-.*-token$/i. Include unit tests for sanitizeHeaders in a separate spec file.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/auth-hooks.interface.ts. Implement HookContext with { userId?, email?, tenantId?, ip: string, userAgent: string, headers: Record<string, string> } where headers are sanitized. Implement BeforeRegisterResult { allowed: boolean, reason?: string, modifiedData?: { role?, status?, emailVerified? } }. Implement OAuthLoginResult { action: 'link'|'create'|'reject', reason?: string }. Implement OAuthProfile { provider, providerId, email, name?, avatar? }. Implement IAuthHooks with 12 OPTIONAL methods (all with ?): beforeRegister, afterRegister, beforeLogin, afterLogin, afterLogout, afterMfaEnabled, afterMfaDisabled, onNewSession, afterEmailVerified, afterPasswordReset, onOAuthLogin, afterInvitationAccepted. Add JSDoc. Also implement sanitizeHeaders(headers: Record<string,string>): Record<string,string> function that blocklists ['authorization','cookie','x-api-key','x-auth-token','x-csrf-token','x-session-id'] plus pattern /^x-.*-token$/i. Include unit tests for sanitizeHeaders in a separate spec file.
 
 ---
 
@@ -183,7 +183,7 @@
 - **Descricao:** Implement DashboardJwtPayload, PlatformJwtPayload, and MfaTempPayload interfaces.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/jwt-payload.interface.ts. Implement DashboardJwtPayload with fields: jti (string), sub (string), tenantId (string), role (string), type (literal 'dashboard'), status (string), mfaVerified (boolean), iat (number), exp (number). Note: emailVerified is NOT a JWT claim. Implement PlatformJwtPayload with: jti, sub, role, type (literal 'platform'), mfaVerified, iat, exp. Implement MfaTempPayload with: sub, type (literal 'mfa_challenge'), context ('dashboard'|'platform'), iat, exp. Add JSDoc explaining each interface's purpose.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/jwt-payload.interface.ts. Implement DashboardJwtPayload with fields: jti (string), sub (string), tenantId (string), role (string), type (literal 'dashboard'), status (string), mfaVerified (boolean), iat (number), exp (number). Note: emailVerified is NOT a JWT claim. Implement PlatformJwtPayload with: jti, sub, role, type (literal 'platform'), mfaVerified, iat, exp. Implement MfaTempPayload with: sub, type (literal 'mfa_challenge'), context ('dashboard'|'platform'), iat, exp. Add JSDoc explaining each interface's purpose.
 
 ---
 
@@ -197,7 +197,7 @@
 - **Descricao:** Implement result interfaces needed from Phase 1 onwards for compilation of later phases.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/auth-result.interface.ts. Implement AuthResult { user: AuthUser, accessToken: string, rawRefreshToken: string, sessionHash?: string }. Implement PlatformAuthResult { admin: AuthPlatformUser, accessToken: string, rawRefreshToken: string }. Implement MfaChallengeResult { mfaRequired: true, mfaToken: string }. IMPORTANT: Use rawRefreshToken (never refreshToken) as field name everywhere. These are defined here (not in services) so Phase 1 barrel export can include them. Import AuthUser from ./user-repository.interface and AuthPlatformUser from ./platform-user-repository.interface. Add JSDoc.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/auth-result.interface.ts. Implement AuthResult { user: AuthUser, accessToken: string, rawRefreshToken: string, sessionHash?: string }. Implement PlatformAuthResult { admin: AuthPlatformUser, accessToken: string, rawRefreshToken: string }. Implement MfaChallengeResult { mfaRequired: true, mfaToken: string }. IMPORTANT: Use rawRefreshToken (never refreshToken) as field name everywhere. These are defined here (not in services) so Phase 1 barrel export can include them. Import AuthUser from ./user-repository.interface and AuthPlatformUser from ./platform-user-repository.interface. Add JSDoc.
 
 ---
 
@@ -211,7 +211,7 @@
 - **Descricao:** Implement AuthenticatedRequest and PlatformAuthenticatedRequest interfaces extending Express Request.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/authenticated-request.interface.ts. Implement AuthenticatedRequest extending import('express').Request with user: DashboardJwtPayload. Implement PlatformAuthenticatedRequest extending Request with user: PlatformJwtPayload. Import payload types from ./jwt-payload.interface. Add JSDoc.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/authenticated-request.interface.ts. Implement AuthenticatedRequest extending import('express').Request with user: DashboardJwtPayload. Implement PlatformAuthenticatedRequest extending Request with user: PlatformJwtPayload. Import payload types from ./jwt-payload.interface. Add JSDoc.
 
 ---
 
@@ -225,7 +225,7 @@
 - **Descricao:** Implementar interface OAuthProviderPlugin com métodos nativos (sem Passport).
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/oauth-provider.interface.ts. Implement OAuthProviderPlugin { name: string, authorizeUrl(state: string): string, exchangeCode(code: string): Promise<{ access_token: string }>, fetchProfile(accessToken: string): Promise<OAuthProfile> }. Sem dependência de Passport — cada plugin implementa o fluxo OAuth2 nativamente via `fetch`. Import OAuthProfile from ./auth-hooks.interface.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/oauth-provider.interface.ts. Implement OAuthProviderPlugin { name: string, authorizeUrl(state: string): string, exchangeCode(code: string): Promise<{ access_token: string }>, fetchProfile(accessToken: string): Promise<OAuthProfile> }. Sem dependência de Passport — cada plugin implementa o fluxo OAuth2 nativamente via `fetch`. Import OAuthProfile from ./auth-hooks.interface.
 
 ---
 
@@ -253,7 +253,7 @@
 - **Descricao:** Implement the default options object with all default values from table 4.2 of the spec.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 128, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platformAdmin.enabled false.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 128, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platformAdmin.enabled false.
 
 ---
 
@@ -267,7 +267,7 @@
 - **Descricao:** Implement resolveOptions() with shallow merge per group and all security validations (jwt.secret entropy, mfa.encryptionKey, algorithm pinning, etc.).
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platformAdmin.enabled. (7) Validar que clientId e clientSecret estão configurados para cada provider OAuth habilitado. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platformAdmin.enabled. (7) Validar que clientId e clientSecret estão configurados para cada provider OAuth habilitado. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
 
 ---
 
@@ -281,7 +281,7 @@
 - **Descricao:** Write comprehensive unit tests for resolveOptions covering success paths and all validation failures.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/resolved-options.spec.ts. Test cases: (1) Success with valid minimal config (jwt.secret of 32+ chars with high entropy). (2) Reject jwt.secret shorter than 32 chars. (3) Reject jwt.secret with low entropy (e.g., 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'). (4) Reject jwt.algorithm other than HS256. (5) Accept jwt.algorithm HS256 explicitly. (6) Reject mfa.encryptionKey that doesn't decode to 32 bytes. (7) Accept valid mfa.encryptionKey (32 bytes base64). (8) Reject empty roles.hierarchy. (9) Reject platformAdmin.enabled without platformHierarchy. (10) Verify functions are preserved after merge (pass a tenantIdResolver function, assert it's still a function after resolve). (11) Verify shallow merge doesn't deep-clone functions. (12) Reject otpLength > 8. (13) Warning logged when routePrefix differs from 'auth' without explicit refreshCookiePath. All tests should use descriptive names and verify exact error messages.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.spec.ts. Test cases: (1) Success with valid minimal config (jwt.secret of 32+ chars with high entropy). (2) Reject jwt.secret shorter than 32 chars. (3) Reject jwt.secret with low entropy (e.g., 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'). (4) Reject jwt.algorithm other than HS256. (5) Accept jwt.algorithm HS256 explicitly. (6) Reject mfa.encryptionKey that doesn't decode to 32 bytes. (7) Accept valid mfa.encryptionKey (32 bytes base64). (8) Reject empty roles.hierarchy. (9) Reject platformAdmin.enabled without platformHierarchy. (10) Verify functions are preserved after merge (pass a tenantIdResolver function, assert it's still a function after resolve). (11) Verify shallow merge doesn't deep-clone functions. (12) Reject otpLength > 8. (13) Warning logged when routePrefix differs from 'auth' without explicit refreshCookiePath. All tests should use descriptive names and verify exact error messages.
 
 ---
 
@@ -295,7 +295,7 @@
 - **Descricao:** Create AUTH_THROTTLE_CONFIGS with 14 endpoint rate limiting configurations per section 16.2.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/constants/throttle-configs.ts. Export AUTH_THROTTLE_CONFIGS object with 14 named throttler configurations per section 16.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Each config uses the @nestjs/throttler >= 6.0.0 named throttler API: { default: { limit, ttl } }. Include configs for: register, login, refresh, verifyEmail, resendVerification, mfaSetup, mfaChallenge, mfaDisable, forgotPassword, resetPassword, sessionsList, sessionsRevoke, platformLogin, invitationAccept. Reference the exact limits and TTL windows from the spec.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/constants/throttle-configs.ts. Export AUTH_THROTTLE_CONFIGS object with 14 named throttler configurations per section 16.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Each config uses the @nestjs/throttler >= 6.0.0 named throttler API: { default: { limit, ttl } }. Include configs for: register, login, refresh, verifyEmail, resendVerification, mfaSetup, mfaChallenge, mfaDisable, forgotPassword, resetPassword, sessionsList, sessionsRevoke, platformLogin, invitationAccept. Reference the exact limits and TTL windows from the spec.
 
 ---
 
@@ -309,7 +309,7 @@
 - **Descricao:** Create constants/index.ts with re-exports of public constants.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/constants/index.ts. Re-export AUTH_THROTTLE_CONFIGS from ./throttle-configs. Re-export AUTH_ERROR_CODES from ../errors/auth-error-codes (will be created in NEST-020).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/constants/index.ts. Re-export AUTH_THROTTLE_CONFIGS from ./throttle-configs. Re-export AUTH_ERROR_CODES from ../errors/auth-error-codes (will be created in NEST-020).
 
 ---
 
@@ -323,7 +323,7 @@
 - **Descricao:** Implement all 33 error codes as a const object with Portuguese message mappings per section 15 of the spec.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/errors/auth-error-codes.ts. Export AUTH_ERROR_CODES typed with `as const` containing all 33 codes from table 15.3 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Must include: INVALID_CREDENTIALS, EMAIL_ALREADY_EXISTS, TOKEN_INVALID, TOKEN_EXPIRED, TOKEN_REVOKED, REFRESH_TOKEN_INVALID, REFRESH_TOKEN_EXPIRED, INSUFFICIENT_ROLE, ACCOUNT_LOCKED, ACCOUNT_BANNED, ACCOUNT_INACTIVE, ACCOUNT_SUSPENDED, FORBIDDEN, PENDING_APPROVAL, MFA_REQUIRED, MFA_INVALID_CODE, MFA_ALREADY_ENABLED, MFA_NOT_ENABLED, MFA_SETUP_REQUIRED, MFA_TEMP_TOKEN_INVALID, EMAIL_NOT_VERIFIED, OTP_EXPIRED, OTP_INVALID, OTP_MAX_ATTEMPTS, SESSION_LIMIT_REACHED, SESSION_NOT_FOUND, OAUTH_FAILED, OAUTH_EMAIL_MISMATCH, PLATFORM_AUTH_REQUIRED, INVITATION_INVALID, INVITATION_EXPIRED, PASSWORD_RESET_TOKEN_INVALID, VALIDATION_ERROR. Also export AUTH_ERROR_MESSAGES mapping each code to a Portuguese message string.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/errors/auth-error-codes.ts. Export AUTH_ERROR_CODES typed with `as const` containing all 33 codes from table 15.3 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Must include: INVALID_CREDENTIALS, EMAIL_ALREADY_EXISTS, TOKEN_INVALID, TOKEN_EXPIRED, TOKEN_REVOKED, REFRESH_TOKEN_INVALID, REFRESH_TOKEN_EXPIRED, INSUFFICIENT_ROLE, ACCOUNT_LOCKED, ACCOUNT_BANNED, ACCOUNT_INACTIVE, ACCOUNT_SUSPENDED, FORBIDDEN, PENDING_APPROVAL, MFA_REQUIRED, MFA_INVALID_CODE, MFA_ALREADY_ENABLED, MFA_NOT_ENABLED, MFA_SETUP_REQUIRED, MFA_TEMP_TOKEN_INVALID, EMAIL_NOT_VERIFIED, OTP_EXPIRED, OTP_INVALID, OTP_MAX_ATTEMPTS, SESSION_LIMIT_REACHED, SESSION_NOT_FOUND, OAUTH_FAILED, OAUTH_EMAIL_MISMATCH, PLATFORM_AUTH_REQUIRED, INVITATION_INVALID, INVITATION_EXPIRED, PASSWORD_RESET_TOKEN_INVALID, VALIDATION_ERROR. Also export AUTH_ERROR_MESSAGES mapping each code to a Portuguese message string.
 
 ---
 
@@ -337,7 +337,7 @@
 - **Descricao:** Implement AuthException extending HttpException with automatic message lookup and standard error format.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/errors/auth-exception.ts. Implement class AuthException extends HttpException. Constructor: (code: string, statusCode: number = 401, details?: Record<string,unknown>). The response body format must be { error: { code, message, details? } } where message is looked up from AUTH_ERROR_MESSAGES[code]. If code not found in messages, use code as message. Import AUTH_ERROR_MESSAGES from ./auth-error-codes. Export the class.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/errors/auth-exception.ts. Implement class AuthException extends HttpException. Constructor: (code: string, statusCode: number = 401, details?: Record<string,unknown>). The response body format must be { error: { code, message, details? } } where message is looked up from AUTH_ERROR_MESSAGES[code]. If code not found in messages, use code as message. Import AUTH_ERROR_MESSAGES from ./auth-error-codes. Export the class.
 
 ---
 
@@ -351,7 +351,7 @@
 - **Descricao:** Write unit tests for AUTH_ERROR_CODES and AuthException covering format, message lookup, and status codes.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/errors/auth-exception.spec.ts. Test: (1) AuthException creates correct response format { error: { code, message } }. (2) Message is auto-looked up from AUTH_ERROR_MESSAGES. (3) Default status code is 401. (4) Custom status code works (e.g., 403 for FORBIDDEN). (5) Details are included when provided. (6) Unknown code uses code as message. (7) AUTH_ERROR_CODES has exactly 33 entries. (8) AUTH_ERROR_CODES is typed as const (verify a specific code is a string literal type at compile time).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/errors/auth-exception.spec.ts. Test: (1) AuthException creates correct response format { error: { code, message } }. (2) Message is auto-looked up from AUTH_ERROR_MESSAGES. (3) Default status code is 401. (4) Custom status code works (e.g., 403 for FORBIDDEN). (5) Details are included when provided. (6) Unknown code uses code as message. (7) AUTH_ERROR_CODES has exactly 33 entries. (8) AUTH_ERROR_CODES is typed as const (verify a specific code is a string literal type at compile time).
 
 ---
 
@@ -365,7 +365,7 @@
 - **Descricao:** Implement sleep utility for timing normalization and hasRole utility for hierarchical role verification.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/utils/sleep.ts with export function sleep(ms: number): Promise<void> wrapping setTimeout in a Promise. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/utils/roles.util.ts with export function hasRole(userRole: string, requiredRole: string, hierarchy: Record<string, string[]>): boolean. The hasRole function checks: (1) exact match userRole === requiredRole returns true, (2) if hierarchy[userRole] includes requiredRole returns true, (3) otherwise false. The hierarchy must be fully denormalized — each role lists ALL transitive descendants. This is a single-level lookup, NOT recursive. Add JSDoc warning that hierarchy must be denormalized. Write unit tests for both utilities: sleep resolves after delay, hasRole exact match, inherited role, insufficient role, missing role in hierarchy.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/utils/sleep.ts with export function sleep(ms: number): Promise<void> wrapping setTimeout in a Promise. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/utils/roles.util.ts with export function hasRole(userRole: string, requiredRole: string, hierarchy: Record<string, string[]>): boolean. The hasRole function checks: (1) exact match userRole === requiredRole returns true, (2) if hierarchy[userRole] includes requiredRole returns true, (3) otherwise false. The hierarchy must be fully denormalized — each role lists ALL transitive descendants. This is a single-level lookup, NOT recursive. Add JSDoc warning that hierarchy must be denormalized. Write unit tests for both utilities: sleep resolves after delay, hasRole exact match, inherited role, insufficient role, missing role in hierarchy.
 
 ---
 
@@ -379,7 +379,7 @@
 - **Descricao:** Implement AES-256-GCM encryption and decryption functions using Node.js crypto module.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/crypto/aes-gcm.ts. Implement export function encrypt(plaintext: string, keyBase64: string): string — generate 12-byte IV with crypto.randomBytes(12), decode key from base64, create cipher with crypto.createCipheriv('aes-256-gcm', keyBuffer, iv), return format base64(iv):base64(authTag):base64(ciphertext). Implement export function decrypt(ciphertext: string, keyBase64: string): string — parse the iv:authTag:ciphertext format, create decipher with crypto.createDecipheriv, setAuthTag, return plaintext. NEVER reuse IVs. Key must be exactly 32 bytes when decoded from base64.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/crypto/aes-gcm.ts. Implement export function encrypt(plaintext: string, keyBase64: string): string — generate 12-byte IV with crypto.randomBytes(12), decode key from base64, create cipher with crypto.createCipheriv('aes-256-gcm', keyBuffer, iv), return format base64(iv):base64(authTag):base64(ciphertext). Implement export function decrypt(ciphertext: string, keyBase64: string): string — parse the iv:authTag:ciphertext format, create decipher with crypto.createDecipheriv, setAuthTag, return plaintext. NEVER reuse IVs. Key must be exactly 32 bytes when decoded from base64.
 
 ---
 
@@ -393,7 +393,7 @@
 - **Descricao:** Implement generateSecureToken and sha256 utility functions using Node.js crypto.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/crypto/secure-token.ts. Implement export function generateSecureToken(bytes: number = 32): string using crypto.randomBytes(bytes).toString('hex'). Implement export function sha256(input: string): string using crypto.createHash('sha256').update(input).digest('hex'). Both functions use Node.js built-in crypto module only.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/crypto/secure-token.ts. Implement export function generateSecureToken(bytes: number = 32): string using crypto.randomBytes(bytes).toString('hex'). Implement export function sha256(input: string): string using crypto.createHash('sha256').update(input).digest('hex'). Both functions use Node.js built-in crypto module only.
 
 ---
 
@@ -407,7 +407,7 @@
 - **Descricao:** Write comprehensive tests for AES-GCM and secure token utilities.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/crypto/aes-gcm.spec.ts. Tests: (1) Round-trip encrypt then decrypt returns original plaintext. (2) Test with various data sizes (empty string, short, long). (3) Two consecutive encryptions produce different ciphertexts (IV uniqueness). (4) Decrypt fails with tampered authTag (integrity check). (5) Decrypt fails with wrong key. (6) Output format matches base64:base64:base64 pattern. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/crypto/secure-token.spec.ts. Tests: (1) generateSecureToken returns hex string of correct length (default 64 hex chars for 32 bytes). (2) generateSecureToken with custom bytes parameter. (3) sha256 returns consistent hash for same input. (4) sha256 returns different hashes for different inputs. (5) sha256 output is 64-char hex string.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/crypto/aes-gcm.spec.ts. Tests: (1) Round-trip encrypt then decrypt returns original plaintext. (2) Test with various data sizes (empty string, short, long). (3) Two consecutive encryptions produce different ciphertexts (IV uniqueness). (4) Decrypt fails with tampered authTag (integrity check). (5) Decrypt fails with wrong key. (6) Output format matches base64:base64:base64 pattern. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/crypto/secure-token.spec.ts. Tests: (1) generateSecureToken returns hex string of correct length (default 64 hex chars for 32 bytes). (2) generateSecureToken with custom bytes parameter. (3) sha256 returns consistent hash for same input. (4) sha256 returns different hashes for different inputs. (5) sha256 output is 64-char hex string.
 
 ---
 
@@ -421,7 +421,7 @@
 - **Descricao:** Implement AuthRedisService wrapping ioredis with automatic namespace prefixing and all required operations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/redis/auth-redis.service.ts. Implement @Injectable() class AuthRedisService. Inject BYMAX_AUTH_REDIS_CLIENT (ioredis instance) and BYMAX_AUTH_OPTIONS (for namespace). All methods prefix keys with {namespace}: automatically. Methods: get(key): Promise<string|null>, set(key, value, ttl?): Promise<void> (if ttl use SET key value EX ttl), del(key): Promise<void>, incr(key): Promise<number>, expire(key, ttl): Promise<void>, ttl(key): Promise<number>, sadd(setKey, member): Promise<number>, srem(setKey, member): Promise<number>, smembers(setKey): Promise<string[]>, sismember(setKey, member): Promise<boolean>, eval(script, keys, args): Promise<any> (for Lua scripts — document this any with JSDoc). This service is internal — NOT exported in the public barrel.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/redis/auth-redis.service.ts. Implement @Injectable() class AuthRedisService. Inject BYMAX_AUTH_REDIS_CLIENT (ioredis instance) and BYMAX_AUTH_OPTIONS (for namespace). All methods prefix keys with {namespace}: automatically. Methods: get(key): Promise<string|null>, set(key, value, ttl?): Promise<void> (if ttl use SET key value EX ttl), del(key): Promise<void>, incr(key): Promise<number>, expire(key, ttl): Promise<void>, ttl(key): Promise<number>, sadd(setKey, member): Promise<number>, srem(setKey, member): Promise<number>, smembers(setKey): Promise<string[]>, sismember(setKey, member): Promise<boolean>, eval(script, keys, args): Promise<any> (for Lua scripts — document this any with JSDoc). This service is internal — NOT exported in the public barrel.
 
 ---
 
@@ -435,7 +435,7 @@
 - **Descricao:** Create the internal NestJS module that registers AuthRedisService as a provider.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/redis/auth-redis.module.ts. Implement @Module({ providers: [AuthRedisService], exports: [AuthRedisService] }) class AuthRedisModule. This is an internal module, not exported publicly.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/redis/auth-redis.module.ts. Implement @Module({ providers: [AuthRedisService], exports: [AuthRedisService] }) class AuthRedisModule. This is an internal module, not exported publicly.
 
 ---
 
@@ -449,7 +449,7 @@
 - **Descricao:** Write unit tests for AuthRedisService with ioredis mocks verifying namespace prefixing and all operations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/redis/auth-redis.service.spec.ts. Mock ioredis instance. Test with namespace 'auth'. Tests: (1) get('mykey') calls redis.get('auth:mykey'). (2) set('k','v',60) calls redis.set('auth:k','v','EX',60). (3) set without TTL calls redis.set without EX. (4) del prefixes key. (5) incr prefixes key. (6) expire prefixes key. (7) ttl prefixes key. (8) sadd prefixes set key. (9) srem prefixes set key. (10) smembers prefixes and returns array. (11) sismember prefixes and returns boolean. (12) eval passes prefixed keys. Use NestJS Test.createTestingModule with mock providers.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/redis/auth-redis.service.spec.ts. Mock ioredis instance. Test with namespace 'auth'. Tests: (1) get('mykey') calls redis.get('auth:mykey'). (2) set('k','v',60) calls redis.set('auth:k','v','EX',60). (3) set without TTL calls redis.set without EX. (4) del prefixes key. (5) incr prefixes key. (6) expire prefixes key. (7) ttl prefixes key. (8) sadd prefixes set key. (9) srem prefixes set key. (10) smembers prefixes and returns array. (11) sismember prefixes and returns boolean. (12) eval passes prefixed keys. Use NestJS Test.createTestingModule with mock providers.
 
 ---
 
@@ -463,7 +463,7 @@
 - **Descricao:** Implement PasswordService with `node:crypto` scrypt hash and compare, constant-time verification.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.ts. Implement @Injectable() class PasswordService. Usar `node:crypto` scrypt com parâmetros N=2^15, r=8, p=1, keyLen=64. Implement async hash(plain: string): Promise<string>: gerar salt de 16 bytes via `crypto.randomBytes(16)`, derivar chave com `crypto.scrypt(plain, salt, 64, { N: 2**15, r: 8, p: 1 })`, retornar formato `scrypt:{salt_hex}:{derived_hex}`. Implement async compare(plain: string, hash: string): Promise<boolean>: parsear salt e derived do formato, re-derivar chave com mesmo salt e parâmetros, comparar com `crypto.timingSafeEqual`. Add JSDoc.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/password.service.ts. Implement @Injectable() class PasswordService. Usar `node:crypto` scrypt com parâmetros N=2^15, r=8, p=1, keyLen=64. Implement async hash(plain: string): Promise<string>: gerar salt de 16 bytes via `crypto.randomBytes(16)`, derivar chave com `crypto.scrypt(plain, salt, 64, { N: 2**15, r: 8, p: 1 })`, retornar formato `scrypt:{salt_hex}:{derived_hex}`. Implement async compare(plain: string, hash: string): Promise<boolean>: parsear salt e derived do formato, re-derivar chave com mesmo salt e parâmetros, comparar com `crypto.timingSafeEqual`. Add JSDoc.
 
 ---
 
@@ -477,7 +477,7 @@
 - **Descricao:** Write unit tests for PasswordService hash/compare operations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.spec.ts. Tests: (1) hash produz string no formato `scrypt:{salt_hex}:{derived_hex}`. (2) compare retorna true para senha correta. (3) compare retorna false para senha incorreta. (4) Hashes diferentes são gerados para a mesma senha (salt aleatório). (5) compare usa timingSafeEqual (verificar que buffers de tamanho diferente retornam false). Use NestJS Test.createTestingModule.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/password.service.spec.ts. Tests: (1) hash produz string no formato `scrypt:{salt_hex}:{derived_hex}`. (2) compare retorna true para senha correta. (3) compare retorna false para senha incorreta. (4) Hashes diferentes são gerados para a mesma senha (salt aleatório). (5) compare usa timingSafeEqual (verificar que buffers de tamanho diferente retornam false). Use NestJS Test.createTestingModule.
 
 ---
 
@@ -491,7 +491,7 @@
 - **Descricao:** Implement TokenManagerService with JWT issuance, opaque refresh tokens, Lua-based rotation, and MFA temp tokens.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/token-manager.service.ts. Implement @Injectable() class TokenManagerService. Inject JwtService (@nestjs/jwt), BYMAX_AUTH_OPTIONS, AuthRedisService. Methods: (1) issueAccess(payload: Omit<DashboardJwtPayload,'jti'|'iat'|'exp'>): generate jti internally with crypto.randomUUID(), sign JWT with HS256 and accessExpiresIn. (2) issueTokens(user, ip, userAgent, extraClaims?): call issueAccess, generate refresh with crypto.randomUUID(), store in Redis as rt:{sha256(refresh)} -> JSON {userId,tenantId,role,device,ip,createdAt}, TTL=refreshExpiresInDays*86400, return AuthResult. (3) issuePlatformTokens(admin, ip, userAgent): similar but type:'platform' and refresh prefix prt:. (4) reissueTokens(oldRefresh, ip, userAgent): atomic Lua script per section 12.4 — get old session, generate new refresh, create rotation pointer rp:{sha256(old)}->new TTL=refreshGraceWindowSeconds, create new session rt:{sha256(new)}, delete old. If old not found check grace window rp:{sha256(old)}. If nothing found throw REFRESH_TOKEN_INVALID. (5) decodeToken(token): decode JWT without validating expiration, validate jti exists, add @internal JSDoc warning. (6) issueMfaTempToken(userId, context: 'dashboard'|'platform'): JWT with type:'mfa_challenge', context claim, 5min exp. Store in Redis mfa:{sha256(token)}->userId, TTL 300s. (7) verifyMfaTempToken(token): verify JWT, find in Redis, consume (delete), return {userId, context} — DEVIATION from spec which returns just string.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/token-manager.service.ts. Implement @Injectable() class TokenManagerService. Inject JwtService (@nestjs/jwt), BYMAX_AUTH_OPTIONS, AuthRedisService. Methods: (1) issueAccess(payload: Omit<DashboardJwtPayload,'jti'|'iat'|'exp'>): generate jti internally with crypto.randomUUID(), sign JWT with HS256 and accessExpiresIn. (2) issueTokens(user, ip, userAgent, extraClaims?): call issueAccess, generate refresh with crypto.randomUUID(), store in Redis as rt:{sha256(refresh)} -> JSON {userId,tenantId,role,device,ip,createdAt}, TTL=refreshExpiresInDays*86400, return AuthResult. (3) issuePlatformTokens(admin, ip, userAgent): similar but type:'platform' and refresh prefix prt:. (4) reissueTokens(oldRefresh, ip, userAgent): atomic Lua script per section 12.4 — get old session, generate new refresh, create rotation pointer rp:{sha256(old)}->new TTL=refreshGraceWindowSeconds, create new session rt:{sha256(new)}, delete old. If old not found check grace window rp:{sha256(old)}. If nothing found throw REFRESH_TOKEN_INVALID. (5) decodeToken(token): decode JWT without validating expiration, validate jti exists, add @internal JSDoc warning. (6) issueMfaTempToken(userId, context: 'dashboard'|'platform'): JWT with type:'mfa_challenge', context claim, 5min exp. Store in Redis mfa:{sha256(token)}->userId, TTL 300s. (7) verifyMfaTempToken(token): verify JWT, find in Redis, consume (delete), return {userId, context} — DEVIATION from spec which returns just string.
 
 ---
 
@@ -505,7 +505,7 @@
 - **Descricao:** Write comprehensive unit tests for TokenManagerService covering all token operations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/token-manager.service.spec.ts. Mock JwtService and AuthRedisService. Tests: (1) issueAccess generates jti and signs JWT. (2) issueTokens stores refresh in Redis with correct TTL. (3) issuePlatformTokens uses type:'platform'. (4) reissueTokens creates rotation pointer and new session. (5) reissueTokens with expired old token uses grace window. (6) reissueTokens with no old and no grace window throws REFRESH_TOKEN_INVALID. (7) decodeToken returns payload with jti. (8) decodeToken throws TOKEN_INVALID if no jti. (9) issueMfaTempToken stores in Redis with TTL 300. (10) verifyMfaTempToken returns {userId, context}. (11) verifyMfaTempToken consumes token (deletes from Redis). (12) verifyMfaTempToken throws MFA_TEMP_TOKEN_INVALID if not in Redis.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/token-manager.service.spec.ts. Mock JwtService and AuthRedisService. Tests: (1) issueAccess generates jti and signs JWT. (2) issueTokens stores refresh in Redis with correct TTL. (3) issuePlatformTokens uses type:'platform'. (4) reissueTokens creates rotation pointer and new session. (5) reissueTokens with expired old token uses grace window. (6) reissueTokens with no old and no grace window throws REFRESH_TOKEN_INVALID. (7) decodeToken returns payload with jti. (8) decodeToken throws TOKEN_INVALID if no jti. (9) issueMfaTempToken stores in Redis with TTL 300. (10) verifyMfaTempToken returns {userId, context}. (11) verifyMfaTempToken consumes token (deletes from Redis). (12) verifyMfaTempToken throws MFA_TEMP_TOKEN_INVALID if not in Redis.
 
 ---
 
@@ -519,7 +519,7 @@
 - **Descricao:** Implement TokenDeliveryService handling cookie/bearer/both modes for token delivery and extraction.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/token-delivery.service.ts. Implement @Injectable() class TokenDeliveryService. Inject BYMAX_AUTH_OPTIONS for tokenDelivery mode and cookies config. Methods: (1) deliverAuthResponse(res, authResult, req?): mode cookie -> set cookies (access httpOnly, refresh httpOnly with path, session signal non-httpOnly) + return {user}. Mode bearer -> return {user, accessToken, refreshToken}. Mode both -> set cookies + return all. Use discriminated return types. (2) deliverRefreshResponse(res, result, req?): same logic for refresh. (3) extractAccessToken(req): cookie mode -> req.cookies[accessTokenName]. bearer -> Authorization Bearer header. both -> cookie first then header. (4) extractRefreshToken(req): cookie -> req.cookies[refreshTokenName]. bearer -> req.body.refreshToken. both -> cookie first then body. (5) clearAuthSession(res, req?): clear all auth cookies on resolved domains. bearer mode -> no-op. (6) resolveCookieDomains(req): call user's resolveDomains if configured, or use extractDomain. (7) extractDomain(req): validate hostname with /^[a-z0-9.-]+$/i, reject invalid chars, fallback to configured domain. Configure cookies per table 14.1: HttpOnly, Secure in prod, SameSite, correct paths. Use @Res({passthrough:true}) pattern.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/token-delivery.service.ts. Implement @Injectable() class TokenDeliveryService. Inject BYMAX_AUTH_OPTIONS for tokenDelivery mode and cookies config. Methods: (1) deliverAuthResponse(res, authResult, req?): mode cookie -> set cookies (access httpOnly, refresh httpOnly with path, session signal non-httpOnly) + return {user}. Mode bearer -> return {user, accessToken, refreshToken}. Mode both -> set cookies + return all. Use discriminated return types. (2) deliverRefreshResponse(res, result, req?): same logic for refresh. (3) extractAccessToken(req): cookie mode -> req.cookies[accessTokenName]. bearer -> Authorization Bearer header. both -> cookie first then header. (4) extractRefreshToken(req): cookie -> req.cookies[refreshTokenName]. bearer -> req.body.refreshToken. both -> cookie first then body. (5) clearAuthSession(res, req?): clear all auth cookies on resolved domains. bearer mode -> no-op. (6) resolveCookieDomains(req): call user's resolveDomains if configured, or use extractDomain. (7) extractDomain(req): validate hostname with /^[a-z0-9.-]+$/i, reject invalid chars, fallback to configured domain. Configure cookies per table 14.1: HttpOnly, Secure in prod, SameSite, correct paths. Use @Res({passthrough:true}) pattern.
 
 ---
 
@@ -533,7 +533,7 @@
 - **Descricao:** Write unit tests for TokenDeliveryService covering all three modes and security validations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/token-delivery.service.spec.ts. Mock Express Request and Response objects. Tests for each mode (cookie, bearer, both): (1) deliverAuthResponse sets correct cookies in cookie mode. (2) deliverAuthResponse returns tokens in bearer mode. (3) deliverAuthResponse does both in both mode. (4) extractAccessToken reads from cookie in cookie mode. (5) extractAccessToken reads from header in bearer mode. (6) extractAccessToken tries cookie first in both mode. (7) extractRefreshToken reads from cookie vs body correctly. (8) clearAuthSession clears cookies in cookie mode, no-op in bearer. (9) extractDomain with valid hostname returns domain. (10) extractDomain with malicious hostname (special chars) falls back to default. (11) Cookie attributes: HttpOnly, Secure, SameSite, path.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/token-delivery.service.spec.ts. Mock Express Request and Response objects. Tests for each mode (cookie, bearer, both): (1) deliverAuthResponse sets correct cookies in cookie mode. (2) deliverAuthResponse returns tokens in bearer mode. (3) deliverAuthResponse does both in both mode. (4) extractAccessToken reads from cookie in cookie mode. (5) extractAccessToken reads from header in bearer mode. (6) extractAccessToken tries cookie first in both mode. (7) extractRefreshToken reads from cookie vs body correctly. (8) clearAuthSession clears cookies in cookie mode, no-op in bearer. (9) extractDomain with valid hostname returns domain. (10) extractDomain with malicious hostname (special chars) falls back to default. (11) Cookie attributes: HttpOnly, Secure, SameSite, path.
 
 ---
 
@@ -547,7 +547,7 @@
 - **Descricao:** Implement BruteForceService with Redis-backed attempt tracking and lockout logic.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/brute-force.service.ts. Implement @Injectable() class BruteForceService. Inject AuthRedisService and BYMAX_AUTH_OPTIONS (bruteForce.maxAttempts, bruteForce.windowSeconds). Methods: (1) async isLockedOut(identifier: string): Promise<boolean> — get lf:{identifier}, parse as number, return count >= maxAttempts. (2) async recordFailure(identifier: string): Promise<void> — INCR lf:{identifier}, EXPIRE lf:{identifier} windowSeconds. (3) async resetFailures(identifier: string): Promise<void> — DEL lf:{identifier}. (4) async getRemainingLockoutSeconds(identifier: string): Promise<number> — TTL lf:{identifier}, return 0 if not locked or key doesn't exist.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/brute-force.service.ts. Implement @Injectable() class BruteForceService. Inject AuthRedisService and BYMAX_AUTH_OPTIONS (bruteForce.maxAttempts, bruteForce.windowSeconds). Methods: (1) async isLockedOut(identifier: string): Promise<boolean> — get lf:{identifier}, parse as number, return count >= maxAttempts. (2) async recordFailure(identifier: string): Promise<void> — INCR lf:{identifier}, EXPIRE lf:{identifier} windowSeconds. (3) async resetFailures(identifier: string): Promise<void> — DEL lf:{identifier}. (4) async getRemainingLockoutSeconds(identifier: string): Promise<number> — TTL lf:{identifier}, return 0 if not locked or key doesn't exist.
 
 ---
 
@@ -561,7 +561,7 @@
 - **Descricao:** Write unit tests for BruteForceService covering lockout, failure recording, and reset.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/brute-force.service.spec.ts. Mock AuthRedisService. Tests: (1) isLockedOut returns false when no attempts recorded. (2) isLockedOut returns false when attempts < maxAttempts. (3) isLockedOut returns true when attempts >= maxAttempts. (4) recordFailure calls incr and expire with correct key and TTL. (5) resetFailures calls del with correct key. (6) getRemainingLockoutSeconds returns TTL when locked. (7) getRemainingLockoutSeconds returns 0 when not locked.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/brute-force.service.spec.ts. Mock AuthRedisService. Tests: (1) isLockedOut returns false when no attempts recorded. (2) isLockedOut returns false when attempts < maxAttempts. (3) isLockedOut returns true when attempts >= maxAttempts. (4) recordFailure calls incr and expire with correct key and TTL. (5) resetFailures calls del with correct key. (6) getRemainingLockoutSeconds returns TTL when locked. (7) getRemainingLockoutSeconds returns 0 when not locked.
 
 ---
 
@@ -575,7 +575,7 @@
 - **Descricao:** Implement NoOpEmailProvider that logs all email operations via NestJS Logger without sending real emails.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/providers/no-op-email.provider.ts. Implement @Injectable() class NoOpEmailProvider implements IEmailProvider. Use NestJS Logger (private readonly logger = new Logger(NoOpEmailProvider.name)). Each of the 7 methods (sendPasswordResetToken, sendPasswordResetOtp, sendEmailVerificationOtp, sendMfaEnabledNotification, sendMfaDisabledNotification, sendNewSessionAlert, sendInvitation) should log the method name and email address, then return Promise.resolve(). Per section 10.3 of the spec.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/providers/no-op-email.provider.ts. Implement @Injectable() class NoOpEmailProvider implements IEmailProvider. Use NestJS Logger (private readonly logger = new Logger(NoOpEmailProvider.name)). Each of the 7 methods (sendPasswordResetToken, sendPasswordResetOtp, sendEmailVerificationOtp, sendMfaEnabledNotification, sendMfaDisabledNotification, sendNewSessionAlert, sendInvitation) should log the method name and email address, then return Promise.resolve(). Per section 10.3 of the spec.
 
 ---
 
@@ -589,7 +589,7 @@
 - **Descricao:** Implement NoOpAuthHooks with safe defaults, including the standard onOAuthLogin logic.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/hooks/no-op-auth.hooks.ts. Implement @Injectable() class NoOpAuthHooks implements IAuthHooks. beforeRegister returns { allowed: true }. All other hooks are no-op (return void/undefined). onOAuthLogin implements default safe logic: if existing user with matching email -> return { action: 'link' }; if no existing user -> return { action: 'create' }; if email mismatch -> return { action: 'reject', reason: 'Email mismatch' }. IMPORTANT: Use explicit types from IAuthHooks for all parameters — never use `any` for sessionInfo, use { device: string; ip: string; sessionHash: string } instead. This is a deliberate deviation from the spec section 9.3 which uses _sessionInfo: any.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/hooks/no-op-auth.hooks.ts. Implement @Injectable() class NoOpAuthHooks implements IAuthHooks. beforeRegister returns { allowed: true }. All other hooks are no-op (return void/undefined). onOAuthLogin implements default safe logic: if existing user with matching email -> return { action: 'link' }; if no existing user -> return { action: 'create' }; if email mismatch -> return { action: 'reject', reason: 'Email mismatch' }. IMPORTANT: Use explicit types from IAuthHooks for all parameters — never use `any` for sessionInfo, use { device: string; ip: string; sessionHash: string } instead. This is a deliberate deviation from the spec section 9.3 which uses _sessionInfo: any.
 
 ---
 
@@ -603,7 +603,7 @@
 - **Descricao:** Write unit tests for NoOpEmailProvider and NoOpAuthHooks.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/providers/no-op-email.provider.spec.ts. Test that each method resolves without error and logs the call. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/hooks/no-op-auth.hooks.spec.ts. Test: (1) beforeRegister returns { allowed: true }. (2) onOAuthLogin with matching email returns { action: 'link' }. (3) onOAuthLogin with new user returns { action: 'create' }. (4) onOAuthLogin with email mismatch returns { action: 'reject' }. (5) Other hooks do not throw.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/providers/no-op-email.provider.spec.ts. Test that each method resolves without error and logs the call. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/hooks/no-op-auth.hooks.spec.ts. Test: (1) beforeRegister returns { allowed: true }. (2) onOAuthLogin with matching email returns { action: 'link' }. (3) onOAuthLogin with new user returns { action: 'create' }. (4) onOAuthLogin with email mismatch returns { action: 'reject' }. (5) Other hooks do not throw.
 
 ---
 
@@ -614,10 +614,10 @@
 - **Dependencias:** NEST-005, NEST-006, NEST-007, NEST-008, NEST-009, NEST-010, NEST-011, NEST-012, NEST-013, NEST-014, NEST-018, NEST-020, NEST-021, NEST-023, NEST-038, NEST-039
 - **Agente:** architect
 - **Estimativa:** ~15min
-- **Descricao:** Update src/index.ts with all Phase 1 exports, using export type for interfaces and export for values.
+- **Descricao:** Update src/server/index.ts with all Phase 1 exports, using export type for interfaces and export for values.
 
 **Prompt para o agente:**
-> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/index.ts with all Phase 1 exports. Use `export type` for interfaces and type aliases: BymaxAuthModuleOptions, AuthUser, IUserRepository, AuthPlatformUser, IPlatformUserRepository, IEmailProvider, IAuthHooks, HookContext, BeforeRegisterResult, OAuthLoginResult, OAuthProfile, DashboardJwtPayload, PlatformJwtPayload, MfaTempPayload, AuthResult, PlatformAuthResult, MfaChallengeResult, AuthenticatedRequest, PlatformAuthenticatedRequest, OAuthProviderPlugin, ResolvedOptions. Use `export` (value) for: BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_PLATFORM_USER_REPOSITORY, BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT (from constants), AuthException, AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_THROTTLE_CONFIGS, NoOpEmailProvider, NoOpAuthHooks, encrypt, decrypt, generateSecureToken, sha256, sleep, hasRole. Do NOT export AuthRedisService (internal). Verify proper import paths.
+> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/server/index.ts with all Phase 1 exports. Use `export type` for interfaces and type aliases: BymaxAuthModuleOptions, AuthUser, IUserRepository, AuthPlatformUser, IPlatformUserRepository, IEmailProvider, IAuthHooks, HookContext, BeforeRegisterResult, OAuthLoginResult, OAuthProfile, DashboardJwtPayload, PlatformJwtPayload, MfaTempPayload, AuthResult, PlatformAuthResult, MfaChallengeResult, AuthenticatedRequest, PlatformAuthenticatedRequest, OAuthProviderPlugin, ResolvedOptions. Use `export` (value) for: BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_PLATFORM_USER_REPOSITORY, BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT (from constants), AuthException, AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_THROTTLE_CONFIGS, NoOpEmailProvider, NoOpAuthHooks, encrypt, decrypt, generateSecureToken, sha256, sleep, hasRole. Do NOT export AuthRedisService (internal). Verify proper import paths.
 
 ---
 
@@ -647,7 +647,7 @@
 - **Descricao:** Implementar JwtAuthGuard nativo com `CanActivate`, sem Passport, usando `@nestjs/jwt` JwtService.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.ts. Implementar class JwtAuthGuard `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService`, `Reflector` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`: (1) Verificar decorator `@Public()` via `Reflector` — se presente, retornar true sem validação. (2) Extrair token do cookie ou header Authorization via `tokenDeliveryService.extractAccessToken(req)`. Se ausente, throw `UnauthorizedException` TOKEN_MISSING. (3) Verificar JWT com `jwtService.verify(token, { algorithms: ['HS256'] })`. CRITICAL: pinar `algorithms: ['HS256']` para prevenir algorithm confusion attacks (CVE-2015-9235). (4) Verificar `payload.jti` existe e é string — throw TOKEN_INVALID se ausente. (5) Verificar `payload.type === 'dashboard'` — rejeitar 'platform' e 'mfa_challenge'. (6) Verificar blacklist via `authRedis.isBlacklisted(jti)` — se blacklisted, throw TOKEN_REVOKED. (7) Popular `request.user` com payload validado. (8) Respeitar decorator `@Public()`. Retornar true.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/jwt-auth.guard.ts. Implementar class JwtAuthGuard `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService`, `Reflector` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`: (1) Verificar decorator `@Public()` via `Reflector` — se presente, retornar true sem validação. (2) Extrair token do cookie ou header Authorization via `tokenDeliveryService.extractAccessToken(req)`. Se ausente, throw `UnauthorizedException` TOKEN_MISSING. (3) Verificar JWT com `jwtService.verify(token, { algorithms: ['HS256'] })`. CRITICAL: pinar `algorithms: ['HS256']` para prevenir algorithm confusion attacks (CVE-2015-9235). (4) Verificar `payload.jti` existe e é string — throw TOKEN_INVALID se ausente. (5) Verificar `payload.type === 'dashboard'` — rejeitar 'platform' e 'mfa_challenge'. (6) Verificar blacklist via `authRedis.isBlacklisted(jti)` — se blacklisted, throw TOKEN_REVOKED. (7) Popular `request.user` com payload validado. (8) Respeitar decorator `@Public()`. Retornar true.
 
 ---
 
@@ -661,21 +661,36 @@
 - **Descricao:** Testes unitários para JwtAuthGuard cobrindo tokens válidos, rejeição por tipo, blacklist, jti ausente e @Public().
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.spec.ts. Mock JwtService, AuthRedisService e TokenDeliveryService. Tests: (1) Token dashboard válido passa validação e popula request.user. (2) Token sem jti lança TOKEN_INVALID. (3) Token com type 'platform' é rejeitado. (4) Token com type 'mfa_challenge' é rejeitado. (5) Token com jti na blacklist lança TOKEN_REVOKED. (6) Token não na blacklist passa. (7) Algoritmo pinado em HS256 (verificar chamada jwtService.verify). (8) Rota com @Public() retorna true sem validação.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/jwt-auth.guard.spec.ts. Mock JwtService, AuthRedisService e TokenDeliveryService. Tests: (1) Token dashboard válido passa validação e popula request.user. (2) Token sem jti lança TOKEN_INVALID. (3) Token com type 'platform' é rejeitado. (4) Token com type 'mfa_challenge' é rejeitado. (5) Token com jti na blacklist lança TOKEN_REVOKED. (6) Token não na blacklist passa. (7) Algoritmo pinado em HS256 (verificar chamada jwtService.verify). (8) Rota com @Public() retorna true sem validação.
 
 ---
 
-### ⬜ NEST-045: Guard - JwtAuthGuard
+### ⬜ NEST-045: JwtAuthGuard unit tests
 - **Fase:** 2
 - **Status:** TODO
 - **Prioridade:** Media
 - **Dependencias:** NEST-043
-- **Agente:** code-reviewer
+- **Agente:** tester
 - **Estimativa:** ~30min
-- **Descricao:** Implement JwtAuthGuard extending AuthGuard('jwt') with @Public() metadata support.
+- **Descricao:** Testes unitarios do JwtAuthGuard nativo implementado em NEST-043, cobrindo todos os cenarios de validacao de token e metadata @Public().
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.ts. Implement @Injectable() class JwtAuthGuard extends AuthGuard('jwt'). Inject Reflector. Override canActivate(context: ExecutionContext): check IS_PUBLIC_KEY metadata via reflector.getAllAndOverride. If public return true. Otherwise call super.canActivate(context). Override handleRequest(err, user, info) to throw AuthException with appropriate code (TOKEN_INVALID or TOKEN_EXPIRED based on info) if err or !user.
+> Escrever testes unitarios para `src/server/guards/jwt-auth.guard.ts` (o guard nativo implementado em NEST-043, sem Passport).
+> Criar arquivo `src/server/guards/__tests__/jwt-auth.guard.spec.ts`. Mock de `JwtService`, `AuthRedisService`, `TokenDeliveryService`.
+> Cenarios de teste:
+> 1. Token dashboard valido com assinatura correta → aceito, `request.user` populado com payload.
+> 2. Token expirado → rejeitado com `TOKEN_INVALID`.
+> 3. Token com `jti` na blacklist Redis → rejeitado com `TOKEN_REVOKED`.
+> 4. Token com `type: 'platform'` → rejeitado (guard so aceita tokens dashboard).
+> 5. Token com `type: 'mfa_challenge'` → rejeitado com `TOKEN_INVALID`.
+> 6. Endpoint com `@Public()` decorator → skip validation, retorna true sem verificar token.
+> 7. Request sem token (header e cookie ausentes) → rejeitado com `TOKEN_INVALID`.
+> 8. Verificar que `algorithms: ['HS256']` esta fixado na chamada a `jwtService.verify` (rejeita `alg: none`).
+>
+> Criterios de aceitacao:
+> - Todos os 8 cenarios testados e passando
+> - Cobertura >= 90% no arquivo do guard
+> - Nenhum uso de Passport nos testes
 
 ---
 
@@ -689,7 +704,7 @@
 - **Descricao:** Implement RolesGuard with hierarchical role checking using denormalized hierarchy.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/roles.guard.ts. Implement @Injectable() class RolesGuard implements CanActivate. Inject Reflector and BYMAX_AUTH_OPTIONS. In canActivate: read required roles from ROLES_KEY metadata via reflector.getAllAndOverride. If no roles required return true. Get request.user.role. Use the hasRole utility from utils/roles.util.ts to check against roles.hierarchy. If no role satisfies, throw AuthException with INSUFFICIENT_ROLE (403). IMPORTANT: hierarchy must be fully denormalized — document in JSDoc that OWNER: ['ADMIN','MEMBER','VIEWER'] not just OWNER: ['ADMIN'].
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/roles.guard.ts. Implement @Injectable() class RolesGuard implements CanActivate. Inject Reflector and BYMAX_AUTH_OPTIONS. In canActivate: read required roles from ROLES_KEY metadata via reflector.getAllAndOverride. If no roles required return true. Get request.user.role. Use the hasRole utility from utils/roles.util.ts to check against roles.hierarchy. If no role satisfies, throw AuthException with INSUFFICIENT_ROLE (403). IMPORTANT: hierarchy must be fully denormalized — document in JSDoc that OWNER: ['ADMIN','MEMBER','VIEWER'] not just OWNER: ['ADMIN'].
 
 ---
 
@@ -703,7 +718,7 @@
 - **Descricao:** Implement UserStatusGuard with Redis caching and status-specific error mapping.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/user-status.guard.ts. Implement @Injectable() class UserStatusGuard implements CanActivate. Inject AuthRedisService, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_OPTIONS. In canActivate: (1) If route is public (no user on request) return true. (2) Extract user.sub from request. (3) Check Redis cache us:{userId}. (4) If cache miss, call userRepo.findById(userId), cache result with userStatusCacheTtlSeconds TTL. (5) Check status against blockedStatuses array from options. (6) Map status to specific error: BANNED->ACCOUNT_BANNED (403), INACTIVE->ACCOUNT_INACTIVE (403), SUSPENDED->ACCOUNT_SUSPENDED (403), PENDING_APPROVAL->PENDING_APPROVAL (403). (7) If not blocked return true.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/user-status.guard.ts. Implement @Injectable() class UserStatusGuard implements CanActivate. Inject AuthRedisService, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_OPTIONS. In canActivate: (1) If route is public (no user on request) return true. (2) Extract user.sub from request. (3) Check Redis cache us:{userId}. (4) If cache miss, call userRepo.findById(userId), cache result with userStatusCacheTtlSeconds TTL. (5) Check status against blockedStatuses array from options. (6) Map status to specific error: BANNED->ACCOUNT_BANNED (403), INACTIVE->ACCOUNT_INACTIVE (403), SUSPENDED->ACCOUNT_SUSPENDED (403), PENDING_APPROVAL->PENDING_APPROVAL (403). (7) If not blocked return true.
 
 ---
 
@@ -717,7 +732,7 @@
 - **Descricao:** Write unit tests for all three guards covering all branches.
 
 **Prompt para o agente:**
-> Create test files for each guard. /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.spec.ts: (1) Public route returns true without JWT. (2) Protected route without token throws. (3) Protected route with valid token passes. (4) handleRequest maps errors correctly. /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/roles.guard.spec.ts: (1) No roles metadata allows access. (2) Exact role match allows. (3) Hierarchical role (OWNER accessing ADMIN route) allows. (4) Insufficient role throws INSUFFICIENT_ROLE 403. /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/user-status.guard.spec.ts: (1) Public route (no user) returns true. (2) ACTIVE status passes. (3) BANNED status throws ACCOUNT_BANNED. (4) INACTIVE throws ACCOUNT_INACTIVE. (5) Cache hit uses cached value. (6) Cache miss fetches from repository and caches.
+> Create test files for each guard. /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/jwt-auth.guard.spec.ts: (1) Public route returns true without JWT. (2) Protected route without token throws. (3) Protected route with valid token passes. (4) handleRequest maps errors correctly. /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/roles.guard.spec.ts: (1) No roles metadata allows access. (2) Exact role match allows. (3) Hierarchical role (OWNER accessing ADMIN route) allows. (4) Insufficient role throws INSUFFICIENT_ROLE 403. /Users/maximiliano/Documents/My Apps/nest-auth/src/server/guards/user-status.guard.spec.ts: (1) Public route (no user) returns true. (2) ACTIVE status passes. (3) BANNED status throws ACCOUNT_BANNED. (4) INACTIVE throws ACCOUNT_INACTIVE. (5) Cache hit uses cached value. (6) Cache miss fetches from repository and caches.
 
 ---
 
@@ -731,7 +746,7 @@
 - **Descricao:** Implement @CurrentUser param decorator that extracts request.user or a specific property.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/current-user.decorator.ts. Implement export const CurrentUser = createParamDecorator((data: string | undefined, ctx: ExecutionContext) => { const request = ctx.switchToHttp().getRequest(); const user = request.user; return data ? user?.[data] : user; }). Add JSDoc: /** Extracts the authenticated user from the request. @param property Optional property to extract (e.g., 'sub' for userId). Consumer must type the parameter explicitly: @CurrentUser('sub') userId: string */
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/current-user.decorator.ts. Implement export const CurrentUser = createParamDecorator((data: string | undefined, ctx: ExecutionContext) => { const request = ctx.switchToHttp().getRequest(); const user = request.user; return data ? user?.[data] : user; }). Add JSDoc: /** Extracts the authenticated user from the request. @param property Optional property to extract (e.g., 'sub' for userId). Consumer must type the parameter explicitly: @CurrentUser('sub') userId: string */
 
 ---
 
@@ -745,7 +760,7 @@
 - **Descricao:** Implement @Roles and @Public metadata decorators for use with RolesGuard and JwtAuthGuard.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/roles.decorator.ts. Export const ROLES_KEY = 'roles'. Export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles). Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/public.decorator.ts. Export const IS_PUBLIC_KEY = 'isPublic'. Export const Public = () => SetMetadata(IS_PUBLIC_KEY, true). Add JSDoc to both.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/roles.decorator.ts. Export const ROLES_KEY = 'roles'. Export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles). Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/public.decorator.ts. Export const IS_PUBLIC_KEY = 'isPublic'. Export const Public = () => SetMetadata(IS_PUBLIC_KEY, true). Add JSDoc to both.
 
 ---
 
@@ -759,7 +774,7 @@
 - **Descricao:** Write unit tests for all decorators.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/current-user.decorator.spec.ts. Test: (1) Returns full user object when no property specified. (2) Returns specific property when property specified (e.g., 'sub'). (3) Returns undefined when user not present. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/roles.decorator.spec.ts. Test that @Roles('ADMIN') sets metadata correctly. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/decorators/public.decorator.spec.ts. Test that @Public() sets IS_PUBLIC_KEY to true.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/current-user.decorator.spec.ts. Test: (1) Returns full user object when no property specified. (2) Returns specific property when property specified (e.g., 'sub'). (3) Returns undefined when user not present. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/roles.decorator.spec.ts. Test that @Roles('ADMIN') sets metadata correctly. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/decorators/public.decorator.spec.ts. Test that @Public() sets IS_PUBLIC_KEY to true.
 
 ---
 
@@ -773,7 +788,7 @@
 - **Descricao:** Implement RegisterDto with class-validator decorators including email, password, name, and tenantId.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.ts. Implement class RegisterDto with: @IsEmail() email: string, @IsString() @MinLength(8) @MaxLength(128) password: string (MaxLength 128 — limite prático de input para prevenir DoS), @IsString() @MinLength(2) name: string, @IsString() @IsNotEmpty() tenantId: string (@IsNotEmpty prevents empty string passing @IsString). Export the class.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/dto/register.dto.ts. Implement class RegisterDto with: @IsEmail() email: string, @IsString() @MinLength(8) @MaxLength(128) password: string (MaxLength 128 — limite prático de input para prevenir DoS), @IsString() @MinLength(2) name: string, @IsString() @IsNotEmpty() tenantId: string (@IsNotEmpty prevents empty string passing @IsString). Export the class.
 
 ---
 
@@ -787,7 +802,7 @@
 - **Descricao:** Implement LoginDto with deliberate omission of @MinLength on password for anti-enumeration.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.ts. Implement class LoginDto with: @IsEmail() email: string, @IsString() @MaxLength(128) password: string, @IsString() @IsNotEmpty() tenantId: string. IMPORTANT: Deliberately NO @MinLength on password — all passwords pass to comparação scrypt to not reveal if password is too short before comparison (anti-enumeration). Add JSDoc on password field: /** Deliberately without @MinLength — every password passes to scrypt compare to prevent revealing minimum length requirements before comparison */. Export the class.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/dto/login.dto.ts. Implement class LoginDto with: @IsEmail() email: string, @IsString() @MaxLength(128) password: string, @IsString() @IsNotEmpty() tenantId: string. IMPORTANT: Deliberately NO @MinLength on password — all passwords pass to comparação scrypt to not reveal if password is too short before comparison (anti-enumeration). Add JSDoc on password field: /** Deliberately without @MinLength — every password passes to scrypt compare to prevent revealing minimum length requirements before comparison */. Export the class.
 
 ---
 
@@ -801,7 +816,7 @@
 - **Descricao:** Write validation tests for RegisterDto and LoginDto using class-validator.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.spec.ts. Use class-validator's validate() function. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password shorter than 8 chars fails. (4) Password longer than 128 chars fails. (5) Name shorter than 2 chars fails. (6) Empty tenantId fails. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.spec.ts. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password longer than 128 fails. (4) Short password (e.g., '1') passes validation (deliberate — no MinLength). (5) Empty tenantId fails.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/dto/register.dto.spec.ts. Use class-validator's validate() function. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password shorter than 8 chars fails. (4) Password longer than 128 chars fails. (5) Name shorter than 2 chars fails. (6) Empty tenantId fails. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/dto/login.dto.spec.ts. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password longer than 128 fails. (4) Short password (e.g., '1') passes validation (deliberate — no MinLength). (5) Empty tenantId fails.
 
 ---
 
@@ -815,7 +830,7 @@
 - **Descricao:** Implement OtpService with secure OTP generation, Redis storage, constant-time comparison, and timing normalization.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/otp.service.ts. Implement @Injectable() class OtpService. Inject AuthRedisService. Methods: (1) generate(length=6): use crypto.randomInt(0, 10**length) — NEVER Math.random(). Pad with zeros: String(num).padStart(length,'0'). (2) store(purpose, identifier, code, ttlSeconds): Redis key otp:{purpose}:{identifier} -> JSON {code, attempts:0}, with TTL. (3) verify(purpose, identifier, code): get from Redis. If not found throw OTP_EXPIRED. Check attempts >= 5 throw OTP_MAX_ATTEMPTS. Constant-time comparison: convert both to Buffer.from(x,'utf8'), if different lengths return OTP_INVALID without calling timingSafeEqual (it throws RangeError on length mismatch). Use crypto.timingSafeEqual for same-length. If invalid increment attempts throw OTP_INVALID. If valid delete key. TIMING NORMALIZATION: const start = Date.now(), before each return/throw: await sleep(Math.max(0, 100 - (Date.now()-start))). Returns void. (4) incrementAttempts(purpose, identifier): read JSON, increment attempts field, write back with same TTL. Reference section 5.1 of the development plan.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/otp.service.ts. Implement @Injectable() class OtpService. Inject AuthRedisService. Methods: (1) generate(length=6): use crypto.randomInt(0, 10**length) — NEVER Math.random(). Pad with zeros: String(num).padStart(length,'0'). (2) store(purpose, identifier, code, ttlSeconds): Redis key otp:{purpose}:{identifier} -> JSON {code, attempts:0}, with TTL. (3) verify(purpose, identifier, code): get from Redis. If not found throw OTP_EXPIRED. Check attempts >= 5 throw OTP_MAX_ATTEMPTS. Constant-time comparison: convert both to Buffer.from(x,'utf8'), if different lengths return OTP_INVALID without calling timingSafeEqual (it throws RangeError on length mismatch). Use crypto.timingSafeEqual for same-length. If invalid increment attempts throw OTP_INVALID. If valid delete key. TIMING NORMALIZATION: const start = Date.now(), before each return/throw: await sleep(Math.max(0, 100 - (Date.now()-start))). Returns void. (4) incrementAttempts(purpose, identifier): read JSON, increment attempts field, write back with same TTL. Reference section 5.1 of the development plan.
 
 ---
 
@@ -829,7 +844,7 @@
 - **Descricao:** Write unit tests for OtpService covering generation, storage, verification, expiration, and timing.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/otp.service.spec.ts. Mock AuthRedisService. Tests: (1) generate(6) produces 6-digit string. (2) generate pads with leading zeros (mock crypto.randomInt to return 42 -> '000042'). (3) store calls Redis set with correct key format and TTL. (4) verify with correct code succeeds and deletes key. (5) verify with expired OTP (not in Redis) throws OTP_EXPIRED. (6) verify with wrong code increments attempts and throws OTP_INVALID. (7) verify with 5+ attempts throws OTP_MAX_ATTEMPTS. (8) verify with different-length code returns OTP_INVALID without calling timingSafeEqual. (9) Timing normalization: all branches take similar time (verify elapsed > 90ms for all cases).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/otp.service.spec.ts. Mock AuthRedisService. Tests: (1) generate(6) produces 6-digit string. (2) generate pads with leading zeros (mock crypto.randomInt to return 42 -> '000042'). (3) store calls Redis set with correct key format and TTL. (4) verify with correct code succeeds and deletes key. (5) verify with expired OTP (not in Redis) throws OTP_EXPIRED. (6) verify with wrong code increments attempts and throws OTP_INVALID. (7) verify with 5+ attempts throws OTP_MAX_ATTEMPTS. (8) verify with different-length code returns OTP_INVALID without calling timingSafeEqual. (9) Timing normalization: all branches take similar time (verify elapsed > 90ms for all cases).
 
 ---
 
@@ -843,7 +858,7 @@
 - **Descricao:** Implement AuthService with register, login, logout, refresh, getMe, verifyEmail, and resendVerificationEmail methods.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/auth.service.ts. Implement @Injectable() class AuthService. Inject: BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY (IUserRepository), BYMAX_AUTH_EMAIL_PROVIDER (IEmailProvider), BYMAX_AUTH_HOOKS (IAuthHooks), PasswordService, TokenManagerService, BruteForceService, AuthRedisService, OtpService, @Optional() SessionService. Methods per Appendix A of the spec: (1) register(dto, req): resolve tenantId via tenantIdResolver if configured, call hooks.beforeRegister (reject if not allowed, apply modifiedData), check email exists, hash password, create user, if emailVerification.required generate+store+send OTP, issue tokens, call hooks.afterRegister (catch errors log don't propagate), return AuthResult. (2) login(dto, req): resolve tenantId, compute brute-force id sha256(tenantId+':'+email), check lockout (throw ACCOUNT_LOCKED with Retry-After header), call hooks.beforeLogin, find user, check status against blockedStatuses, check emailVerified if required, compare password, if mfaEnabled issue mfaTempToken return MfaChallengeResult, otherwise reset brute-force+issue tokens+update lastLogin+hooks.afterLogin return AuthResult. (3) logout(accessToken, refreshToken, userId): decode token for jti+exp, blacklist rv:{jti} with remaining TTL, delete rt:{sha256(refresh)}, hooks.afterLogout. (4) refresh(oldRefresh, ip, userAgent): delegate to tokenManager.reissueTokens. (5) getMe(userId): findById, throw TOKEN_INVALID if not found. (6) verifyEmail(tenantId, email, userId, otp): verify via otpService, update emailVerified, hooks.afterEmailVerified. (7) resendVerificationEmail(tenantId, email): atomic cooldown SET resend:email_verification:{sha256(tenantId+':'+email)} 1 NX EX 60, if nil return success silently, otherwise find user+generate OTP+store+send. Timing normalization on resend.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/auth.service.ts. Implement @Injectable() class AuthService. Inject: BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY (IUserRepository), BYMAX_AUTH_EMAIL_PROVIDER (IEmailProvider), BYMAX_AUTH_HOOKS (IAuthHooks), PasswordService, TokenManagerService, BruteForceService, AuthRedisService, OtpService, @Optional() SessionService. Methods per Appendix A of the spec: (1) register(dto, req): resolve tenantId via tenantIdResolver if configured, call hooks.beforeRegister (reject if not allowed, apply modifiedData), check email exists, hash password, create user, if emailVerification.required generate+store+send OTP, issue tokens, call hooks.afterRegister (catch errors log don't propagate), return AuthResult. (2) login(dto, req): resolve tenantId, compute brute-force id sha256(tenantId+':'+email), check lockout (throw ACCOUNT_LOCKED with Retry-After header), call hooks.beforeLogin, find user, check status against blockedStatuses, check emailVerified if required, compare password, if mfaEnabled issue mfaTempToken return MfaChallengeResult, otherwise reset brute-force+issue tokens+update lastLogin+hooks.afterLogin return AuthResult. (3) logout(accessToken, refreshToken, userId): decode token for jti+exp, blacklist rv:{jti} with remaining TTL, delete rt:{sha256(refresh)}, hooks.afterLogout. (4) refresh(oldRefresh, ip, userAgent): delegate to tokenManager.reissueTokens. (5) getMe(userId): findById, throw TOKEN_INVALID if not found. (6) verifyEmail(tenantId, email, userId, otp): verify via otpService, update emailVerified, hooks.afterEmailVerified. (7) resendVerificationEmail(tenantId, email): atomic cooldown SET resend:email_verification:{sha256(tenantId+':'+email)} 1 NX EX 60, if nil return success silently, otherwise find user+generate OTP+store+send. Timing normalization on resend.
 
 ---
 
@@ -857,7 +872,7 @@
 - **Descricao:** Write comprehensive unit tests for AuthService covering all methods and edge cases.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/auth.service.spec.ts. Mock all dependencies. Tests for register: (1) Success creates user and returns AuthResult. (2) Duplicate email throws EMAIL_ALREADY_EXISTS. (3) Hook rejects with reason. (4) Hook modifiedData applied. (5) Email verification OTP sent when required. Tests for login: (6) Success returns AuthResult. (7) Invalid credentials records brute-force failure. (8) Brute-force lockout throws ACCOUNT_LOCKED. (9) Blocked status throws specific error. (10) MFA enabled returns MfaChallengeResult. (11) Email not verified throws EMAIL_NOT_VERIFIED. (12) tenantIdResolver is called when configured. Tests for logout: (13) Blacklists JWT jti. (14) Deletes refresh token. Tests for refresh: (15) Delegates to reissueTokens. Tests for getMe: (16) Returns user. (17) Not found throws TOKEN_INVALID. Tests for verifyEmail: (18) Verifies OTP and updates user. Tests for resendVerificationEmail: (19) Cooldown prevents duplicate sends. (20) Success generates and sends new OTP.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/services/auth.service.spec.ts. Mock all dependencies. Tests for register: (1) Success creates user and returns AuthResult. (2) Duplicate email throws EMAIL_ALREADY_EXISTS. (3) Hook rejects with reason. (4) Hook modifiedData applied. (5) Email verification OTP sent when required. Tests for login: (6) Success returns AuthResult. (7) Invalid credentials records brute-force failure. (8) Brute-force lockout throws ACCOUNT_LOCKED. (9) Blocked status throws specific error. (10) MFA enabled returns MfaChallengeResult. (11) Email not verified throws EMAIL_NOT_VERIFIED. (12) tenantIdResolver is called when configured. Tests for logout: (13) Blacklists JWT jti. (14) Deletes refresh token. Tests for refresh: (15) Delegates to reissueTokens. Tests for getMe: (16) Returns user. (17) Not found throws TOKEN_INVALID. Tests for verifyEmail: (18) Verifies OTP and updates user. Tests for resendVerificationEmail: (19) Cooldown prevents duplicate sends. (20) Success generates and sends new OTP.
 
 ---
 
@@ -871,7 +886,7 @@
 - **Descricao:** Implement AuthController with 7 endpoints for register, login, logout, refresh, me, verify-email, and resend-verification.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/controllers/auth.controller.ts. Implement @Controller() class AuthController. Inject AuthService and TokenDeliveryService. 7 endpoints: (1) POST /register: @Public(), @Throttle(AUTH_THROTTLE_CONFIGS.register), @UsePipes(ValidationPipe), body: RegisterDto. Call authService.register(dto, req), deliver via tokenDeliveryService.deliverAuthResponse(res, result, req). Use @Res({passthrough:true}). (2) POST /login: @Public(), @Throttle(login). Call authService.login(dto, req). If MfaChallengeResult (mfaRequired=true) return directly, else deliver via tokenDeliveryService. (3) POST /logout: @UseGuards(JwtAuthGuard). Extract access+refresh tokens via tokenDeliveryService, call authService.logout, call tokenDeliveryService.clearAuthSession. (4) POST /refresh: @Public(), @Throttle(refresh). Extract refresh via tokenDeliveryService, call authService.refresh, deliver new tokens. (5) GET /me: @UseGuards(JwtAuthGuard). Call authService.getMe(user.sub). (6) POST /verify-email: @Public(), @Throttle(verifyEmail). (7) POST /resend-verification: @Public(), @Throttle(resendVerification). Extract req.ip and req.headers['user-agent'] for all service calls.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/controllers/auth.controller.ts. Implement @Controller() class AuthController. Inject AuthService and TokenDeliveryService. 7 endpoints: (1) POST /register: @Public(), @Throttle(AUTH_THROTTLE_CONFIGS.register), @UsePipes(ValidationPipe), body: RegisterDto. Call authService.register(dto, req), deliver via tokenDeliveryService.deliverAuthResponse(res, result, req). Use @Res({passthrough:true}). (2) POST /login: @Public(), @Throttle(login). Call authService.login(dto, req). If MfaChallengeResult (mfaRequired=true) return directly, else deliver via tokenDeliveryService. (3) POST /logout: @UseGuards(JwtAuthGuard). Extract access+refresh tokens via tokenDeliveryService, call authService.logout, call tokenDeliveryService.clearAuthSession. (4) POST /refresh: @Public(), @Throttle(refresh). Extract refresh via tokenDeliveryService, call authService.refresh, deliver new tokens. (5) GET /me: @UseGuards(JwtAuthGuard). Call authService.getMe(user.sub). (6) POST /verify-email: @Public(), @Throttle(verifyEmail). (7) POST /resend-verification: @Public(), @Throttle(resendVerification). Extract req.ip and req.headers['user-agent'] for all service calls.
 
 ---
 
@@ -885,7 +900,7 @@
 - **Descricao:** Write unit tests for AuthController with mocked services.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/controllers/auth.controller.spec.ts. Mock AuthService and TokenDeliveryService. Tests: (1) POST /register calls authService.register and tokenDeliveryService.deliverAuthResponse. (2) POST /login with normal result calls deliverAuthResponse. (3) POST /login with MFA result returns MfaChallengeResult directly. (4) POST /logout extracts tokens and calls logout+clearAuthSession. (5) POST /refresh extracts refresh token and delivers new tokens. (6) GET /me returns user data. (7) POST /verify-email calls verifyEmail. (8) POST /resend-verification calls resendVerificationEmail. (9) Verify guards are applied (JwtAuthGuard on protected routes, Public on public routes).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/controllers/auth.controller.spec.ts. Mock AuthService and TokenDeliveryService. Tests: (1) POST /register calls authService.register and tokenDeliveryService.deliverAuthResponse. (2) POST /login with normal result calls deliverAuthResponse. (3) POST /login with MFA result returns MfaChallengeResult directly. (4) POST /logout extracts tokens and calls logout+clearAuthSession. (5) POST /refresh extracts refresh token and delivers new tokens. (6) GET /me returns user data. (7) POST /verify-email calls verifyEmail. (8) POST /resend-verification calls resendVerificationEmail. (9) Verify guards are applied (JwtAuthGuard on protected routes, Public on public routes).
 
 ---
 
@@ -924,10 +939,10 @@
 - **Dependencias:** NEST-061, NEST-049, NEST-050, NEST-052, NEST-053
 - **Agente:** architect
 - **Estimativa:** ~15min
-- **Descricao:** Update src/index.ts with all Phase 2 exports.
+- **Descricao:** Update src/server/index.ts with all Phase 2 exports.
 
 **Prompt para o agente:**
-> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/index.ts adding Phase 2 exports. Add: export { BymaxAuthModule } from './bymax-one-nest-auth.module'. export { AuthService } from './services/auth.service'. export { JwtAuthGuard } from './guards/jwt-auth.guard'. export { RolesGuard } from './guards/roles.guard'. export { UserStatusGuard } from './guards/user-status.guard'. export { CurrentUser } from './decorators/current-user.decorator'. export { Roles, ROLES_KEY } from './decorators/roles.decorator'. export { Public, IS_PUBLIC_KEY } from './decorators/public.decorator'. export { RegisterDto } from './dto/register.dto'. export { LoginDto } from './dto/login.dto'. Note: AuthResult and MfaChallengeResult types were already exported in Phase 1 from interfaces/auth-result.interface. Verify no duplicate exports.
+> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/server/index.ts adding Phase 2 exports. Add: export { BymaxAuthModule } from './bymax-one-nest-auth.module'. export { AuthService } from './services/auth.service'. export { JwtAuthGuard } from './guards/jwt-auth.guard'. export { RolesGuard } from './guards/roles.guard'. export { UserStatusGuard } from './guards/user-status.guard'. export { CurrentUser } from './decorators/current-user.decorator'. export { Roles, ROLES_KEY } from './decorators/roles.decorator'. export { Public, IS_PUBLIC_KEY } from './decorators/public.decorator'. export { RegisterDto } from './dto/register.dto'. export { LoginDto } from './dto/login.dto'. Note: AuthResult and MfaChallengeResult types were already exported in Phase 1 from interfaces/auth-result.interface. Verify no duplicate exports.
 
 ---
 
@@ -957,13 +972,13 @@
 - **Descricao:** Create the three MFA DTO files with class-validator decorators for MFA setup verification, challenge, and disable flows.
 
 **Prompt para o agente:**
-> Create three DTO files in `src/dto/`:
+> Create three DTO files in `src/server/dto/`:
 > 
-> 1. `src/dto/mfa-verify.dto.ts` — class `MfaVerifyDto` with field: `@IsString() @IsNotEmpty() @Length(6, 6) code: string`.
+> 1. `src/server/dto/mfa-verify.dto.ts` — class `MfaVerifyDto` with field: `@IsString() @IsNotEmpty() @Length(6, 6) code: string`.
 > 
-> 2. `src/dto/mfa-challenge.dto.ts` — class `MfaChallengeDto` with fields: `@IsString() @IsNotEmpty() mfaTempToken: string` and `@IsString() @IsNotEmpty() @MaxLength(128) code: string`.
+> 2. `src/server/dto/mfa-challenge.dto.ts` — class `MfaChallengeDto` with fields: `@IsString() @IsNotEmpty() mfaTempToken: string` and `@IsString() @IsNotEmpty() @MaxLength(128) code: string`.
 > 
-> 3. `src/dto/mfa-disable.dto.ts` — class `MfaDisableDto` with field: `@IsString() @IsNotEmpty() @Length(6, 6) code: string`. Add a JSDoc comment noting that only TOTP codes are accepted for disabling MFA (recovery codes are not accepted by design decision). Mention that recovery without TOTP requires administrative intervention.
+> 3. `src/server/dto/mfa-disable.dto.ts` — class `MfaDisableDto` with field: `@IsString() @IsNotEmpty() @Length(6, 6) code: string`. Add a JSDoc comment noting that only TOTP codes are accepted for disabling MFA (recovery codes are not accepted by design decision). Mention that recovery without TOTP requires administrative intervention.
 > 
 > All DTOs must import decorators from `class-validator`. Follow the existing DTO patterns already in the project from Phase 2. Export all DTOs from their respective files.
 > 
@@ -984,13 +999,13 @@
 - **Descricao:** Create the SkipMfa decorator that sets metadata to bypass MfaRequiredGuard on specific endpoints.
 
 **Prompt para o agente:**
-> Create file `src/decorators/skip-mfa.decorator.ts`.
+> Create file `src/server/decorators/skip-mfa.decorator.ts`.
 > 
 > Implementation:
 > - Define a constant `SKIP_MFA_KEY = 'skipMfa'` and export it.
 > - Create and export a decorator `SkipMfa` using `SetMetadata(SKIP_MFA_KEY, true)` from `@nestjs/common`.
 > 
-> Follow the same pattern as other decorators in `src/decorators/` from Phase 2 (e.g., `@Public()` if it exists).
+> Follow the same pattern as other decorators in `src/server/decorators/` from Phase 2 (e.g., `@Public()` if it exists).
 > 
 > Acceptance criteria:
 > - `@SkipMfa()` can be applied to controller methods
@@ -1009,7 +1024,7 @@
 - **Descricao:** Create the MfaRequiredGuard that checks if a user with MFA enabled has completed MFA verification, respecting the SkipMfa decorator.
 
 **Prompt para o agente:**
-> Create file `src/guards/mfa-required.guard.ts`.
+> Create file `src/server/guards/mfa-required.guard.ts`.
 > 
 > Implementation:
 > - Implement `CanActivate` from `@nestjs/common`.
@@ -1020,7 +1035,7 @@
 >   3. If the user has MFA enabled (`user.mfaEnabled === true`) but `user.mfaVerified !== true`, throw an exception using the `MFA_REQUIRED` error code from the project's error constants.
 >   4. Otherwise, return true.
 > 
-> Import `SKIP_MFA_KEY` from `src/decorators/skip-mfa.decorator.ts`. Use the project's `AuthException` class for throwing errors, following existing guard patterns from Phase 2.
+> Import `SKIP_MFA_KEY` from `src/server/decorators/skip-mfa.decorator.ts`. Use the project's `AuthException` class for throwing errors, following existing guard patterns from Phase 2.
 > 
 > Acceptance criteria:
 > - Guard passes when MFA is not enabled on the user
@@ -1040,7 +1055,7 @@
 - **Descricao:** Implement the MfaService skeleton with encryptSecret, decryptSecret, hashRecoveryCodes, and verifyRecoveryCode private methods.
 
 **Prompt para o agente:**
-> Create file `src/services/mfa.service.ts` with an `@Injectable()` class `MfaService`.
+> Create file `src/server/services/mfa.service.ts` with an `@Injectable()` class `MfaService`.
 > 
 > Inject the following dependencies (follow existing DI patterns from Phase 2 services):
 > - `@Inject(BYMAX_AUTH_OPTIONS) options`
@@ -1058,7 +1073,7 @@
 > 
 > Implement these private/utility methods:
 > 
-> 1. `private encryptSecret(secret: string): string` — delegates to `aes-gcm.encrypt(secret, this.options.encryptionKey)` from `src/utils/aes-gcm.ts` (already exists from Phase 1).
+> 1. `private encryptSecret(secret: string): string` — delegates to `aes-gcm.encrypt(secret, this.options.encryptionKey)` from `src/server/utils/aes-gcm.ts` (already exists from Phase 1).
 > 
 > 2. `private decryptSecret(encrypted: string): string` — delegates to `aes-gcm.decrypt(encrypted, this.options.encryptionKey)`.
 > 
@@ -1092,13 +1107,13 @@
 - **Descricao:** Implement the MFA setup method that generates TOTP secret, QR code URI, and recovery codes with idempotency via Redis.
 
 **Prompt para o agente:**
-> In `src/services/mfa.service.ts`, implement the `async setup(userId: string): Promise<MfaSetupResult>` method:
+> In `src/server/services/mfa.service.ts`, implement the `async setup(userId: string): Promise<MfaSetupResult>` method:
 > 
 > 1. Fetch the user via `userRepo.findById(userId)`. Check if MFA is already enabled — if yes, throw `MFA_ALREADY_ENABLED`.
 > 
 > 2. **Idempotency check:** Look up Redis key `mfa_setup:{sha256(userId)}`. If it exists and has TTL > 0, parse and return the existing result (secret, qrCodeUri, recoveryCodes) instead of generating new ones.
 > 
-> 3. Gerar TOTP secret: usar `crypto.randomBytes(20)` de `node:crypto` e codificar em Base32 via utilitário `src/crypto/totp.ts`.
+> 3. Gerar TOTP secret: usar `crypto.randomBytes(20)` de `node:crypto` e codificar em Base32 via utilitário `src/server/crypto/totp.ts`.
 > 
 > 4. Encrypt the secret using `this.encryptSecret(secretBase32)`.
 > 
@@ -1106,7 +1121,7 @@
 > 
 > 6. Store in Redis temporarily: key `mfa_setup:{sha256(userId)}` with value `{ encryptedSecret, hashedCodes, plainCodes, secret: secret.base32 }`, TTL 10 minutes (600 seconds). Use `sha256(userId)` as the key per the spec's identifier hashing principle.
 > 
-> 7. Gerar QR code URI via `buildTotpUri(secretBase32, email, issuer)` de `src/crypto/totp.ts`, onde `issuer` vem de `this.options.mfa.issuer` ou `this.options.appName`.
+> 7. Gerar QR code URI via `buildTotpUri(secretBase32, email, issuer)` de `src/server/crypto/totp.ts`, onde `issuer` vem de `this.options.mfa.issuer` ou `this.options.appName`.
 > 
 > 8. Return `MfaSetupResult { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }`.
 > 
@@ -1130,13 +1145,13 @@
 - **Descricao:** Implement the method that validates a TOTP code against the pending setup and permanently enables MFA for the user.
 
 **Prompt para o agente:**
-> In `src/services/mfa.service.ts`, implement `async verifyAndEnable(userId: string, code: string): Promise<void>`:
+> In `src/server/services/mfa.service.ts`, implement `async verifyAndEnable(userId: string, code: string): Promise<void>`:
 > 
 > 1. Fetch the setup data from Redis key `mfa_setup:{sha256(userId)}`. If not found, throw `MFA_SETUP_REQUIRED`.
 > 
 > 2. Decrypt the secret using `this.decryptSecret(encryptedSecret)`.
 > 
-> 3. Validar o código TOTP usando `verifyTotp(secret, code, window)` de `src/crypto/totp.ts` com window = `this.options.mfa.totpWindow` (ou default da config). Se inválido, throw `MFA_INVALID_CODE`.
+> 3. Validar o código TOTP usando `verifyTotp(secret, code, window)` de `src/server/crypto/totp.ts` com window = `this.options.mfa.totpWindow` (ou default da config). Se inválido, throw `MFA_INVALID_CODE`.
 > 
 > 4. Persist MFA to the database: `userRepo.updateMfa({ mfaEnabled: true, mfaSecret: encryptedSecret, mfaRecoveryCodes: hashedCodes })`.
 > 
@@ -1167,7 +1182,7 @@
 - **Descricao:** Implement the MFA challenge method that validates TOTP or recovery codes during login, handling both dashboard and platform contexts with brute-force protection.
 
 **Prompt para o agente:**
-> In `src/services/mfa.service.ts`, implement `async challenge(mfaTempToken: string, code: string, ip: string, userAgent: string): Promise<AuthResult | PlatformAuthResult>`:
+> In `src/server/services/mfa.service.ts`, implement `async challenge(mfaTempToken: string, code: string, ip: string, userAgent: string): Promise<AuthResult | PlatformAuthResult>`:
 > 
 > 1. Verify `mfaTempToken` via `tokenManager.verifyMfaTempToken(mfaTempToken)` — returns `{ userId, context }` where context is `'dashboard'` or `'platform'`.
 > 
@@ -1182,7 +1197,7 @@
 > 5. Decrypt `user.mfaSecret`.
 > 
 > 6. Determine if `code` is a TOTP code (6 digits) or recovery code (other format):
->    - **If TOTP:** Validar com `verifyTotp()` de `src/crypto/totp.ts`. Check anti-replay: se Redis key `tu:{userId}:{code}` existe, rejeitar como já usado. Se válido, set `tu:{userId}:{code}` com TTL 90 seconds.
+>    - **If TOTP:** Validar com `verifyTotp()` de `src/server/crypto/totp.ts`. Check anti-replay: se Redis key `tu:{userId}:{code}` existe, rejeitar como já usado. Se válido, set `tu:{userId}:{code}` com TTL 90 seconds.
 >    - **If recovery code:** Call `this.verifyRecoveryCode(code, user.mfaRecoveryCodes)`. If found (index >= 0), remove it from the array via `userRepo.updateMfa()` with the code at that index removed.
 > 
 > 7. If invalid: record brute-force failure. If failures >= 5, also revoke the `mfaTempToken` (force re-authentication). Throw `MFA_INVALID_CODE`.
@@ -1197,7 +1212,7 @@
 > 
 > 9. Return the result matching the context.
 > 
-> Import `AuthResult` and `PlatformAuthResult` from `src/interfaces/auth-result.interface.ts`.
+> Import `AuthResult` and `PlatformAuthResult` from `src/server/interfaces/auth-result.interface.ts`.
 > 
 > Acceptance criteria:
 > - Valid TOTP code returns AuthResult with mfaVerified: true
@@ -1220,13 +1235,13 @@
 - **Descricao:** Implement MFA disable method requiring a valid TOTP code with brute-force protection.
 
 **Prompt para o agente:**
-> In `src/services/mfa.service.ts`, implement `async disable(userId: string, code: string): Promise<void>`:
+> In `src/server/services/mfa.service.ts`, implement `async disable(userId: string, code: string): Promise<void>`:
 > 
 > 1. Fetch user via `userRepo.findById(userId)`.
 > 2. If MFA is not enabled, throw `MFA_NOT_ENABLED`.
 > 3. Check brute-force lockout: `bruteForce.isLockedOut(sha256(userId))` — uses the same identifier as `challenge`.
 > 4. Decrypt `user.mfaSecret`.
-> 5. Validar o código TOTP usando `verifyTotp()` de `src/crypto/totp.ts`. Apenas códigos TOTP são aceitos (recovery codes não).
+> 5. Validar o código TOTP usando `verifyTotp()` de `src/server/crypto/totp.ts`. Apenas códigos TOTP são aceitos (recovery codes não).
 > 6. If invalid: record failure via `bruteForce.recordFailure(sha256(userId))`, throw `MFA_INVALID_CODE`.
 > 7. If valid: reset brute-force counter.
 > 8. Disable MFA: `userRepo.updateMfa({ mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: null })`.
@@ -1252,7 +1267,7 @@
 - **Descricao:** Create the MFA controller with four endpoints for setup, verify, challenge, and disable, applying appropriate guards and throttle decorators.
 
 **Prompt para o agente:**
-> Create file `src/controllers/mfa.controller.ts`.
+> Create file `src/server/controllers/mfa.controller.ts`.
 > 
 > Implementation:
 > - `@Controller()` with prefix `{routePrefix}/mfa` (resolve routePrefix from injected options).
@@ -1315,7 +1330,7 @@
 - **Descricao:** Update the main index.ts barrel export to include all Phase 3 public APIs.
 
 **Prompt para o agente:**
-> Update `src/index.ts` (the main barrel export file) to add the following exports:
+> Update `src/server/index.ts` (the main barrel export file) to add the following exports:
 > 
 > - `export { MfaRequiredGuard } from './guards/mfa-required.guard'`
 > - `export { SkipMfa } from './decorators/skip-mfa.decorator'`
@@ -1343,7 +1358,7 @@
 - **Descricao:** Write comprehensive unit tests for MfaService covering all flows including setup idempotency, challenge with both contexts, and edge cases.
 
 **Prompt para o agente:**
-> Create test file `src/services/__tests__/mfa.service.spec.ts` (or follow the project's existing test file convention).
+> Create test file `src/server/services/__tests__/mfa.service.spec.ts` (or follow the project's existing test file convention).
 > 
 > Write unit tests for `MfaService` covering:
 > 
@@ -1396,7 +1411,7 @@
 - **Descricao:** Write unit tests for MfaController verifying correct routing, guard application, and delegation to MfaService.
 
 **Prompt para o agente:**
-> Create test file `src/controllers/__tests__/mfa.controller.spec.ts`.
+> Create test file `src/server/controllers/__tests__/mfa.controller.spec.ts`.
 > 
 > Write unit tests for `MfaController` covering:
 > 
@@ -1425,7 +1440,7 @@
 - **Descricao:** Write unit tests for MfaRequiredGuard verifying it correctly enforces MFA verification and respects the SkipMfa decorator.
 
 **Prompt para o agente:**
-> Create test file `src/guards/__tests__/mfa-required.guard.spec.ts`.
+> Create test file `src/server/guards/__tests__/mfa-required.guard.spec.ts`.
 > 
 > Test cases:
 > 1. User without MFA enabled -> guard passes (returns true)
@@ -1486,13 +1501,13 @@
 - **Descricao:** Create all six DTOs for password reset and email verification flows with proper validation decorators.
 
 **Prompt para o agente:**
-> Create the following 6 DTO files in `src/dto/`:
+> Create the following 6 DTO files in `src/server/dto/`:
 > 
-> 1. `src/dto/forgot-password.dto.ts` — class `ForgotPasswordDto`:
+> 1. `src/server/dto/forgot-password.dto.ts` — class `ForgotPasswordDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 > 
-> 2. `src/dto/reset-password.dto.ts` — class `ResetPasswordDto`:
+> 2. `src/server/dto/reset-password.dto.ts` — class `ResetPasswordDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @MinLength(8) @MaxLength(128) newPassword: string`
 >    - `@IsOptional() @IsString() @IsNotEmpty() token?: string`
@@ -1501,21 +1516,21 @@
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 >    - Add JSDoc comment: `@IsNotEmpty()` on optional fields ensures that if present, they are not empty strings (which would produce a valid but incorrect `sha256("")`).
 > 
-> 3. `src/dto/verify-otp.dto.ts` — class `VerifyOtpDto`:
+> 3. `src/server/dto/verify-otp.dto.ts` — class `VerifyOtpDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @IsNotEmpty() @Length(6, 8) otp: string` (min 6 = default, max 8 = max otpLength)
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 > 
-> 4. `src/dto/resend-otp.dto.ts` — class `ResendOtpDto`:
+> 4. `src/server/dto/resend-otp.dto.ts` — class `ResendOtpDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 > 
-> 5. `src/dto/verify-email.dto.ts` — class `VerifyEmailDto`:
+> 5. `src/server/dto/verify-email.dto.ts` — class `VerifyEmailDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @IsNotEmpty() otp: string`
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 > 
-> 6. `src/dto/resend-verification.dto.ts` — class `ResendVerificationDto`:
+> 6. `src/server/dto/resend-verification.dto.ts` — class `ResendVerificationDto`:
 >    - `@IsEmail() email: string`
 >    - `@IsString() @IsNotEmpty() tenantId: string`
 > 
@@ -1538,7 +1553,7 @@
 - **Descricao:** Create the SessionService with session creation, FIFO session limit enforcement, and user-agent parsing.
 
 **Prompt para o agente:**
-> Create file `src/services/session.service.ts` with an `@Injectable()` class `SessionService`.
+> Create file `src/server/services/session.service.ts` with an `@Injectable()` class `SessionService`.
 > 
 > Inject: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `AuthRedisService`, `@Inject(BYMAX_AUTH_EMAIL_PROVIDER) emailProvider`, `@Inject(BYMAX_AUTH_HOOKS) hooks`.
 > 
@@ -1556,7 +1571,7 @@
 - **Descricao:** Implement session listing with current-session marking and single session revocation with ownership validation.
 
 **Prompt para o agente:**
-> In `src/services/session.service.ts`, implement:
+> In `src/server/services/session.service.ts`, implement:
 > 
 > 1. `async listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]>`:
 >    - Get all hashes from SET: `SMEMBERS sess:{userId}`.
@@ -1595,7 +1610,7 @@
 - **Descricao:** Implement session rotation during refresh token rotation using an atomic Lua script that handles both token and session updates.
 
 **Prompt para o agente:**
-> In `src/services/session.service.ts`, implement:
+> In `src/server/services/session.service.ts`, implement:
 > 
 > `async rotateSession(userId: string, oldRefreshToken: string, newRefreshToken: string): Promise<void>`:
 >    - Compute `oldHash = sha256(oldRefreshToken)` and `newHash = sha256(newRefreshToken)`.
@@ -1630,7 +1645,7 @@
 - **Descricao:** Create the session controller with endpoints for listing, revoking single, and revoking all sessions.
 
 **Prompt para o agente:**
-> Create file `src/controllers/session.controller.ts`.
+> Create file `src/server/controllers/session.controller.ts`.
 > 
 > Implementation:
 > - `@Controller()` with prefix `{routePrefix}/sessions`.
@@ -1665,7 +1680,7 @@
 - **Descricao:** Create PasswordResetService and implement the initiate reset method supporting both token and OTP flows with timing normalization.
 
 **Prompt para o agente:**
-> Create file `src/services/password-reset.service.ts` with an `@Injectable()` class `PasswordResetService`.
+> Create file `src/server/services/password-reset.service.ts` with an `@Injectable()` class `PasswordResetService`.
 > 
 > Inject: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `OtpService`, `PasswordService`, `AuthRedisService`, `@Optional() SessionService`.
 > 
@@ -1704,7 +1719,7 @@
 - **Descricao:** Implement the resetPassword method supporting three validation modes (token, OTP, verifiedToken) with session invalidation and cross-tenant protection.
 
 **Prompt para o agente:**
-> In `src/services/password-reset.service.ts`, implement `async resetPassword(dto: ResetPasswordDto): Promise<void>`:
+> In `src/server/services/password-reset.service.ts`, implement `async resetPassword(dto: ResetPasswordDto): Promise<void>`:
 > 
 > 1. Validate exactly one of `token`, `otp`, or `verifiedToken` is present. If none or multiple, throw a validation error.
 > 
@@ -1752,7 +1767,7 @@
 - **Descricao:** Implement the OTP verification (which produces a verifiedToken) and OTP resend with atomic cooldown.
 
 **Prompt para o agente:**
-> In `src/services/password-reset.service.ts`, implement:
+> In `src/server/services/password-reset.service.ts`, implement:
 > 
 > 1. `async verifyOtp(email: string, otp: string, tenantId: string): Promise<{ verifiedToken: string }>`:
 >    - Compute identifier: `sha256(tenantId + ':' + email)`.
@@ -1788,7 +1803,7 @@
 - **Descricao:** Create the password reset controller with four public endpoints for forgot-password, reset, OTP verification, and OTP resend.
 
 **Prompt para o agente:**
-> Create file `src/controllers/password-reset.controller.ts`.
+> Create file `src/server/controllers/password-reset.controller.ts`.
 > 
 > Implementation:
 > - `@Controller()` with prefix `{routePrefix}/password`.
@@ -1834,7 +1849,7 @@
 > 4. Register `SessionController` ONLY when `options.sessions?.enabled === true` AND `options.controllers?.sessions !== false`.
 > 5. Register `PasswordResetController` ONLY when `options.controllers?.passwordReset !== false`.
 > 
-> Update barrel exports in `src/index.ts`:
+> Update barrel exports in `src/server/index.ts`:
 > - `export { ForgotPasswordDto, ResetPasswordDto, VerifyOtpDto, ResendOtpDto, VerifyEmailDto, ResendVerificationDto }`
 > - `export type { SessionInfo } from './services/session.service'`
 > 
@@ -1857,7 +1872,7 @@
 - **Descricao:** Integrate SessionService into AuthService's login, logout, and refresh flows, and into MfaService's challenge flow.
 
 **Prompt para o agente:**
-> Modify `src/services/auth.service.ts` and potentially `src/services/token-manager.service.ts`:
+> Modify `src/server/services/auth.service.ts` and potentially `src/server/services/token-manager.service.ts`:
 > 
 > 1. Add `@Optional() SessionService` injection to `AuthService` (if not already present).
 > 
@@ -1867,7 +1882,7 @@
 > 
 > 4. In `refresh()`: Call `this.sessionService?.rotateSession(userId, oldRefreshToken, newRefreshToken)` to keep `sess:` and `sd:` synchronized during token rotation. This should use the atomic Lua script from NEST-073.
 > 
-> 5. In `MfaService.challenge()` (`src/services/mfa.service.ts`): After issuing tokens with `mfaVerified: true` and `context === 'dashboard'`, call `sessionService.createSession()` if sessions are enabled.
+> 5. In `MfaService.challenge()` (`src/server/services/mfa.service.ts`): After issuing tokens with `mfaVerified: true` and `context === 'dashboard'`, call `sessionService.createSession()` if sessions are enabled.
 > 
 > Add comments at integration points: `// Phase 4: SessionService integration`.
 > 
@@ -1892,7 +1907,7 @@
 - **Descricao:** Write comprehensive unit tests for SessionService covering creation, listing, revocation, FIFO eviction, and rotation.
 
 **Prompt para o agente:**
-> Create test file `src/services/__tests__/session.service.spec.ts`.
+> Create test file `src/server/services/__tests__/session.service.spec.ts`.
 > 
 > Write unit tests covering:
 > 
@@ -1927,7 +1942,7 @@
 - **Descricao:** Write unit tests for PasswordResetService covering token and OTP flows, cross-tenant protection, timing normalization, and cooldown.
 
 **Prompt para o agente:**
-> Create test file `src/services/__tests__/password-reset.service.spec.ts`.
+> Create test file `src/server/services/__tests__/password-reset.service.spec.ts`.
 > 
 > Write unit tests covering:
 > 
@@ -1965,7 +1980,7 @@
 - **Descricao:** Write unit tests for SessionController verifying correct endpoint behavior and delegation to SessionService.
 
 **Prompt para o agente:**
-> Create test file `src/controllers/__tests__/session.controller.spec.ts`.
+> Create test file `src/server/controllers/__tests__/session.controller.spec.ts`.
 > 
 > Write unit tests covering:
 > 
@@ -1994,7 +2009,7 @@
 - **Descricao:** Write unit tests for PasswordResetController verifying all four endpoints delegate correctly.
 
 **Prompt para o agente:**
-> Create test file `src/controllers/__tests__/password-reset.controller.spec.ts`.
+> Create test file `src/server/controllers/__tests__/password-reset.controller.spec.ts`.
 > 
 > Write unit tests covering:
 > 
@@ -2024,7 +2039,7 @@
 - **Descricao:** Update existing AuthService tests to cover the new SessionService integration points in login, logout, and refresh flows.
 
 **Prompt para o agente:**
-> Update the existing AuthService test file (likely `src/services/__tests__/auth.service.spec.ts` or similar) to add test cases for Phase 4 SessionService integration:
+> Update the existing AuthService test file (likely `src/server/services/__tests__/auth.service.spec.ts` or similar) to add test cases for Phase 4 SessionService integration:
 > 
 > 1. **login() with sessions enabled:** Verify `sessionService.createSession()` is called after token issuance. Verify `sessionHash` is included in the returned `AuthResult`.
 > 2. **login() with sessions disabled:** Verify `sessionService` is not called. Verify `AuthResult` does not include `sessionHash`.
@@ -2083,21 +2098,49 @@
 - **Fase:** 5
 - **Status:** TODO
 - **Prioridade:** Media
-- **Dependencias:** NEST-026, NEST-010
+- **Dependencias:** NEST-042, NEST-034, NEST-027
 - **Agente:** code-reviewer
 - **Estimativa:** ~30min
 - **Descricao:** Implementar JwtPlatformGuard nativo com `CanActivate`, sem Passport, usando `@nestjs/jwt` JwtService. Mesmo padrão do JwtAuthGuard da Fase 2 mas isolando por claim type: 'platform'.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/guards/jwt-platform.guard.ts`. Implementar `JwtPlatformGuard` que `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`:
+> Criar o arquivo `src/server/guards/jwt-platform.guard.ts`. Implementar `JwtPlatformGuard` que `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`:
 > - Extrair token do header Authorization (Bearer) via `tokenDeliveryService.extractAccessToken(req)` e, se configurado para modo cookie/both, também do cookie de access token.
 > - Verificar JWT com `jwtService.verify(token, { algorithms: ['HS256'] })`. OBRIGATORIAMENTE pinar `algorithms: ['HS256']` — idêntico ao `JwtAuthGuard` da Fase 2.
 > - Verificar que `payload.type === 'platform'`. Se não, lançar `UnauthorizedException` com código `PLATFORM_AUTH_REQUIRED`.
 > - Verificar que `payload.jti` existe. Se não, lançar `UnauthorizedException` com código `TOKEN_INVALID`.
 > - Verificar blacklist via `authRedis.isBlacklisted(jti)`. Se blacklisted, lançar `UnauthorizedException` com `TOKEN_REVOKED`.
 > - Popular `request.user` com payload validado. Retornar true.
-> Seguir o mesmo padrão estrutural de `src/guards/jwt-auth.guard.ts` da Fase 2.
+> Seguir o mesmo padrão estrutural de `src/server/guards/jwt-auth.guard.ts` da Fase 2.
 > Critérios de aceitação: compila sem erros, pina HS256, valida type === 'platform', verifica jti e blacklist, tokens com type 'dashboard' são rejeitados.
+
+---
+
+### ⬜ NEST-098: JwtPlatformGuard unit tests
+- **Fase:** 5
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-097
+- **Agente:** security-reviewer
+- **Estimativa:** ~25min
+- **Descricao:** Testes unitarios do JwtPlatformGuard nativo, verificando validacao de tokens platform, rejeicao de tokens dashboard e algorithm pinning HS256.
+
+**Prompt para o agente:**
+> Escrever testes unitarios para `src/server/guards/jwt-platform.guard.ts`:
+> 1. Token com `type: 'platform'` e assinatura valida → aceito, `request.user` populado.
+> 2. Token com `type: 'dashboard'` → rejeitado com `PLATFORM_AUTH_REQUIRED`.
+> 3. Token com `type: 'mfa_challenge'` → rejeitado com `TOKEN_INVALID`.
+> 4. Token sem `jti` → rejeitado com `TOKEN_INVALID`.
+> 5. Token com `jti` na blacklist Redis → rejeitado com `TOKEN_REVOKED`.
+> 6. Token expirado → rejeitado com `TOKEN_INVALID`.
+> 7. Verificar que `algorithms: ['HS256']` esta fixado (sem `alg: none`).
+> 8. Endpoint com `@Public()` → skip validation, retorna true.
+> 9. Mock de `JwtService`, `AuthRedisService`, `TokenDeliveryService`.
+>
+> Criterios de aceitacao:
+> - Todos os 9 cenarios testados e passando
+> - Cobertura >= 90% no arquivo do guard
+> - Nenhum uso de Passport nos testes
 
 ---
 
@@ -2111,12 +2154,12 @@
 - **Descricao:** Criar guard de roles que usa platformHierarchy para verificar permissões de admin da plataforma.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/guards/platform-roles.guard.ts`. Implementar `PlatformRolesGuard`:
+> Criar o arquivo `src/server/guards/platform-roles.guard.ts`. Implementar `PlatformRolesGuard`:
 > - Usa `Reflector` para ler os roles requeridos setados por `@PlatformRoles()`.
 > - Extrai o role do `request.user` (do JWT payload).
 > - Verifica se o role do usuário é >= ao role requerido usando `platformHierarchy` das opções do módulo (análogo ao `RolesGuard` da Fase 2 que usa `roles.hierarchy`).
 > - Se a hierarquia não está configurada (`platformAdmin.roles.hierarchy`), lança `ForbiddenException` com `INSUFFICIENT_ROLE`.
-> - Usar a mesma lógica utilitária `hasRole()` de `src/utils/roles.util.ts`.
+> - Usar a mesma lógica utilitária `hasRole()` de `src/server/utils/roles.util.ts`.
 > Critérios de aceitação: admin com role suficiente passa, role insuficiente recebe 403 INSUFFICIENT_ROLE.
 
 ---
@@ -2131,11 +2174,11 @@
 - **Descricao:** Criar decorator @PlatformRoles() para endpoints de plataforma.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/decorators/platform-roles.decorator.ts`. Implementar o decorator `@PlatformRoles(...roles: string[])`:
+> Criar o arquivo `src/server/decorators/platform-roles.decorator.ts`. Implementar o decorator `@PlatformRoles(...roles: string[])`:
 > - Usa `SetMetadata` do `@nestjs/common` com chave `'platformRoles'` (ou constante exportada `PLATFORM_ROLES_KEY`).
 > - Aceita um spread de strings representando os roles requeridos.
 > - Exportar `PlatformRoles` e `PLATFORM_ROLES_KEY`.
-> Seguir o padrão de `src/decorators/roles.decorator.ts` da Fase 2.
+> Seguir o padrão de `src/server/decorators/roles.decorator.ts` da Fase 2.
 > Critérios de aceitação: decorator compila, seta metadata corretamente, constante PLATFORM_ROLES_KEY exportada.
 
 ---
@@ -2150,7 +2193,7 @@
 - **Descricao:** Criar DTO de login de plataforma com validações email e password.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/dto/platform-login.dto.ts`. Implementar `PlatformLoginDto` com:
+> Criar o arquivo `src/server/dto/platform-login.dto.ts`. Implementar `PlatformLoginDto` com:
 > - `@IsEmail() email: string`
 > - `@IsString() @IsNotEmpty() @MaxLength(128) password: string`
 > Usar decorators de `class-validator`. O `@MaxLength(128)` é limite prático de input para prevenir DoS.
@@ -2169,7 +2212,7 @@
 - **Descricao:** Implementar o método login() do PlatformAuthService com brute-force, MFA redirect e emissão de tokens.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/services/platform-auth.service.ts`. Implementar `PlatformAuthService` (injectable) com o método `login(dto: PlatformLoginDto, ip: string, userAgent: string)`:
+> Criar o arquivo `src/server/services/platform-auth.service.ts`. Implementar `PlatformAuthService` (injectable) com o método `login(dto: PlatformLoginDto, ip: string, userAgent: string)`:
 > 1. Brute-force check: usar `BruteForceService` com identifier `sha256('platform:' + email)` — o prefixo 'platform:' evita colisão com dashboard identifiers `sha256(tenantId + ':' + email)`.
 > 2. Buscar admin via `platformUserRepo.findByEmail(email)`. Se não encontrado, incrementar brute-force e lançar `INVALID_CREDENTIALS` (sem revelar que email não existe).
 > 3. Comparar senha via `CryptoService.comparePassword(dto.password, admin.passwordHash)`.
@@ -2195,7 +2238,7 @@
 - **Descricao:** Implementar logout de admin da plataforma com blacklist e limpeza Redis.
 
 **Prompt para o agente:**
-> No arquivo `src/services/platform-auth.service.ts`, adicionar o método `logout(userId: string, jti: string, refreshToken: string, sessionHash: string)`:
+> No arquivo `src/server/services/platform-auth.service.ts`, adicionar o método `logout(userId: string, jti: string, refreshToken: string, sessionHash: string)`:
 > 1. Blacklist do access JWT: SET `rv:{jti}` com TTL = accessExpiresIn.
 > 2. Deletar refresh token: DEL `prt:{sha256(refreshToken)}`.
 > 3. Remover sessão do SET: SREM `psess:{userId}` o `sessionHash`.
@@ -2214,7 +2257,7 @@
 - **Descricao:** Implementar refresh de tokens de plataforma com rotação e atualização de sessão.
 
 **Prompt para o agente:**
-> No arquivo `src/services/platform-auth.service.ts`, adicionar o método `refresh(refreshToken: string, ip: string, userAgent: string)`:
+> No arquivo `src/server/services/platform-auth.service.ts`, adicionar o método `refresh(refreshToken: string, ip: string, userAgent: string)`:
 > 1. Usar `tokenManager.reissuePlatformTokens(refreshToken)` que faz rotação com prefixo `prt:` e ponteiro `prp:`.
 > 2. Atualizar SET `psess:{userId}` e detalhes `psd:{sessionHash}` durante rotação.
 > 3. OBRIGATORIAMENTE: Renovar TTL do SET `psess:{userId}` com `EXPIRE` a cada rotação (previne expiração do SET enquanto tokens individuais são renovados).
@@ -2233,7 +2276,7 @@
 - **Descricao:** Implementar getMe para retornar dados do admin autenticado.
 
 **Prompt para o agente:**
-> No arquivo `src/services/platform-auth.service.ts`, adicionar o método `getMe(userId: string)`:
+> No arquivo `src/server/services/platform-auth.service.ts`, adicionar o método `getMe(userId: string)`:
 > 1. Buscar admin via `platformUserRepo.findById(userId)`.
 > 2. Se não encontrado, lançar `NotFoundException`.
 > 3. Retornar dados do admin (sem passwordHash).
@@ -2251,7 +2294,7 @@
 - **Descricao:** Implementar revogação de todas as sessões de plataforma de um admin usando o SET psess.
 
 **Prompt para o agente:**
-> No arquivo `src/services/platform-auth.service.ts`, adicionar o método `revokeAllPlatformSessions(userId: string)`:
+> No arquivo `src/server/services/platform-auth.service.ts`, adicionar o método `revokeAllPlatformSessions(userId: string)`:
 > 1. Usar `SMEMBERS psess:{userId}` para enumerar todos os session hashes ativos.
 > 2. Para cada hash: DEL `prt:{hash}`, DEL `psd:{hash}`.
 > 3. DEL o SET `psess:{userId}`.
@@ -2271,7 +2314,7 @@
 - **Descricao:** Criar controller com os 6 endpoints de autenticação de plataforma.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/controllers/platform-auth.controller.ts`. Implementar `PlatformAuthController` com os 6 endpoints:
+> Criar o arquivo `src/server/controllers/platform-auth.controller.ts`. Implementar `PlatformAuthController` com os 6 endpoints:
 > 1. `POST /login` — público, `@Throttle(AUTH_THROTTLE_CONFIGS.platformLogin)`. Chama `platformAuthService.login()`. Usa `TokenDeliveryService` para entregar tokens.
 > 2. `POST /mfa/challenge` — público (requer mfaToken no body), `@Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)`. Reutiliza `MfaService.challenge()` — o `context: 'platform'` no temp token direciona o fluxo para emitir tokens de plataforma. Usa `TokenDeliveryService`.
 > 3. `GET /me` — protegido com `@UseGuards(JwtPlatformGuard)`. Chama `platformAuthService.getMe()`.
@@ -2294,7 +2337,7 @@
 - **Descricao:** Escrever testes unitários completos para PlatformAuthService e PlatformAuthController.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/services/__tests__/platform-auth.service.spec.ts` e `src/controllers/__tests__/platform-auth.controller.spec.ts`. Testes requeridos:
+> Criar o arquivo `src/server/services/__tests__/platform-auth.service.spec.ts` e `src/server/controllers/__tests__/platform-auth.controller.spec.ts`. Testes requeridos:
 > Para PlatformAuthService:
 > 1. `login()` com credenciais válidas sem MFA retorna tokens com type 'platform'.
 > 2. `login()` com MFA habilitado retorna `{ mfaRequired: true, mfaTempToken }`.
@@ -2324,7 +2367,7 @@
 - **Descricao:** Criar módulo dinâmico OAuth que registra providers com base na configuração.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/oauth/oauth.module.ts`. Implementar `OAuthModule` como módulo dinâmico:
+> Criar o arquivo `src/server/oauth/oauth.module.ts`. Implementar `OAuthModule` como módulo dinâmico:
 > - Método estático `register(options)` ou `forRoot(options)` que recebe a configuração OAuth.
 > - Registra providers OAuth com base nos providers configurados (ex: se google está configurado, registra GoogleOAuthPlugin, GoogleStrategy, GoogleAuthGuard).
 > - Importado condicionalmente pelo `BymaxAuthModule` — só registrado se `oauth` está presente na configuração.
@@ -2344,7 +2387,7 @@
 - **Descricao:** Implementar início do fluxo OAuth com geração de state CSRF e redirect.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/oauth/oauth.service.ts`. Implementar `OAuthService` com método `initiateOAuth(provider: string, tenantId: string)`:
+> Criar o arquivo `src/server/oauth/oauth.service.ts`. Implementar `OAuthService` com método `initiateOAuth(provider: string, tenantId: string)`:
 > 1. Gerar state aleatório com `crypto.randomBytes(32).toString('hex')` (64 caracteres hex).
 > 2. Armazenar no Redis: `os:{sha256(state)}` com valor `{ tenantId }` e TTL 10 min (600s).
 > 3. NOTA: O pacote NÃO valida que tenantId existe (database-agnostic). O hook `onOAuthLogin` é o ponto de validação. Documentar com JSDoc que sem `onOAuthLogin`, tenant spoofing é possível.
@@ -2365,7 +2408,7 @@
 - **Descricao:** Implementar processamento de callback OAuth com validação de state, criação/vinculação de usuário e emissão de tokens.
 
 **Prompt para o agente:**
-> No arquivo `src/oauth/oauth.service.ts`, adicionar o método `handleCallback(provider: string, code: string, state: string, ip: string, userAgent: string)`. O método usa o plugin do provider para trocar o code e buscar o profile:
+> No arquivo `src/server/oauth/oauth.service.ts`, adicionar o método `handleCallback(provider: string, code: string, state: string, ip: string, userAgent: string)`. O método usa o plugin do provider para trocar o code e buscar o profile:
 > 1. Validar state no Redis: GET `os:{sha256(state)}`. Se não encontrado, lançar `OAUTH_FAILED`.
 > 2. Extrair `tenantId` do state armazenado.
 > 3. Consumir state: DEL `os:{sha256(state)}` (single-use).
@@ -2392,7 +2435,7 @@
 - **Descricao:** Implementar plugin Google OAuth com strategy e guard.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/oauth/google/google-oauth.plugin.ts`. Implementar `GoogleOAuthPlugin` que implementa a interface `OAuthProviderPlugin`. Deve expor `name: 'google'`. Configuração via `clientId`, `clientSecret`, `callbackUrl`, `scope` (default: `['email', 'profile']`). Implementar métodos nativos sem Passport:
+> Criar o arquivo `src/server/oauth/google/google-oauth.plugin.ts`. Implementar `GoogleOAuthPlugin` que implementa a interface `OAuthProviderPlugin`. Deve expor `name: 'google'`. Configuração via `clientId`, `clientSecret`, `callbackUrl`, `scope` (default: `['email', 'profile']`). Implementar métodos nativos sem Passport:
 > - `authorizeUrl(state: string): string` — constrói URL de autorização Google OAuth2 com query params (client_id, redirect_uri, scope, state, response_type=code).
 > - `exchangeCode(code: string): Promise<{ access_token: string }>` — troca authorization code por access token via `fetch` POST para `https://oauth2.googleapis.com/token`.
 > - `fetchProfile(accessToken: string): Promise<OAuthProfile>` — busca profile via `fetch` GET para `https://www.googleapis.com/oauth2/v2/userinfo`, extrai `email`, `name`, `picture`, `providerId`.
@@ -2411,7 +2454,7 @@
 - **Descricao:** Escrever testes para OAuthService cobrindo fluxo completo, state CSRF e tenantId resolution.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/oauth/__tests__/oauth.service.spec.ts`. Testes requeridos:
+> Criar o arquivo `src/server/oauth/__tests__/oauth.service.spec.ts`. Testes requeridos:
 > 1. `initiateOAuth()` gera state de 64 chars hex e armazena no Redis com TTL 600s.
 > 2. `handleCallback()` com action 'create': cria usuário e emite tokens.
 > 3. `handleCallback()` com action 'link': vincula OAuth a usuário existente e emite tokens.
@@ -2435,7 +2478,7 @@
 - **Descricao:** Criar DTO para criação de convites com email, role e tenantName opcional.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/dto/create-invitation.dto.ts`. Implementar `CreateInvitationDto`:
+> Criar o arquivo `src/server/dto/create-invitation.dto.ts`. Implementar `CreateInvitationDto`:
 > - `@IsEmail() email: string`
 > - `@IsString() @IsNotEmpty() role: string`
 > - `@IsOptional() @IsString() tenantName?: string`
@@ -2454,7 +2497,7 @@
 - **Descricao:** Criar DTO para aceitação de convites com token, name e password.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/dto/accept-invitation.dto.ts`. Implementar `AcceptInvitationDto`:
+> Criar o arquivo `src/server/dto/accept-invitation.dto.ts`. Implementar `AcceptInvitationDto`:
 > - `@IsString() @IsNotEmpty() token: string`
 > - `@IsString() @MinLength(2) name: string`
 > - `@IsString() @MinLength(8) @MaxLength(128) password: string`
@@ -2473,9 +2516,9 @@
 - **Descricao:** Implementar criação de convites com validação de role na hierarquia e armazenamento seguro no Redis.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/services/invitation.service.ts`. Implementar `InvitationService` com método `invite(inviterId: string, email: string, role: string, tenantId: string, tenantName?: string)`:
+> Criar o arquivo `src/server/services/invitation.service.ts`. Implementar `InvitationService` com método `invite(inviterId: string, email: string, role: string, tenantId: string, tenantName?: string)`:
 > 1. Validar que o `role` existe na `roles.hierarchy` configurada. Se não existe, lançar `INSUFFICIENT_ROLE`.
-> 2. Validação de autorização: buscar inviter via `userRepo.findById(inviterId)`, verificar que role do inviter >= role solicitado usando `hasRole()` de `src/utils/roles.util.ts`. Se não autorizado, lançar `INSUFFICIENT_ROLE`.
+> 2. Validação de autorização: buscar inviter via `userRepo.findById(inviterId)`, verificar que role do inviter >= role solicitado usando `hasRole()` de `src/server/utils/roles.util.ts`. Se não autorizado, lançar `INSUFFICIENT_ROLE`.
 > 3. Gerar token seguro via `generateSecureToken(32)`.
 > 4. Armazenar: `inv:{sha256(token)}` com valor `{ email, role, tenantId, inviterId }` e TTL = `tokenTtlSeconds` (da config invitations).
 > 5. Buscar nome do inviter via `userRepo.findById(inviterId)` para incluir no email.
@@ -2497,7 +2540,7 @@
 - **Descricao:** Implementar aceitação de convites com criação de usuário e emissão de tokens.
 
 **Prompt para o agente:**
-> No arquivo `src/services/invitation.service.ts`, adicionar o método `acceptInvitation(dto: AcceptInvitationDto, ip: string, userAgent: string)`:
+> No arquivo `src/server/services/invitation.service.ts`, adicionar o método `acceptInvitation(dto: AcceptInvitationDto, ip: string, userAgent: string)`:
 > 1. Buscar convite: GET `inv:{sha256(dto.token)}`. Se não encontrado, lançar `INVALID_INVITATION_TOKEN`.
 > 2. Verificar se email já existe no tenant via `userRepo.findByEmail(invitation.email, invitation.tenantId)`. Se existe, lançar erro.
 > 3. Hash da senha via `CryptoService.hashPassword(dto.password)`.
@@ -2520,7 +2563,7 @@
 - **Descricao:** Criar controller com endpoints para criar e aceitar convites.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/controllers/invitation.controller.ts`. Implementar `InvitationController`:
+> Criar o arquivo `src/server/controllers/invitation.controller.ts`. Implementar `InvitationController`:
 > 1. `POST /` — protegido com `@UseGuards(JwtAuthGuard, RolesGuard)`. Extrai `tenantId` do JWT (req.user.tenantId), NÃO do body. `tenantName` vem do body (`dto.tenantName`) ou usa `tenantId` como fallback. Chama `invitationService.invite(req.user.sub, dto.email, dto.role, tenantId, dto.tenantName)`.
 > 2. `POST /accept` — público, com `@Throttle(AUTH_THROTTLE_CONFIGS.invitationAccept)`. Chama `invitationService.acceptInvitation(dto, ip, userAgent)`. Usa `TokenDeliveryService` para entregar tokens.
 > DESVIO DA SPEC: DTO da spec não inclui `tenantName`, mas `IEmailProvider.sendInvitation()` o requer. Campo opcional adicionado.
@@ -2538,7 +2581,7 @@
 - **Descricao:** Escrever testes unitários para InvitationService cobrindo criação, aceitação, e validações.
 
 **Prompt para o agente:**
-> Criar os arquivos `src/services/__tests__/invitation.service.spec.ts` e `src/controllers/__tests__/invitation.controller.spec.ts`. Testes requeridos:
+> Criar os arquivos `src/server/services/__tests__/invitation.service.spec.ts` e `src/server/controllers/__tests__/invitation.controller.spec.ts`. Testes requeridos:
 > 1. `invite()` com role válido e inviter autorizado: token gerado e email enviado.
 > 2. `invite()` com role inexistente na hierarquia: lança INSUFFICIENT_ROLE.
 > 3. `invite()` com inviter sem autorização (role inferior): lança INSUFFICIENT_ROLE.
@@ -2563,7 +2606,7 @@
 - **Descricao:** Integrar PlatformAuth, OAuth e Invitations no módulo dinâmico principal com registro condicional.
 
 **Prompt para o agente:**
-> Atualizar o arquivo `src/bymax-auth.module.ts` (o módulo dinâmico principal) para:
+> Atualizar o arquivo `src/server/bymax-auth.module.ts` (o módulo dinâmico principal) para:
 > 1. Registrar `PlatformAuthService`, `PlatformAuthController`, `JwtPlatformStrategy`, `JwtPlatformGuard`, `PlatformRolesGuard` se `platformAdmin.enabled` é true na configuração.
 > 2. Importar `OAuthModule` se `oauth` está presente e configurado.
 > 3. Registrar `InvitationService` e `InvitationController` se `invitations.enabled` é true.
@@ -2583,7 +2626,7 @@
 - **Descricao:** Atualizar barrel export com todos os exports da Fase 5.
 
 **Prompt para o agente:**
-> Atualizar o arquivo `src/index.ts` para adicionar os seguintes exports:
+> Atualizar o arquivo `src/server/index.ts` para adicionar os seguintes exports:
 > - `export { JwtPlatformGuard } from './guards/jwt-platform.guard'`
 > - `export { PlatformRolesGuard } from './guards/platform-roles.guard'`
 > - `export { PlatformRoles } from './decorators/platform-roles.decorator'`
@@ -2608,7 +2651,7 @@
 - **Descricao:** Criar guard WebSocket que extrai JWT do handshake e valida tipo dashboard.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/guards/ws-jwt.guard.ts`. Implementar `WsJwtGuard`:
+> Criar o arquivo `src/server/guards/ws-jwt.guard.ts`. Implementar `WsJwtGuard`:
 > 1. No `canActivate(context)`: verificar se `@nestjs/websockets` está disponível via try/catch em `require.resolve('@nestjs/websockets')`. Se não disponível, lançar erro descritivo: "WsJwtGuard requires @nestjs/websockets to be installed". Este check deve ser em runtime (canActivate), não apenas compile-time.
 > 2. Extrair token de `client.handshake.headers.authorization` (formato `Bearer <token>`). NÃO extrair de query params (segurança).
 > 3. Validar JWT usando o mesmo secret/options do módulo.
@@ -2630,10 +2673,10 @@
 - **Descricao:** Criar guard que permite acesso se userId no param === JWT.sub ou se role é admin. Protecao contra IDOR.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/guards/self-or-admin.guard.ts`. Implementar `SelfOrAdminGuard`:
+> Criar o arquivo `src/server/guards/self-or-admin.guard.ts`. Implementar `SelfOrAdminGuard`:
 > 1. Comparar `req.params.userId` (ou `req.params.id`) com `req.user.sub`.
 > 2. Se match: permitir acesso.
-> 3. Se não match: verificar se o role do usuário é admin na hierarquia usando `hasRole()` de `src/utils/roles.util.ts`.
+> 3. Se não match: verificar se o role do usuário é admin na hierarquia usando `hasRole()` de `src/server/utils/roles.util.ts`.
 > 4. Para session hashes em `DELETE /sessions/:id`: validar formato SHA-256 hex (64 caracteres, regex `[a-f0-9]{64}`). Se formato inválido, rejeitar.
 > 5. Se não é self nem admin: lançar `ForbiddenException`.
 > IMPORTANTE: Este guard NÃO valida que o recurso alvo pertence ao `tenantId` do JWT. Em contextos multi-tenant, o controller/service deve verificar ownership adicionalmente. Adicionar comentário JSDoc documentando esta limitação.
@@ -2651,7 +2694,7 @@
 - **Descricao:** Criar guard que tenta autenticar via JWT mas nao falha se token ausente.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/guards/optional-auth.guard.ts`. Implementar `OptionalAuthGuard`:
+> Criar o arquivo `src/server/guards/optional-auth.guard.ts`. Implementar `OptionalAuthGuard`:
 > 1. Extends `JwtAuthGuard` (da Fase 2).
 > 2. Sobrescrever `handleRequest(err, user, info)`:
 >    - Se token ausente (info indica 'No auth token'): retornar `null` (NÃO lançar exceção).
@@ -2673,9 +2716,9 @@
 
 **Prompt para o agente:**
 > Criar arquivos de teste para os 3 guards:
-> - `src/guards/__tests__/ws-jwt.guard.spec.ts`
-> - `src/guards/__tests__/self-or-admin.guard.spec.ts`
-> - `src/guards/__tests__/optional-auth.guard.spec.ts`
+> - `src/server/guards/__tests__/ws-jwt.guard.spec.ts`
+> - `src/server/guards/__tests__/self-or-admin.guard.spec.ts`
+> - `src/server/guards/__tests__/optional-auth.guard.spec.ts`
 > Testes requeridos:
 > WsJwtGuard:
 > 1. Token com type 'platform' é rejeitado.
@@ -2738,7 +2781,7 @@
 > 1. Register -> Login -> POST /auth/mfa/setup (retorna secret e QR) -> POST /auth/mfa/verify (com TOTP válido, retorna recovery codes) -> POST /auth/logout.
 > 2. Login novamente -> resposta com mfaRequired: true e mfaTempToken -> POST /auth/mfa/challenge com TOTP -> tokens emitidos.
 > 3. Login -> mfaTempToken -> POST /auth/mfa/challenge com recovery code -> tokens emitidos (recovery code consumido).
-> Usar `verifyTotp()` de `src/crypto/totp.ts` ou implementação local com `node:crypto` para gerar códigos TOTP válidos no teste.
+> Usar `verifyTotp()` de `src/server/crypto/totp.ts` ou implementação local com `node:crypto` para gerar códigos TOTP válidos no teste.
 > Critérios de aceitação: setup + verify funciona, challenge com TOTP funciona, challenge com recovery code funciona e é consumido.
 
 ---
@@ -2905,9 +2948,9 @@
 
 **Prompt para o agente:**
 > Realizar revisão de segurança verificando os seguintes itens nos arquivos do projeto:
-> 1. `src/services/password.service.ts`: senhas hasheadas com scrypt (N=2^15, r=8, p=1). Verificar parâmetros de custo.
-> 2. `src/services/password.service.ts`: comparação constant-time em senhas via `crypto.timingSafeEqual()`.
-> 3. `src/services/crypto.service.ts`: secrets TOTP criptografados com AES-256-GCM. Verificar uso de `createCipheriv('aes-256-gcm')`.
+> 1. `src/server/services/password.service.ts`: senhas hasheadas com scrypt (N=2^15, r=8, p=1). Verificar parâmetros de custo.
+> 2. `src/server/services/password.service.ts`: comparação constant-time em senhas via `crypto.timingSafeEqual()`.
+> 3. `src/server/services/crypto.service.ts`: secrets TOTP criptografados com AES-256-GCM. Verificar uso de `createCipheriv('aes-256-gcm')`.
 > 4. MFA recovery codes hasheados com scrypt via PasswordService (não armazenados em plain text).
 > 5. Refresh tokens são opacos (UUID v4, não JWT).
 > 6. Comparação de OTPs e recovery codes usa `timingSafeEqual` com buffers de mesmo comprimento.
@@ -2927,9 +2970,9 @@
 
 **Prompt para o agente:**
 > Realizar revisão de segurança verificando:
-> 1. `src/services/token-manager.service.ts`: rotação de refresh com grace window implementada.
+> 1. `src/server/services/token-manager.service.ts`: rotação de refresh com grace window implementada.
 > 2. Blacklist de access tokens via `rv:{jti}` no Redis.
-> 3. `src/services/token-delivery.service.ts`: HttpOnly cookies em modo cookie/both.
+> 3. `src/server/services/token-delivery.service.ts`: HttpOnly cookies em modo cookie/both.
 > 4. Refresh cookie com SameSite Strict.
 > 5. Path restrito `/auth` (ou configurado) no refresh cookie.
 > 6. Algorithm pinning no JWT Strategy: `algorithms: ['HS256']` em `src/strategies/jwt.strategy.ts` E `src/strategies/jwt-platform.strategy.ts`.
@@ -2950,7 +2993,7 @@
 
 **Prompt para o agente:**
 > Realizar revisão de segurança verificando:
-> 1. `src/services/brute-force.service.ts`: brute-force por email scopado por tenant (identifier usa `sha256(tenantId + ':' + email)`).
+> 1. `src/server/services/brute-force.service.ts`: brute-force por email scopado por tenant (identifier usa `sha256(tenantId + ':' + email)`).
 > 2. Rate limiting por IP: verificar que `@Throttle()` com configs de `AUTH_THROTTLE_CONFIGS` está presente em todos os endpoints sensíveis (login, register, forgot-password, mfa/challenge, refresh, invitation/accept, platform/login).
 > 3. Não revelação de existência de usuário: login com email inexistente retorna mesma mensagem que senha errada. forgot-password sempre retorna sucesso.
 > 4. PII mascarado em logs: verificar que NestJS Logger não loga emails, senhas, tokens em plain text.
@@ -2973,18 +3016,18 @@
 
 **Prompt para o agente:**
 > Adicionar documentação JSDoc completa em todos os métodos públicos dos seguintes arquivos de serviço:
-> - `src/services/auth.service.ts`
-> - `src/services/token-manager.service.ts`
-> - `src/services/token-delivery.service.ts`
-> - `src/services/brute-force.service.ts`
-> - `src/services/crypto.service.ts`
-> - `src/services/mfa.service.ts`
-> - `src/services/session.service.ts`
-> - `src/services/password-reset.service.ts`
-> - `src/services/otp.service.ts`
-> - `src/services/platform-auth.service.ts`
-> - `src/services/invitation.service.ts`
-> - `src/oauth/oauth.service.ts`
+> - `src/server/services/auth.service.ts`
+> - `src/server/services/token-manager.service.ts`
+> - `src/server/services/token-delivery.service.ts`
+> - `src/server/services/brute-force.service.ts`
+> - `src/server/services/crypto.service.ts`
+> - `src/server/services/mfa.service.ts`
+> - `src/server/services/session.service.ts`
+> - `src/server/services/password-reset.service.ts`
+> - `src/server/services/otp.service.ts`
+> - `src/server/services/platform-auth.service.ts`
+> - `src/server/services/invitation.service.ts`
+> - `src/server/oauth/oauth.service.ts`
 > Cada JSDoc deve incluir: descrição do método, `@param` para cada parâmetro com tipo e descrição, `@returns` com tipo e descrição, `@throws` listando exceções possíveis.
 > Critérios de aceitação: todos os métodos públicos de todos os services têm JSDoc completo.
 
@@ -3001,8 +3044,8 @@
 
 **Prompt para o agente:**
 > Adicionar documentação JSDoc completa nos seguintes arquivos:
-> Guards: `jwt-auth.guard.ts`, `jwt-platform.guard.ts`, `roles.guard.ts`, `platform-roles.guard.ts`, `user-status.guard.ts`, `mfa-verified.guard.ts`, `ws-jwt.guard.ts`, `self-or-admin.guard.ts`, `optional-auth.guard.ts` (todos em `src/guards/`).
-> Decorators: `current-user.decorator.ts`, `roles.decorator.ts`, `platform-roles.decorator.ts`, `public.decorator.ts` (todos em `src/decorators/`).
+> Guards: `jwt-auth.guard.ts`, `jwt-platform.guard.ts`, `roles.guard.ts`, `platform-roles.guard.ts`, `user-status.guard.ts`, `mfa-verified.guard.ts`, `ws-jwt.guard.ts`, `self-or-admin.guard.ts`, `optional-auth.guard.ts` (todos em `src/server/guards/`).
+> Decorators: `current-user.decorator.ts`, `roles.decorator.ts`, `platform-roles.decorator.ts`, `public.decorator.ts` (todos em `src/server/decorators/`).
 > Cada JSDoc deve incluir: descrição do guard/decorator, exemplos de uso, notas de segurança quando aplicável (ex: limitações cross-tenant do SelfOrAdminGuard, peer dep de WsJwtGuard).
 > Critérios de aceitação: todos os guards e decorators públicos têm JSDoc com exemplos.
 
@@ -3066,7 +3109,7 @@
 - **Descricao:** Adicionar WsJwtGuard, SelfOrAdminGuard e OptionalAuthGuard ao barrel export.
 
 **Prompt para o agente:**
-> Atualizar o arquivo `src/index.ts` para adicionar:
+> Atualizar o arquivo `src/server/index.ts` para adicionar:
 > - `export { WsJwtGuard } from './guards/ws-jwt.guard'`
 > - `export { SelfOrAdminGuard } from './guards/self-or-admin.guard'`
 > - `export { OptionalAuthGuard } from './guards/optional-auth.guard'`
@@ -3085,7 +3128,7 @@
 - **Descricao:** Revisão completa do barrel export para garantir que tudo público está exportado e export type vs export está correto.
 
 **Prompt para o agente:**
-> Revisar o arquivo `src/index.ts` completamente:
+> Revisar o arquivo `src/server/index.ts` completamente:
 > 1. Verificar que TODOS os itens públicos estão exportados: todos os services, controllers, guards, decorators, DTOs, interfaces, types, constantes.
 > 2. Verificar que `export type` é usado para interfaces e types (ex: AuthUser, IUserRepository, IEmailProvider, AuthModuleOptions, PlatformAuthResult).
 > 3. Verificar que `export` regular (sem `type`) é usado para: classes de DTOs (preservar metadata class-validator), guards, decorators, services, módulo.
@@ -3105,7 +3148,7 @@
 - **Descricao:** Validar opções na inicialização do módulo com mensagens de erro claras.
 
 **Prompt para o agente:**
-> Revisar e melhorar a validação de opções em `src/bymax-auth.module.ts` (ou `src/utils/resolve-options.ts`):
+> Revisar e melhorar a validação de opções em `src/server/bymax-auth.module.ts` (ou `src/server/utils/resolve-options.ts`):
 > 1. Verificar que `jwt.secret` é obrigatório e não vazio. Mensagem: "BymaxAuthModule: jwt.secret is required".
 > 2. Verificar que `userRepository` é fornecido. Mensagem: "BymaxAuthModule: userRepository is required".
 > 3. Se `platformAdmin.enabled`, verificar que `platformUserRepository` é fornecido. Mensagem: "BymaxAuthModule: platformUserRepository is required when platformAdmin is enabled".
@@ -4061,6 +4104,7 @@
 > 7. Status blocking: BANNED user is redirected to login with `reason=banned`.
 > 8. Status blocking: INACTIVE user is redirected to login with `reason=inactive`.
 > 9. User header propagation: verify `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain` are set on the request.
+> 10. Authenticated user visiting a public-but-redirect route (e.g., `/auth/login` configured via `publicRoutesRedirectIfAuthenticated`) gets redirected to their dashboard.
 > Mock `NextRequest` and `NextResponse`. Verify with `npm run test`.
 
 ---
@@ -4152,7 +4196,7 @@ O caminho critico determina a duracao minima do projeto. As cadeias de dependenc
 2. NEST-042 → NEST-043 (JWT Strategy) → NEST-057 (AuthService) → NEST-059 (AuthController) → NEST-061 (BymaxAuthModule) → NEST-064 (Phase 2 validation)
 
 **Cadeia MFA (Fase 3):**
-3. NEST-064 → NEST-069 (MfaService skeleton) → NEST-070 (setup) → NEST-071 (verifyAndEnable) → NEST-072 (challenge) → NEST-073 (MfaController) → NEST-074 (module integration) → NEST-079 (Phase 3 validation)
+3. NEST-064 → NEST-068 (MfaService helpers) → NEST-069 (MfaService skeleton) → NEST-070 (setup) → NEST-071 (verifyAndEnable) → NEST-072 (challenge) → NEST-073 (MfaController) → NEST-074 (module integration) → NEST-079 (Phase 3 validation)
 
 **Cadeia Sessoes + Password Reset (Fase 4):**
 4. NEST-064 → NEST-081 (SessionService create) → NEST-082 (list/revoke) → NEST-083 (rotate) → NEST-086 (integration) → NEST-096 (Phase 4 validation)
@@ -4160,7 +4204,7 @@ O caminho critico determina a duracao minima do projeto. As cadeias de dependenc
 
 **Cadeia Plataforma + OAuth + Convites (Fase 5):**
 6. NEST-064 → NEST-097 (JWT Platform Strategy) → NEST-101 (PlatformAuthService login) → NEST-107 (controller) → NEST-119 (module integration) → NEST-120 (barrel)
-7. NEST-064 → NEST-108 (OAuthModule) → NEST-109 (OAuthService initiate) → NEST-110 (callback) → NEST-119 (module integration)
+7. NEST-064 → NEST-109 (OAuthModule) → NEST-110 (OAuthService initiate) → NEST-111 (callback) → NEST-119 (module integration)
 8. NEST-064 → NEST-115 (InvitationService invite) → NEST-116 (accept) → NEST-117 (controller) → NEST-119 (module integration)
 
 **Cadeia Integracao (Fase 6):**
