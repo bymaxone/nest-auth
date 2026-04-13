@@ -15,6 +15,7 @@
 
 **2. English Only**
 - All code, comments, JSDoc, variable names, and docs in English. JSDoc on every public export.
+- **Exception:** `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` contains end-user-facing strings in Portuguese. This is intentional product design — do not translate them to English. Future i18n support will allow consumers to override these values via `BymaxAuthModule.forRoot({ messages: { ... } })`.
 
 **3. TypeScript — Zero `any`**
 - Never `any` in production code. Use `unknown`, generics, or explicit types.

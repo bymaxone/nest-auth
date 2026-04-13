@@ -5,6 +5,21 @@ node_modules/
 .pnpm-store/
 
 # ============================================
+# Cryptographic Material
+# ============================================
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets/
+.env.production
+.env.staging
+.env.test
+.env.development
+
+# ============================================
 # Environment Variables
 # ============================================
 .env
@@ -72,6 +87,8 @@ yarn.lock
 .settings/
 *.sublime-workspace
 .vscode-test
+.vscode/
+!.vscode/extensions.json
 
 # ============================================
 # OS Generated Files

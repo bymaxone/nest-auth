@@ -1,0 +1,456 @@
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import type { Request } from 'express'
+
+import {
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY
+} from '../bymax-one-nest-auth.constants'
+import { BruteForceService } from './brute-force.service'
+import { OtpService } from './otp.service'
+import { PasswordService } from './password.service'
+import { TokenManagerService } from './token-manager.service'
+import type { ResolvedOptions } from '../config/resolved-options'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import type { AuthErrorCode } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
+import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type {
+  AuthResult,
+  MfaChallengeResult,
+  RotatedTokenResult
+} from '../interfaces/auth-result.interface'
+import type { IEmailProvider } from '../interfaces/email-provider.interface'
+import type {
+  AuthUser,
+  IUserRepository,
+  SafeAuthUser
+} from '../interfaces/user-repository.interface'
+import { AuthRedisService } from '../redis/auth-redis.service'
+import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { sleep } from '../utils/sleep'
+
+/** Minimum response time in ms for anti-enumeration endpoints. */
+const ANTI_ENUM_MIN_MS = 300
+
+/**
+ * Core authentication service for dashboard (tenant) users.
+ *
+ * Orchestrates the full authentication lifecycle: registration, login, logout,
+ * token refresh, email verification, and brute-force protection. All security-
+ * sensitive operations (password hashing, JWT issuance, brute-force tracking)
+ * are delegated to specialized services.
+ *
+ * @remarks
+ * Hook errors from `after*` and `on*` hooks are caught and logged — they must
+ * never propagate to the caller. Only `beforeRegister` can block the flow.
+ */
+@Injectable()
+export class AuthService {
+  private readonly logger = new Logger(AuthService.name)
+
+  constructor(
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
+    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
+    private readonly passwordService: PasswordService,
+    private readonly tokenManager: TokenManagerService,
+    private readonly bruteForce: BruteForceService,
+    private readonly redis: AuthRedisService,
+    private readonly otpService: OtpService
+  ) {}
+
+  // ---------------------------------------------------------------------------
+  // Register
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Registers a new dashboard user.
+   *
+   * @param dto - Registration payload (email, password, name, tenantId from body,
+   *   or tenantId resolved from request via `tenantIdResolver`).
+   * @param req - Incoming Express request (used for tenantId resolution and hooks).
+   * @returns Full auth result with tokens and safe user object.
+   * @throws {@link AuthException} with `EMAIL_ALREADY_EXISTS` if the email is taken.
+   * @throws {@link AuthException} with `FORBIDDEN` if `beforeRegister` hook rejects.
+   */
+  async register(
+    dto: { email: string; password: string; name: string; tenantId: string },
+    req: Request
+  ): Promise<AuthResult> {
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const ip = req.ip ?? ''
+    const userAgent = String(req.headers['user-agent'] ?? '')
+    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
+
+    // beforeRegister hook — only hook that can block the flow.
+    if (this.hooks?.beforeRegister) {
+      const hookResult = await this.hooks.beforeRegister(
+        { email: dto.email, name: dto.name, tenantId },
+        context
+      )
+      if (!hookResult.allowed) {
+        throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
+      }
+      if (hookResult.modifiedData) {
+        // Merge hook overrides immutably — avoids mutating the validated DTO and
+        // bypassing class-validator constraints already applied by the pipe.
+        dto = { ...dto, ...hookResult.modifiedData } as typeof dto
+      }
+    }
+
+    // Check uniqueness before hashing password (cheaper than scrypt on conflict).
+    const existing = await this.userRepo.findByEmail(dto.email, tenantId)
+    if (existing) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
+    }
+
+    const passwordHash = await this.passwordService.hash(dto.password)
+
+    const augmented = dto as Record<string, unknown>
+    const newUser = await this.userRepo.create({
+      email: dto.email,
+      name: dto.name,
+      passwordHash,
+      tenantId,
+      ...(typeof augmented['role'] === 'string' && { role: augmented['role'] }),
+      ...(typeof augmented['status'] === 'string' && { status: augmented['status'] }),
+      ...(this.options.emailVerification.required
+        ? { emailVerified: false }
+        : typeof augmented['emailVerified'] === 'boolean'
+          ? { emailVerified: augmented['emailVerified'] }
+          : {})
+    })
+
+    // Send email verification OTP if required.
+    if (this.options.emailVerification.required) {
+      await this.sendVerificationOtp(tenantId, dto.email, newUser.id)
+    }
+
+    const safeUser = toSafeUser(newUser)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+
+    // afterRegister — fire-and-forget; errors must not propagate.
+    if (this.hooks?.afterRegister) {
+      Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
+        this.logger.error('afterRegister hook threw', err)
+      })
+    }
+
+    return result
+  }
+
+  // ---------------------------------------------------------------------------
+  // Login
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Authenticates a dashboard user with email and password.
+   *
+   * Returns either a full {@link AuthResult} or a {@link MfaChallengeResult}
+   * when the user has MFA enabled.
+   *
+   * @param dto - Login credentials.
+   * @param req - Incoming Express request.
+   * @returns Auth result or MFA challenge prompt.
+   * @throws {@link AuthException} with `ACCOUNT_LOCKED` when brute-force limit reached.
+   * @throws {@link AuthException} with `INVALID_CREDENTIALS` on bad email/password.
+   */
+  async login(
+    dto: { email: string; password: string; tenantId: string },
+    req: Request
+  ): Promise<AuthResult | MfaChallengeResult> {
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const ip = req.ip ?? ''
+    const userAgent = String(req.headers['user-agent'] ?? '')
+
+    // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
+    const bfIdentifier = hmacSha256(`${tenantId}${dto.email}`, this.options.jwt.secret)
+
+    const locked = await this.bruteForce.isLockedOut(bfIdentifier)
+    if (locked) {
+      const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
+        retryAfterSeconds: remainingSeconds
+      })
+    }
+
+    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
+
+    if (this.hooks?.beforeLogin) {
+      await this.hooks.beforeLogin(dto.email, tenantId, context)
+    }
+
+    const user = await this.userRepo.findByEmail(dto.email, tenantId)
+
+    // Use constant-time approach: always compare password (even for not-found).
+    if (!user || !user.passwordHash) {
+      await this.bruteForce.recordFailure(bfIdentifier)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    // Status check before expensive scrypt — avoid wasting CPU on blocked accounts.
+    this.assertUserNotBlocked(user)
+
+    // Email verification gate.
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+
+    const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
+    if (!passwordMatch) {
+      await this.bruteForce.recordFailure(bfIdentifier)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    // Reset brute-force counter on success.
+    await this.bruteForce.resetFailures(bfIdentifier)
+
+    // MFA challenge path.
+    if (user.mfaEnabled) {
+      const mfaTempToken = await this.tokenManager.issueMfaTempToken(user.id, 'dashboard')
+      return { mfaRequired: true, mfaTempToken }
+    }
+
+    const safeUser = toSafeUser(user)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+
+    // Non-blocking side effects.
+    void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
+      this.logger.error('updateLastLogin failed', err)
+    })
+    if (this.hooks?.afterLogin) {
+      Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
+        this.logger.error('afterLogin hook threw', err)
+      })
+    }
+
+    return result
+  }
+
+  // ---------------------------------------------------------------------------
+  // Logout
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Logs out a dashboard user by revoking the access token and deleting the refresh session.
+   *
+   * @param accessToken - Raw JWT access token (used to extract `jti` for revocation).
+   * @param rawRefreshToken - Raw opaque refresh token (session key is derived from its hash).
+   * @param userId - The authenticated user's ID (for hook context).
+   */
+  async logout(accessToken: string, rawRefreshToken: string, userId: string): Promise<void> {
+    // Decode without verifying — the token may be expired at logout time.
+    try {
+      const payload = this.tokenManager.decodeToken(accessToken)
+      const now = Math.floor(Date.now() / 1000)
+      const remainingTtl = payload.exp - now
+      if (remainingTtl > 0) {
+        await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
+      }
+    } catch {
+      // Malformed token — no revocation entry needed.
+    }
+
+    // Delete the refresh session.
+    await this.redis.del(`rt:${sha256(rawRefreshToken)}`)
+
+    if (this.hooks?.afterLogout) {
+      Promise.resolve(this.hooks.afterLogout(userId, {} as HookContext)).catch((err: unknown) => {
+        this.logger.error('afterLogout hook threw', err)
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Refresh
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Rotates a dashboard refresh token.
+   *
+   * Delegates to {@link TokenManagerService.reissueTokens}. Callers that need the
+   * full user record in the HTTP response must fetch it from the user repository
+   * using the returned `session.userId`.
+   *
+   * @param oldRefreshToken - The raw refresh token from the client.
+   * @param ip - Client IP address.
+   * @param userAgent - User-Agent header value.
+   * @returns New tokens and minimal session identity.
+   */
+  async refresh(
+    oldRefreshToken: string,
+    ip: string,
+    userAgent: string
+  ): Promise<RotatedTokenResult> {
+    return this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+  }
+
+  // ---------------------------------------------------------------------------
+  // GetMe
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Retrieves the full safe user record for the currently authenticated user.
+   *
+   * @param userId - Subject claim from the verified JWT.
+   * @returns Safe user object (credential fields excluded).
+   * @throws {@link AuthException} with `TOKEN_INVALID` if the user no longer exists.
+   */
+  async getMe(userId: string): Promise<SafeAuthUser> {
+    const user = await this.userRepo.findById(userId)
+    if (!user) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    return toSafeUser(user)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email verification
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Verifies the user's email address using a one-time password.
+   *
+   * @param tenantId - Tenant scope.
+   * @param email - The email address being verified.
+   * @param userId - The user's internal ID (from the verified JWT).
+   * @param otp - The OTP supplied by the user.
+   */
+  async verifyEmail(tenantId: string, email: string, userId: string, otp: string): Promise<void> {
+    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
+    await this.otpService.verify('email_verification', identifier, otp)
+    await this.userRepo.updateEmailVerified(userId, true)
+
+    if (this.hooks?.afterEmailVerified) {
+      // Fetch user for hook (credential fields stripped).
+      const user = await this.userRepo.findById(userId)
+      if (user) {
+        Promise.resolve(this.hooks.afterEmailVerified(toSafeUser(user), {} as HookContext)).catch(
+          (err: unknown) => {
+            this.logger.error('afterEmailVerified hook threw', err)
+          }
+        )
+      }
+    }
+  }
+
+  /**
+   * Resends an email verification OTP with an atomic cooldown.
+   *
+   * A `SET NX EX 60` guard prevents duplicate sends within 60 seconds, even
+   * under concurrent requests. The response is always the same to prevent
+   * email enumeration (timing normalization applied).
+   *
+   * @param tenantId - Tenant scope.
+   * @param email - The email address to re-send to (not validated — always succeeds).
+   */
+  async resendVerificationEmail(tenantId: string, email: string): Promise<void> {
+    const start = Date.now()
+    const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)}`
+
+    // Atomic NX: only one send allowed per 60 seconds. SET NX EX is atomic — no TOCTOU race.
+    const wasSet = await this.redis.setnx(cooldownKey, 60)
+    if (!wasSet) {
+      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+      return // Already sent recently — silently succeed.
+    }
+
+    const user = await this.userRepo.findByEmail(email, tenantId)
+    if (user && !user.emailVerified) {
+      await this.sendVerificationOtp(tenantId, email, user.id)
+    }
+
+    await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private async resolveTenantId(dtoTenantId: string, req: Request): Promise<string> {
+    if (this.options.tenantIdResolver) {
+      return this.options.tenantIdResolver(req)
+    }
+    return dtoTenantId
+  }
+
+  private buildHookContext(opts: {
+    tenantId?: string
+    email?: string
+    userId?: string
+    ip: string
+    userAgent: string
+    req: Request
+  }): HookContext {
+    const headers = opts.req.headers as Record<string, string | string[] | undefined>
+    const sanitized = sanitizeHeaders(
+      Object.fromEntries(
+        Object.entries(headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : (v ?? '')])
+      )
+    )
+    const ctx: HookContext = {
+      ip: opts.ip,
+      userAgent: opts.userAgent,
+      sanitizedHeaders: sanitized
+    }
+    // exactOptionalPropertyTypes: only assign optional fields when defined.
+    if (opts.userId !== undefined) ctx.userId = opts.userId
+    if (opts.email !== undefined) ctx.email = opts.email
+    if (opts.tenantId !== undefined) ctx.tenantId = opts.tenantId
+    return ctx
+  }
+
+  private assertUserNotBlocked(user: AuthUser): void {
+    const blocked = this.options.blockedStatuses.map((s) => s.toLowerCase())
+    if (blocked.includes(user.status.toLowerCase())) {
+      const codeMap: Record<string, string> = {
+        banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
+        inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
+        suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+        pending: AUTH_ERROR_CODES.PENDING_APPROVAL,
+        pending_approval: AUTH_ERROR_CODES.PENDING_APPROVAL
+      }
+
+      const code = codeMap[user.status.toLowerCase()] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
+      throw new AuthException(code as AuthErrorCode, 403)
+    }
+  }
+
+  private async sendVerificationOtp(
+    tenantId: string,
+    email: string,
+    userId: string
+  ): Promise<void> {
+    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
+    const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
+    const ttl = this.options.emailVerification.otpTtlSeconds
+    const otp = this.otpService.generate(length)
+    await this.otpService.store('email_verification', identifier, otp, ttl)
+
+    void this.emailProvider.sendEmailVerificationOtp(email, otp).catch((err: unknown) => {
+      this.logger.error(`sendEmailVerificationOtp failed for user ${userId}`, err)
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Projection helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Projects a full {@link AuthUser} to a {@link SafeAuthUser} by excluding
+ * credential and secret fields that must never leave the service layer.
+ */
+function toSafeUser(user: AuthUser): SafeAuthUser {
+  const {
+    passwordHash: _passwordHash,
+    mfaSecret: _mfaSecret,
+    mfaRecoveryCodes: _mfaRecoveryCodes,
+    ...safe
+  } = user
+  return safe
+}
