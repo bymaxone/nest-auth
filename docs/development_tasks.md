@@ -2,7 +2,7 @@
 
 > Gerado em: 2026-04-11
 > Baseado em: [development_plan.md](./development_plan.md) e [technical_specification.md](./technical_specification.md)
-> Total de tasks: 151
+> Total de tasks: 184
 
 ---
 
@@ -23,7 +23,7 @@
 | `architect` | Design de interfaces, modulo dinamico, estrutura de projeto, barrel exports |
 | `planner` | Planejamento de sub-sistemas complexos |
 | `typescript-reviewer` | Revisao de tipagem, interfaces, generics, DTOs |
-| `security-reviewer` | Crypto (AES-GCM, bcrypt), JWT, brute-force, constant-time, CSRF |
+| `security-reviewer` | Crypto (AES-GCM, scrypt, TOTP nativo), JWT, brute-force, constant-time, CSRF |
 | `code-reviewer` | Qualidade geral, patterns NestJS, services, controllers, guards |
 | `database-reviewer` | Operacoes Redis, scripts Lua, design de chaves |
 | `general-purpose` | Scaffold, configuracao, setup inicial, testes |
@@ -38,7 +38,10 @@
 | Fase 4 — Sessoes e Reset de Senha | 17 | 17 | 0 | 0% |
 | Fase 5 — Plataforma, OAuth e Convites | 25 | 25 | 0 | 0% |
 | Fase 6 — Integracao, Polimento e Publicacao | 30 | 30 | 0 | 0% |
-| **TOTAL** | **151** | **151** | **0** | **0%** |
+| Fase 7 — Shared + Client Subpath | 9 | 9 | 0 | 0% |
+| Fase 8 — React Subpath | 8 | 8 | 0 | 0% |
+| Fase 9 — Next.js Subpath | 17 | 17 | 0 | 0% |
+| **TOTAL** | **185** | **185** | **0** | **0%** |
 
 ---
 
@@ -54,7 +57,7 @@
 - **Descricao:** Initialize the npm package with scope @bymax-one, configure package.json with name, version, peer dependencies, scripts (build, lint, test, test:cov, prepublishOnly), and "files": ["dist"].
 
 **Prompt para o agente:**
-> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `npm init` with scope @bymax-one. Configure scripts: "build": "tsc -p tsconfig.build.json", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "npm run build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/passport, @nestjs/throttler, passport, passport-jwt, ioredis, class-validator, class-transformer, bcrypt, express. Add otpauth ^9.0.0 as a direct dependency. Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/bcrypt, @types/passport-jwt, @types/node, @types/express. Verify npm install succeeds.
+> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `npm init` with scope @bymax-one. Configure scripts: "build": "tsc -p tsconfig.build.json", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "npm run build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/throttler, ioredis, class-validator, class-transformer, express. Sem dependencies diretas (`"dependencies": {}`). Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/node, @types/express. Verify npm install succeeds.
 
 ---
 
@@ -96,7 +99,7 @@
 - **Descricao:** Create all source subdirectories under src/ as specified in the development plan.
 
 **Prompt para o agente:**
-> Create the following directory structure under /Users/maximiliano/Documents/My Apps/nest-auth/src/: interfaces/, config/, services/, controllers/, guards/, decorators/, strategies/, redis/, dto/, crypto/, errors/, oauth/, constants/, providers/, hooks/. Each directory should have a .gitkeep file or index.ts placeholder as appropriate. Verify the structure is correct.
+> Create the following directory structure under /Users/maximiliano/Documents/My Apps/nest-auth/src/: server/ (interfaces/, config/, services/, controllers/, guards/, decorators/, redis/, dto/, crypto/, errors/, oauth/, constants/, providers/, hooks/), shared/, client/, react/, nextjs/. Each directory should have a .gitkeep file or index.ts placeholder as appropriate. Verify the structure is correct.
 
 ---
 
@@ -219,10 +222,10 @@
 - **Dependencias:** NEST-004
 - **Agente:** typescript-reviewer
 - **Estimativa:** ~30min
-- **Descricao:** Implement OAuthProviderPlugin interface with deliberate any escape hatch for Passport profiles.
+- **Descricao:** Implementar interface OAuthProviderPlugin com métodos nativos (sem Passport).
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/oauth-provider.interface.ts. Implement OAuthProviderPlugin { name: string, strategy: any, guard: any, extractProfile(passportUser: any): OAuthProfile }. The `any` on extractProfile's param is a deliberate escape hatch because Passport profiles are untyped — add JSDoc /** @param passportUser Raw Passport profile object — uses `any` because Passport provider profiles have no shared type */ explaining this. Import OAuthProfile from ./auth-hooks.interface.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/interfaces/oauth-provider.interface.ts. Implement OAuthProviderPlugin { name: string, authorizeUrl(state: string): string, exchangeCode(code: string): Promise<{ access_token: string }>, fetchProfile(accessToken: string): Promise<OAuthProfile> }. Sem dependência de Passport — cada plugin implementa o fluxo OAuth2 nativamente via `fetch`. Import OAuthProfile from ./auth-hooks.interface.
 
 ---
 
@@ -250,7 +253,7 @@
 - **Descricao:** Implement the default options object with all default values from table 4.2 of the spec.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 72, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platformAdmin.enabled false.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 128, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platformAdmin.enabled false.
 
 ---
 
@@ -264,7 +267,7 @@
 - **Descricao:** Implement resolveOptions() with shallow merge per group and all security validations (jwt.secret entropy, mfa.encryptionKey, algorithm pinning, etc.).
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platformAdmin.enabled. (7) Validate peer dependencies: if oauth.google configured, verify passport-google-oauth20 is importable via require.resolve() — throw descriptive error if absent. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platformAdmin.enabled. (7) Validar que clientId e clientSecret estão configurados para cada provider OAuth habilitado. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
 
 ---
 
@@ -457,10 +460,10 @@
 - **Dependencias:** NEST-014, NEST-005
 - **Agente:** code-reviewer
 - **Estimativa:** ~30min
-- **Descricao:** Implement PasswordService with bcrypt hash and compare, configurable salt rounds.
+- **Descricao:** Implement PasswordService with `node:crypto` scrypt hash and compare, constant-time verification.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.ts. Implement @Injectable() class PasswordService. Inject BYMAX_AUTH_OPTIONS to read password.saltRounds (default 12). Implement async hash(plain: string): Promise<string> using bcrypt.hash(plain, saltRounds). Implement async compare(plain: string, hash: string): Promise<boolean> using bcrypt.compare (already constant-time). Add JSDoc.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.ts. Implement @Injectable() class PasswordService. Usar `node:crypto` scrypt com parâmetros N=2^15, r=8, p=1, keyLen=64. Implement async hash(plain: string): Promise<string>: gerar salt de 16 bytes via `crypto.randomBytes(16)`, derivar chave com `crypto.scrypt(plain, salt, 64, { N: 2**15, r: 8, p: 1 })`, retornar formato `scrypt:{salt_hex}:{derived_hex}`. Implement async compare(plain: string, hash: string): Promise<boolean>: parsear salt e derived do formato, re-derivar chave com mesmo salt e parâmetros, comparar com `crypto.timingSafeEqual`. Add JSDoc.
 
 ---
 
@@ -474,7 +477,7 @@
 - **Descricao:** Write unit tests for PasswordService hash/compare operations.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.spec.ts. Tests: (1) hash produces a valid bcrypt string. (2) compare returns true for correct password. (3) compare returns false for wrong password. (4) Salt rounds from config are respected (use a mock config with saltRounds=10). Use NestJS Test.createTestingModule.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/services/password.service.spec.ts. Tests: (1) hash produz string no formato `scrypt:{salt_hex}:{derived_hex}`. (2) compare retorna true para senha correta. (3) compare retorna false para senha incorreta. (4) Hashes diferentes são gerados para a mesma senha (salt aleatório). (5) compare usa timingSafeEqual (verificar que buffers de tamanho diferente retornam false). Use NestJS Test.createTestingModule.
 
 ---
 
@@ -634,31 +637,31 @@
 
 ## Fase 2 — Autenticacao Core
 
-### ⬜ NEST-043: Strategy - JwtStrategy (Passport)
+### ⬜ NEST-043: Guard - JwtAuthGuard nativo
 - **Fase:** 2
 - **Status:** TODO
 - **Prioridade:** Media
 - **Dependencias:** NEST-042
 - **Agente:** security-reviewer
 - **Estimativa:** ~30min
-- **Descricao:** Implement JWT Passport strategy with algorithm pinning, blacklist checking, and type validation.
+- **Descricao:** Implementar JwtAuthGuard nativo com `CanActivate`, sem Passport, usando `@nestjs/jwt` JwtService.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/strategies/jwt.strategy.ts. Implement class JwtStrategy extends PassportStrategy(Strategy, 'jwt') from @nestjs/passport. Inject BYMAX_AUTH_OPTIONS and TokenDeliveryService. In constructor super() call: configure jwtFromRequest to use a custom extractor that calls tokenDeliveryService.extractAccessToken(req). Set secretOrKey from options.jwt.secret. CRITICAL: pin algorithms: ['HS256'] to prevent algorithm confusion attacks (CVE-2015-9235). Set ignoreExpiration: false. In async validate(payload: DashboardJwtPayload): (1) Verify payload.jti exists and is string — throw TOKEN_INVALID if absent. (2) Verify payload.type === 'dashboard' — reject 'platform' and 'mfa_challenge' types. (3) Check blacklist in Redis: get rv:{payload.jti} — if exists throw TOKEN_REVOKED. (4) Return payload to populate request.user. Inject AuthRedisService for blacklist check.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.ts. Implementar class JwtAuthGuard `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService`, `Reflector` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`: (1) Verificar decorator `@Public()` via `Reflector` — se presente, retornar true sem validação. (2) Extrair token do cookie ou header Authorization via `tokenDeliveryService.extractAccessToken(req)`. Se ausente, throw `UnauthorizedException` TOKEN_MISSING. (3) Verificar JWT com `jwtService.verify(token, { algorithms: ['HS256'] })`. CRITICAL: pinar `algorithms: ['HS256']` para prevenir algorithm confusion attacks (CVE-2015-9235). (4) Verificar `payload.jti` existe e é string — throw TOKEN_INVALID se ausente. (5) Verificar `payload.type === 'dashboard'` — rejeitar 'platform' e 'mfa_challenge'. (6) Verificar blacklist via `authRedis.isBlacklisted(jti)` — se blacklisted, throw TOKEN_REVOKED. (7) Popular `request.user` com payload validado. (8) Respeitar decorator `@Public()`. Retornar true.
 
 ---
 
-### ⬜ NEST-044: Strategy - JwtStrategy tests
+### ⬜ NEST-044: Guard - JwtAuthGuard tests
 - **Fase:** 2
 - **Status:** TODO
 - **Prioridade:** Media
 - **Dependencias:** NEST-043
 - **Agente:** tester
 - **Estimativa:** ~30min
-- **Descricao:** Write unit tests for JwtStrategy covering valid tokens, type rejection, blacklist, and missing jti.
+- **Descricao:** Testes unitários para JwtAuthGuard cobrindo tokens válidos, rejeição por tipo, blacklist, jti ausente e @Public().
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/strategies/jwt.strategy.spec.ts. Mock AuthRedisService and TokenDeliveryService. Tests: (1) Valid dashboard token passes validation. (2) Token without jti throws TOKEN_INVALID. (3) Token with type 'platform' is rejected. (4) Token with type 'mfa_challenge' is rejected. (5) Token with jti found in blacklist (rv:{jti}) throws TOKEN_REVOKED. (6) Token not in blacklist passes. (7) Algorithm is pinned to HS256 (verify constructor config).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/guards/jwt-auth.guard.spec.ts. Mock JwtService, AuthRedisService e TokenDeliveryService. Tests: (1) Token dashboard válido passa validação e popula request.user. (2) Token sem jti lança TOKEN_INVALID. (3) Token com type 'platform' é rejeitado. (4) Token com type 'mfa_challenge' é rejeitado. (5) Token com jti na blacklist lança TOKEN_REVOKED. (6) Token não na blacklist passa. (7) Algoritmo pinado em HS256 (verificar chamada jwtService.verify). (8) Rota com @Public() retorna true sem validação.
 
 ---
 
@@ -770,7 +773,7 @@
 - **Descricao:** Implement RegisterDto with class-validator decorators including email, password, name, and tenantId.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.ts. Implement class RegisterDto with: @IsEmail() email: string, @IsString() @MinLength(8) @MaxLength(72) password: string (MaxLength 72 is mandatory — bcrypt truncates silently above 72 bytes), @IsString() @MinLength(2) name: string, @IsString() @IsNotEmpty() tenantId: string (@IsNotEmpty prevents empty string passing @IsString). Export the class.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.ts. Implement class RegisterDto with: @IsEmail() email: string, @IsString() @MinLength(8) @MaxLength(128) password: string (MaxLength 128 — limite prático de input para prevenir DoS), @IsString() @MinLength(2) name: string, @IsString() @IsNotEmpty() tenantId: string (@IsNotEmpty prevents empty string passing @IsString). Export the class.
 
 ---
 
@@ -784,7 +787,7 @@
 - **Descricao:** Implement LoginDto with deliberate omission of @MinLength on password for anti-enumeration.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.ts. Implement class LoginDto with: @IsEmail() email: string, @IsString() @MaxLength(72) password: string, @IsString() @IsNotEmpty() tenantId: string. IMPORTANT: Deliberately NO @MinLength on password — all passwords pass to bcrypt comparison to not reveal if password is too short before comparison (anti-enumeration). Add JSDoc on password field: /** Deliberately without @MinLength — every password passes to bcrypt.compare to prevent revealing minimum length requirements before comparison */. Export the class.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.ts. Implement class LoginDto with: @IsEmail() email: string, @IsString() @MaxLength(128) password: string, @IsString() @IsNotEmpty() tenantId: string. IMPORTANT: Deliberately NO @MinLength on password — all passwords pass to comparação scrypt to not reveal if password is too short before comparison (anti-enumeration). Add JSDoc on password field: /** Deliberately without @MinLength — every password passes to scrypt compare to prevent revealing minimum length requirements before comparison */. Export the class.
 
 ---
 
@@ -798,7 +801,7 @@
 - **Descricao:** Write validation tests for RegisterDto and LoginDto using class-validator.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.spec.ts. Use class-validator's validate() function. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password shorter than 8 chars fails. (4) Password longer than 72 chars fails. (5) Name shorter than 2 chars fails. (6) Empty tenantId fails. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.spec.ts. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password longer than 72 fails. (4) Short password (e.g., '1') passes validation (deliberate — no MinLength). (5) Empty tenantId fails.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/register.dto.spec.ts. Use class-validator's validate() function. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password shorter than 8 chars fails. (4) Password longer than 128 chars fails. (5) Name shorter than 2 chars fails. (6) Empty tenantId fails. Create /Users/maximiliano/Documents/My Apps/nest-auth/src/dto/login.dto.spec.ts. Tests: (1) Valid DTO passes. (2) Invalid email fails. (3) Password longer than 128 fails. (4) Short password (e.g., '1') passes validation (deliberate — no MinLength). (5) Empty tenantId fails.
 
 ---
 
@@ -896,7 +899,7 @@
 - **Descricao:** Implement the main dynamic module with registerAsync, conditional providers/controllers, and route prefix support.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-one-nest-auth.module.ts. Implement @Module({}) class BymaxAuthModule with static registerAsync(options: { imports?, inject?, useFactory, providers? }): DynamicModule. In the method: (1) useFactory resolves user config, call resolveOptions to apply defaults+validate, register resolved options as provider with BYMAX_AUTH_OPTIONS token. (2) Register mandatory providers: AuthRedisService, PasswordService, TokenManagerService, TokenDeliveryService, BruteForceService, OtpService, AuthService, JwtStrategy, JwtAuthGuard, RolesGuard, UserStatusGuard. (3) Register fallback providers: if BYMAX_AUTH_HOOKS not in user providers -> register NoOpAuthHooks. If BYMAX_AUTH_EMAIL_PROVIDER not in user providers -> register NoOpEmailProvider. (4) Build controllers array dynamically: include AuthController if controllers.auth !== false. (5) Import JwtModule.registerAsync with secret and signOptions from resolved options. (6) Import PassportModule.register({ defaultStrategy: 'jwt' }). (7) Use RouterModule.register([{ path: routePrefix, module: BymaxAuthModule }]) for dynamic route prefix. (8) DO NOT register guards as APP_GUARD — each controller applies guards explicitly. (9) Merge user's providers array with internal providers.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-one-nest-auth.module.ts. Implement @Module({}) class BymaxAuthModule with static registerAsync(options: { imports?, inject?, useFactory, providers? }): DynamicModule. In the method: (1) useFactory resolves user config, call resolveOptions to apply defaults+validate, register resolved options as provider with BYMAX_AUTH_OPTIONS token. (2) Register mandatory providers: AuthRedisService, PasswordService, TokenManagerService, TokenDeliveryService, BruteForceService, OtpService, AuthService, JwtAuthGuard, RolesGuard, UserStatusGuard. (3) Register fallback providers: if BYMAX_AUTH_HOOKS not in user providers -> register NoOpAuthHooks. If BYMAX_AUTH_EMAIL_PROVIDER not in user providers -> register NoOpEmailProvider. (4) Build controllers array dynamically: include AuthController if controllers.auth !== false. (5) Import JwtModule.registerAsync with secret and signOptions from resolved options. (6) Use RouterModule.register([{ path: routePrefix, module: BymaxAuthModule }]) for dynamic route prefix. (8) DO NOT register guards as APP_GUARD — each controller applies guards explicitly. (9) Merge user's providers array with internal providers.
 
 ---
 
@@ -1062,11 +1065,11 @@
 > 3. `private async hashRecoveryCodes(count: number): Promise<{ plainCodes: string[]; hashedCodes: string[] }>`:
 >    - Generate `count` random codes using `crypto.randomBytes`.
 >    - Format each as `xxxx-xxxx-xxxx` using alphanumeric characters.
->    - Hash each code with bcrypt.
+>    - Hash cada código via `PasswordService.hash()` (scrypt).
 >    - Return both plain and hashed arrays.
 > 
 > 4. `private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number>`:
->    - Iterate over `hashedCodes`, compare each with `bcrypt.compare` (which is constant-time internally).
+>    - Iterar sobre `hashedCodes`, comparar cada um com `PasswordService.compare()` (usa `crypto.timingSafeEqual` internamente).
 >    - Return the index if found, -1 if not found.
 > 
 > Leave the public methods (`setup`, `verifyAndEnable`, `challenge`, `disable`) as stubs that throw `NotImplementedError` for now — they will be implemented in subsequent tasks.
@@ -1093,25 +1096,25 @@
 > 
 > 1. Fetch the user via `userRepo.findById(userId)`. Check if MFA is already enabled — if yes, throw `MFA_ALREADY_ENABLED`.
 > 
-> 2. **Idempotency check:** Look up Redis key `mfa_setup:{sha256(userId)}`. If it exists and has TTL > 0, parse and return the existing result (secret, qrCodeUri, recoveryCodes) instead of generating new ones. This prevents CPU waste from bcrypt on concurrent calls.
+> 2. **Idempotency check:** Look up Redis key `mfa_setup:{sha256(userId)}`. If it exists and has TTL > 0, parse and return the existing result (secret, qrCodeUri, recoveryCodes) instead of generating new ones.
 > 
-> 3. Generate a TOTP secret: use the `otpauth` library to create a random 20-byte secret (`new Secret({ size: 20 })`).
+> 3. Gerar TOTP secret: usar `crypto.randomBytes(20)` de `node:crypto` e codificar em Base32 via utilitário `src/crypto/totp.ts`.
 > 
-> 4. Encrypt the secret using `this.encryptSecret(secret.base32)`.
+> 4. Encrypt the secret using `this.encryptSecret(secretBase32)`.
 > 
 > 5. Generate 8 recovery codes using `this.hashRecoveryCodes(8)`.
 > 
 > 6. Store in Redis temporarily: key `mfa_setup:{sha256(userId)}` with value `{ encryptedSecret, hashedCodes, plainCodes, secret: secret.base32 }`, TTL 10 minutes (600 seconds). Use `sha256(userId)` as the key per the spec's identifier hashing principle.
 > 
-> 7. Generate QR code URI: `otpauth://totp/${issuer}:${email}?secret=${secret.base32}&issuer=${issuer}` where `issuer` comes from `this.options.mfa.issuer` or `this.options.appName`.
+> 7. Gerar QR code URI via `buildTotpUri(secretBase32, email, issuer)` de `src/crypto/totp.ts`, onde `issuer` vem de `this.options.mfa.issuer` ou `this.options.appName`.
 > 
-> 8. Return `MfaSetupResult { secret: secret.base32, qrCodeUri, recoveryCodes: plainCodes }`.
+> 8. Return `MfaSetupResult { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }`.
 > 
 > The `MfaSetupResult` type should be defined/exported from this file (or imported if already defined): `{ secret: string; qrCodeUri: string; recoveryCodes: string[] }`.
 > 
 > Acceptance criteria:
 > - Calling setup twice within 10 min returns the same result (idempotency)
-> - QR URI follows the otpauth:// format correctly
+> - QR URI segue o formato otpauth:// corretamente (gerado via `buildTotpUri`)
 > - Recovery codes are in xxxx-xxxx-xxxx format
 > - Redis key uses sha256(userId)
 
@@ -1133,7 +1136,7 @@
 > 
 > 2. Decrypt the secret using `this.decryptSecret(encryptedSecret)`.
 > 
-> 3. Validate the TOTP code using the `otpauth` library with window = `this.options.mfa.totpWindow` (or default from config). If invalid, throw `MFA_INVALID_CODE`.
+> 3. Validar o código TOTP usando `verifyTotp(secret, code, window)` de `src/crypto/totp.ts` com window = `this.options.mfa.totpWindow` (ou default da config). Se inválido, throw `MFA_INVALID_CODE`.
 > 
 > 4. Persist MFA to the database: `userRepo.updateMfa({ mfaEnabled: true, mfaSecret: encryptedSecret, mfaRecoveryCodes: hashedCodes })`.
 > 
@@ -1179,7 +1182,7 @@
 > 5. Decrypt `user.mfaSecret`.
 > 
 > 6. Determine if `code` is a TOTP code (6 digits) or recovery code (other format):
->    - **If TOTP:** Validate with `otpauth` library. Check anti-replay: if Redis key `tu:{userId}:{code}` exists, reject as already used. If valid, set `tu:{userId}:{code}` with TTL 90 seconds.
+>    - **If TOTP:** Validar com `verifyTotp()` de `src/crypto/totp.ts`. Check anti-replay: se Redis key `tu:{userId}:{code}` existe, rejeitar como já usado. Se válido, set `tu:{userId}:{code}` com TTL 90 seconds.
 >    - **If recovery code:** Call `this.verifyRecoveryCode(code, user.mfaRecoveryCodes)`. If found (index >= 0), remove it from the array via `userRepo.updateMfa()` with the code at that index removed.
 > 
 > 7. If invalid: record brute-force failure. If failures >= 5, also revoke the `mfaTempToken` (force re-authentication). Throw `MFA_INVALID_CODE`.
@@ -1223,7 +1226,7 @@
 > 2. If MFA is not enabled, throw `MFA_NOT_ENABLED`.
 > 3. Check brute-force lockout: `bruteForce.isLockedOut(sha256(userId))` — uses the same identifier as `challenge`.
 > 4. Decrypt `user.mfaSecret`.
-> 5. Validate the TOTP code using `otpauth`. Only TOTP codes are accepted (no recovery codes).
+> 5. Validar o código TOTP usando `verifyTotp()` de `src/crypto/totp.ts`. Apenas códigos TOTP são aceitos (recovery codes não).
 > 6. If invalid: record failure via `bruteForce.recordFailure(sha256(userId))`, throw `MFA_INVALID_CODE`.
 > 7. If valid: reset brute-force counter.
 > 8. Disable MFA: `userRepo.updateMfa({ mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: null })`.
@@ -1346,7 +1349,7 @@
 > 
 > 1. **setup():**
 >    - Generates secret, QR code URI, and 8 recovery codes
->    - QR code URI follows `otpauth://totp/` format
+>    - QR code URI segue formato `otpauth://totp/` (gerado via `buildTotpUri`)
 >    - Recovery codes are in `xxxx-xxxx-xxxx` format
 >    - Throws `MFA_ALREADY_ENABLED` if MFA already enabled
 >    - Idempotency: calling setup twice returns same result (mock Redis to return existing data)
@@ -1491,7 +1494,7 @@
 > 
 > 2. `src/dto/reset-password.dto.ts` — class `ResetPasswordDto`:
 >    - `@IsEmail() email: string`
->    - `@IsString() @MinLength(8) @MaxLength(72) newPassword: string`
+>    - `@IsString() @MinLength(8) @MaxLength(128) newPassword: string`
 >    - `@IsOptional() @IsString() @IsNotEmpty() token?: string`
 >    - `@IsOptional() @IsString() @IsNotEmpty() otp?: string`
 >    - `@IsOptional() @IsString() @IsNotEmpty() verifiedToken?: string`
@@ -2076,46 +2079,25 @@
 
 ## Fase 5 — Plataforma, OAuth e Convites
 
-### ⬜ NEST-097: JWT Platform Strategy
+### ⬜ NEST-097: JwtPlatformGuard nativo
 - **Fase:** 5
 - **Status:** TODO
 - **Prioridade:** Media
 - **Dependencias:** NEST-026, NEST-010
 - **Agente:** code-reviewer
 - **Estimativa:** ~30min
-- **Descricao:** Criar a Passport strategy para JWT de plataforma que compartilha jwt.secret mas isola por claim type: 'platform'.
+- **Descricao:** Implementar JwtPlatformGuard nativo com `CanActivate`, sem Passport, usando `@nestjs/jwt` JwtService. Mesmo padrão do JwtAuthGuard da Fase 2 mas isolando por claim type: 'platform'.
 
 **Prompt para o agente:**
-> Criar o arquivo `src/strategies/jwt-platform.strategy.ts`. Implementar uma Passport strategy (`passport-jwt`) chamada `JwtPlatformStrategy` que:
-> - Extrai o JWT do header Authorization (Bearer) usando `ExtractJwt.fromAuthBearerToken()` e, se configurado para modo cookie/both, também do cookie de access token.
-> - Usa o mesmo `jwt.secret` das opções do módulo (injetado via options).
-> - OBRIGATORIAMENTE pina `algorithms: ['HS256']` — idêntico à `JwtStrategy` da Fase 2.
-> - No método `validate(payload)`, verifica que `payload.type === 'platform'`. Se não, lança `UnauthorizedException` com código `PLATFORM_AUTH_REQUIRED`.
-> - Verifica que `payload.jti` existe. Se não, lança `UnauthorizedException` com código `TOKEN_INVALID`.
-> - Verifica a blacklist: consulta Redis pela chave `rv:{jti}`. Se existe, lança `UnauthorizedException` com `TOKEN_REVOKED`.
-> - Retorna o payload validado.
-> Seguir o mesmo padrão estrutural de `src/strategies/jwt.strategy.ts` da Fase 2. Usar `@Injectable()` e registrar como strategy `'jwt-platform'`. Arquivo de referência para padrão: `src/strategies/jwt.strategy.ts`.
-> Critérios de aceitação: compila sem erros, pina HS256, valida type === 'platform', verifica jti e blacklist.
-
----
-
-### ⬜ NEST-098: JWT Platform Guard
-- **Fase:** 5
-- **Status:** TODO
-- **Prioridade:** Media
-- **Dependencias:** NEST-097
-- **Agente:** code-reviewer
-- **Estimativa:** ~30min
-- **Descricao:** Criar guard que aceita apenas tokens platform e rejeita tokens dashboard com PLATFORM_AUTH_REQUIRED.
-
-**Prompt para o agente:**
-> Criar o arquivo `src/guards/jwt-platform.guard.ts`. Implementar `JwtPlatformGuard` que:
-> - Extends `AuthGuard('jwt-platform')` do `@nestjs/passport`.
-> - No método `handleRequest(err, user, info)`: se err ou !user, lança `UnauthorizedException` com código `PLATFORM_AUTH_REQUIRED`.
-> - Valida que `user.jti` está presente (double-check). Se ausente, lança com código `TOKEN_INVALID`.
-> - Exportar como `JwtPlatformGuard`.
-> Seguir o padrão de `src/guards/jwt-auth.guard.ts` da Fase 2.
-> Critérios de aceitação: tokens com type 'dashboard' são rejeitados, tokens com type 'platform' passam, tokens sem jti são rejeitados.
+> Criar o arquivo `src/guards/jwt-platform.guard.ts`. Implementar `JwtPlatformGuard` que `implements CanActivate`. Inject `JwtService` (de `@nestjs/jwt`), `TokenDeliveryService`, `AuthRedisService` e `BYMAX_AUTH_OPTIONS`. No método `canActivate(context: ExecutionContext)`:
+> - Extrair token do header Authorization (Bearer) via `tokenDeliveryService.extractAccessToken(req)` e, se configurado para modo cookie/both, também do cookie de access token.
+> - Verificar JWT com `jwtService.verify(token, { algorithms: ['HS256'] })`. OBRIGATORIAMENTE pinar `algorithms: ['HS256']` — idêntico ao `JwtAuthGuard` da Fase 2.
+> - Verificar que `payload.type === 'platform'`. Se não, lançar `UnauthorizedException` com código `PLATFORM_AUTH_REQUIRED`.
+> - Verificar que `payload.jti` existe. Se não, lançar `UnauthorizedException` com código `TOKEN_INVALID`.
+> - Verificar blacklist via `authRedis.isBlacklisted(jti)`. Se blacklisted, lançar `UnauthorizedException` com `TOKEN_REVOKED`.
+> - Popular `request.user` com payload validado. Retornar true.
+> Seguir o mesmo padrão estrutural de `src/guards/jwt-auth.guard.ts` da Fase 2.
+> Critérios de aceitação: compila sem erros, pina HS256, valida type === 'platform', verifica jti e blacklist, tokens com type 'dashboard' são rejeitados.
 
 ---
 
@@ -2170,10 +2152,10 @@
 **Prompt para o agente:**
 > Criar o arquivo `src/dto/platform-login.dto.ts`. Implementar `PlatformLoginDto` com:
 > - `@IsEmail() email: string`
-> - `@IsString() @IsNotEmpty() @MaxLength(72) password: string`
-> Usar decorators de `class-validator`. O `@MaxLength(72)` previne bcrypt bombing (bcrypt trunca em 72 bytes).
+> - `@IsString() @IsNotEmpty() @MaxLength(128) password: string`
+> Usar decorators de `class-validator`. O `@MaxLength(128)` é limite prático de input para prevenir DoS.
 > Exportar a classe.
-> Critérios de aceitação: validação funciona para email inválido, password vazio, password > 72 chars.
+> Critérios de aceitação: validação funciona para email inválido, password vazio, password > 128 chars.
 
 ---
 
@@ -2383,7 +2365,7 @@
 - **Descricao:** Implementar processamento de callback OAuth com validação de state, criação/vinculação de usuário e emissão de tokens.
 
 **Prompt para o agente:**
-> No arquivo `src/oauth/oauth.service.ts`, adicionar o método `handleCallback(profile: OAuthProfile, state: string, ip: string, userAgent: string)`:
+> No arquivo `src/oauth/oauth.service.ts`, adicionar o método `handleCallback(provider: string, code: string, state: string, ip: string, userAgent: string)`. O método usa o plugin do provider para trocar o code e buscar o profile:
 > 1. Validar state no Redis: GET `os:{sha256(state)}`. Se não encontrado, lançar `OAUTH_FAILED`.
 > 2. Extrair `tenantId` do state armazenado.
 > 3. Consumir state: DEL `os:{sha256(state)}` (single-use).
@@ -2410,12 +2392,12 @@
 - **Descricao:** Implementar plugin Google OAuth com strategy e guard.
 
 **Prompt para o agente:**
-> Criar 3 arquivos:
-> 1. `src/oauth/google/google-oauth.plugin.ts`: implementar `GoogleOAuthPlugin` que implementa a interface `OAuthProviderPlugin`. Deve expor `name: 'google'`, `strategy`, e `guard`. Configuração via `clientId`, `clientSecret`, `callbackUrl`, `scope` (default: `['email', 'profile']`).
-> 2. `src/oauth/google/google.strategy.ts`: Passport strategy usando `passport-google-oauth20`. Extrai profile com `email`, `name`, `picture`, `providerId`. O callback chama `done(null, profile)`.
-> 3. `src/oauth/google/google-auth.guard.ts`: `AuthGuard('google')`.
-> NOTA: `passport-google-oauth20` é peer dependency opcional. Se não instalado, o plugin deve lançar erro descritivo no construtor.
-> Critérios de aceitação: plugin implementa interface, strategy extrai profile corretamente, guard funciona com Passport.
+> Criar o arquivo `src/oauth/google/google-oauth.plugin.ts`. Implementar `GoogleOAuthPlugin` que implementa a interface `OAuthProviderPlugin`. Deve expor `name: 'google'`. Configuração via `clientId`, `clientSecret`, `callbackUrl`, `scope` (default: `['email', 'profile']`). Implementar métodos nativos sem Passport:
+> - `authorizeUrl(state: string): string` — constrói URL de autorização Google OAuth2 com query params (client_id, redirect_uri, scope, state, response_type=code).
+> - `exchangeCode(code: string): Promise<{ access_token: string }>` — troca authorization code por access token via `fetch` POST para `https://oauth2.googleapis.com/token`.
+> - `fetchProfile(accessToken: string): Promise<OAuthProfile>` — busca profile via `fetch` GET para `https://www.googleapis.com/oauth2/v2/userinfo`, extrai `email`, `name`, `picture`, `providerId`.
+> NÃO criar `google.strategy.ts` nem `google-auth.guard.ts` (sem Passport).
+> Critérios de aceitação: plugin implementa interface, métodos nativos com fetch, sem dependência de passport-google-oauth20.
 
 ---
 
@@ -2475,9 +2457,9 @@
 > Criar o arquivo `src/dto/accept-invitation.dto.ts`. Implementar `AcceptInvitationDto`:
 > - `@IsString() @IsNotEmpty() token: string`
 > - `@IsString() @MinLength(2) name: string`
-> - `@IsString() @MinLength(8) @MaxLength(72) password: string`
-> O `@MaxLength(72)` previne bcrypt bombing.
-> Critérios de aceitação: validação funciona para token vazio, name < 2, password < 8, password > 72.
+> - `@IsString() @MinLength(8) @MaxLength(128) password: string`
+> O `@MaxLength(128)` é limite prático de input para prevenir DoS.
+> Critérios de aceitação: validação funciona para token vazio, name < 2, password < 8, password > 128.
 
 ---
 
@@ -2756,7 +2738,7 @@
 > 1. Register -> Login -> POST /auth/mfa/setup (retorna secret e QR) -> POST /auth/mfa/verify (com TOTP válido, retorna recovery codes) -> POST /auth/logout.
 > 2. Login novamente -> resposta com mfaRequired: true e mfaTempToken -> POST /auth/mfa/challenge com TOTP -> tokens emitidos.
 > 3. Login -> mfaTempToken -> POST /auth/mfa/challenge com recovery code -> tokens emitidos (recovery code consumido).
-> Usar `otpauth` ou `totp-generator` para gerar códigos TOTP válidos no teste.
+> Usar `verifyTotp()` de `src/crypto/totp.ts` ou implementação local com `node:crypto` para gerar códigos TOTP válidos no teste.
 > Critérios de aceitação: setup + verify funciona, challenge com TOTP funciona, challenge com recovery code funciona e é consumido.
 
 ---
@@ -2923,10 +2905,10 @@
 
 **Prompt para o agente:**
 > Realizar revisão de segurança verificando os seguintes itens nos arquivos do projeto:
-> 1. `src/services/crypto.service.ts`: senhas hasheadas com bcrypt (12 rounds). Verificar `saltRounds: 12`.
-> 2. `src/services/crypto.service.ts`: comparação constant-time em senhas via `bcrypt.compare()` (inerentemente constant-time).
+> 1. `src/services/password.service.ts`: senhas hasheadas com scrypt (N=2^15, r=8, p=1). Verificar parâmetros de custo.
+> 2. `src/services/password.service.ts`: comparação constant-time em senhas via `crypto.timingSafeEqual()`.
 > 3. `src/services/crypto.service.ts`: secrets TOTP criptografados com AES-256-GCM. Verificar uso de `createCipheriv('aes-256-gcm')`.
-> 4. MFA recovery codes hasheados com bcrypt (não armazenados em plain text).
+> 4. MFA recovery codes hasheados com scrypt via PasswordService (não armazenados em plain text).
 > 5. Refresh tokens são opacos (UUID v4, não JWT).
 > 6. Comparação de OTPs e recovery codes usa `timingSafeEqual` com buffers de mesmo comprimento.
 > Produzir relatório com status (PASS/FAIL) para cada item e recomendações de correção se FAIL.
@@ -3043,7 +3025,7 @@
 > 4. **Exemplo de IEmailProvider:** implementação de referência com NOTA DE SEGURANÇA: todos os valores de usuário interpolados em HTML devem ser escapados (`escapeHtml(name)`) para prevenir XSS nas notificações.
 > 5. **Tabela de endpoints:** todos os 14+ endpoints com método, path, auth, guard e descrição.
 > 6. **Tabela de guards e decorators:** nome, tipo, descrição.
-> 7. **Seção de segurança:** allowlist de domínios em `resolveDomains`, recovery sem TOTP requer intervenção admin, `@MaxLength(72)` em senhas.
+> 7. **Seção de segurança:** allowlist de domínios em `resolveDomains`, recovery sem TOTP requer intervenção admin, `@MaxLength(128)` em senhas.
 > 8. **Nota sobre @nestjs/throttler:** >= 6.0.0 requerido para `AUTH_THROTTLE_CONFIGS`.
 > Critérios de aceitação: README completo e funcional, exemplos de código corretos e testáveis.
 
@@ -3068,7 +3050,7 @@
 > - **OAuth:** extensible plugin system, Google provider
 > - **Invitations:** create, accept
 > - **Guards:** JwtAuthGuard, JwtPlatformGuard, RolesGuard, PlatformRolesGuard, UserStatusGuard, MfaVerifiedGuard, WsJwtGuard, SelfOrAdminGuard, OptionalAuthGuard
-> - **Security:** bcrypt, AES-256-GCM, brute-force protection, CSRF state, constant-time comparison, algorithm pinning
+> - **Security:** scrypt, AES-256-GCM, TOTP nativo, brute-force protection, CSRF state, constant-time comparison, algorithm pinning
 > Formato: Keep a Changelog (https://keepachangelog.com).
 > Critérios de aceitação: entrada v1.0.0 completa com todas as features listadas.
 
@@ -3299,6 +3281,868 @@
 
 ---
 
+## Fase 7 — Shared + Client Subpath
+
+### ⬜ NEST-152: Shared types - AuthUserClient, AuthResult, AuthErrorResponse
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-151
+- **Agente:** typescript-reviewer
+- **Estimativa:** ~30min
+- **Descricao:** Criar os tipos compartilhados entre server e client: subset do AuthUser para consumo no frontend, tipos de resultado de autenticação, resposta de erro e payloads JWT.
+
+**Prompt para o agente:**
+> Criar os seguintes arquivos de tipos compartilhados:
+> 
+> 1. `src/shared/types/auth-user.types.ts` — tipo `AuthUserClient` contendo subset do `AuthUser` para uso no client: `id`, `email`, `name`, `role`, `tenantId`, `status`, `mfaEnabled`, `avatarUrl`. Usar `Pick` ou interface standalone.
+> 2. `src/shared/types/auth-result.types.ts` — tipos `AuthResult` (user + tokens info) e `MfaChallengeResult` (tempToken + métodos disponíveis).
+> 3. `src/shared/types/auth-error.types.ts` — tipo `AuthErrorResponse` com campos: `message`, `error`, `statusCode`, `code` (código de erro da lib).
+> 4. `src/shared/types/jwt-payload.types.ts` — tipos `DashboardJwtPayload`, `PlatformJwtPayload`, `MfaTempPayload` (re-export ou redefinição dos tipos do server).
+> 5. `src/shared/types/auth-config.types.ts` — tipos para nomes de cookies (`AuthCookieNames`), tipos de roles (`AuthRole`), configurações de cookie.
+> 
+> Todos os tipos devem ser `export type` ou `export interface`. Zero dependências externas — apenas TypeScript puro.
+> 
+> Critérios de aceitação:
+> - Cada arquivo compila isoladamente com `tsc --noEmit`
+> - Nenhuma dependência de runtime (apenas types)
+> - Tipos são compatíveis com os exports do server
+> - JSDoc em inglês em todos os tipos exportados
+
+---
+
+### ⬜ NEST-153: Shared constants - cookies, error codes, routes
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-152
+- **Agente:** security-reviewer
+- **Estimativa:** ~25min
+- **Descricao:** Criar constantes compartilhadas para nomes de cookies, códigos de erro e rotas de autenticação, garantindo consistência entre server e client.
+
+**Prompt para o agente:**
+> Criar os seguintes arquivos de constantes compartilhadas:
+> 
+> 1. `src/shared/constants/cookie-defaults.ts` — exportar constantes:
+>    - `AUTH_ACCESS_COOKIE_NAME = 'access_token'`
+>    - `AUTH_REFRESH_COOKIE_NAME = 'refresh_token'`
+>    - `AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'`
+>    - `AUTH_REFRESH_COOKIE_PATH = '/auth'`
+> 2. `src/shared/constants/error-codes.ts` — re-exportar `AUTH_ERROR_CODES` do módulo principal ou redefinir os códigos relevantes para o client.
+> 3. `src/shared/constants/routes.ts` — objeto `AUTH_ROUTES` com todos os paths dos endpoints: `signIn`, `signUp`, `refresh`, `logout`, `me`, `forgotPassword`, `resetPassword`, `mfaSetup`, `mfaVerify`, `mfaChallenge`, `mfaDisable`, etc.
+> 
+> Todas as constantes devem usar `as const` para type-safety. Zero dependências externas.
+> 
+> Critérios de aceitação:
+> - Constantes de cookies correspondem exatamente ao que o server usa
+> - `AUTH_ROUTES` cobre todos os endpoints públicos da lib
+> - Compila sem erros
+> - JSDoc em inglês em todos os exports
+
+---
+
+### ⬜ NEST-154: Shared barrel export and compilation tests
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-152, NEST-153
+- **Agente:** architect
+- **Estimativa:** ~15min
+- **Descricao:** Criar barrel export do subpath shared e verificar que não há dependências externas e que os tipos são compatíveis com os exports do server.
+
+**Prompt para o agente:**
+> 1. Criar `src/shared/index.ts` exportando todos os tipos e constantes dos módulos `types/*` e `constants/*`.
+> 2. Usar `export type` para interfaces/types e `export` para constantes de valor.
+> 3. Verificar que o subpath `shared` tem zero dependências externas (apenas TypeScript types e constantes puras).
+> 4. Criar teste de compilação que importa tudo de `src/shared/index.ts` e verifica que compila sem erros.
+> 5. Verificar que os tipos exportados são compatíveis com os tipos do server (ex: `AuthUserClient` é subset de `AuthUser`).
+> 
+> Critérios de aceitação:
+> - `src/shared/index.ts` exporta todos os tipos e constantes
+> - Zero dependências externas no subpath shared
+> - Teste de compilação passa
+> - Tipos compatíveis com exports do server
+
+---
+
+### ⬜ NEST-155: createAuthFetch - fetch wrapper core
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-154
+- **Agente:** security-reviewer
+- **Estimativa:** ~45min
+- **Descricao:** Implementar o wrapper de fetch que gerencia credentials, intercepta 401s, tenta refresh automático e executa retry da request original.
+
+**Prompt para o agente:**
+> Criar `src/client/createAuthFetch.ts` com a seguinte implementação:
+> 
+> 1. Função `createAuthFetch(config)` que retorna um fetch wrapper tipado.
+> 2. O wrapper deve:
+>    - Adicionar `credentials: 'include'` e headers padrão (`Content-Type: application/json`) em todas as requests.
+>    - Interceptar respostas 401: verificar via `shouldSkipRefreshOnUrl` se a URL é de endpoint de auth (não deve tentar refresh).
+>    - Se não for endpoint de auth: tentar refresh via `POST /api/auth/client-refresh`.
+>    - Implementar single-flight refresh dedup via shared promise (se já existe refresh em andamento, aguardar o mesmo).
+>    - Em refresh bem-sucedido: retry da request original.
+>    - Em refresh falhado: chamar callback `onSessionExpired`.
+> 3. Importar constantes de cookies/rotas de `../shared`.
+> 4. Zero dependências externas — apenas `fetch` nativo.
+> 
+> Critérios de aceitação:
+> - Wrapper adiciona credentials e headers automaticamente
+> - 401 em endpoint normal dispara refresh + retry
+> - 401 em endpoint de auth NÃO dispara refresh
+> - Single-flight dedup funciona (apenas 1 refresh simultâneo)
+> - Callback onSessionExpired é chamado quando refresh falha
+> - Zero dependências externas
+
+---
+
+### ⬜ NEST-156: shouldSkipRefreshOnUrl implementation
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-154
+- **Agente:** code-reviewer
+- **Estimativa:** ~15min
+- **Descricao:** Implementar função interna que determina quais URLs não devem disparar refresh automático ao receber 401.
+
+**Prompt para o agente:**
+> Implementar função `shouldSkipRefreshOnUrl(url: string): boolean` em `src/client/createAuthFetch.ts` (função interna, não exportada):
+> 
+> 1. A função deve retornar `true` para as seguintes URLs (match por `endsWith` ou `includes` no pathname):
+>    - `/auth/sign-in`
+>    - `/auth/sign-up`
+>    - `/auth/refresh`
+>    - `/api/auth/client-refresh`
+>    - `/api/auth/silent-refresh`
+>    - `/auth/forgot-password`
+>    - `/auth/verify`
+>    - `/auth/reset-password`
+> 2. Importar `AUTH_ROUTES` de `../shared` para manter consistência com as rotas do server.
+> 3. Extrair pathname da URL usando `new URL(url)` com tratamento de erro para URLs relativas.
+> 
+> Critérios de aceitação:
+> - Todas as URLs da skip list retornam `true`
+> - URLs normais (ex: `/api/users`, `/api/workouts`) retornam `false`
+> - Funciona com URLs absolutas e relativas
+> - Usa constantes de `AUTH_ROUTES` onde possível
+
+---
+
+### ⬜ NEST-157: Single-flight refresh dedup
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-155
+- **Agente:** security-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Garantir que múltiplas requests recebendo 401 simultaneamente compartilhem uma única chamada de refresh, evitando race conditions.
+
+**Prompt para o agente:**
+> Implementar o padrão de single-flight refresh dedup em `src/client/createAuthFetch.ts`:
+> 
+> 1. Variável de módulo `refreshPromise: Promise<Response> | null = null`.
+> 2. Quando uma 401 é interceptada e refresh é necessário:
+>    - Se `refreshPromise` já existe: aguardar (`await refreshPromise`).
+>    - Se não existe: criar nova promise de refresh, atribuir a `refreshPromise`.
+>    - Usar `.finally(() => { refreshPromise = null })` para limpar a referência.
+> 3. Todas as requests que receberam 401 durante o refresh devem aguardar o mesmo promise e então retry.
+> 
+> Critérios de aceitação:
+> - Com 5 requests simultâneas recebendo 401, apenas 1 POST /refresh é feito
+> - Todas as 5 requests são retried após refresh bem-sucedido
+> - Se refresh falha, todas as 5 recebem o erro
+> - `.finally()` limpa `refreshPromise` em sucesso e falha
+> - Teste unitário com mock de fetch comprova dedup
+
+---
+
+### ⬜ NEST-158: createAuthClient factory
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-155, NEST-156, NEST-157
+- **Agente:** architect
+- **Estimativa:** ~40min
+- **Descricao:** Criar a factory principal do client que expõe métodos tipados para todas as operações de autenticação, usando createAuthFetch internamente.
+
+**Prompt para o agente:**
+> Criar `src/client/createAuthClient.ts`:
+> 
+> 1. Interface `AuthClientConfig`:
+>    - `baseUrl: string` — URL base do server (ex: `http://localhost:3000`)
+>    - `refreshEndpoint?: string` — endpoint de refresh (default: `/api/auth/client-refresh`)
+>    - `credentials?: RequestCredentials` — default: `'include'`
+>    - `defaultHeaders?: Record<string, string>` — headers extras
+>    - `onSessionExpired?: () => void` — callback quando sessão expira
+>    - `timeout?: number` — timeout em ms (default: 30000)
+> 2. Interface `AuthClient` com métodos:
+>    - `login(email: string, password: string, options?: { tenantId?: string }): Promise<AuthResult>`
+>    - `register(data: RegisterInput): Promise<AuthResult>`
+>    - `logout(): Promise<void>`
+>    - `refresh(): Promise<AuthResult>`
+>    - `getMe(): Promise<AuthUserClient>`
+>    - `mfaChallenge(tempToken: string, code: string): Promise<AuthResult>`
+>    - `forgotPassword(email: string, tenantId?: string): Promise<void>`
+>    - `resetPassword(token: string, otp: string, newPassword: string): Promise<void>`
+> 3. Função `createAuthClient(config: AuthClientConfig): AuthClient` que usa `createAuthFetch` internamente.
+> 4. Cada método faz fetch para o endpoint correto usando `AUTH_ROUTES`.
+> 
+> Critérios de aceitação:
+> - Todos os métodos tipados corretamente
+> - Usa createAuthFetch para todas as requests
+> - Config com defaults sensatos
+> - Tratamento de erro consistente (throw em non-2xx)
+> - JSDoc em inglês em todos os métodos e interfaces
+
+---
+
+### ⬜ NEST-159: Client barrel export and tests
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-158
+- **Agente:** code-reviewer
+- **Estimativa:** ~30min
+- **Descricao:** Criar barrel export do subpath client e testes unitários cobrindo refresh dedup, skip list, error handling e cada método do AuthClient.
+
+**Prompt para o agente:**
+> 1. Criar `src/client/index.ts` exportando: `createAuthClient`, `createAuthFetch`, e todos os tipos relevantes (`AuthClientConfig`, `AuthClient`).
+> 2. Escrever testes unitários em `src/client/__tests__/`:
+>    - Mock de `global.fetch` para simular respostas.
+>    - Testar refresh dedup: 5 requests simultâneas com 401 → apenas 1 refresh.
+>    - Testar skip list: 401 em `/auth/sign-in` não dispara refresh.
+>    - Testar error handling: non-2xx responses throw com `AuthErrorResponse`.
+>    - Testar cada método do `AuthClient`: `login`, `register`, `logout`, `refresh`, `getMe`, `mfaChallenge`, `forgotPassword`, `resetPassword`.
+>    - Testar `onSessionExpired` é chamado quando refresh falha.
+> 
+> Critérios de aceitação:
+> - Barrel export compila sem erros
+> - Todos os testes passam
+> - Cobertura >= 80% nos arquivos do client
+> - Mock de fetch não vaza entre testes
+
+---
+
+### ⬜ NEST-160: Phase 7 validation
+- **Fase:** 7
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-154, NEST-159
+- **Agente:** architect
+- **Estimativa:** ~20min
+- **Descricao:** Validação final da Fase 7 — verificar que shared e client têm zero dependências externas, tipos são compatíveis, cobertura adequada e build compila.
+
+**Prompt para o agente:**
+> Executar validação completa da Fase 7:
+> 1. Verificar que `src/shared/` tem zero dependências externas (apenas TypeScript types e constantes).
+> 2. Verificar que `src/client/` tem zero dependências externas (apenas `fetch` nativo e imports de `../shared`).
+> 3. Verificar que tipos do shared são compatíveis com os exports do server (ex: `AuthUserClient` é subset de `AuthUser`).
+> 4. Executar `npm run test -- --coverage` e verificar cobertura >= 80%.
+> 5. Executar `npm run build` e verificar compilação sem erros.
+> 6. Verificar que barrel exports de shared e client estão corretos.
+> 
+> Critérios de aceitação:
+> - Shared: zero dependências externas
+> - Client: zero dependências externas (apenas fetch nativo)
+> - Tipos compatíveis com server
+> - Cobertura >= 80%
+> - Build sem erros
+
+---
+
+## Fase 8 — React Subpath
+
+### ⬜ NEST-161: AuthContext and types
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-160
+- **Agente:** typescript-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Criar o contexto React para autenticação e definir os tipos do AuthContextValue com status, user e métodos de auth.
+
+**Prompt para o agente:**
+> Criar `src/react/context.ts`:
+> 
+> 1. Definir tipo `AuthStatus = 'authenticated' | 'unauthenticated' | 'loading'`.
+> 2. Definir interface `AuthContextValue`:
+>    - `user: AuthUserClient | null`
+>    - `status: AuthStatus`
+>    - `isLoading: boolean`
+>    - `login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthResult>`
+>    - `register: (data: RegisterInput) => Promise<AuthResult>`
+>    - `logout: () => Promise<void>`
+>    - `refresh: () => Promise<void>`
+>    - `forgotPassword: (email: string, tenantId?: string) => Promise<void>`
+>    - `resetPassword: (token: string, otp: string, newPassword: string) => Promise<void>`
+>    - `lastValidation: Date | null`
+> 3. Criar `AuthContext` usando `React.createContext<AuthContextValue | null>(null)`.
+> 4. Importar tipos de `../shared`.
+> 
+> Critérios de aceitação:
+> - Contexto criado com valor inicial `null`
+> - Todos os tipos importados de `../shared`
+> - JSDoc em inglês em todos os tipos
+> - Compila sem erros
+
+---
+
+### ⬜ NEST-162: AuthProvider component
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-161
+- **Agente:** code-reviewer
+- **Estimativa:** ~40min
+- **Descricao:** Implementar o componente AuthProvider que gerencia estado de sessão, revalidação automática e expõe o contexto de autenticação para a árvore de componentes.
+
+**Prompt para o agente:**
+> Criar `src/react/AuthProvider.tsx`:
+> 
+> 1. Props da interface `AuthProviderProps`:
+>    - `children: React.ReactNode`
+>    - `client: AuthClient` (instância criada com `createAuthClient`)
+>    - `onSessionExpired?: () => void`
+>    - `revalidateInterval?: number` (default: `300000` — 5 minutos)
+> 2. Gerenciar estado via `useReducer` com actions: `SET_USER`, `SET_LOADING`, `CLEAR_SESSION`, `SET_ERROR`.
+> 3. No mount (`useEffect`): chamar `client.getMe()` para verificar sessão existente.
+> 4. Configurar `setInterval` para revalidação automática com o intervalo configurado.
+> 5. Implementar métodos que chamam `client.*` e atualizam o estado do reducer.
+> 6. Chamar `onSessionExpired` quando sessão expira (refresh falha).
+> 7. Prover `AuthContext.Provider` com o value calculado.
+> 
+> Critérios de aceitação:
+> - AuthProvider renderiza children corretamente
+> - `client.getMe()` é chamado no mount
+> - Revalidação automática funciona no intervalo configurado
+> - Estado transiciona corretamente: loading → authenticated/unauthenticated
+> - `onSessionExpired` é chamado quando sessão expira
+> - Cleanup de intervals no unmount
+
+---
+
+### ⬜ NEST-163: useSession hook
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-162
+- **Agente:** code-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Criar hook useSession que expõe dados da sessão atual (user, status, loading) a partir do AuthContext.
+
+**Prompt para o agente:**
+> Criar `src/react/useSession.ts`:
+> 
+> 1. Hook `useSession()` que lê do `AuthContext` via `useContext`.
+> 2. Retorna objeto tipado:
+>    - `user: AuthUserClient | null`
+>    - `status: AuthStatus` (`'authenticated'` | `'unauthenticated'` | `'loading'`)
+>    - `isLoading: boolean`
+>    - `refresh: () => Promise<void>`
+>    - `lastValidation: Date | null`
+> 3. Throw erro descritivo se usado fora do `AuthProvider`.
+> 
+> Critérios de aceitação:
+> - Retorna dados corretos do contexto
+> - Throw claro se usado fora do AuthProvider
+> - Tipos corretos no retorno
+> - JSDoc em inglês
+
+---
+
+### ⬜ NEST-164: useAuth hook
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-162
+- **Agente:** code-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Criar hook useAuth que expõe métodos de autenticação (login, register, logout, etc.) a partir do AuthContext.
+
+**Prompt para o agente:**
+> Criar `src/react/useAuth.ts`:
+> 
+> 1. Hook `useAuth()` que lê do `AuthContext` via `useContext`.
+> 2. Retorna objeto tipado com métodos de autenticação:
+>    - `login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthResult>`
+>    - `register: (data: RegisterInput) => Promise<AuthResult>`
+>    - `logout: () => Promise<void>`
+>    - `forgotPassword: (email: string, tenantId?: string) => Promise<void>`
+>    - `resetPassword: (token: string, otp: string, newPassword: string) => Promise<void>`
+> 3. Cada método wrapper chama o método correspondente do client e atualiza estado do contexto.
+> 4. Throw erro descritivo se usado fora do `AuthProvider`.
+> 
+> Critérios de aceitação:
+> - Todos os métodos de auth disponíveis
+> - Throw claro se usado fora do AuthProvider
+> - Tipos corretos no retorno
+> - JSDoc em inglês
+
+---
+
+### ⬜ NEST-165: useAuthStatus hook
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Baixa
+- **Dependencias:** NEST-163
+- **Agente:** code-reviewer
+- **Estimativa:** ~10min
+- **Descricao:** Hook de conveniência que retorna apenas o status de autenticação de forma simplificada (isAuthenticated, isLoading).
+
+**Prompt para o agente:**
+> Criar `src/react/useAuthStatus.ts`:
+> 
+> 1. Hook `useAuthStatus()` que usa `useSession` internamente.
+> 2. Retorna objeto simplificado:
+>    - `isAuthenticated: boolean` (true quando `status === 'authenticated'`)
+>    - `isLoading: boolean` (true quando `status === 'loading'`)
+> 3. Hook de conveniência para uso em guards de rota e renderização condicional.
+> 
+> Critérios de aceitação:
+> - `isAuthenticated` é `true` somente quando status é `'authenticated'`
+> - `isLoading` é `true` somente quando status é `'loading'`
+> - Usa `useSession` internamente (não duplica lógica)
+> - JSDoc em inglês
+
+---
+
+### ⬜ NEST-166: React barrel export
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-161, NEST-162, NEST-163, NEST-164, NEST-165
+- **Agente:** architect
+- **Estimativa:** ~10min
+- **Descricao:** Criar barrel export do subpath react com todos os componentes, hooks e tipos exportados.
+
+**Prompt para o agente:**
+> Criar `src/react/index.ts`:
+> 
+> 1. Exportar componente: `AuthProvider`.
+> 2. Exportar hooks: `useSession`, `useAuth`, `useAuthStatus`.
+> 3. Exportar tipos: `AuthContextValue`, `AuthStatus`, `AuthProviderProps`.
+> 4. Usar `export type` para interfaces e `export` para componentes/hooks.
+> 5. Verificar que compila sem erros.
+> 
+> Critérios de aceitação:
+> - Todos os exports públicos do react subpath estão no barrel
+> - `export type` usado corretamente para tipos
+> - Compila sem erros
+> - Imports circulares ausentes
+
+---
+
+### ⬜ NEST-167: React hooks tests
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-166
+- **Agente:** code-reviewer
+- **Estimativa:** ~45min
+- **Descricao:** Testes unitários completos dos hooks React usando React Testing Library, com mock do AuthClient para isolar comportamento.
+
+**Prompt para o agente:**
+> Escrever testes em `src/react/__tests__/`:
+> 
+> 1. Configurar mock do `AuthClient` para todos os testes.
+> 2. Testar `AuthProvider`:
+>    - Renderiza children corretamente
+>    - Chama `client.getMe()` no mount
+>    - Transiciona de `loading` → `authenticated` quando getMe retorna user
+>    - Transiciona de `loading` → `unauthenticated` quando getMe falha
+> 3. Testar `useSession`:
+>    - Retorna status correto em cada transição
+>    - Throw quando usado fora do AuthProvider
+> 4. Testar `useAuth`:
+>    - `login` chama `client.login` e atualiza estado
+>    - `logout` chama `client.logout` e limpa estado
+>    - Throw quando usado fora do AuthProvider
+> 5. Testar revalidação:
+>    - `setInterval` configurado com intervalo correto
+>    - Cleanup no unmount
+> 6. Usar `@testing-library/react` com `renderHook` e `act`.
+> 
+> Critérios de aceitação:
+> - Todos os testes passam
+> - Cobertura >= 80% nos arquivos react
+> - Mock do AuthClient não vaza entre testes
+> - Testes são isolados e determinísticos
+
+---
+
+### ⬜ NEST-168: Phase 8 validation
+- **Fase:** 8
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-167
+- **Agente:** architect
+- **Estimativa:** ~15min
+- **Descricao:** Validação final da Fase 8 — verificar peer dependency de React, cobertura de testes, e que o build compila sem erros.
+
+**Prompt para o agente:**
+> Executar validação completa da Fase 8:
+> 1. Verificar que `react` é declarado como `peerDependency` com `^19` (não como dependency direta).
+> 2. Verificar que hooks são testados em isolamento com mock do AuthClient.
+> 3. Executar `npm run test -- --coverage` e verificar cobertura >= 80% nos arquivos de `src/react/`.
+> 4. Executar `npm run build` e verificar compilação sem erros.
+> 5. Verificar que não há dependências externas além de `react` como peer dep.
+> 6. Verificar que barrel export de `src/react/index.ts` está completo.
+> 
+> Critérios de aceitação:
+> - React ^19 como peerDependency apenas
+> - Hooks testados em isolamento
+> - Cobertura >= 80%
+> - Build sem erros
+
+---
+
+## Fase 9 — Next.js Subpath
+
+### ⬜ NEST-169: isBackgroundRequest helper
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-160
+- **Agente:** code-reviewer
+- **Estimativa:** ~15min
+- **Descricao:** Criar helper para detectar requisicoes paralelas do Next.js via headers. Retorna boolean indicando se a request e uma background request (RSC, prefetch ou state-tree).
+
+**Prompt para o agente:**
+> Create `src/nextjs/helpers/isBackgroundRequest.ts`. The function receives a Request (or NextRequest) and checks for Next.js parallel/background request headers: `RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree` (presence). Return `true` if any of these headers are detected. This is used by the proxy to return 401 instead of redirect for background requests, preventing redirect loops in client-side navigation. Export the function and its return type. Add JSDoc explaining why background requests need special handling. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-170: buildSilentRefreshUrl helper
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-160
+- **Agente:** code-reviewer
+- **Estimativa:** ~10min
+- **Descricao:** Criar helper que monta a URL para `/api/auth/silent-refresh` com parametro de redirect. Aceita NextRequest e string de destino.
+
+**Prompt para o agente:**
+> Create `src/nextjs/helpers/buildSilentRefreshUrl.ts`. The function accepts a NextRequest and a `redirectTo` string parameter. It builds and returns a URL pointing to `/api/auth/silent-refresh` with the `redirect` query parameter set to the provided destination. Use the request's origin to build absolute URLs. Handle edge cases: missing redirectTo defaults to current pathname, encode the redirect param properly. Export the function with JSDoc. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-171: dedupeSetCookieHeaders + parseSetCookieHeader
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-160
+- **Agente:** security-reviewer
+- **Estimativa:** ~25min
+- **Descricao:** Criar helpers para deduplicacao e parsing de headers Set-Cookie. Critico para setups white-label multi-dominio onde multiplos Set-Cookie podem colidir.
+
+**Prompt para o agente:**
+> Create `src/nextjs/helpers/dedupeSetCookieHeaders.ts` with two exported functions:
+> 1. `parseSetCookieHeader(raw: string)`: parse a raw Set-Cookie string into an object with properties: `name`, `value`, `httpOnly`, `secure`, `sameSite`, `path`, `domain`, `maxAge`, `expires`. Handle all standard cookie attributes case-insensitively.
+> 2. `dedupeSetCookieHeaders(cookies: string[])`: deduplicate an array of Set-Cookie strings where the dedup key is `(name + domain)` — last writer wins. This is critical for multi-domain white-label setups where the backend may send duplicate cookies for different domains.
+> Include a `getSetCookie()` fallback for pre-Node 18.14 environments where `Headers.getSetCookie()` is not available (use `get('set-cookie')` and split on comma boundaries that are NOT inside cookie values). Add JSDoc for all exports. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-172: JWT helpers (decodeJwtToken, verifyJwtToken)
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-160
+- **Agente:** security-reviewer
+- **Estimativa:** ~35min
+- **Descricao:** Criar helpers JWT para uso no Edge Runtime do Next.js. Inclui decodificacao Base64 sem verificacao de assinatura e verificacao HS256 via Web Crypto API.
+
+**Prompt para o agente:**
+> Create `src/nextjs/helpers/jwt.ts` with the following exports:
+> 1. `decodeJwtToken(token: string)`: Base64-decode JWT payload without signature verification. Return `DecodedToken` interface with `isValid` computed from `exp` claim. Handle malformed tokens gracefully (return `{ isValid: false }`).
+> 2. `verifyJwtToken(token: string, secret?: string)`: HS256 verification using Web Crypto API (`crypto.subtle.importKey` + `crypto.subtle.verify`). CRITICAL: implement algorithm pinning — reject any token with `alg` !== `HS256` (prevents `alg:none` attacks and RS256 confusion). If `secret` (JWT_SECRET) is not provided, fallback to `decodeJwtToken` (decode-only mode).
+> 3. Helper functions: `isTokenExpired(token: DecodedToken): boolean`, `getUserRole(token: DecodedToken): string`, `getUserId(token: DecodedToken): string`, `getTenantId(token: DecodedToken): string | undefined`.
+> Define `DecodedToken` interface with standard JWT claims (sub, exp, iat, role, tenantId, etc.). All functions must work in Edge Runtime (no Node.js-specific APIs). Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-173: createAuthProxy - config interface and factory skeleton
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-169, NEST-170, NEST-171, NEST-172
+- **Agente:** architect
+- **Estimativa:** ~30min
+- **Descricao:** Criar a interface de configuracao do proxy e o esqueleto da factory function. Define o contrato publico do modulo Next.js.
+
+**Prompt para o agente:**
+> Create `src/nextjs/createAuthProxy.ts` with the following:
+> 1. Define `AuthProxyConfig` interface with properties: `publicRoutes: string[]`, `publicRoutesRedirectIfAuthenticated: string[]`, `protectedRoutes: Array<{ pattern: string, allowedRoles: string[], redirectPath?: string }>`, `loginPath: string`, `getDefaultDashboard: (role: string) => string`, `apiBase: string`, `jwtSecret?: string`, `maxRefreshAttempts?: number` (default 2), `cookieNames: { access: string, refresh: string, hasSession: string }`, `userHeaders: { userId: string, role: string, tenantId: string, tenantDomain: string }`, `blockedUserStatuses: string[]`.
+> 2. Create `createAuthProxy(config: AuthProxyConfig)` factory function that returns `{ proxy: (request: NextRequest) => Promise<NextResponse>, config }`. The proxy function skeleton should: classify the route (public, protected, API), and call the appropriate handler (to be implemented in NEST-174, NEST-175, NEST-176).
+> 3. The factory pattern allows the consuming Next.js app to configure once and export `proxy` for Next.js 16's proxy.ts convention.
+> Export the config interface and factory. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-174: createAuthProxy - public route handling
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-173
+- **Agente:** security-reviewer
+- **Estimativa:** ~40min
+- **Descricao:** Implementar logica de rotas publicas no proxy, incluindo protecao contra loop infinito de redirect. Os dois guards (`_r` counter e `reason=expired`) foram descobertos e validados no bymax-fitness-ai.
+
+**Prompt para o agente:**
+> Implement public route handling in `src/nextjs/createAuthProxy.ts`:
+> 1. If user is authenticated AND route is in `publicRoutesRedirectIfAuthenticated` → redirect to dashboard via `getDefaultDashboard(role)`.
+> 2. If `has_session` cookie exists AND `reason` query param !== `expired` AND `_r` counter < `maxRefreshAttempts` → redirect to silent-refresh (via `buildSilentRefreshUrl`), incrementing `_r` param.
+> 3. If `reason=expired` → show the page as-is (break the redirect loop). This is CRITICAL: it prevents infinite redirect when the backend confirms the session is truly expired.
+> 4. If `_r` >= `maxRefreshAttempts` → show the page as-is (break the redirect loop). This is the second safety net: even without `reason=expired`, the counter prevents infinite redirects.
+> 5. The `_r` param is incremented on each silent-refresh redirect attempt.
+> CRITICAL: These two guards (steps 3 and 4) are defense-in-depth against the infinite redirect loop discovered in bymax-fitness-ai. Both must be present. Add inline comments explaining the loop prevention logic. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-175: createAuthProxy - protected route handling
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-173
+- **Agente:** security-reviewer
+- **Estimativa:** ~35min
+- **Descricao:** Implementar logica de rotas protegidas no proxy, incluindo verificacao JWT, RBAC e bloqueio por status de usuario.
+
+**Prompt para o agente:**
+> Implement protected route handling in `src/nextjs/createAuthProxy.ts`:
+> 1. No token + `has_session` cookie + `_r` < max → redirect to silent-refresh (same counter logic as public routes).
+> 2. No token + no `has_session` → redirect to `loginPath`.
+> 3. Invalid/expired token → same `has_session`/silent-refresh logic as step 1.
+> 4. Valid token + blocked status (check `blockedUserStatuses` array, e.g., BANNED, INACTIVE, EXPIRED) → redirect to `loginPath` with `reason` query param indicating the block reason.
+> 5. Valid token + role NOT in `allowedRoles` for matched route → redirect to `getDefaultDashboard(userRole)` with `error=forbidden` query param.
+> 6. Valid token + allowed role → `NextResponse.next()` with user headers injected (x-user-id, x-user-role, x-tenant-id, x-tenant-domain).
+> Use `verifyJwtToken` for token validation. Reuse the `_r` counter mechanism from public routes. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-176: createAuthProxy - background request handling + user headers
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-173
+- **Agente:** code-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Integrar deteccao de background requests e propagacao de headers de usuario apos autenticacao bem-sucedida.
+
+**Prompt para o agente:**
+> Implement background request handling and user header propagation in `src/nextjs/createAuthProxy.ts`:
+> 1. At the beginning of the proxy function (before public/protected route logic), check `isBackgroundRequest(request)`. If true AND the user is not authenticated, return a 401 Response instead of redirecting. This prevents Next.js RSC/prefetch/state-tree requests from triggering redirect chains.
+> 2. After successful authentication in protected routes: propagate user information via request headers using the configured `userHeaders` mapping — set `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain` from the decoded JWT token.
+> 3. After successful authentication: clean up the `_r` query parameter from the URL to avoid leaking internal state to the page. Use `NextResponse.rewrite()` or URL manipulation to strip it.
+> Add JSDoc explaining why background requests need 401 instead of redirect. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-177: createSilentRefreshHandler
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-171
+- **Agente:** security-reviewer
+- **Estimativa:** ~40min
+- **Descricao:** Criar handler para rota `/api/auth/silent-refresh`. Faz refresh silencioso de tokens via backend e redireciona de volta com cookies atualizados.
+
+**Prompt para o agente:**
+> Create `src/nextjs/createSilentRefreshHandler.ts`:
+> 1. Export a factory `createSilentRefreshHandler(config)` that returns a GET handler for `/api/auth/silent-refresh`.
+> 2. GET handler logic: extract `redirect` query param as destination. Forward cookies from the incoming request to the backend `POST /auth/refresh` endpoint.
+> 3. On success (2xx from backend): redirect to destination URL with `Set-Cookie` headers propagated using `dedupeSetCookieHeaders` to avoid duplicates.
+> 4. On failure (non-2xx from backend): redirect to `loginPath?reason=expired`. Clear all 3 cookies: access token (path `/`), refresh token (path `/api/auth`), has_session (path `/`). Set each with `Max-Age=0`.
+> 5. CRITICAL — Open redirect defense: validate that `redirect` param starts with `/`, does NOT start with `//`, and resolves to the same origin after URL resolution. Reject anything else by defaulting to `loginPath`.
+> 6. Include `getSetCookie()` fallback for older runtimes (pre-Node 18.14).
+> Export the factory and its config type. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-178: createClientRefreshHandler
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-171
+- **Agente:** code-reviewer
+- **Estimativa:** ~20min
+- **Descricao:** Criar handler POST para refresh client-side. Serve como ponte same-origin para que o client JavaScript possa renovar tokens.
+
+**Prompt para o agente:**
+> Create `src/nextjs/createClientRefreshHandler.ts`:
+> 1. Export a factory `createClientRefreshHandler(config)` that returns a POST handler.
+> 2. POST handler logic: forward cookies from the incoming request to the backend `POST /auth/refresh` endpoint.
+> 3. On success: return `200` response with `Set-Cookie` headers propagated via `dedupeSetCookieHeaders`.
+> 4. On failure: return `401` response with empty body.
+> 5. This handler acts as a same-origin bridge for client-side JavaScript refresh — the browser sends cookies automatically, and we forward them to the backend API.
+> Export the factory and config type. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-179: createLogoutHandler
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Media
+- **Dependencias:** NEST-171
+- **Agente:** code-reviewer
+- **Estimativa:** ~15min
+- **Descricao:** Criar handler POST para logout. Encaminha para o backend e limpa cookies na resposta.
+
+**Prompt para o agente:**
+> Create `src/nextjs/createLogoutHandler.ts`:
+> 1. Export a factory `createLogoutHandler(config)` that returns a POST handler.
+> 2. POST handler logic: forward cookies from the incoming request to the backend `POST /auth/logout` endpoint.
+> 3. Regardless of backend response: clear all auth cookies (access token at `/`, refresh token at `/api/auth`, has_session at `/`) by setting `Max-Age=0`.
+> 4. Return redirect to `loginPath` or a 200 response (configurable).
+> Export the factory and config type. Verify with `npm run build`.
+
+---
+
+### ⬜ NEST-180: Next.js barrel export
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-173, NEST-174, NEST-175, NEST-176, NEST-177, NEST-178, NEST-179
+- **Agente:** architect
+- **Estimativa:** ~10min
+- **Descricao:** Criar barrel export do subpath `nextjs` reunindo todas as factories, helpers e tipos.
+
+**Prompt para o agente:**
+> Create `src/nextjs/index.ts` as the barrel export for the Next.js subpath. Export all public APIs:
+> - Factories: `createAuthProxy`, `createSilentRefreshHandler`, `createClientRefreshHandler`, `createLogoutHandler`
+> - Helpers: `isBackgroundRequest`, `buildSilentRefreshUrl`, `dedupeSetCookieHeaders`, `parseSetCookieHeader`, `decodeJwtToken`, `verifyJwtToken`, `isTokenExpired`, `getUserRole`, `getUserId`, `getTenantId`
+> - Types: `AuthProxyConfig`, `DecodedToken`, and any other public interfaces
+> Use `export type` for type-only exports to ensure proper tree-shaking. Verify with `npm run build`. Ensure no circular dependencies.
+
+---
+
+### ⬜ NEST-181: Proxy tests - redirect loop prevention
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-180
+- **Agente:** security-reviewer
+- **Estimativa:** ~45min
+- **Descricao:** Testes criticos para validar que o mecanismo de prevencao de loop infinito de redirect funciona corretamente. Estes cenarios foram descobertos em producao no bymax-fitness-ai.
+
+**Prompt para o agente:**
+> Create tests for the redirect loop prevention logic in the proxy. File: `src/nextjs/__tests__/createAuthProxy.loop.spec.ts`.
+> Test scenarios:
+> 1. `_r` counter increments on each silent-refresh redirect attempt.
+> 2. `_r` counter reaching `maxRefreshAttempts` stops the redirect loop and shows the page.
+> 3. `reason=expired` query param stops the redirect loop on public routes.
+> 4. Combination: `_r` at max AND `reason=expired` — both guards work as defense-in-depth.
+> 5. `_r` param is cleaned up from the URL after successful authentication.
+> 6. `_r` counter resets when navigating to a different route.
+> Mock `NextRequest` and `NextResponse` appropriately. Use `jest.fn()` or equivalent for URL manipulation. These tests are CRITICAL — they validate the fix for the infinite redirect loop discovered in bymax-fitness-ai. Verify with `npm run test`.
+
+---
+
+### ⬜ NEST-182: Proxy tests - background requests, RBAC, status blocking
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-180
+- **Agente:** code-reviewer
+- **Estimativa:** ~35min
+- **Descricao:** Testes para deteccao de background requests, controle de acesso baseado em roles e bloqueio por status de usuario.
+
+**Prompt para o agente:**
+> Create tests for proxy RBAC and background request handling. File: `src/nextjs/__tests__/createAuthProxy.rbac.spec.ts`.
+> Test scenarios:
+> 1. `isBackgroundRequest` returns 401 for requests with `RSC: 1` header.
+> 2. `isBackgroundRequest` returns 401 for requests with `Next-Router-Prefetch: 1` header.
+> 3. `isBackgroundRequest` returns 401 for requests with `Next-Router-State-Tree` header.
+> 4. Background requests with valid auth pass through normally.
+> 5. RBAC: user with wrong role is redirected to their default dashboard with `error=forbidden`.
+> 6. RBAC: user with correct role passes through.
+> 7. Status blocking: BANNED user is redirected to login with `reason=banned`.
+> 8. Status blocking: INACTIVE user is redirected to login with `reason=inactive`.
+> 9. User header propagation: verify `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain` are set on the request.
+> Mock `NextRequest` and `NextResponse`. Verify with `npm run test`.
+
+---
+
+### ⬜ NEST-183: Route handler tests
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-180
+- **Agente:** code-reviewer
+- **Estimativa:** ~30min
+- **Descricao:** Testes para os route handlers (silent-refresh, client-refresh, logout), incluindo defesa contra open redirect.
+
+**Prompt para o agente:**
+> Create tests for route handlers. File: `src/nextjs/__tests__/routeHandlers.spec.ts`.
+> Test scenarios for `createSilentRefreshHandler`:
+> 1. Success path: backend returns 2xx → redirect to destination with Set-Cookie propagated.
+> 2. Failure path: backend returns 401 → redirect to loginPath with `reason=expired`, all 3 cookies cleared.
+> 3. Open redirect defense: `redirect=/valid/path` works, `redirect=//evil.com` is rejected, `redirect=https://evil.com` is rejected.
+> 4. Cookie deduplication: multiple Set-Cookie headers are deduplicated correctly.
+> Test scenarios for `createClientRefreshHandler`:
+> 5. Success: backend 2xx → response 200 with Set-Cookie.
+> 6. Failure: backend 401 → response 401.
+> Test scenarios for `createLogoutHandler`:
+> 7. Cookies are cleared regardless of backend response.
+> Mock `fetch` for backend calls. Verify with `npm run test`.
+
+---
+
+### ⬜ NEST-184: JWT helper tests
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-172
+- **Agente:** security-reviewer
+- **Estimativa:** ~25min
+- **Descricao:** Testes de seguranca para os helpers JWT, incluindo validacao contra ataques conhecidos como `alg:none` e confusao RS256/HS256.
+
+**Prompt para o agente:**
+> Create tests for JWT helpers. File: `src/nextjs/__tests__/jwt.spec.ts`.
+> Test scenarios for `decodeJwtToken`:
+> 1. Valid JWT with future `exp` → `isValid: true` with correct claims.
+> 2. Expired JWT → `isValid: false` with claims still accessible.
+> 3. Malformed JWT (not 3 parts) → `isValid: false`.
+> 4. Invalid Base64 in payload → `isValid: false`.
+> Test scenarios for `verifyJwtToken`:
+> 5. Valid HS256 token with correct secret → verified successfully.
+> 6. Valid HS256 token with wrong secret → verification fails.
+> 7. SECURITY: `alg:none` attack → rejected (algorithm pinning).
+> 8. SECURITY: RS256 token presented to HS256 verifier → rejected.
+> 9. Fallback: when JWT_SECRET is not provided, falls back to `decodeJwtToken` (decode-only).
+> Test helper functions: `isTokenExpired`, `getUserRole`, `getUserId`, `getTenantId`.
+> Use real JWT tokens generated in test setup (base64-encode manually or use a test helper). Verify with `npm run test`.
+
+---
+
+### ⬜ NEST-185: Phase 9 validation
+- **Fase:** 9
+- **Status:** TODO
+- **Prioridade:** Alta
+- **Dependencias:** NEST-180, NEST-181, NEST-182, NEST-183, NEST-184
+- **Agente:** architect
+- **Estimativa:** ~20min
+- **Descricao:** Checklist final da Fase 9 — validar que o subpath Next.js esta completo, testado e pronto para integracao.
+
+**Prompt para o agente:**
+> Execute the Phase 9 validation checklist:
+> 1. [ ] Verify peer dependencies: `next ^16` and `react ^19` are declared.
+> 2. [ ] Verify proxy logic has 90%+ test coverage on critical paths (redirect loop, RBAC, status blocking).
+> 3. [ ] Verify ALL redirect loop scenarios are tested (NEST-181).
+> 4. [ ] Verify `npm run build` compiles without errors.
+> 5. [ ] Verify open redirect defense is tested (NEST-183).
+> 6. [ ] Verify `alg:none` and RS256 confusion attacks are tested (NEST-184).
+> 7. [ ] Verify barrel export includes all public APIs with correct `export type` usage.
+> 8. [ ] Verify all helpers work in Edge Runtime (no Node.js-specific APIs except where fallback is provided).
+> 9. [ ] Verify `dedupeSetCookieHeaders` handles multi-domain white-label scenarios.
+> 10. [ ] Verify background request detection covers RSC, prefetch, and state-tree headers.
+> For each item, mark PASS or FAIL with evidence. If any FAIL, list corrective action.
+> Acceptance criteria: all 10 items PASS.
+
+---
+
 ## Caminho Critico
 
 O caminho critico determina a duracao minima do projeto. As cadeias de dependencia mais longas sao:
@@ -3322,7 +4166,12 @@ O caminho critico determina a duracao minima do projeto. As cadeias de dependenc
 **Cadeia Integracao (Fase 6):**
 9. NEST-120 → NEST-122 (WsJwtGuard) → NEST-141 (Test Coverage) → NEST-149 (npm Publish Prep) → NEST-151 (Final Validation)
 
-**Duracao estimada do caminho critico:** ~6 semanas (1 desenvolvedor + agente IA)
+**Cadeia Frontend (Fases 7-9):**
+10. NEST-151 → NEST-152 (shared types) → NEST-154 (shared barrel) → NEST-155 (createAuthFetch) → NEST-158 (createAuthClient) → NEST-160 (Phase 7 validation)
+11. NEST-160 → NEST-161 (AuthContext) → NEST-162 (AuthProvider) → NEST-167 (tests) → NEST-168 (Phase 8 validation)
+12. NEST-160 → NEST-173 (createAuthProxy skeleton) → NEST-174 (public routes) → NEST-177 (silent-refresh) → NEST-181 (proxy tests) → NEST-185 (Phase 9 validation)
+
+**Duracao estimada do caminho critico:** ~8 semanas (1 desenvolvedor + agente IA)
 
 ## Tarefas Paralelizaveis
 
@@ -3352,3 +4201,8 @@ Grupos de tarefas que podem ser executados simultaneamente:
 - E2E tests (NEST-125..132) podem rodar em paralelo entre si
 - Security reviews (NEST-134..136) podem rodar em paralelo
 - JSDoc (NEST-137..138) pode rodar em paralelo com testes
+
+**Fase 8 + 9 — Podem rodar em paralelo:**
+- Fase 8 (React: NEST-161..168) e Fase 9 (Next.js: NEST-169..185) dependem ambas da Fase 7, mas sao independentes entre si
+- Dentro da Fase 9, helpers (NEST-169..172) podem rodar em paralelo
+- Testes (NEST-181..184) podem rodar em paralelo entre si
