@@ -274,9 +274,9 @@ The project uses `ts-jest` 29 with the following considerations:
 
 | Command              | Purpose                                |
 | -------------------- | -------------------------------------- |
-| `npm test`           | Run all tests once                     |
-| `npm run test:cov`   | Run all tests with coverage report     |
-| `npm run test:watch` | Run tests in watch mode (development)  |
+| `pnpm test`          | Run all tests once                     |
+| `pnpm test:cov`      | Run all tests with coverage report     |
+| `pnpm test:watch`    | Run tests in watch mode (development)  |
 | `npx jest path/to/file.spec.ts` | Run a single test file      |
 | `npx jest --testNamePattern="should hash"` | Run tests matching a pattern |
 
@@ -1510,7 +1510,7 @@ This project enforces the following **global** coverage thresholds. A test run w
 Run coverage locally:
 
 ```bash
-npm run test:cov
+pnpm test:cov
 ```
 
 This generates:
@@ -1820,7 +1820,7 @@ Use this checklist before submitting any test code:
 
 ### Coverage
 
-- [ ] Running `npm run test:cov` shows all four metrics at 80% or above.
+- [ ] Running `pnpm test:cov` shows all four metrics at 80% or above.
 - [ ] Security-critical modules (guards, password, tokens) are at 90%+ coverage.
 - [ ] Barrel files, `.d.ts` files, and pure interface/type files are excluded.
 

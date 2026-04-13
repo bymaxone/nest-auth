@@ -4711,7 +4711,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
     "lint": "eslint src",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
     "@nestjs/common": "^11.0.0",

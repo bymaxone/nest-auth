@@ -82,7 +82,7 @@ O desenvolvimento segue uma abordagem **incremental por camadas**, onde cada fas
 
 **Tarefas detalhadas:**
 
-1. Executar `npm init` com escopo `@bymax-one`
+1. Executar `pnpm init` com escopo `@bymax-one`
 2. Instalar peer dependencies como devDependencies para desenvolvimento local
 3. Confirmar que `"dependencies": {}` — o pacote não possui dependências diretas (toda criptografia usa `node:crypto` nativo)
 4. Instalar devDependencies: `@nestjs/testing`, `jest`, `ts-jest`, `typescript`, `tsup ^8.0.0`
@@ -101,7 +101,7 @@ O desenvolvimento segue uma abordagem **incremental por camadas**, onde cada fas
 7. Configurar `tsconfig.build.json` excluindo testes
 8. Configurar Jest com preset `ts-jest`, coverage mínima de 80% (branches, functions, lines, statements)
 9. Criar estrutura de diretórios: `src/server/` (diretório principal do backend), `src/shared/`, `src/client/`, `src/react/`, `src/nextjs/`, e dentro de `src/server/`: `interfaces/`, `config/`, `services/`, `controllers/`, `guards/`, `decorators/`, `redis/`, `dto/`, `crypto/`, `errors/`, `oauth/`, `constants/`, `providers/`, `hooks/`
-10. Verificar que `npm run build` compila sem erros (mesmo com barrel export vazio)
+10. Verificar que `pnpm build` compila sem erros (mesmo com barrel export vazio)
 
 ### 2.2 Interfaces e contratos
 
@@ -389,8 +389,8 @@ Atualizar `src/server/index.ts` com todos os exports da Fase 1:
 
 ### 2.10 Validação da Fase 1
 
-- [ ] `npm run build` compila sem erros
-- [ ] `npm run test` passa com cobertura >= 80%
+- [ ] `pnpm build` compila sem erros
+- [ ] `pnpm test` passa com cobertura >= 80%
 - [ ] Todas as interfaces estão exportadas e tipadas corretamente (`export type` para interfaces, `export` para valores)
 - [ ] `AuthResult`, `PlatformAuthResult` e `MfaChallengeResult` definidos e exportados
 - [ ] `resolveOptions()` valida jwt.secret, mfa.encryptionKey, jwt.algorithm e preserva funções após merge
@@ -670,8 +670,8 @@ Adicionar ao `index.ts`:
 - [ ] Controllers são registrados condicionalmente (auth: false → sem AuthController)
 - [ ] Prefixo de rotas dinâmico funciona via RouterModule
 - [ ] `tenantIdResolver` é chamado quando fornecido, e `tenantId` do body é ignorado
-- [ ] `npm run build` sem erros
-- [ ] `npm run test` com cobertura >= 80%
+- [ ] `pnpm build` sem erros
+- [ ] `pnpm test` com cobertura >= 80%
 
 ---
 
@@ -1366,10 +1366,10 @@ Adicionar ao `index.ts`:
 
 ### 7.7 Publicação
 
-1. Executar `npm run build`
-2. Executar `npm run test:cov` — verificar cobertura >= 80%
-3. Executar `npm pack` para verificar conteúdo do pacote
-4. Publicar com `npm publish --access public`
+1. Executar `pnpm build`
+2. Executar `pnpm test:cov` — verificar cobertura >= 80%
+3. Executar `pnpm pack` para verificar conteúdo do pacote
+4. Publicar com `pnpm publish --access public`
 
 ### 7.8 Validação da Fase 6
 
@@ -1646,7 +1646,7 @@ Adicionar ao `index.ts`:
 
 | Critério                | Exigência                                                                                                                                                                                 |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Compilação**          | `npm run build` sem erros em cada fase                                                                                                                                                    |
+| **Compilação**          | `pnpm build` sem erros em cada fase                                                                                                                                                    |
 | **Cobertura de testes** | >= 80% (branches, functions, lines) por fase                                                                                                                                              |
 | **Linting**             | Zero erros de ESLint                                                                                                                                                                      |
 | **Tipagem**             | Zero uso de `any` em código de produção. Preferir tipos discriminados a `Record<string, unknown>`. Para dados externos não tipados, usar narrowing documentado via JSDoc                   |

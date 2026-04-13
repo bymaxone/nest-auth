@@ -668,7 +668,7 @@ If the entire subpath is included, check for:
 
 ### 9.1 Post-Build Directory Structure Check
 
-After running `npm run build`, verify the output matches this exact structure:
+After running `pnpm build`, verify the output matches this exact structure:
 
 ```
 dist/
@@ -757,7 +757,7 @@ The project's `prepublishOnly` script runs the full validation pipeline:
 
 ```json
 {
-  "prepublishOnly": "npm run clean && npm run typecheck && npm run test && npm run build"
+  "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm test && pnpm build"
 }
 ```
 
@@ -765,7 +765,7 @@ This ensures that types compile, tests pass, and the build succeeds before any p
 
 ```json
 {
-  "prepublishOnly": "npm run clean && npm run typecheck && npm run test && npm run build && npx publint && npx @arethetypeswrong/cli --pack ."
+  "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm test && pnpm build && npx publint && npx @arethetypeswrong/cli --pack ."
 }
 ```
 
@@ -976,5 +976,5 @@ When adding a sixth (or later) subpath entry:
 5. Add the JSX `esbuildOptions` if the entry contains `.tsx` files
 6. Add the subpath to `"exports"` in `package.json` with `types`/`import`/`require`
 7. Add the subpath to `"typesVersions"` in `package.json`
-8. Run `npm run build` and verify the output structure
+8. Run `pnpm build` and verify the output structure
 9. Run `npx publint` and `npx @arethetypeswrong/cli --pack .` to validate

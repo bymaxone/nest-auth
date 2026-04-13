@@ -47,17 +47,17 @@
 
 ## Fase 1 — Fundacao e Infraestrutura
 
-### ⬜ NEST-001: Project scaffold - package.json and npm init
+### ⬜ NEST-001: Project scaffold - package.json and pnpm init
 - **Fase:** 1
 - **Status:** TODO
 - **Prioridade:** Alta
 - **Dependencias:** Nenhuma
 - **Agente:** architect
 - **Estimativa:** ~20min
-- **Descricao:** Initialize the npm package with scope @bymax-one, configure package.json with name, version, peer dependencies, scripts (build, lint, test, test:cov, prepublishOnly), and "files": ["dist"].
+- **Descricao:** Initialize the pnpm package with scope @bymax-one, configure package.json with name, version, peer dependencies, scripts (build, lint, test, test:cov, prepublishOnly), and "files": ["dist"].
 
 **Prompt para o agente:**
-> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `npm init` with scope @bymax-one. Configure scripts: "build": "tsup", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "npm run build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/throttler, ioredis, class-validator, class-transformer, reflect-metadata ^0.2.0. Sem dependencies diretas (`"dependencies": {}`). Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/node, @types/express, tsup ^8.0.0. Verify npm install succeeds.
+> Create the package.json for @bymax-one/nest-auth v1.0.0. Run `pnpm init` with scope @bymax-one. Configure scripts: "build": "tsup", "lint": "eslint src/**/*.ts", "test": "jest", "test:cov": "jest --coverage", "prepublishOnly": "pnpm build". Set "files": ["dist"] for precise publish control. Add peer dependencies as specified in section 18 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: @nestjs/common, @nestjs/core, @nestjs/jwt, @nestjs/throttler, ioredis, class-validator, class-transformer, reflect-metadata ^0.2.0. Sem dependencies diretas (`"dependencies": {}`). Install devDependencies: @nestjs/testing, jest, ts-jest, typescript, @types/node, @types/express, tsup ^8.0.0. Verify pnpm install succeeds.
 
 ---
 
@@ -85,7 +85,7 @@
 - **Descricao:** Configure ESLint with @typescript-eslint, Jest with ts-jest preset and 80% coverage thresholds, .gitignore, LICENSE (MIT), and empty CHANGELOG.md.
 
 **Prompt para o agente:**
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 80% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/server/index.ts as empty barrel export. Verify `npm run build` compiles without errors.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 80% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/server/index.ts as empty barrel export. Verify `pnpm build` compiles without errors.
 
 ---
 
@@ -631,7 +631,7 @@
 - **Descricao:** Run full build and test suite, verify compilation is clean and coverage meets 80% threshold.
 
 **Prompt para o agente:**
-> Run the following validation checks for Phase 1 completion: (1) `npm run build` must compile with zero errors. (2) `npm run test -- --coverage` must pass with >= 80% coverage on branches, functions, lines, statements. (3) Verify all interfaces are exported correctly (check index.ts for both export type and export). (4) Verify AuthResult, PlatformAuthResult, MfaChallengeResult are defined and exported. (5) Verify resolveOptions validates jwt.secret, mfa.encryptionKey, jwt.algorithm and preserves functions after merge. (6) Verify encrypt/decrypt AES-256-GCM round-trip works and IVs are unique. (7) Verify Redis namespace prefixing. (8) Verify PasswordService hash/compare round-trip. (9) Verify BruteForceService lockout. (10) Verify TokenManagerService token operations. (11) Verify TokenDeliveryService in all 3 modes. (12) Verify 33 error codes in AUTH_ERROR_CODES. (13) Verify extractDomain rejects malicious hostnames. Fix any issues found.
+> Run the following validation checks for Phase 1 completion: (1) `pnpm build` must compile with zero errors. (2) `pnpm test --coverage` must pass with >= 80% coverage on branches, functions, lines, statements. (3) Verify all interfaces are exported correctly (check index.ts for both export type and export). (4) Verify AuthResult, PlatformAuthResult, MfaChallengeResult are defined and exported. (5) Verify resolveOptions validates jwt.secret, mfa.encryptionKey, jwt.algorithm and preserves functions after merge. (6) Verify encrypt/decrypt AES-256-GCM round-trip works and IVs are unique. (7) Verify Redis namespace prefixing. (8) Verify PasswordService hash/compare round-trip. (9) Verify BruteForceService lockout. (10) Verify TokenManagerService token operations. (11) Verify TokenDeliveryService in all 3 modes. (12) Verify 33 error codes in AUTH_ERROR_CODES. (13) Verify extractDomain rejects malicious hostnames. Fix any issues found.
 
 ---
 
@@ -956,7 +956,7 @@
 - **Descricao:** Run full build and test suite for Phase 2, verify all flows work end-to-end and coverage meets 80%.
 
 **Prompt para o agente:**
-> Run Phase 2 validation: (1) `npm run build` compiles without errors. (2) `npm run test -- --coverage` passes with >= 80% coverage. (3) Verify register -> login -> refresh -> logout flow works (via unit tests confirming correct service calls and data flow). (4) Guards work: public routes skip JWT, protected routes require JWT, roles are checked hierarchically. (5) TokenDelivery works in all 3 modes. (6) Brute-force blocks after N attempts with Retry-After header. (7) Dynamic module compiles and initializes. (8) Controllers are registered conditionally. (9) Route prefix works via RouterModule. (10) tenantIdResolver is called when configured. (11) OtpService constant-time comparison works. Fix any issues found.
+> Run Phase 2 validation: (1) `pnpm build` compiles without errors. (2) `pnpm test --coverage` passes with >= 80% coverage. (3) Verify register -> login -> refresh -> logout flow works (via unit tests confirming correct service calls and data flow). (4) Guards work: public routes skip JWT, protected routes require JWT, roles are checked hierarchically. (5) TokenDelivery works in all 3 modes. (6) Brute-force blocks after N attempts with Retry-After header. (7) Dynamic module compiles and initializes. (8) Controllers are registered conditionally. (9) Route prefix works via RouterModule. (10) tenantIdResolver is called when configured. (11) OtpService constant-time comparison works. Fix any issues found.
 
 ---
 
@@ -3192,16 +3192,16 @@
 
 **Prompt para o agente:**
 > Verificar a configuração de build:
-> 1. Executar `npm run build` e verificar que produz `dist/` sem erros ou warnings.
+> 1. Executar `pnpm build` e verificar que produz `dist/` sem erros ou warnings.
 > 2. Verificar que `dist/` contém: `.js` files, `.d.ts` type declarations, `.js.map` sourcemaps.
 > 3. Verificar `tsconfig.json` tem: `declaration: true`, `declarationMap: true`, `sourceMap: true`, `outDir: "dist"`.
 > 4. Verificar `package.json`:
 >    - `"main": "dist/index.js"`
 >    - `"types": "dist/index.d.ts"`
 >    - `"files": ["dist/"]` — apenas dist publicado (sem src, tests, docs).
-> 5. Executar `npm pack` e verificar conteúdo do tarball — apenas dist/ e package.json/README/LICENSE/CHANGELOG.
+> 5. Executar `pnpm pack` e verificar conteúdo do tarball — apenas dist/ e package.json/README/LICENSE/CHANGELOG.
 > 6. Verificar que NÃO inclui: `src/`, `test/`, `node_modules/`, `.env`, `tsconfig.json`.
-> Critérios de aceitação: build limpo, types e sourcemaps gerados, package.json correto, npm pack contém apenas o necessário.
+> Critérios de aceitação: build limpo, types e sourcemaps gerados, package.json correto, pnpm pack contém apenas o necessário.
 
 ---
 
@@ -3217,7 +3217,7 @@
 **Prompt para o agente:**
 > Testar instalação local:
 > 1. Criar um diretório temporário com um projeto NestJS mínimo (`nest new test-app` ou scaffold manual).
-> 2. Instalar o pacote local: `npm install ../nest-auth` (path relativo ao tarball ou diretório).
+> 2. Instalar o pacote local: `pnpm install ../nest-auth` (path relativo ao tarball ou diretório).
 > 3. Verificar que o import funciona: `import { BymaxAuthModule, JwtAuthGuard, AuthService } from '@bymax-one/nest-auth'`.
 > 4. Verificar que types estão disponíveis: `import type { AuthUser, IUserRepository, AuthModuleOptions } from '@bymax-one/nest-auth'`.
 > 5. Verificar que `BymaxAuthModule.registerAsync()` compila sem erros no app.module.ts.
@@ -3236,7 +3236,7 @@
 - **Descricao:** Executar cobertura de testes e garantir >= 80% em branches, functions e lines.
 
 **Prompt para o agente:**
-> Executar `npm run test:cov` e analisar o relatório:
+> Executar `pnpm test:cov` e analisar o relatório:
 > 1. Verificar cobertura total >= 80% para: branches, functions, lines, statements.
 > 2. Identificar arquivos com cobertura < 80%.
 > 3. Para cada arquivo abaixo de 80%, listar os métodos/branches não cobertos.
@@ -3287,12 +3287,12 @@
 
 **Prompt para o agente:**
 > Executar o checklist de publicação:
-> 1. `npm run build` — verificar zero erros e zero warnings.
-> 2. `npm run test:cov` — verificar cobertura >= 80%.
-> 3. `npm pack` — verificar conteúdo do pacote (apenas dist, package.json, README, LICENSE, CHANGELOG).
+> 1. `pnpm build` — verificar zero erros e zero warnings.
+> 2. `pnpm test:cov` — verificar cobertura >= 80%.
+> 3. `pnpm pack` — verificar conteúdo do pacote (apenas dist, package.json, README, LICENSE, CHANGELOG).
 > 4. Verificar `package.json`: name `@bymax-one/nest-auth`, version `1.0.0`, license, repository, keywords, peerDependencies corretas.
 > 5. Verificar que `.npmignore` ou `files` em package.json exclui src/, test/, docs/, .github/.
-> 6. Preparar comando de publicação: `npm publish --access public`.
+> 6. Preparar comando de publicação: `pnpm publish --access public`.
 > NÃO executar o publish automaticamente — apenas preparar e validar.
 > Critérios de aceitação: build limpo, coverage OK, pack correto, package.json completo, pronto para publish.
 
@@ -3582,8 +3582,8 @@
 > 1. Verificar que `src/shared/` tem zero dependências externas (apenas TypeScript types e constantes).
 > 2. Verificar que `src/client/` tem zero dependências externas (apenas `fetch` nativo e imports de `../shared`).
 > 3. Verificar que tipos do shared são compatíveis com os exports do server (ex: `AuthUserClient` é subset de `AuthUser`).
-> 4. Executar `npm run test -- --coverage` e verificar cobertura >= 80%.
-> 5. Executar `npm run build` e verificar compilação sem erros.
+> 4. Executar `pnpm test --coverage` e verificar cobertura >= 80%.
+> 5. Executar `pnpm build` e verificar compilação sem erros.
 > 6. Verificar que barrel exports de shared e client estão corretos.
 > 
 > Critérios de aceitação:
@@ -3828,8 +3828,8 @@
 > Executar validação completa da Fase 8:
 > 1. Verificar que `react` é declarado como `peerDependency` com `^19` (não como dependency direta).
 > 2. Verificar que hooks são testados em isolamento com mock do AuthClient.
-> 3. Executar `npm run test -- --coverage` e verificar cobertura >= 80% nos arquivos de `src/react/`.
-> 4. Executar `npm run build` e verificar compilação sem erros.
+> 3. Executar `pnpm test --coverage` e verificar cobertura >= 80% nos arquivos de `src/react/`.
+> 4. Executar `pnpm build` e verificar compilação sem erros.
 > 5. Verificar que não há dependências externas além de `react` como peer dep.
 > 6. Verificar que barrel export de `src/react/index.ts` está completo.
 > 
@@ -3853,7 +3853,7 @@
 - **Descricao:** Criar helper para detectar requisicoes paralelas do Next.js via headers. Retorna boolean indicando se a request e uma background request (RSC, prefetch ou state-tree).
 
 **Prompt para o agente:**
-> Create `src/nextjs/helpers/isBackgroundRequest.ts`. The function receives a Request (or NextRequest) and checks for Next.js parallel/background request headers: `RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree` (presence). Return `true` if any of these headers are detected. This is used by the proxy to return 401 instead of redirect for background requests, preventing redirect loops in client-side navigation. Export the function and its return type. Add JSDoc explaining why background requests need special handling. Verify with `npm run build`.
+> Create `src/nextjs/helpers/isBackgroundRequest.ts`. The function receives a Request (or NextRequest) and checks for Next.js parallel/background request headers: `RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree` (presence). Return `true` if any of these headers are detected. This is used by the proxy to return 401 instead of redirect for background requests, preventing redirect loops in client-side navigation. Export the function and its return type. Add JSDoc explaining why background requests need special handling. Verify with `pnpm build`.
 
 ---
 
@@ -3867,7 +3867,7 @@
 - **Descricao:** Criar helper que monta a URL para `/api/auth/silent-refresh` com parametro de redirect. Aceita NextRequest e string de destino.
 
 **Prompt para o agente:**
-> Create `src/nextjs/helpers/buildSilentRefreshUrl.ts`. The function accepts a NextRequest and a `redirectTo` string parameter. It builds and returns a URL pointing to `/api/auth/silent-refresh` with the `redirect` query parameter set to the provided destination. Use the request's origin to build absolute URLs. Handle edge cases: missing redirectTo defaults to current pathname, encode the redirect param properly. Export the function with JSDoc. Verify with `npm run build`.
+> Create `src/nextjs/helpers/buildSilentRefreshUrl.ts`. The function accepts a NextRequest and a `redirectTo` string parameter. It builds and returns a URL pointing to `/api/auth/silent-refresh` with the `redirect` query parameter set to the provided destination. Use the request's origin to build absolute URLs. Handle edge cases: missing redirectTo defaults to current pathname, encode the redirect param properly. Export the function with JSDoc. Verify with `pnpm build`.
 
 ---
 
@@ -3884,7 +3884,7 @@
 > Create `src/nextjs/helpers/dedupeSetCookieHeaders.ts` with two exported functions:
 > 1. `parseSetCookieHeader(raw: string)`: parse a raw Set-Cookie string into an object with properties: `name`, `value`, `httpOnly`, `secure`, `sameSite`, `path`, `domain`, `maxAge`, `expires`. Handle all standard cookie attributes case-insensitively.
 > 2. `dedupeSetCookieHeaders(cookies: string[])`: deduplicate an array of Set-Cookie strings where the dedup key is `(name + domain)` — last writer wins. This is critical for multi-domain white-label setups where the backend may send duplicate cookies for different domains.
-> Include a `getSetCookie()` fallback for pre-Node 18.14 environments where `Headers.getSetCookie()` is not available (use `get('set-cookie')` and split on comma boundaries that are NOT inside cookie values). Add JSDoc for all exports. Verify with `npm run build`.
+> Include a `getSetCookie()` fallback for pre-Node 18.14 environments where `Headers.getSetCookie()` is not available (use `get('set-cookie')` and split on comma boundaries that are NOT inside cookie values). Add JSDoc for all exports. Verify with `pnpm build`.
 
 ---
 
@@ -3902,7 +3902,7 @@
 > 1. `decodeJwtToken(token: string)`: Base64-decode JWT payload without signature verification. Return `DecodedToken` interface with `isValid` computed from `exp` claim. Handle malformed tokens gracefully (return `{ isValid: false }`).
 > 2. `verifyJwtToken(token: string, secret?: string)`: HS256 verification using Web Crypto API (`crypto.subtle.importKey` + `crypto.subtle.verify`). CRITICAL: implement algorithm pinning — reject any token with `alg` !== `HS256` (prevents `alg:none` attacks and RS256 confusion). If `secret` (JWT_SECRET) is not provided, fallback to `decodeJwtToken` (decode-only mode).
 > 3. Helper functions: `isTokenExpired(token: DecodedToken): boolean`, `getUserRole(token: DecodedToken): string`, `getUserId(token: DecodedToken): string`, `getTenantId(token: DecodedToken): string | undefined`.
-> Define `DecodedToken` interface with standard JWT claims (sub, exp, iat, role, tenantId, etc.). All functions must work in Edge Runtime (no Node.js-specific APIs). Verify with `npm run build`.
+> Define `DecodedToken` interface with standard JWT claims (sub, exp, iat, role, tenantId, etc.). All functions must work in Edge Runtime (no Node.js-specific APIs). Verify with `pnpm build`.
 
 ---
 
@@ -3920,7 +3920,7 @@
 > 1. Define `AuthProxyConfig` interface with properties: `publicRoutes: string[]`, `publicRoutesRedirectIfAuthenticated: string[]`, `protectedRoutes: Array<{ pattern: string, allowedRoles: string[], redirectPath?: string }>`, `loginPath: string`, `getDefaultDashboard: (role: string) => string`, `apiBase: string`, `jwtSecret?: string`, `maxRefreshAttempts?: number` (default 2), `cookieNames: { access: string, refresh: string, hasSession: string }`, `userHeaders: { userId: string, role: string, tenantId: string, tenantDomain: string }`, `blockedUserStatuses: string[]`.
 > 2. Create `createAuthProxy(config: AuthProxyConfig)` factory function that returns `{ proxy: (request: NextRequest) => Promise<NextResponse>, config }`. The proxy function skeleton should: classify the route (public, protected, API), and call the appropriate handler (to be implemented in NEST-174, NEST-175, NEST-176).
 > 3. The factory pattern allows the consuming Next.js app to configure once and export `proxy` for Next.js 16's proxy.ts convention.
-> Export the config interface and factory. Verify with `npm run build`.
+> Export the config interface and factory. Verify with `pnpm build`.
 
 ---
 
@@ -3940,7 +3940,7 @@
 > 3. If `reason=expired` → show the page as-is (break the redirect loop). This is CRITICAL: it prevents infinite redirect when the backend confirms the session is truly expired.
 > 4. If `_r` >= `maxRefreshAttempts` → show the page as-is (break the redirect loop). This is the second safety net: even without `reason=expired`, the counter prevents infinite redirects.
 > 5. The `_r` param is incremented on each silent-refresh redirect attempt.
-> CRITICAL: These two guards (steps 3 and 4) are defense-in-depth against the infinite redirect loop discovered in bymax-fitness-ai. Both must be present. Add inline comments explaining the loop prevention logic. Verify with `npm run build`.
+> CRITICAL: These two guards (steps 3 and 4) are defense-in-depth against the infinite redirect loop discovered in bymax-fitness-ai. Both must be present. Add inline comments explaining the loop prevention logic. Verify with `pnpm build`.
 
 ---
 
@@ -3961,7 +3961,7 @@
 > 4. Valid token + blocked status (check `blockedUserStatuses` array, e.g., BANNED, INACTIVE, EXPIRED) → redirect to `loginPath` with `reason` query param indicating the block reason.
 > 5. Valid token + role NOT in `allowedRoles` for matched route → redirect to `getDefaultDashboard(userRole)` with `error=forbidden` query param.
 > 6. Valid token + allowed role → `NextResponse.next()` with user headers injected (x-user-id, x-user-role, x-tenant-id, x-tenant-domain).
-> Use `verifyJwtToken` for token validation. Reuse the `_r` counter mechanism from public routes. Verify with `npm run build`.
+> Use `verifyJwtToken` for token validation. Reuse the `_r` counter mechanism from public routes. Verify with `pnpm build`.
 
 ---
 
@@ -3979,7 +3979,7 @@
 > 1. At the beginning of the proxy function (before public/protected route logic), check `isBackgroundRequest(request)`. If true AND the user is not authenticated, return a 401 Response instead of redirecting. This prevents Next.js RSC/prefetch/state-tree requests from triggering redirect chains.
 > 2. After successful authentication in protected routes: propagate user information via request headers using the configured `userHeaders` mapping — set `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain` from the decoded JWT token.
 > 3. After successful authentication: clean up the `_r` query parameter from the URL to avoid leaking internal state to the page. Use `NextResponse.rewrite()` or URL manipulation to strip it.
-> Add JSDoc explaining why background requests need 401 instead of redirect. Verify with `npm run build`.
+> Add JSDoc explaining why background requests need 401 instead of redirect. Verify with `pnpm build`.
 
 ---
 
@@ -4000,7 +4000,7 @@
 > 4. On failure (non-2xx from backend): redirect to `loginPath?reason=expired`. Clear all 3 cookies: access token (path `/`), refresh token (path `/api/auth`), has_session (path `/`). Set each with `Max-Age=0`.
 > 5. CRITICAL — Open redirect defense: validate that `redirect` param starts with `/`, does NOT start with `//`, and resolves to the same origin after URL resolution. Reject anything else by defaulting to `loginPath`.
 > 6. Include `getSetCookie()` fallback for older runtimes (pre-Node 18.14).
-> Export the factory and its config type. Verify with `npm run build`.
+> Export the factory and its config type. Verify with `pnpm build`.
 
 ---
 
@@ -4020,7 +4020,7 @@
 > 3. On success: return `200` response with `Set-Cookie` headers propagated via `dedupeSetCookieHeaders`.
 > 4. On failure: return `401` response with empty body.
 > 5. This handler acts as a same-origin bridge for client-side JavaScript refresh — the browser sends cookies automatically, and we forward them to the backend API.
-> Export the factory and config type. Verify with `npm run build`.
+> Export the factory and config type. Verify with `pnpm build`.
 
 ---
 
@@ -4039,7 +4039,7 @@
 > 2. POST handler logic: forward cookies from the incoming request to the backend `POST /auth/logout` endpoint.
 > 3. Regardless of backend response: clear all auth cookies (access token at `/`, refresh token at `/api/auth`, has_session at `/`) by setting `Max-Age=0`.
 > 4. Return redirect to `loginPath` or a 200 response (configurable).
-> Export the factory and config type. Verify with `npm run build`.
+> Export the factory and config type. Verify with `pnpm build`.
 
 ---
 
@@ -4057,7 +4057,7 @@
 > - Factories: `createAuthProxy`, `createSilentRefreshHandler`, `createClientRefreshHandler`, `createLogoutHandler`
 > - Helpers: `isBackgroundRequest`, `buildSilentRefreshUrl`, `dedupeSetCookieHeaders`, `parseSetCookieHeader`, `decodeJwtToken`, `verifyJwtToken`, `isTokenExpired`, `getUserRole`, `getUserId`, `getTenantId`
 > - Types: `AuthProxyConfig`, `DecodedToken`, and any other public interfaces
-> Use `export type` for type-only exports to ensure proper tree-shaking. Verify with `npm run build`. Ensure no circular dependencies.
+> Use `export type` for type-only exports to ensure proper tree-shaking. Verify with `pnpm build`. Ensure no circular dependencies.
 
 ---
 
@@ -4079,7 +4079,7 @@
 > 4. Combination: `_r` at max AND `reason=expired` — both guards work as defense-in-depth.
 > 5. `_r` param is cleaned up from the URL after successful authentication.
 > 6. `_r` counter resets when navigating to a different route.
-> Mock `NextRequest` and `NextResponse` appropriately. Use `jest.fn()` or equivalent for URL manipulation. These tests are CRITICAL — they validate the fix for the infinite redirect loop discovered in bymax-fitness-ai. Verify with `npm run test`.
+> Mock `NextRequest` and `NextResponse` appropriately. Use `jest.fn()` or equivalent for URL manipulation. These tests are CRITICAL — they validate the fix for the infinite redirect loop discovered in bymax-fitness-ai. Verify with `pnpm test`.
 
 ---
 
@@ -4105,7 +4105,7 @@
 > 8. Status blocking: INACTIVE user is redirected to login with `reason=inactive`.
 > 9. User header propagation: verify `x-user-id`, `x-user-role`, `x-tenant-id`, `x-tenant-domain` are set on the request.
 > 10. Authenticated user visiting a public-but-redirect route (e.g., `/auth/login` configured via `publicRoutesRedirectIfAuthenticated`) gets redirected to their dashboard.
-> Mock `NextRequest` and `NextResponse`. Verify with `npm run test`.
+> Mock `NextRequest` and `NextResponse`. Verify with `pnpm test`.
 
 ---
 
@@ -4130,7 +4130,7 @@
 > 6. Failure: backend 401 → response 401.
 > Test scenarios for `createLogoutHandler`:
 > 7. Cookies are cleared regardless of backend response.
-> Mock `fetch` for backend calls. Verify with `npm run test`.
+> Mock `fetch` for backend calls. Verify with `pnpm test`.
 
 ---
 
@@ -4157,7 +4157,7 @@
 > 8. SECURITY: RS256 token presented to HS256 verifier → rejected.
 > 9. Fallback: when JWT_SECRET is not provided, falls back to `decodeJwtToken` (decode-only).
 > Test helper functions: `isTokenExpired`, `getUserRole`, `getUserId`, `getTenantId`.
-> Use real JWT tokens generated in test setup (base64-encode manually or use a test helper). Verify with `npm run test`.
+> Use real JWT tokens generated in test setup (base64-encode manually or use a test helper). Verify with `pnpm test`.
 
 ---
 
@@ -4175,7 +4175,7 @@
 > 1. [ ] Verify peer dependencies: `next ^16` and `react ^19` are declared.
 > 2. [ ] Verify proxy logic has 90%+ test coverage on critical paths (redirect loop, RBAC, status blocking).
 > 3. [ ] Verify ALL redirect loop scenarios are tested (NEST-181).
-> 4. [ ] Verify `npm run build` compiles without errors.
+> 4. [ ] Verify `pnpm build` compiles without errors.
 > 5. [ ] Verify open redirect defense is tested (NEST-183).
 > 6. [ ] Verify `alg:none` and RS256 confusion attacks are tested (NEST-184).
 > 7. [ ] Verify barrel export includes all public APIs with correct `export type` usage.
