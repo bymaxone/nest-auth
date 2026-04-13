@@ -4745,7 +4745,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bymax-digital/auth.git"
+    "url": "https://github.com/bymaxone/nest-auth.git"
   }
 }
 ```
