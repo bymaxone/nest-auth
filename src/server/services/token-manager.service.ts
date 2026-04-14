@@ -59,6 +59,18 @@ interface RefreshSession {
   device: string
   ip: string
   createdAt: string
+  /**
+   * Whether MFA is enabled on the account at the time the session was created.
+   *
+   * Persisted so that `buildRotatedResult` can propagate the correct value into
+   * rotated access tokens. Without this, `mfaEnabled` would be reset to `false`
+   * on every rotation, silently disabling `MfaRequiredGuard` for MFA-enabled users
+   * after their first token refresh.
+   *
+   * `mfaVerified` is intentionally NOT stored — it must always be `false` in
+   * rotated tokens to force re-authentication through the MFA challenge endpoint.
+   */
+  mfaEnabled: boolean
 }
 
 /**
@@ -138,24 +150,43 @@ export class TokenManagerService {
    * @param user - Safe user object (credential fields excluded).
    * @param ip - Client IP address (for session audit).
    * @param userAgent - User-Agent header value (for session description).
+   * @param overrides - Optional JWT claim overrides. Use `{ mfaVerified: true }` when
+   *   issuing tokens after a successful MFA challenge.
    * @returns Full auth result containing access token, raw refresh token, and user.
    */
-  async issueTokens(user: SafeAuthUser, ip: string, userAgent: string): Promise<AuthResult> {
+  async issueTokens(
+    user: SafeAuthUser,
+    ip: string,
+    userAgent: string,
+    overrides?: { mfaVerified?: boolean }
+  ): Promise<AuthResult> {
     const accessToken = this.issueAccess({
       sub: user.id,
       tenantId: user.tenantId,
       role: user.role,
       type: 'dashboard',
       status: user.status,
-      mfaVerified: false
+      mfaEnabled: user.mfaEnabled,
+      mfaVerified: overrides?.mfaVerified ?? false
     })
 
     const rawRefreshToken = randomUUID()
-    const sessionKey = `rt:${sha256(rawRefreshToken)}`
-    const session = this.buildSession(user.id, user.tenantId, user.role, ip, userAgent)
+    const tokenHash = sha256(rawRefreshToken)
+    const sessionKey = `rt:${tokenHash}`
+    const session = this.buildSession(
+      user.id,
+      user.tenantId,
+      user.role,
+      ip,
+      userAgent,
+      user.mfaEnabled
+    )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
     await this.redis.set(sessionKey, JSON.stringify(session), ttl)
+    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
+    await this.redis.sadd(`sess:${user.id}`, `rt:${tokenHash}`)
+    await this.redis.expire(`sess:${user.id}`, ttl)
 
     return { user, accessToken, rawRefreshToken }
   }
@@ -172,26 +203,34 @@ export class TokenManagerService {
    * @param admin - Safe platform admin object (credential fields excluded).
    * @param ip - Client IP address.
    * @param userAgent - User-Agent header value.
+   * @param overrides - Optional JWT claim overrides. Use `{ mfaVerified: true }` when
+   *   issuing tokens after a successful MFA challenge.
    * @returns Platform auth result.
    */
   async issuePlatformTokens(
     admin: SafeAuthPlatformUser,
     ip: string,
-    userAgent: string
+    userAgent: string,
+    overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
     const accessToken = this.issuePlatformAccess({
       sub: admin.id,
       role: admin.role,
       type: 'platform',
-      mfaVerified: false
+      mfaEnabled: admin.mfaEnabled,
+      mfaVerified: overrides?.mfaVerified ?? false
     })
 
     const rawRefreshToken = randomUUID()
-    const sessionKey = `prt:${sha256(rawRefreshToken)}`
-    const session = this.buildSession(admin.id, '', admin.role, ip, userAgent)
+    const tokenHash = sha256(rawRefreshToken)
+    const sessionKey = `prt:${tokenHash}`
+    const session = this.buildSession(admin.id, '', admin.role, ip, userAgent, admin.mfaEnabled)
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
     await this.redis.set(sessionKey, JSON.stringify(session), ttl)
+    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
+    await this.redis.sadd(`sess:${admin.id}`, `prt:${tokenHash}`)
+    await this.redis.expire(`sess:${admin.id}`, ttl)
 
     return { admin, accessToken, rawRefreshToken }
   }
@@ -244,6 +283,7 @@ export class TokenManagerService {
     if (oldSessionJson !== null) {
       return this.rotateFromPrimary(
         oldSessionJson,
+        oldHash,
         ip,
         userAgent,
         newRawRefresh,
@@ -272,6 +312,7 @@ export class TokenManagerService {
    */
   private async rotateFromPrimary(
     oldSessionJson: string,
+    oldHash: string,
     ip: string,
     userAgent: string,
     newRawRefresh: string,
@@ -280,10 +321,24 @@ export class TokenManagerService {
     refreshTtl: number,
     graceTtl: number
   ): Promise<RotatedTokenResult> {
-    const old = JSON.parse(oldSessionJson) as RefreshSession
-    const newSession = this.buildSession(old.userId, old.tenantId, old.role, ip, userAgent)
+    const old = this.parseSession(oldSessionJson)
+    const newHash = sha256(newRawRefresh)
+    const newSession = this.buildSession(
+      old.userId,
+      old.tenantId,
+      old.role,
+      ip,
+      userAgent,
+      old.mfaEnabled
+    )
     await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
     await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
+    // Update the per-user session SET: remove the rotated-away session, add the new session
+    // AND the grace pointer so that invalidateUserSessions can delete both on logout/MFA change.
+    await this.redis.srem(`sess:${old.userId}`, `rt:${oldHash}`)
+    await this.redis.sadd(`sess:${old.userId}`, `rt:${newHash}`)
+    await this.redis.sadd(`sess:${old.userId}`, graceKey)
+    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
     return this.buildRotatedResult(newSession, newRawRefresh)
   }
 
@@ -300,7 +355,7 @@ export class TokenManagerService {
     refreshTtl: number,
     graceTtl: number
   ): Promise<RotatedTokenResult> {
-    const graceSession = JSON.parse(graceSessionJson) as RefreshSession
+    const graceSession = this.parseSession(graceSessionJson)
     const anotherNewRefresh = randomUUID()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
@@ -308,11 +363,50 @@ export class TokenManagerService {
       graceSession.tenantId,
       graceSession.role,
       ip,
-      userAgent
+      userAgent,
+      graceSession.mfaEnabled
     )
     await this.redis.set(`rt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
     await this.redis.set(`rp:${anotherNewHash}`, JSON.stringify(anotherSession), graceTtl)
+    // Add new session AND its grace pointer to the per-user SET so that
+    // invalidateUserSessions deletes both keys on logout or MFA state change.
+    await this.redis.sadd(`sess:${graceSession.userId}`, `rt:${anotherNewHash}`)
+    await this.redis.sadd(`sess:${graceSession.userId}`, `rp:${anotherNewHash}`)
+    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
     return this.buildRotatedResult(anotherSession, anotherNewRefresh)
+  }
+
+  /**
+   * Parses and validates a Redis session JSON string.
+   *
+   * Guards against malformed JSON (e.g. from a key collision with another process)
+   * and against missing required fields that would produce JWTs with `undefined` claims.
+   *
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` if the JSON is invalid
+   *   or missing required `userId` / `role` fields.
+   */
+  private parseSession(json: string): RefreshSession {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(json)
+    } catch {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    const rec = parsed as Record<string, unknown>
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof rec['userId'] !== 'string' ||
+      typeof rec['role'] !== 'string'
+    ) {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    // Older sessions written before `mfaEnabled` was added to RefreshSession will
+    // have an absent key. Default to false so rotation is safe for legacy sessions.
+    if (typeof rec['mfaEnabled'] !== 'boolean') {
+      rec['mfaEnabled'] = false
+    }
+    return parsed as RefreshSession
   }
 
   /** Constructs a session record from identity fields and request metadata. */
@@ -321,9 +415,10 @@ export class TokenManagerService {
     tenantId: string,
     role: string,
     ip: string,
-    device: string
+    device: string,
+    mfaEnabled: boolean
   ): RefreshSession {
-    return { userId, tenantId, role, device, ip, createdAt: new Date().toISOString() }
+    return { userId, tenantId, role, device, ip, createdAt: new Date().toISOString(), mfaEnabled }
   }
 
   /**
@@ -334,14 +429,23 @@ export class TokenManagerService {
    * rotation — the Redis session does not store full user data. Guards that enforce
    * status checks must read from the user repository or a status cache, not the
    * JWT `status` claim.
+   *
+   * `mfaVerified` is always `false` after rotation because the Redis session does not
+   * persist MFA verification state. A user who authenticated with MFA will lose the
+   * `mfaVerified: true` claim on the first token rotation. MFA guards should be aware
+   * of this behaviour and direct users through the MFA challenge flow to re-acquire it.
    */
   private buildRotatedResult(session: RefreshSession, rawRefreshToken: string): RotatedTokenResult {
+    // mfaEnabled is propagated from the stored session so MfaRequiredGuard continues
+    // to enforce MFA after rotation. mfaVerified is always false — the user must
+    // re-complete the MFA challenge after rotation to re-acquire a verified token.
     const accessToken = this.issueAccess({
       sub: session.userId,
       tenantId: session.tenantId,
       role: session.role,
       type: 'dashboard',
       status: '',
+      mfaEnabled: session.mfaEnabled,
       mfaVerified: false
     })
 
@@ -446,6 +550,13 @@ export class TokenManagerService {
     const storedUserId = await this.redis.getdel(`mfa:${sha256(payload.jti)}`)
 
     if (storedUserId === null) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
+
+    // Defence-in-depth: cross-check the Redis-stored userId against the JWT sub claim.
+    // In the current threat model this requires a forged JWT (which requires the secret),
+    // but an explicit comparison makes the relationship between the two values auditable.
+    if (storedUserId !== payload.sub) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 

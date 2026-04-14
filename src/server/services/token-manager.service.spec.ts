@@ -25,7 +25,10 @@ const mockRedis = {
   set: jest.fn(),
   del: jest.fn(),
   eval: jest.fn(),
-  getdel: jest.fn()
+  getdel: jest.fn(),
+  sadd: jest.fn().mockResolvedValue(1),
+  srem: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(undefined)
 }
 
 const mockOptions = {
@@ -104,6 +107,7 @@ describe('TokenManagerService', () => {
         role: 'member',
         type: 'dashboard',
         status: 'active',
+        mfaEnabled: false,
         mfaVerified: false
       })
 
@@ -229,6 +233,18 @@ describe('TokenManagerService', () => {
       expect(keys.some((k) => k.startsWith('rp:'))).toBe(true)
     })
 
+    // Verifies that primary rotation tracks the grace pointer in sess:{userId} so invalidateUserSessions can delete it.
+    it('should add the grace pointer key to sess:{userId} SET on primary rotation', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const saddCalls = mockRedis.sadd.mock.calls as unknown[][]
+      const addedKeys = saddCalls.map((c) => String(c[1]))
+      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(true)
+    })
+
     // Verifies that when the primary session key is null, the grace window pointer is checked via getdel.
     it('should use grace window session when Lua returns null', async () => {
       mockRedis.eval.mockResolvedValue(null)
@@ -254,6 +270,37 @@ describe('TokenManagerService', () => {
       const keys = mockRedis.set.mock.calls.map((c: unknown[]) => String(c[0]))
       expect(keys.some((k) => k.startsWith('rt:'))).toBe(true)
       expect(keys.some((k) => k.startsWith('rp:'))).toBe(true)
+    })
+
+    // Verifies that grace-window rotation also tracks the new grace pointer in sess:{userId} SET.
+    it('should add the new grace pointer key to sess:{userId} SET on grace-window rotation', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const saddCalls = mockRedis.sadd.mock.calls as unknown[][]
+      const addedKeys = saddCalls.map((c) => String(c[1]))
+      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(true)
+    })
+
+    // Verifies that REFRESH_TOKEN_INVALID is thrown when the session contains invalid JSON.
+    it('should throw REFRESH_TOKEN_INVALID when the session contains invalid JSON', async () => {
+      mockRedis.eval.mockResolvedValue('not-valid-json')
+
+      await expect(service.reissueTokens('old-token', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+    })
+
+    // Verifies that REFRESH_TOKEN_INVALID is thrown when the session JSON is missing required fields.
+    it('should throw REFRESH_TOKEN_INVALID when session JSON is missing userId or role', async () => {
+      mockRedis.eval.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', device: 'Browser' }))
+
+      await expect(service.reissueTokens('old-token', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the session nor the grace pointer exists.
@@ -392,6 +439,23 @@ describe('TokenManagerService', () => {
         exp: 9999999999
       })
       mockRedis.getdel.mockResolvedValue(null) // not found / already consumed
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
+    })
+
+    // Verifies that MFA_TEMP_TOKEN_INVALID is thrown when storedUserId differs from the JWT sub claim.
+    // This is a defence-in-depth check: requires a forged JWT but makes the binding between
+    // the Redis record and the token claims explicit and auditable.
+    it('should throw MFA_TEMP_TOKEN_INVALID when storedUserId does not match payload.sub', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        iat: 0,
+        exp: 9999999999
+      })
+      mockRedis.getdel.mockResolvedValue('different-user') // userId mismatch
 
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
     })

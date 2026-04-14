@@ -41,6 +41,15 @@ export interface DashboardJwtPayload {
    * request (TTL controlled by `userStatusCacheTtlSeconds` in module options).
    */
   status: string
+  /**
+   * Whether MFA (TOTP) is currently enabled on the user's account.
+   *
+   * Stamped at token issuance. When `true`, the `MfaRequiredGuard` enforces that
+   * `mfaVerified` is also `true` before granting access to protected resources.
+   * Resets to `false` on token rotation (the Redis session does not persist this
+   * state) — this is intentional: MFA enable/disable always invalidates all sessions.
+   */
+  mfaEnabled: boolean
   /** Whether the user completed MFA verification before this token was issued. */
   mfaVerified: boolean
   /** Issued-at timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
@@ -65,6 +74,11 @@ export interface PlatformJwtPayload {
   role: string
   /** Discriminant literal — always `'platform'`. Prevents token type confusion. */
   type: 'platform'
+  /**
+   * Whether MFA (TOTP) is currently enabled on the admin's account.
+   * Follows the same semantics as `DashboardJwtPayload.mfaEnabled`.
+   */
+  mfaEnabled: boolean
   /** Whether the admin completed MFA verification before this token was issued. */
   mfaVerified: boolean
   /** Issued-at timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */

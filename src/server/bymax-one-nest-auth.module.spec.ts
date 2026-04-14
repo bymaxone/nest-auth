@@ -121,6 +121,24 @@ describe('BymaxAuthModule', () => {
       ).rejects.toThrow(/insufficient entropy/)
     })
 
+    // Verifies that the module fails when controllers.mfa: true is set without the mfa config group.
+    it('should throw when controllers.mfa is true but mfa config group is missing', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => validOptions, // validOptions has no mfa group
+              controllers: { mfa: true },
+              extraProviders: [
+                { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+                { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+              ]
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.mfa: true requires the mfa group/)
+    })
+
     // Verifies that the module fails to compile when roles.hierarchy is missing.
     it('should throw when roles.hierarchy is missing', async () => {
       await expect(

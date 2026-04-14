@@ -50,8 +50,18 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/mfa/setup — 5 requests per minute per IP. */
   mfaSetup: { default: { limit: 5, ttl: 60_000 } },
 
-  /** POST /auth/mfa/challenge — 10 requests per minute per IP. */
-  mfaChallenge: { default: { limit: 10, ttl: 60_000 } },
+  /** POST /auth/mfa/verify-enable — 5 requests per minute per IP. */
+  mfaVerifyEnable: { default: { limit: 5, ttl: 60_000 } },
+
+  /**
+   * POST /auth/mfa/challenge — 5 requests per minute per IP.
+   *
+   * Aligned with `login` and `platformLogin` (5/60s). The per-user brute-force
+   * counter in `BruteForceService` is the primary defence; the IP throttle provides
+   * a complementary layer against distributed single-account attacks. Using 10/min
+   * (the previous value) would give an attacker twice the headroom per IP window.
+   */
+  mfaChallenge: { default: { limit: 5, ttl: 60_000 } },
 
   /** POST /auth/mfa/disable — 3 requests per 5 minutes per IP. */
   mfaDisable: { default: { limit: 3, ttl: 300_000 } },

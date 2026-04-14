@@ -107,9 +107,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+#### Phase 3 — Multi-Factor Authentication (TOTP)
+
+**Crypto utilities** (`src/server/crypto/totp.ts`)
+- `generateTotpSecret()` — generates a cryptographically random 20-byte TOTP secret via `node:crypto.randomBytes`; returns both raw `Buffer` and `base32`-encoded string
+- `buildTotpUri(secret, account, issuer)` — constructs a standard `otpauth://totp/` URI for QR code generation
+- `verifyTotp(secret, code, window)` — validates a 6-digit TOTP code within a configurable step window (±1 by default) using HMAC-SHA1 per RFC 6238
+- `generateHotp(secret, counter)` — low-level HOTP generation (RFC 4226) used internally by `verifyTotp` and exposed for testing
+- `fromBase32(input)` / `toBase32(buf)` — pure Base32 encode/decode without external dependencies; `fromBase32` strips whitespace, hyphens, and padding before decoding
+
+**Services** (`src/server/services/mfa.service.ts`)
+- `MfaService.setup(userId)` — generates TOTP secret and recovery codes; uses atomic `setIfAbsent` to guarantee idempotency under concurrent requests; encrypts secret with AES-256-GCM; returns plain recovery codes once (then discarded)
+- `MfaService.verifyAndEnable(userId, code, ip, userAgent)` — validates the first TOTP code against the pending setup key; atomically consumes the setup key to prevent double-enable races; persists encrypted secret and hashed recovery codes to the user repository; invalidates all existing refresh sessions
+- `MfaService.challenge(tempToken, code, ip, userAgent)` — exchanges a short-lived MFA temp token for full auth tokens; accepts both TOTP codes and recovery codes; enforces anti-replay via 90-second `setnx` key; brute-force lockout with `challenge:`-namespaced counter; supports both `dashboard` and `platform` contexts
+- `MfaService.disable(userId, code, ip, userAgent, context)` — disables MFA after TOTP verification; only accepts TOTP (recovery codes cannot disable by design); invalidates all sessions; supports both dashboard and platform repositories via `context` parameter
+
+**Guards** (`src/server/guards/mfa-required.guard.ts`)
+- `MfaRequiredGuard` — enforces MFA verification on routes where the authenticated JWT has `mfaEnabled: true`; gates on `mfaVerified: true` claim; respects `@SkipMfa()` decorator to exclude specific endpoints (e.g. the challenge endpoint itself)
+
+**Decorators** (`src/server/decorators/skip-mfa.decorator.ts`)
+- `@SkipMfa()` — metadata decorator that marks an endpoint as exempt from `MfaRequiredGuard`; used on `POST /mfa/challenge` and any other pre-MFA routes
+
+**DTOs** (`src/server/dto/`)
+- `MfaChallengeDto` — `mfaTempToken` (string) + `code` (string); `@MaxLength(14)` as defence-in-depth before regex
+- `MfaVerifyDto` — 6-digit TOTP code; `@MaxLength(6)` + `@Matches(/^\d{6}$/)`
+- `MfaDisableDto` — 6-digit TOTP code; `@MaxLength(6)` + `@Matches(/^\d{6}$/)`; JSDoc explains why recovery codes are not accepted
+
+**Controllers** (`src/server/controllers/mfa.controller.ts`)
+- `POST /mfa/setup` — initiates TOTP setup; returns secret, QR URI, and plain recovery codes (shown once); idempotent within 10-minute window; dashboard users only
+- `POST /mfa/verify-enable` — submits the first TOTP code to permanently activate MFA; returns 204 No Content
+- `POST /mfa/challenge` — public endpoint (protected only by temp token); exchanges temp token + TOTP or recovery code for full auth tokens; returns cookie or bearer response for dashboard, plain JSON for platform
+- `POST /mfa/disable` — disables MFA for dashboard or platform users; derived `context` from `user.type` JWT claim; returns 204 No Content
+
+**Redis additions** (`src/server/redis/auth-redis.service.ts`)
+- `setIfAbsent(key, value, ttl)` — atomic `SET NX EX`; returns `true` if the key was newly created, `false` if it already existed; used for idempotent setup key reservation
+- `invalidateUserSessions(userId)` — Lua script that reads all members of `sess:{userId}`, deletes each session key (including grace pointers tracked in the SET), and removes the SET itself in a single round-trip
+
+**Module integration** (`src/server/bymax-one-nest-auth.module.ts`)
+- `controllers.mfa: true` option conditionally registers `MfaController`; startup validation throws if `controllers.mfa: true` is set without the `mfa` configuration group
+
+---
+
 ### Security
 
-- **HMAC keying for composite Redis keys** — all `sha256(tenantId + email)` call sites replaced with `hmacSha256(..., jwt.secret)` to prevent rainbow-table reversal of email addresses stored as Redis key segments
+- **Grace pointer survivorship fix** — `rotateFromPrimary` and `rotateFromGrace` now add grace pointer keys (`rp:{hash}`) to the `sess:{userId}` Redis SET so that `invalidateUserSessions` (called on MFA enable/disable) deletes them atomically, preventing stale refresh tokens from surviving MFA state changes
+- **Brute-force counter namespacing** — MFA challenge and disable endpoints use HMAC identifiers prefixed with `challenge:` and `disable:` respectively, preventing a pre-auth attacker from exhausting the disable counter via the public challenge endpoint
+- **`verifyAndEnable` re-entry guard** — added `MFA_ALREADY_ENABLED` check at entry so that a stale Redis setup key from a previous attempt cannot overwrite an active MFA secret and recovery codes
+- **`disable()` context-awareness** — the disable flow now accepts a `context` parameter (`'dashboard'` | `'platform'`) and dispatches to the correct repository, preventing platform admins from receiving `TOKEN_INVALID` when attempting to disable MFA
+- **HMAC keying for composite Redis keys**  — all `sha256(tenantId + email)` call sites replaced with `hmacSha256(..., jwt.secret)` to prevent rainbow-table reversal of email addresses stored as Redis key segments
 - **Atomic resend cooldown** — GET+SET TOCTOU race in `resendVerificationEmail` replaced with atomic `SET NX EX` (`setnx`) preventing duplicate OTP sends under concurrent requests
 - **Immutable DTO merging** — `Object.assign(dto, hookResult.modifiedData)` replaced with `dto = { ...dto, ...modifiedData }` preventing mutation of the class-validator–validated DTO and bypassing decorator constraints
 - **`secureCookies` resolved at startup** — `process.env.NODE_ENV === 'production'` check moved from per-request code inside `TokenDeliveryService` to `resolveOptions()`, eliminating an environment-variable read inside library service methods
@@ -123,8 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 424 unit tests across 29 co-located spec files (`*.spec.ts`)
+- 561 tests across 34 co-located spec files (`*.spec.ts`), including `mfa-integration.spec.ts` with 11 Phase 3 end-to-end scenarios
 - **100% coverage** on all metrics (Statements, Branches, Functions, Lines) across every source file
 - Per-directory coverage thresholds enforced: 95% for `crypto/` and `guards/`, 80% global
 - Every `it()` block has an English comment explaining the branch under test
 - All spec files have a file-level JSDoc docblock describing strategy, mocks, and special setup
+- Phase 3 integration smoke test validates: full setup→enable→challenge flow, idempotency, recovery codes, anti-replay, brute-force lockout, counter namespacing, platform context, session invalidation, disable TOTP-only enforcement, and `@SkipMfa()` guard bypass

@@ -34,14 +34,14 @@
 | ------------------------------------------- | ------- | ------- | ------ | --------- |
 | Fase 1 — Fundacao e Infraestrutura          | 42      | 0       | 42     | 100%      |
 | Fase 2 — Autenticacao Core                  | 22      | 0       | 22     | 100%      |
-| Fase 3 — Autenticacao Multi-Fator (MFA)     | 15      | 15      | 0      | 0%        |
+| Fase 3 — Autenticacao Multi-Fator (MFA)     | 15      | 0       | 15     | 100%      |
 | Fase 4 — Sessoes e Reset de Senha           | 17      | 17      | 0      | 0%        |
 | Fase 5 — Plataforma, OAuth e Convites       | 25      | 25      | 0      | 0%        |
 | Fase 6 — Integracao, Polimento e Publicacao | 30      | 30      | 0      | 0%        |
 | Fase 7 — Shared + Client Subpath            | 9       | 9       | 0      | 0%        |
 | Fase 8 — React Subpath                      | 8       | 8       | 0      | 0%        |
 | Fase 9 — Next.js Subpath                    | 17      | 17      | 0      | 0%        |
-| **TOTAL**                                   | **185** | **121** | **64** | **35%**   |
+| **TOTAL**                                   | **185** | **106** | **79** | **43%**   |
 
 ---
 
@@ -1095,7 +1095,7 @@
 ### NEST-065: MFA DTOs
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-026
 - **Agente:** typescript-reviewer
@@ -1123,7 +1123,7 @@
 ### NEST-066: SkipMfa decorator
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-026
 - **Agente:** code-reviewer
@@ -1152,7 +1152,7 @@
 ### NEST-067: MfaRequiredGuard
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-066
 - **Agente:** security-reviewer
@@ -1187,7 +1187,7 @@
 ### NEST-068: MfaService — encrypt/decrypt helpers and recovery code utilities
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-026
 - **Agente:** security-reviewer
@@ -1240,7 +1240,7 @@
 ### NEST-069: MfaService.setup()
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-068
 - **Agente:** code-reviewer
@@ -1274,7 +1274,7 @@
 ### NEST-070: MfaService.verifyAndEnable()
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-069
 - **Agente:** security-reviewer
@@ -1307,7 +1307,7 @@
 ### NEST-071: MfaService.challenge()
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-070
 - **Agente:** security-reviewer
@@ -1355,7 +1355,7 @@
 ### NEST-072: MfaService.disable()
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-070
 - **Agente:** code-reviewer
@@ -1390,7 +1390,7 @@
 ### NEST-073: MfaController
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-065, NEST-071, NEST-072
 - **Agente:** code-reviewer
@@ -1428,7 +1428,7 @@
 ### NEST-074: MFA module integration
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-073, NEST-067
 - **Agente:** architect
@@ -1457,7 +1457,7 @@
 ### NEST-075: MFA barrel exports
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-074
 - **Agente:** code-reviewer
@@ -1488,7 +1488,7 @@
 ### NEST-076: MfaService unit tests
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-072
 - **Agente:** tester
@@ -1541,7 +1541,7 @@
 ### NEST-077: MfaController unit tests
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-073
 - **Agente:** tester
@@ -1573,7 +1573,7 @@
 ### NEST-078: MfaRequiredGuard and SkipMfa unit tests
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-067
 - **Agente:** tester
@@ -1604,7 +1604,7 @@
 ### NEST-079: Phase 3 validation — integration smoke test
 
 - **Fase:** 3
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-076, NEST-077, NEST-078, NEST-075
 - **Agente:** tester

@@ -49,6 +49,7 @@ const JWT_PAYLOAD = {
   role: 'member',
   type: 'dashboard',
   status: 'active',
+  mfaEnabled: false,
   mfaVerified: false,
   iat: 1_000_000,
   exp: 9_999_999_999

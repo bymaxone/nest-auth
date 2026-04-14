@@ -464,7 +464,18 @@ export interface BymaxAuthModuleOptions {
     /** Enables `AuthController` (register, login, logout, refresh, me). Default: `true` */
     auth?: boolean
 
-    /** Enables `MfaController`. Default: `true` when `mfa` is configured. */
+    /**
+     * Enables `MfaController`, `MfaService`, and `MfaRequiredGuard`.
+     *
+     * **Opt-in** — must be set to `true` explicitly **on the `registerAsync()` call**,
+     * not inside `useFactory`. The factory is evaluated asynchronously after the module
+     * is built; this field is the synchronous activation switch.
+     *
+     * When set to `true`, the `mfa` group (`encryptionKey`, `issuer`) **must** also be
+     * present in the `useFactory` return value — omitting it causes a startup error.
+     *
+     * Default: `false`
+     */
     mfa?: boolean
 
     /** Enables `PasswordResetController`. Default: `true` */

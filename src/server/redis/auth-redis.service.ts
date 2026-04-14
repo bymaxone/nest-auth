@@ -224,6 +224,49 @@ export class AuthRedisService {
   }
 
   /**
+   * Atomically sets a key only if it does not already exist, with a TTL.
+   *
+   * Equivalent to `SET key value EX ttl NX`. Returns `true` if the key was created
+   * (this caller won the race), or `false` if the key already existed.
+   *
+   * Use this to prevent overwriting an existing value in concurrent scenarios
+   * (e.g. idempotent MFA setup where two requests must not generate different secrets).
+   *
+   * @param key - Application key (namespace prefix is applied automatically).
+   * @param value - String value to store.
+   * @param ttl - Time-to-live in seconds.
+   * @returns `true` if the key was newly set, `false` if it already existed.
+   */
+  async setIfAbsent(key: string, value: string, ttl: number): Promise<boolean> {
+    const result = await this.redis.set(this.prefix(key), value, 'EX', ttl, 'NX')
+    return result === 'OK'
+  }
+
+  /**
+   * Atomically deletes all refresh sessions for a user.
+   *
+   * Reads the `sess:{userId}` Redis SET whose members are full key suffixes
+   * (e.g. `rt:{hash}` for dashboard sessions, `prt:{hash}` for platform sessions).
+   * Deletes each corresponding namespaced key and then removes the SET itself —
+   * all in a single Lua transaction to prevent the race where a concurrent login
+   * could add a new session between the SMEMBERS read and the final DEL.
+   *
+   * @param userId - Internal user ID whose sessions will be invalidated.
+   */
+  async invalidateUserSessions(userId: string): Promise<void> {
+    await this.eval(
+      `local members = redis.call('SMEMBERS', KEYS[1])
+       local ns = ARGV[1]
+       for _, member in ipairs(members) do
+         redis.call('DEL', ns .. ':' .. member)
+       end
+       redis.call('DEL', KEYS[1])`,
+      [`sess:${userId}`],
+      [this.namespace]
+    )
+  }
+
+  /**
    * Atomically increments a counter and sets a fixed TTL on the **first** increment.
    *
    * Implements a fixed-window rate-limit counter. The TTL is set only when the

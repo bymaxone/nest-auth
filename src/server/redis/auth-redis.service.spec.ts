@@ -311,6 +311,51 @@ describe('AuthRedisService', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setIfAbsent
+  // ---------------------------------------------------------------------------
+
+  describe('setIfAbsent', () => {
+    // Verifies that setIfAbsent returns true when the key is newly set (redis returns 'OK').
+    it('should call redis.set with EX and NX flags and return true when OK', async () => {
+      mockRedis.set.mockResolvedValue('OK')
+      const result = await service.setIfAbsent('mfa_setup:user1', 'setup-data', 600)
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        prefixed('mfa_setup:user1'),
+        'setup-data',
+        'EX',
+        600,
+        'NX'
+      )
+      expect(result).toBe(true)
+    })
+
+    // Verifies that setIfAbsent returns false when the key already existed (redis returns null).
+    it('should return false when the key already existed (redis returns null)', async () => {
+      mockRedis.set.mockResolvedValue(null)
+      const result = await service.setIfAbsent('mfa_setup:user1', 'setup-data', 600)
+      expect(result).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // invalidateUserSessions
+  // ---------------------------------------------------------------------------
+
+  describe('invalidateUserSessions', () => {
+    // Verifies that invalidateUserSessions calls eval with the sess:{userId} key and namespace as ARGV.
+    it('should call eval with sess:{userId} key and namespace as ARGV[1]', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      await service.invalidateUserSessions('user-1')
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('SMEMBERS'),
+        1,
+        prefixed('sess:user-1'),
+        NAMESPACE
+      )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // incrWithFixedTtl
   // ---------------------------------------------------------------------------
 

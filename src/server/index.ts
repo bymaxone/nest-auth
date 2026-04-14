@@ -23,7 +23,6 @@ export {
 // Configuration
 // ---------------------------------------------------------------------------
 
-export { resolveOptions } from './config/resolved-options'
 export type { ResolvedOptions } from './config/resolved-options'
 
 // ---------------------------------------------------------------------------
@@ -116,6 +115,7 @@ export { NoOpEmailProvider } from './providers/no-op-email.provider'
 // ---------------------------------------------------------------------------
 
 export { JwtAuthGuard } from './guards/jwt-auth.guard'
+export { MfaRequiredGuard } from './guards/mfa-required.guard'
 export { RolesGuard } from './guards/roles.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 
@@ -126,12 +126,16 @@ export { UserStatusGuard } from './guards/user-status.guard'
 export { CurrentUser } from './decorators/current-user.decorator'
 export { IS_PUBLIC_KEY, Public } from './decorators/public.decorator'
 export { ROLES_KEY, Roles } from './decorators/roles.decorator'
+export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
 
 // ---------------------------------------------------------------------------
 // DTOs
 // ---------------------------------------------------------------------------
 
 export { LoginDto } from './dto/login.dto'
+export { MfaChallengeDto } from './dto/mfa-challenge.dto'
+export { MfaDisableDto } from './dto/mfa-disable.dto'
+export { MfaVerifyDto } from './dto/mfa-verify.dto'
 export { RegisterDto } from './dto/register.dto'
 
 // ---------------------------------------------------------------------------
@@ -139,6 +143,8 @@ export { RegisterDto } from './dto/register.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+export { MfaService } from './services/mfa.service'
+export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
 
 // ---------------------------------------------------------------------------
