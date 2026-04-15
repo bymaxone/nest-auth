@@ -11,6 +11,7 @@ import {
 } from '../bymax-one-nest-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
@@ -127,6 +128,7 @@ export class MfaService {
     private readonly tokenManager: TokenManagerService,
     private readonly bruteForce: BruteForceService,
     private readonly passwordService: PasswordService,
+    private readonly sessionService: SessionService,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks
   ) {}
@@ -479,6 +481,11 @@ export class MfaService {
       const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent, {
         mfaVerified: true
       })
+
+      // Track the session when sessions are enabled (enforces concurrent session limit).
+      if (this.options.sessions.enabled) {
+        await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+      }
 
       if (this.hooks.afterLogin) {
         void Promise.resolve(

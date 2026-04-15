@@ -396,8 +396,16 @@ function validateRefreshCookiePath(
 function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   const graceSeconds =
     jwt.refreshGraceWindowSeconds ?? DEFAULT_OPTIONS.jwt.refreshGraceWindowSeconds
-  const refreshLifetimeSeconds =
-    (jwt.refreshExpiresInDays ?? DEFAULT_OPTIONS.jwt.refreshExpiresInDays) * 86_400
+  const refreshExpiresInDays = jwt.refreshExpiresInDays ?? DEFAULT_OPTIONS.jwt.refreshExpiresInDays
+  const refreshLifetimeSeconds = refreshExpiresInDays * 86_400
+
+  if (!Number.isFinite(refreshExpiresInDays) || refreshExpiresInDays <= 0) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.refreshExpiresInDays must be a positive finite number. ` +
+        `Got: ${refreshExpiresInDays}. Zero, negative, NaN, and Infinity are all rejected — ` +
+        `any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime.`
+    )
+  }
 
   if (graceSeconds >= refreshLifetimeSeconds) {
     throw new Error(

@@ -132,20 +132,35 @@ export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
 // DTOs
 // ---------------------------------------------------------------------------
 
+export { ForgotPasswordDto } from './dto/forgot-password.dto'
 export { LoginDto } from './dto/login.dto'
 export { MfaChallengeDto } from './dto/mfa-challenge.dto'
 export { MfaDisableDto } from './dto/mfa-disable.dto'
 export { MfaVerifyDto } from './dto/mfa-verify.dto'
 export { RegisterDto } from './dto/register.dto'
+export { ResendOtpDto } from './dto/resend-otp.dto'
+export { ResendVerificationDto } from './dto/resend-verification.dto'
+export { ResetPasswordDto } from './dto/reset-password.dto'
+export { VerifyEmailDto } from './dto/verify-email.dto'
+export { VerifyOtpDto } from './dto/verify-otp.dto'
 
 // ---------------------------------------------------------------------------
-// Services (Phase 2)
+// Services
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
 export { MfaService } from './services/mfa.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
+// NOTE: PasswordResetService is only registered in the NestJS container when
+// controllers.passwordReset !== false (the default). Importing it here for
+// use in a host-app module where passwordReset is disabled will cause an
+// injection error — register it in extraProviders in that case.
+export { PasswordResetService } from './services/password-reset.service'
+export { SessionService } from './services/session.service'
+// Aliased to avoid collision with SessionInfo from email-provider.interface (which
+// represents an email send session, not an auth session).
+export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
 
 // ---------------------------------------------------------------------------
 // Utilities

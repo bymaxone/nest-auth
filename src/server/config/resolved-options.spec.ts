@@ -605,3 +605,27 @@ describe('resolveOptions — refreshCookiePath validation', () => {
     expect(() => resolveOptions({ ...MINIMAL_OPTIONS, routePrefix: 'auth' })).not.toThrow()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Validation failures — jwt.refreshExpiresInDays
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — jwt.refreshExpiresInDays validation', () => {
+  // Verifies that a zero value for refreshExpiresInDays throws a startup error.
+  it('should throw when refreshExpiresInDays is 0', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, refreshExpiresInDays: 0 }
+    }
+    expect(() => resolveOptions(options)).toThrow(/refreshExpiresInDays/)
+  })
+
+  // Verifies that a negative value for refreshExpiresInDays throws a startup error.
+  it('should throw when refreshExpiresInDays is negative', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, refreshExpiresInDays: -1 }
+    }
+    expect(() => resolveOptions(options)).toThrow(/refreshExpiresInDays/)
+  })
+})

@@ -292,7 +292,7 @@ export interface IAuthHooks {
    * will silently evict a legitimate one under FIFO).
    *
    * @param userId - The internal ID of the user whose session was evicted.
-   * @param evictedSessionHash - The HMAC-SHA-256 hash of the evicted refresh token.
+   * @param evictedSessionHash - The SHA-256 hash of the evicted refresh token.
    *   This is the same value stored in Redis — never the raw token.
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */

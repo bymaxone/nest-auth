@@ -21,6 +21,7 @@ import { AuthService } from './auth.service'
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 
 // ---------------------------------------------------------------------------
@@ -114,11 +115,18 @@ const mockOtpService = {
   verify: jest.fn()
 }
 
+const mockSessionService = {
+  createSession: jest.fn(),
+  revokeSession: jest.fn(),
+  rotateSession: jest.fn()
+}
+
 const mockOptions = {
   jwt: { secret: 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long' },
   emailVerification: { required: false, otpTtlSeconds: 600 },
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
-  bruteForce: { maxAttempts: 5, windowSeconds: 900 }
+  bruteForce: { maxAttempts: 5, windowSeconds: 900 },
+  sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
 }
 
 const mockReq = {
@@ -147,7 +155,8 @@ describe('AuthService', () => {
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
         { provide: AuthRedisService, useValue: mockRedis },
-        { provide: OtpService, useValue: mockOtpService }
+        { provide: OtpService, useValue: mockOtpService },
+        { provide: SessionService, useValue: mockSessionService }
       ]
     }).compile()
 
@@ -221,7 +230,8 @@ describe('AuthService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService }
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
 
@@ -234,6 +244,47 @@ describe('AuthService', () => {
 
       expect(mockOtpService.generate).toHaveBeenCalled()
       expect(mockOtpService.store).toHaveBeenCalled()
+    })
+
+    // Verifies that when emailProvider is null, sendVerificationOtp logs a warning and does not attempt to send.
+    it('should log warn and skip OTP send when emailProvider is null', async () => {
+      const noEmailModule = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: null },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+
+      const svc = noEmailModule.get(AuthService)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await svc.register(
+        {
+          email: 'new@example.com',
+          password: 'SecureP@ss1',
+          name: 'New User',
+          tenantId: 'tenant-1'
+        },
+        mockReq
+      )
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'sendVerificationOtp: no email provider configured — OTP not sent'
+      )
+      expect(mockOtpService.generate).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
     })
 
     // Verifies that an error thrown by the afterRegister hook is logged and does not propagate to the caller.
@@ -269,7 +320,8 @@ describe('AuthService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService }
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
 
@@ -430,7 +482,8 @@ describe('AuthService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService }
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
 
@@ -509,7 +562,8 @@ describe('AuthService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService }
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       })
         .compile()
@@ -733,6 +787,218 @@ describe('AuthService', () => {
         expect.any(Error)
       )
       loggerSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Session integration (sessions.enabled: true)
+  // ---------------------------------------------------------------------------
+
+  describe('session integration (sessions.enabled: true)', () => {
+    let sessionEnabledService: AuthService
+
+    const sessionOptions = {
+      ...mockOptions,
+      sessions: { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' as const }
+    }
+
+    beforeEach(async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: sessionOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+
+      sessionEnabledService = module.get(AuthService)
+    })
+
+    // Verifies that register calls sessionService.createSession with the user id and raw refresh token when sessions are enabled.
+    it('register: calls sessionService.createSession after issuing tokens', async () => {
+      // Arrange
+      mockHooks.beforeRegister.mockResolvedValue({ allowed: true })
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      mockPasswordService.hash.mockResolvedValue('scrypt:salt:hash')
+      mockUserRepo.create.mockResolvedValue(USER)
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockHooks.afterRegister.mockResolvedValue(undefined)
+      mockSessionService.createSession.mockResolvedValue(undefined)
+
+      // Act
+      await sessionEnabledService.register(
+        { email: 'new@example.com', password: 'Pass1!', name: 'New', tenantId: 'tenant-1' },
+        mockReq
+      )
+
+      // Assert
+      expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        USER.id,
+        AUTH_RESULT.rawRefreshToken,
+        expect.any(String),
+        expect.any(String)
+      )
+    })
+
+    // Verifies that login calls sessionService.createSession with the user id and raw refresh token when sessions are enabled.
+    it('login: calls sessionService.createSession after issuing tokens', async () => {
+      // Arrange
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+      mockPasswordService.compare.mockResolvedValue(true)
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockHooks.beforeLogin.mockResolvedValue({ allowed: true })
+      mockHooks.afterLogin.mockResolvedValue(undefined)
+      mockSessionService.createSession.mockResolvedValue(undefined)
+
+      // Act
+      await sessionEnabledService.login(
+        { email: USER.email, password: 'Pass1!', tenantId: USER.tenantId },
+        mockReq
+      )
+
+      // Assert
+      expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        USER.id,
+        AUTH_RESULT.rawRefreshToken,
+        expect.any(String),
+        expect.any(String)
+      )
+    })
+
+    // Verifies that logout calls sessionService.revokeSession with the user id and the sha256 hash of the refresh token.
+    it('logout: calls sessionService.revokeSession for the session hash', async () => {
+      // Arrange
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.set.mockResolvedValue(undefined)
+      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
+      mockSessionService.revokeSession.mockResolvedValue(undefined)
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+
+      // Act
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+
+      // Assert
+      expect(mockSessionService.revokeSession).toHaveBeenCalledTimes(1)
+      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(
+        USER.id,
+        expect.stringMatching(/^[a-f0-9]{64}$/)
+      )
+    })
+
+    // Verifies that logout completes without throwing when revokeSession rejects with SESSION_NOT_FOUND.
+    it('logout: swallows SESSION_NOT_FOUND from sessionService.revokeSession', async () => {
+      // Arrange
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.set.mockResolvedValue(undefined)
+      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti2', exp: 9_999_999_999 })
+      mockSessionService.revokeSession.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      )
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+
+      // Act & Assert
+      await expect(
+        sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+      ).resolves.not.toThrow()
+    })
+
+    // Verifies that logout logs a warning when revokeSession rejects with any error code other than SESSION_NOT_FOUND.
+    it('logout: logs warn for non-SESSION_NOT_FOUND errors from sessionService.revokeSession', async () => {
+      // Arrange
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.set.mockResolvedValue(undefined)
+      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti3', exp: 9_999_999_999 })
+      const otherError = new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      mockSessionService.revokeSession.mockRejectedValue(otherError)
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      // Act
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+
+      // Assert — warning is logged but logout still completes without throwing
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
+      warnSpy.mockRestore()
+    })
+
+    // Verifies that a non-AuthException rejection from revokeSession triggers the warn path just like an unknown-code AuthException.
+    it('logout: logs warn when revokeSession rejects with a non-AuthException error', async () => {
+      // Arrange — plain Error covers the `err instanceof AuthException` false branch
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.set.mockResolvedValue(undefined)
+      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti4', exp: 9_999_999_999 })
+      mockSessionService.revokeSession.mockRejectedValue(new Error('unexpected redis failure'))
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      // Act
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+
+      // Assert — warning is logged for any non-SESSION_NOT_FOUND rejection
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
+      warnSpy.mockRestore()
+    })
+
+    // Verifies that refresh calls sessionService.rotateSession with the sha256 hashes of the old and new tokens.
+    it('refresh: calls sessionService.rotateSession as fire-and-forget', async () => {
+      // Arrange
+      const rotatedResult = {
+        session: { userId: USER.id, tenantId: USER.tenantId, role: USER.role },
+        accessToken: 'new.access.jwt',
+        rawRefreshToken: 'new-raw-refresh'
+      }
+      mockTokenManager.reissueTokens.mockResolvedValue(rotatedResult)
+      mockSessionService.rotateSession.mockResolvedValue(undefined)
+
+      // Act
+      await sessionEnabledService.refresh('old-raw-refresh', '1.2.3.4', 'TestBrowser')
+
+      // Allow fire-and-forget to settle
+      await new Promise((r) => setImmediate(r))
+
+      // Assert
+      expect(mockSessionService.rotateSession).toHaveBeenCalledTimes(1)
+      expect(mockSessionService.rotateSession).toHaveBeenCalledWith(
+        expect.stringMatching(/^[a-f0-9]{64}$/), // sha256 of old token
+        expect.stringMatching(/^[a-f0-9]{64}$/), // sha256 of new token
+        '1.2.3.4',
+        'TestBrowser'
+      )
+    })
+
+    // Verifies that refresh completes without throwing when rotateSession fails because session rotation is fire-and-forget.
+    it('refresh: does NOT throw when rotateSession fails (fire-and-forget)', async () => {
+      // Arrange
+      const rotatedResult = {
+        session: { userId: USER.id, tenantId: USER.tenantId, role: USER.role },
+        accessToken: 'new.access.jwt',
+        rawRefreshToken: 'new-raw-refresh'
+      }
+      mockTokenManager.reissueTokens.mockResolvedValue(rotatedResult)
+      mockSessionService.rotateSession.mockRejectedValue(new Error('Redis timeout'))
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      // Act & Assert — refresh should not throw even if session rotation fails
+      await expect(
+        sessionEnabledService.refresh('old-raw-refresh', '1.2.3.4', 'TestBrowser')
+      ).resolves.not.toThrow()
+
+      await new Promise((r) => setImmediate(r))
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('session detail rotation failed')
+      )
+      warnSpy.mockRestore()
     })
   })
 })

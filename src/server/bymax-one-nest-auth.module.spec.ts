@@ -14,10 +14,14 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from './bymax-one-nest-auth.constants'
 import { AuthController } from './controllers/auth.controller'
+import { PasswordResetController } from './controllers/password-reset.controller'
+import { SessionController } from './controllers/session.controller'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
+import { PasswordResetService } from './services/password-reset.service'
+import { SessionService } from './services/session.service'
 import { BymaxAuthModule } from './bymax-one-nest-auth.module'
 
 // ---------------------------------------------------------------------------
@@ -390,6 +394,139 @@ describe('BymaxAuthModule', () => {
         jwt: expect.objectContaining({ secret: JWT_SECRET }),
         roles: expect.objectContaining({ hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } })
       })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Phase 4 — Sessions and Password Reset integration smoke tests
+  // ---------------------------------------------------------------------------
+
+  describe('Phase 4: SessionService and PasswordResetService wiring', () => {
+    const extraProviders = [
+      { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+    ]
+
+    // Verifies that SessionService is always exported from the module regardless of whether the sessions controller flag is set.
+    it('SessionService is always exported regardless of controllers.sessions flag', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(SessionService)).toBeDefined()
+    })
+
+    // Verifies that PasswordResetService is exported when the passwordReset controller feature is not explicitly disabled.
+    it('PasswordResetService is exported when controllers.passwordReset is not disabled (default)', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(PasswordResetService)).toBeDefined()
+    })
+
+    // Verifies that PasswordResetController is registered by default when no controllers config is provided, confirming opt-out behavior.
+    it('PasswordResetController is registered by default (opt-out behavior)', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(PasswordResetController)).toBeDefined()
+    })
+
+    // Verifies that PasswordResetController is not registered when controllers.passwordReset is explicitly set to false.
+    it('PasswordResetController is NOT registered when controllers.passwordReset is false', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { passwordReset: false },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(() => module.get(PasswordResetController)).toThrow()
+    })
+
+    // Verifies that PasswordResetService is also not registered when the passwordReset feature is fully disabled via controllers config.
+    it('PasswordResetService is NOT registered when controllers.passwordReset is false', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { passwordReset: false },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(() => module.get(PasswordResetService)).toThrow()
+    })
+
+    // Verifies that SessionController is registered only when both controllers.sessions is true and sessions.enabled is true.
+    it('SessionController is registered when controllers.sessions: true AND sessions.enabled: true', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => ({
+              ...validOptions,
+              sessions: { enabled: true }
+            }),
+            controllers: { sessions: true },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(SessionController)).toBeDefined()
+    })
+
+    // Verifies that SessionController is not registered when controllers.sessions is not set, confirming opt-in behavior.
+    it('SessionController is NOT registered when controllers.sessions is not set (opt-in behavior)', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(() => module.get(SessionController)).toThrow()
+    })
+
+    // Verifies that the module throws a startup error when controllers.sessions is true but sessions.enabled is false or not set.
+    it('throws startup error when controllers.sessions: true but sessions.enabled is not true', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => ({
+                ...validOptions,
+                sessions: { enabled: false }
+              }),
+              controllers: { sessions: true },
+              extraProviders
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.sessions.*requires sessions\.enabled/)
     })
   })
 })

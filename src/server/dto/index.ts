@@ -1,1 +1,11 @@
-// Server DTOs — populated incrementally per development phase
+export { ForgotPasswordDto } from './forgot-password.dto'
+export { LoginDto } from './login.dto'
+export { MfaChallengeDto } from './mfa-challenge.dto'
+export { MfaDisableDto } from './mfa-disable.dto'
+export { MfaVerifyDto } from './mfa-verify.dto'
+export { RegisterDto } from './register.dto'
+export { ResendOtpDto } from './resend-otp.dto'
+export { ResendVerificationDto } from './resend-verification.dto'
+export { ResetPasswordDto } from './reset-password.dto'
+export { VerifyEmailDto } from './verify-email.dto'
+export { VerifyOtpDto } from './verify-otp.dto'

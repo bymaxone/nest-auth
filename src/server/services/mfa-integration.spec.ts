@@ -42,6 +42,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
 import { MfaService } from './mfa.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 
 // ---------------------------------------------------------------------------
@@ -61,7 +62,14 @@ const mockOptions = {
     issuer: 'TestApp',
     totpWindow: 1,
     recoveryCodeCount: 2
-  }
+  },
+  sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+}
+
+const mockSessionService = {
+  createSession: jest.fn(),
+  revokeSession: jest.fn(),
+  rotateSession: jest.fn()
 }
 
 const DASHBOARD_USER = {
@@ -181,6 +189,7 @@ describe('MFA Phase 3 — integration smoke tests', () => {
             compare: jest.fn().mockResolvedValue(false)
           }
         },
+        { provide: SessionService, useValue: mockSessionService },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
       ]
@@ -321,6 +330,7 @@ describe('MFA Phase 3 — integration smoke tests', () => {
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
         { provide: PasswordService, useValue: mockPasswordSvc },
+        { provide: SessionService, useValue: mockSessionService },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
       ]

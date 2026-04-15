@@ -10,6 +10,7 @@ import {
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
@@ -54,13 +55,16 @@ export class AuthService {
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
-    @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
+    @Inject(BYMAX_AUTH_EMAIL_PROVIDER)
+    @Optional()
+    private readonly emailProvider: IEmailProvider | null,
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
     private readonly passwordService: PasswordService,
     private readonly tokenManager: TokenManagerService,
     private readonly bruteForce: BruteForceService,
     private readonly redis: AuthRedisService,
-    private readonly otpService: OtpService
+    private readonly otpService: OtpService,
+    private readonly sessionService: SessionService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -133,9 +137,14 @@ export class AuthService {
     const safeUser = toSafeUser(newUser)
     const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
 
+    // Track the session when sessions are enabled (enforces concurrent session limit).
+    if (this.options.sessions.enabled) {
+      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+    }
+
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
-      Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
+      void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
         this.logger.error('afterRegister hook threw', err)
       })
     }
@@ -218,12 +227,17 @@ export class AuthService {
     const safeUser = toSafeUser(user)
     const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
 
+    // Track the session when sessions are enabled (enforces concurrent session limit).
+    if (this.options.sessions.enabled) {
+      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+    }
+
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
       this.logger.error('updateLastLogin failed', err)
     })
     if (this.hooks?.afterLogin) {
-      Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
+      void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
         this.logger.error('afterLogin hook threw', err)
       })
     }
@@ -255,13 +269,34 @@ export class AuthService {
       // Malformed token — no revocation entry needed.
     }
 
-    // Delete the refresh session.
-    await this.redis.del(`rt:${sha256(rawRefreshToken)}`)
+    // Delete the refresh token key — always required for auth security.
+    const sessionHash = sha256(rawRefreshToken)
+    await this.redis.del(`rt:${sessionHash}`)
+
+    // Delegate session metadata cleanup to SessionService.revokeSession(), which
+    // performs an atomic SISMEMBER ownership check before deleting sd:{hash} and
+    // SREMing from sess:{userId}. The rt:{hash} DEL above already ran — revokeSession's
+    // internal DEL will be a no-op (Redis DEL is idempotent when key is absent).
+    // SESSION_NOT_FOUND: session was evicted, already revoked, or the refresh token
+    // does not belong to this user — in all cases authentication is already invalidated.
+    if (this.options.sessions.enabled) {
+      await this.sessionService.revokeSession(userId, sessionHash).catch((err: unknown) => {
+        const errCode =
+          err instanceof AuthException
+            ? (err.getResponse() as { error: { code: string } }).error.code
+            : undefined
+        if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
+          this.logger.warn(`logout: session cleanup failed — ${String(err)}`)
+        }
+      })
+    }
 
     if (this.hooks?.afterLogout) {
-      Promise.resolve(this.hooks.afterLogout(userId, {} as HookContext)).catch((err: unknown) => {
-        this.logger.error('afterLogout hook threw', err)
-      })
+      void Promise.resolve(this.hooks.afterLogout(userId, {} as HookContext)).catch(
+        (err: unknown) => {
+          this.logger.error('afterLogout hook threw', err)
+        }
+      )
     }
   }
 
@@ -286,7 +321,20 @@ export class AuthService {
     ip: string,
     userAgent: string
   ): Promise<RotatedTokenResult> {
-    return this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+    const result = await this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+
+    // Rotate the session detail record to the new token hash.
+    // Fire-and-forget: sd: keys are display metadata only — a rotation failure
+    // does not invalidate the auth tokens already issued above.
+    if (this.options.sessions.enabled) {
+      void this.sessionService
+        .rotateSession(sha256(oldRefreshToken), sha256(result.rawRefreshToken), ip, userAgent)
+        .catch((err: unknown) => {
+          this.logger.warn(`refresh: session detail rotation failed — ${String(err)}`)
+        })
+    }
+
+    return result
   }
 
   // ---------------------------------------------------------------------------
@@ -329,11 +377,11 @@ export class AuthService {
       // Fetch user for hook (credential fields stripped).
       const user = await this.userRepo.findById(userId)
       if (user) {
-        Promise.resolve(this.hooks.afterEmailVerified(toSafeUser(user), {} as HookContext)).catch(
-          (err: unknown) => {
-            this.logger.error('afterEmailVerified hook threw', err)
-          }
-        )
+        void Promise.resolve(
+          this.hooks.afterEmailVerified(toSafeUser(user), {} as HookContext)
+        ).catch((err: unknown) => {
+          this.logger.error('afterEmailVerified hook threw', err)
+        })
       }
     }
   }
@@ -425,6 +473,11 @@ export class AuthService {
     email: string,
     userId: string
   ): Promise<void> {
+    if (!this.emailProvider) {
+      this.logger.warn('sendVerificationOtp: no email provider configured — OTP not sent')
+      return
+    }
+
     const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
     const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
     const ttl = this.options.emailVerification.otpTtlSeconds

@@ -35,13 +35,13 @@
 | Fase 1 — Fundacao e Infraestrutura          | 42      | 0       | 42     | 100%      |
 | Fase 2 — Autenticacao Core                  | 22      | 0       | 22     | 100%      |
 | Fase 3 — Autenticacao Multi-Fator (MFA)     | 15      | 0       | 15     | 100%      |
-| Fase 4 — Sessoes e Reset de Senha           | 17      | 17      | 0      | 0%        |
+| Fase 4 — Sessoes e Reset de Senha           | 17      | 0       | 17     | 100%      |
 | Fase 5 — Plataforma, OAuth e Convites       | 25      | 25      | 0      | 0%        |
 | Fase 6 — Integracao, Polimento e Publicacao | 30      | 30      | 0      | 0%        |
 | Fase 7 — Shared + Client Subpath            | 9       | 9       | 0      | 0%        |
 | Fase 8 — React Subpath                      | 8       | 8       | 0      | 0%        |
 | Fase 9 — Next.js Subpath                    | 17      | 17      | 0      | 0%        |
-| **TOTAL**                                   | **185** | **106** | **79** | **43%**   |
+| **TOTAL**                                   | **185** | **89**  | **96** | **52%**   |
 
 ---
 
@@ -1641,7 +1641,7 @@
 ### NEST-080: Password Reset and Verification DTOs
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-026
 - **Agente:** typescript-reviewer
@@ -1691,7 +1691,7 @@
 ### NEST-081: SessionService — createSession and enforceSessionLimit
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-026
 - **Agente:** code-reviewer
@@ -1711,7 +1711,7 @@
 ### NEST-082: SessionService — listSessions and revokeSession
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-081
 - **Agente:** code-reviewer
@@ -1751,7 +1751,7 @@
 ### NEST-083: SessionService — rotateSession with atomic Lua script
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-082
 - **Agente:** database-reviewer
@@ -1790,7 +1790,7 @@
 ### NEST-084: SessionController
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-082
 - **Agente:** code-reviewer
@@ -1827,7 +1827,7 @@
 ### NEST-085: PasswordResetService — initiateReset
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-080
 - **Agente:** security-reviewer
@@ -1869,7 +1869,7 @@
 ### NEST-086: PasswordResetService — resetPassword
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-085
 - **Agente:** security-reviewer
@@ -1916,7 +1916,7 @@
 ### NEST-087: PasswordResetService — verifyOtp and resendOtp
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-085
 - **Agente:** security-reviewer
@@ -1954,7 +1954,7 @@
 ### NEST-088: PasswordResetController
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-086, NEST-087
 - **Agente:** code-reviewer
@@ -1993,7 +1993,7 @@
 ### NEST-089: Phase 4 module integration — SessionService and PasswordResetService
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-084, NEST-088
 - **Agente:** architect
@@ -2028,7 +2028,7 @@
 ### NEST-090: AuthService integration with SessionService
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-083, NEST-089
 - **Agente:** planner
@@ -2062,7 +2062,7 @@
 ### NEST-091: SessionService unit tests
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-083
 - **Agente:** tester
@@ -2100,7 +2100,7 @@
 ### NEST-092: PasswordResetService unit tests
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-087
 - **Agente:** tester
@@ -2141,7 +2141,7 @@
 ### NEST-093: SessionController unit tests
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-084
 - **Agente:** tester
@@ -2173,7 +2173,7 @@
 ### NEST-094: PasswordResetController unit tests
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-088
 - **Agente:** tester
@@ -2206,7 +2206,7 @@
 ### NEST-095: AuthService integration tests update
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-090
 - **Agente:** tester
@@ -2236,7 +2236,7 @@
 ### NEST-096: Phase 4 validation — integration smoke test
 
 - **Fase:** 4
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-091, NEST-092, NEST-093, NEST-094, NEST-095
 - **Agente:** tester

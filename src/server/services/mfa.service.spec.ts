@@ -21,6 +21,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'
 import { MfaService } from './mfa.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,14 @@ const mockOptions = {
     issuer: 'TestApp',
     totpWindow: 1,
     recoveryCodeCount: 2
-  }
+  },
+  sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+}
+
+const mockSessionService = {
+  createSession: jest.fn(),
+  revokeSession: jest.fn(),
+  rotateSession: jest.fn()
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +191,7 @@ describe('MfaService', () => {
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
         { provide: PasswordService, useValue: mockPasswordService },
+        { provide: SessionService, useValue: mockSessionService },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
       ]
@@ -276,6 +285,7 @@ describe('MfaService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
@@ -847,6 +857,7 @@ describe('MfaService', () => {
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
@@ -900,6 +911,56 @@ describe('MfaService', () => {
         { mfaVerified: true }
       )
       expect(result).toBe(PLATFORM_AUTH_RESULT)
+    })
+
+    // Verifies that challenge calls sessionService.createSession when sessions.enabled is true.
+    it('should call sessionService.createSession when sessions.enabled is true', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const sessionOptions = {
+        ...mockOptions,
+        sessions: { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+      }
+      const sessionModule = await Test.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: sessionOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const sessionEnabledService = sessionModule.get(MfaService)
+
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: SAFE_USER.id,
+        context: 'dashboard'
+      })
+      mockTokenManager.issueTokens.mockResolvedValue(MOCK_AUTH_RESULT)
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockSessionService.createSession.mockResolvedValue('session-hash')
+
+      await sessionEnabledService.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
+
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        SAFE_USER.id,
+        MOCK_AUTH_RESULT.rawRefreshToken,
+        '1.2.3.4',
+        'Browser'
+      )
     })
   })
 

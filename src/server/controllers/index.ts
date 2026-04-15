@@ -4,3 +4,5 @@
 
 export { AuthController } from './auth.controller'
 export { MfaController } from './mfa.controller'
+export { PasswordResetController } from './password-reset.controller'
+export { SessionController } from './session.controller'
