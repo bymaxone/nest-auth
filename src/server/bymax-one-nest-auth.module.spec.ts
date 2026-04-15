@@ -400,14 +400,14 @@ describe('BymaxAuthModule', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Phase 4 — Sessions and Password Reset integration smoke tests
+  // Sessions and Password Reset integration smoke tests
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
-  // Phase 5 cross-validations
+  // platformAuth, oauth, and invitations cross-validations
   // ---------------------------------------------------------------------------
 
-  describe('Phase 5: platformAuth, oauth, and invitations cross-validations', () => {
+  describe('platformAuth, oauth, and invitations cross-validations', () => {
     const extraProviders = [
       { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
       { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
@@ -561,7 +561,7 @@ describe('BymaxAuthModule', () => {
     })
   })
 
-  describe('Phase 4: SessionService and PasswordResetService wiring', () => {
+  describe('SessionService and PasswordResetService wiring', () => {
     const extraProviders = [
       { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
       { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }

@@ -192,7 +192,7 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
  *
  * This service is responsible only for session creation and enforcement.
  * Session listing, individual revocation, and bulk-revocation are handled
- * by dedicated services (NEST-082 / NEST-083).
+ * by dedicated session-management services.
  */
 @Injectable()
 export class SessionService {
@@ -569,7 +569,7 @@ export class SessionService {
    * not atomic. Under high concurrency two simultaneous logins for the same user
    * may both observe the SET before the other's session is committed, allowing a
    * transient overshoot of 1 extra session per concurrent login pair. A fully atomic
-   * Lua implementation is introduced in `rotateSession` (NEST-083). The practical
+   * A fully atomic Lua implementation is used in `rotateSession`. The practical
    * risk is low for most `defaultMaxSessions` values (≥ 2).
    *
    * @param userId - Internal user ID whose session count is being checked.

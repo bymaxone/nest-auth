@@ -1,5 +1,5 @@
 /**
- * @fileoverview Phase 3 integration smoke tests — MFA end-to-end flow validation.
+ * @fileoverview MFA integration smoke tests — end-to-end flow validation.
  *
  * Validates the full MFA lifecycle (setup → verifyAndEnable → challenge → disable)
  * and key security properties: anti-replay, brute-force isolation, session invalidation.
@@ -8,7 +8,7 @@
  * AES-256-GCM encrypt/decrypt and TOTP generation use real crypto to catch integration
  * regressions that mocks would mask.
  *
- * Test scenarios (Phase 3 MFA checklist):
+ * Test scenarios:
  *  1. Full flow: setup → verifyAndEnable → challenge (TOTP) end-to-end
  *  2. Setup is idempotent (concurrent calls within TTL return the same data)
  *  3. Recovery codes work as alternative to TOTP in challenge
@@ -146,7 +146,7 @@ const mockHooks = {}
 // Suite bootstrap
 // ---------------------------------------------------------------------------
 
-describe('MFA Phase 3 — integration smoke tests', () => {
+describe('MFA — integration smoke tests', () => {
   let service: MfaService
 
   beforeEach(async () => {

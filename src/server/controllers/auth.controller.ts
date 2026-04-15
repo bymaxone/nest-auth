@@ -33,7 +33,7 @@ import type {
 import { TokenDeliveryService } from '../services/token-delivery.service'
 
 // ---------------------------------------------------------------------------
-// Inline request body DTOs — scoped to auth endpoints not covered by Phase 2 DTOs
+// Inline request body DTOs — scoped to auth endpoints that do not have standalone DTO files
 // ---------------------------------------------------------------------------
 
 class VerifyEmailBody {

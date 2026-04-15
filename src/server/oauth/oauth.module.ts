@@ -83,7 +83,7 @@ export function buildOAuthPlugins(options: ResolvedOptions): OAuthProviderPlugin
  *
  * @example
  * ```typescript
- * // BymaxAuthModule integration (NEST-120):
+ * // BymaxAuthModule integration:
  * providers: [
  *   ...OAuthModule.getOAuthProviders(resolvedOptions),
  *   ...otherProviders
