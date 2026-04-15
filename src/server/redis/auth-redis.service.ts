@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 
 /**

@@ -74,7 +74,7 @@ Within the library, services inject the client via the Symbol token:
 ```typescript
 import { Inject, Injectable } from "@nestjs/common";
 import { Redis } from "ioredis";
-import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-one-nest-auth.constants";
+import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-auth.constants";
 
 @Injectable()
 export class AuthRedisService {
@@ -102,7 +102,7 @@ In unit tests, provide a mock Redis instance through the same token:
 
 ```typescript
 import { Test } from "@nestjs/testing";
-import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-one-nest-auth.constants";
+import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-auth.constants";
 
 const mockRedis = {
   get: jest.fn(),

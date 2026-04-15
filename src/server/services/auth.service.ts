@@ -6,7 +6,7 @@ import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'

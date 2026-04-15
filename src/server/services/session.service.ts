@@ -4,7 +4,7 @@ import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'

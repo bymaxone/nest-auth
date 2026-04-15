@@ -7,7 +7,7 @@
 
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { PasswordService } from './password.service'
 
 const mockOptions = {

@@ -4,7 +4,7 @@ import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import type { Request } from 'express'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'

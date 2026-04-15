@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { BruteForceService } from './brute-force.service'

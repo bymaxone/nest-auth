@@ -36,7 +36,7 @@ A dynamic module is a module whose providers, controllers, and exports are deter
 The primary entry point for consumers is `registerAsync`. This allows the host application to inject its own `ConfigService` or factory to supply configuration asynchronously.
 
 ```typescript
-// bymax-one-nest-auth.module.ts
+// bymax-auth.module.ts
 
 import { DynamicModule, Module, Provider, Type } from '@nestjs/common';
 import {
@@ -45,7 +45,7 @@ import {
   EMAIL_PROVIDER,
   AUTH_REDIS_CLIENT,
   AUTH_HOOKS,
-} from './bymax-one-nest-auth.constants';
+} from './bymax-auth.constants';
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface';
 
 @Module({})
@@ -232,7 +232,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 This package uses `Symbol()` for all injection tokens to avoid naming collisions with host application providers.
 
 ```typescript
-// bymax-one-nest-auth.constants.ts
+// bymax-auth.constants.ts
 
 /**
  * Injection token for the resolved auth module options.
@@ -283,7 +283,7 @@ When a token is not a class (i.e., it is a Symbol, string, or abstract class), y
 
 ```typescript
 import { Injectable, Inject } from '@nestjs/common';
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants';
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
 import type { IUserRepository } from '../interfaces/user-repository.interface';
 
@@ -463,7 +463,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
-import { AUTH_MODULE_OPTIONS } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
@@ -681,7 +681,7 @@ Attaches user data if a valid token is present, but does not reject unauthentica
 
 import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { AUTH_MODULE_OPTIONS } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
 import type { Request } from 'express';
 
@@ -732,7 +732,7 @@ For WebSocket gateways, extract the token from the handshake:
 import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { WsException } from '@nestjs/websockets';
-import { AUTH_MODULE_OPTIONS } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
 
 @Injectable()
@@ -1035,7 +1035,7 @@ Services in this package follow these principles:
 // services/example.service.ts
 
 import { Injectable, Inject } from '@nestjs/common';
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants';
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
 import type { IUserRepository } from '../interfaces/user-repository.interface';
 
@@ -1696,7 +1696,7 @@ Each entry point has a barrel `index.ts` that controls the public API surface:
 // src/server/index.ts — Server barrel export
 
 // Module
-export { BymaxAuthModule } from './bymax-one-nest-auth.module';
+export { BymaxAuthModule } from './bymax-auth.module';
 
 // Services (export class, not type)
 export { AuthService } from './services/auth.service';
@@ -1727,7 +1727,7 @@ export {
   EMAIL_PROVIDER,
   AUTH_REDIS_CLIENT,
   AUTH_HOOKS,
-} from './bymax-one-nest-auth.constants';
+} from './bymax-auth.constants';
 
 // Interfaces (export type, not class)
 export type { AuthModuleOptions, AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface';
@@ -1756,7 +1756,7 @@ export type { IUserRepository } from './interfaces/user-repository.interface';
 
 // CORRECT: Use 'export' (no 'type') for classes, functions, constants, decorators
 export { AuthService } from './services/auth.service';
-export { AUTH_MODULE_OPTIONS } from './bymax-one-nest-auth.constants';
+export { AUTH_MODULE_OPTIONS } from './bymax-auth.constants';
 export { Public } from './decorators/public.decorator';
 ```
 
@@ -1922,7 +1922,7 @@ import {
   AUTH_MODULE_OPTIONS,
   USER_REPOSITORY,
   AUTH_HOOKS,
-} from '../bymax-one-nest-auth.constants';
+} from '../bymax-auth.constants';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -2065,7 +2065,7 @@ import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { AUTH_MODULE_OPTIONS } from '../bymax-one-nest-auth.constants';
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
 
 describe('JwtAuthGuard', () => {
   let guard: JwtAuthGuard;

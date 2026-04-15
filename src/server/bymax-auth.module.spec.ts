@@ -13,7 +13,7 @@ import {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY
-} from './bymax-one-nest-auth.constants'
+} from './bymax-auth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { AuthController } from './controllers/auth.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
@@ -24,7 +24,7 @@ import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
 import { PasswordResetService } from './services/password-reset.service'
 import { SessionService } from './services/session.service'
-import { BymaxAuthModule } from './bymax-one-nest-auth.module'
+import { BymaxAuthModule } from './bymax-auth.module'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -520,7 +520,7 @@ describe('BymaxAuthModule', () => {
 
     // Verifies that controllers.oauth: true with a valid oauth.google config compiles
     // successfully and registers OAuthController — also exercises the OAUTH_PLUGINS
-    // factory provider body (line 294 in bymax-one-nest-auth.module.ts).
+    // factory provider body (line 294 in bymax-auth.module.ts).
     it('should compile and register OAuthController when controllers.oauth: true with valid oauth config', async () => {
       const module = await Test.createTestingModule({
         imports: [

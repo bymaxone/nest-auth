@@ -8,7 +8,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'

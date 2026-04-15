@@ -7,7 +7,7 @@
 import { HttpStatus } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { UserStatusGuard } from './user-status.guard'

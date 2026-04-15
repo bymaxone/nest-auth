@@ -13,7 +13,7 @@ import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'

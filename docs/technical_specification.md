@@ -226,8 +226,8 @@ O pacote é organizado em 5 subpaths com responsabilidades distintas:
 ├── src/
 │   ├── server/                              # Backend NestJS
 │   │   ├── index.ts                         # Barrel export (server)
-│   │   ├── bymax-one-nest-auth.module.ts    # Root dynamic module
-│   │   ├── bymax-one-nest-auth.constants.ts # Injection tokens
+│   │   ├── bymax-auth.module.ts    # Root dynamic module
+│   │   ├── bymax-auth.constants.ts # Injection tokens
 │   │   ├── interfaces/
 │   │   │   ├── auth-module-options.interface.ts
 │   │   │   ├── user-repository.interface.ts
@@ -417,10 +417,10 @@ O pacote usa o campo `exports` do `package.json` para expor múltiplos entry poi
 
 ```typescript
 // Módulo principal
-export { BymaxAuthModule } from './bymax-one-nest-auth.module'
+export { BymaxAuthModule } from './bymax-auth.module'
 // Constantes de injeção
 export { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT } from './bymax-one-nest-auth.constants'
+  BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT } from './bymax-auth.constants'
 // Interfaces (types)
 export type { BymaxAuthModuleOptions, IUserRepository, AuthUser, IPlatformUserRepository,
   AuthPlatformUser, IEmailProvider, IAuthHooks, OAuthProviderPlugin, DashboardJwtPayload,
@@ -980,7 +980,7 @@ export class AppModule {}
 O pacote define constantes de injeção que a aplicação host deve fornecer:
 
 ```typescript
-// bymax-one-nest-auth.constants.ts
+// bymax-auth.constants.ts
 
 /** Token para as opções resolvidas do módulo */
 export const BYMAX_AUTH_OPTIONS = Symbol("BYMAX_AUTH_OPTIONS");
@@ -4796,7 +4796,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - `authenticated-request.interface.ts` — Request tipado
 
 3. **Configuração**
-   - `bymax-one-nest-auth.constants.ts` — Tokens de injeção
+   - `bymax-auth.constants.ts` — Tokens de injeção
    - `config/default-options.ts` — Valores padrão
    - `config/resolved-options.ts` — Merge de opções
 
@@ -4852,7 +4852,7 @@ O pacote **não possui dependências diretas** (`"dependencies": {}`). Todas as 
    - `controllers/auth.controller.ts` — Endpoints com decorators e throttle
 
 6. **Módulo dinâmico**
-   - `bymax-one-nest-auth.module.ts` — `registerAsync()`, provider registration, conditional controller loading
+   - `bymax-auth.module.ts` — `registerAsync()`, provider registration, conditional controller loading
 
 7. **Testes unitários**
    - Testes para `AuthService` (register, login, logout, refresh)

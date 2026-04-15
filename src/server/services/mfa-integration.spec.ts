@@ -31,7 +31,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import { encrypt } from '../crypto/aes-gcm'
 import { hmacSha256 } from '../crypto/secure-token'
 import { generateHotp, generateTotpSecret } from '../crypto/totp'

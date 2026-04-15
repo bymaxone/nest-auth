@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 
 import { Inject, Injectable } from '@nestjs/common'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.

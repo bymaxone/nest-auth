@@ -4,7 +4,7 @@
 // Module
 // ---------------------------------------------------------------------------
 
-export { BymaxAuthModule } from './bymax-one-nest-auth.module'
+export { BymaxAuthModule } from './bymax-auth.module'
 
 // ---------------------------------------------------------------------------
 // Injection tokens
@@ -17,7 +17,7 @@ export {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY
-} from './bymax-one-nest-auth.constants'
+} from './bymax-auth.constants'
 
 // ---------------------------------------------------------------------------
 // Configuration

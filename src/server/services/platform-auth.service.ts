@@ -1,9 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
-import {
-  BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_PLATFORM_USER_REPOSITORY } from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { TokenManagerService } from './token-manager.service'

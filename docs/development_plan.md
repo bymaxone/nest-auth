@@ -141,7 +141,7 @@ O desenvolvimento segue uma abordagem **incremental por camadas**, onde cada fas
 
 | Arquivo                                | Conteúdo                                                                                                                                                                                                                                                                                                             |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/bymax-one-nest-auth.constants.ts` | 6 Symbols: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `BYMAX_AUTH_PLATFORM_USER_REPOSITORY`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `BYMAX_AUTH_REDIS_CLIENT`                                                                                                                                     |
+| `src/server/bymax-auth.constants.ts` | 6 Symbols: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `BYMAX_AUTH_PLATFORM_USER_REPOSITORY`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `BYMAX_AUTH_REDIS_CLIENT`                                                                                                                                     |
 | `src/server/config/default-options.ts`        | Objeto com todos os valores padrão conforme tabela 4.2 da spec                                                                                                                                                                                                                                                       |
 | `src/server/config/resolved-options.ts`       | Tipo `ResolvedOptions` (opções com defaults aplicados) + função `resolveOptions(userOptions)` que faz deep merge com defaults + validação de `jwt.secret` (mín 32 chars, entropia Shannon >= 3.5 bits/char, rejeita padrões repetitivos) + validação de `mfa.encryptionKey` (32 bytes quando decodificado de base64) |
 | `src/server/constants/index.ts`               | Re-export de constantes públicas                                                                                                                                                                                                                                                                                     |
@@ -602,7 +602,7 @@ Atualizar `src/server/index.ts` com todos os exports da Fase 1:
 
 ### 3.6 Módulo dinâmico
 
-**Arquivo:** `src/server/bymax-one-nest-auth.module.ts`
+**Arquivo:** `src/server/bymax-auth.module.ts`
 
 **Tarefas detalhadas:**
 

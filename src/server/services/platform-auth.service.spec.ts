@@ -17,7 +17,7 @@ import { Test } from '@nestjs/testing'
 import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY
-} from '../bymax-one-nest-auth.constants'
+} from '../bymax-auth.constants'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'

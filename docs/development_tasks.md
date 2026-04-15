@@ -267,7 +267,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-one-nest-auth.constants.ts. Export 6 Symbols: BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS'), BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY'), BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol('BYMAX_AUTH_PLATFORM_USER_REPOSITORY'), BYMAX_AUTH_EMAIL_PROVIDER = Symbol('BYMAX_AUTH_EMAIL_PROVIDER'), BYMAX_AUTH_HOOKS = Symbol('BYMAX_AUTH_HOOKS'), BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT'). Use descriptive Symbol names. Export with `export const` (not export type).
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-auth.constants.ts. Export 6 Symbols: BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS'), BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY'), BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol('BYMAX_AUTH_PLATFORM_USER_REPOSITORY'), BYMAX_AUTH_EMAIL_PROVIDER = Symbol('BYMAX_AUTH_EMAIL_PROVIDER'), BYMAX_AUTH_HOOKS = Symbol('BYMAX_AUTH_HOOKS'), BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT'). Use descriptive Symbol names. Export with `export const` (not export type).
 
 ---
 
@@ -1038,7 +1038,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-one-nest-auth.module.ts. Implement @Module({}) class BymaxAuthModule with static registerAsync(options: { imports?, inject?, useFactory, providers? }): DynamicModule. In the method: (1) useFactory resolves user config, call resolveOptions to apply defaults+validate, register resolved options as provider with BYMAX_AUTH_OPTIONS token. (2) Register mandatory providers: AuthRedisService, PasswordService, TokenManagerService, TokenDeliveryService, BruteForceService, OtpService, AuthService, JwtAuthGuard, RolesGuard, UserStatusGuard. (3) Register fallback providers: if BYMAX_AUTH_HOOKS not in user providers -> register NoOpAuthHooks. If BYMAX_AUTH_EMAIL_PROVIDER not in user providers -> register NoOpEmailProvider. (4) Build controllers array dynamically: include AuthController if controllers.auth !== false. (5) Import JwtModule.registerAsync with secret and signOptions from resolved options. (6) Use RouterModule.register([{ path: routePrefix, module: BymaxAuthModule }]) for dynamic route prefix. (8) DO NOT register guards as APP_GUARD — each controller applies guards explicitly. (9) Merge user's providers array with internal providers.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-auth.module.ts. Implement @Module({}) class BymaxAuthModule with static registerAsync(options: { imports?, inject?, useFactory, providers? }): DynamicModule. In the method: (1) useFactory resolves user config, call resolveOptions to apply defaults+validate, register resolved options as provider with BYMAX_AUTH_OPTIONS token. (2) Register mandatory providers: AuthRedisService, PasswordService, TokenManagerService, TokenDeliveryService, BruteForceService, OtpService, AuthService, JwtAuthGuard, RolesGuard, UserStatusGuard. (3) Register fallback providers: if BYMAX_AUTH_HOOKS not in user providers -> register NoOpAuthHooks. If BYMAX_AUTH_EMAIL_PROVIDER not in user providers -> register NoOpEmailProvider. (4) Build controllers array dynamically: include AuthController if controllers.auth !== false. (5) Import JwtModule.registerAsync with secret and signOptions from resolved options. (6) Use RouterModule.register([{ path: routePrefix, module: BymaxAuthModule }]) for dynamic route prefix. (8) DO NOT register guards as APP_GUARD — each controller applies guards explicitly. (9) Merge user's providers array with internal providers.
 
 ---
 
@@ -1054,7 +1054,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-one-nest-auth.module.spec.ts. Tests: (1) Module compiles and initializes with valid minimal config (jwt.secret with 32+ chars high entropy, mock Redis client, mock user repository). (2) Validation fails with weak jwt.secret (short or low entropy). (3) AuthController is NOT registered when controllers.auth is false. (4) AuthController IS registered by default. (5) NoOpEmailProvider is used when no email provider is given. (6) NoOpAuthHooks is used when no hooks provider is given. (7) Route prefix is applied correctly. Use NestJS Test.createTestingModule for integration testing.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/bymax-auth.module.spec.ts. Tests: (1) Module compiles and initializes with valid minimal config (jwt.secret with 32+ chars high entropy, mock Redis client, mock user repository). (2) Validation fails with weak jwt.secret (short or low entropy). (3) AuthController is NOT registered when controllers.auth is false. (4) AuthController IS registered by default. (5) NoOpEmailProvider is used when no email provider is given. (6) NoOpAuthHooks is used when no hooks provider is given. (7) Route prefix is applied correctly. Use NestJS Test.createTestingModule for integration testing.
 
 ---
 
@@ -1070,7 +1070,7 @@
 
 **Prompt para o agente:**
 
-> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/server/index.ts adding Phase 2 exports. Add: export { BymaxAuthModule } from './bymax-one-nest-auth.module'. export { AuthService } from './services/auth.service'. export { JwtAuthGuard } from './guards/jwt-auth.guard'. export { RolesGuard } from './guards/roles.guard'. export { UserStatusGuard } from './guards/user-status.guard'. export { CurrentUser } from './decorators/current-user.decorator'. export { Roles, ROLES_KEY } from './decorators/roles.decorator'. export { Public, IS_PUBLIC_KEY } from './decorators/public.decorator'. export { RegisterDto } from './dto/register.dto'. export { LoginDto } from './dto/login.dto'. Note: AuthResult and MfaChallengeResult types were already exported in Phase 1 from interfaces/auth-result.interface. Verify no duplicate exports.
+> Update /Users/maximiliano/Documents/My Apps/nest-auth/src/server/index.ts adding Phase 2 exports. Add: export { BymaxAuthModule } from './bymax-auth.module'. export { AuthService } from './services/auth.service'. export { JwtAuthGuard } from './guards/jwt-auth.guard'. export { RolesGuard } from './guards/roles.guard'. export { UserStatusGuard } from './guards/user-status.guard'. export { CurrentUser } from './decorators/current-user.decorator'. export { Roles, ROLES_KEY } from './decorators/roles.decorator'. export { Public, IS_PUBLIC_KEY } from './decorators/public.decorator'. export { RegisterDto } from './dto/register.dto'. export { LoginDto } from './dto/login.dto'. Note: AuthResult and MfaChallengeResult types were already exported in Phase 1 from interfaces/auth-result.interface. Verify no duplicate exports.
 
 ---
 

@@ -7,7 +7,7 @@
 import { Test } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { TokenDeliveryService } from './token-delivery.service'
 
 // ---------------------------------------------------------------------------

@@ -143,8 +143,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `setIfAbsent(key, value, ttl)` — atomic `SET NX EX`; returns `true` if the key was newly created, `false` if it already existed; used for idempotent setup key reservation
 - `invalidateUserSessions(userId)` — Lua script that reads all members of `sess:{userId}`, deletes each session key (including grace pointers tracked in the SET), and removes the SET itself in a single round-trip
 
-**Module integration** (`src/server/bymax-one-nest-auth.module.ts`)
+**Module integration** (`src/server/bymax-auth.module.ts`)
 - `controllers.mfa: true` option conditionally registers `MfaController`; startup validation throws if `controllers.mfa: true` is set without the `mfa` configuration group
+
+---
+
+#### Phase 4 — Sessions & Password Reset
+
+**Services** (`src/server/services/`)
+- `SessionService` — full session lifecycle management: `createSession` records device/IP metadata and enforces concurrent session limit via FIFO eviction; `listSessions` returns sorted `SessionInfo[]` with `isCurrent` marked via timing-safe comparison; `revokeSession` atomically verifies ownership (SISMEMBER) before deletion; `revokeAllExceptCurrent` preserves the caller's session while revoking all others; `rotateSession` atomically renames session detail key on token rotation, preserving `createdAt`; device parsing is regex-only (no external libraries); two Lua scripts (`REVOKE_SESSION_LUA`, `ROTATE_SESSION_DETAIL_LUA`) prevent TOCTOU races
+- `PasswordResetService` — dual-flow password reset supporting `token` and `otp` modes (configured via `passwordReset.method`); `initiateReset` always returns success (anti-enumeration); `resetPassword` validates mutual exclusivity of proof fields and delegates to `resetWithToken`, `resetWithOtp`, or `resetWithVerifiedToken`; `verifyOtp` exchanges a validated OTP for a 5-minute `verifiedToken`; `resendOtp` subject to atomic 60-second cooldown via Redis NX key; all tokens consumed atomically via `getdel()` (single-use); `applyPasswordReset` hashes the new password and invalidates all sessions via Lua script; `initiateReset` and `resendOtp` apply a 300ms timing floor to prevent email-existence probing
+
+**Controllers** (`src/server/controllers/`)
+- `SessionController` — 3 endpoints: `GET /sessions` (list active sessions), `DELETE /sessions/all` (revoke all except current), `DELETE /sessions/:id` (revoke single session by 64-char hash); all require `JwtAuthGuard` + `UserStatusGuard`; current session identified by extracting refresh token via `TokenDeliveryService`
+- `PasswordResetController` — 4 endpoints: `POST /password/forgot-password`, `POST /password/reset-password`, `POST /password/verify-otp`, `POST /password/resend-otp`; all `@Public()`; all return 200/204 regardless of email existence; per-endpoint throttle configs
+
+**DTOs** (`src/server/dto/`)
+- `ForgotPasswordDto` — `email` (normalized lowercase) + `tenantId`
+- `ResetPasswordDto` — `email`, `newPassword` (8–128 chars), exactly one of `token` / `otp` / `verifiedToken`, `tenantId`
+- `VerifyOtpDto` — `email`, `otp` (4–8 chars), `tenantId`
+- `ResendOtpDto` — `email` + `tenantId`
+
+**Configuration** (`BymaxAuthModuleOptions`)
+- `sessions.enabled`, `sessions.defaultMaxSessions` (default 5), `sessions.maxSessionsResolver`, `sessions.evictionStrategy` (`'fifo'`)
+- `passwordReset.method` (`'token'` | `'otp'`, default `'token'`), `passwordReset.tokenTtlSeconds` (default 3600), `passwordReset.otpTtlSeconds` (default 600), `passwordReset.otpLength` (default 6)
+
+**Module integration** (`src/server/bymax-auth.module.ts`)
+- `controllers.sessions: true` opt-in gate with startup cross-validation: throws if `sessions.enabled` is not `true` in the factory return value
+- `controllers.passwordReset` opt-out gate (enabled by default); `PasswordResetService` only registered when controller is active
+- `SessionService` always registered unconditionally — `AuthService.login()` and `AuthService.refresh()` call session methods regardless of whether the sessions controller is exposed
+
+**Phase 4 barrel export** — adds `SessionService`, `PasswordResetService`, `ForgotPasswordDto`, `ResetPasswordDto`, `VerifyOtpDto`, `ResendOtpDto`, and `ActiveSessionInfo` type
+
+---
+
+#### Phase 5 — Platform Authentication, OAuth & Invitations
+
+**Services**
+- `PlatformAuthService` (`src/server/services/`) — operator/super-admin authentication layer backed by `IPlatformUserRepository`; `login` validates credentials, applies brute-force protection (HMAC-SHA-256 identifier, no PII in Redis), and returns `PlatformAuthResult` or `MfaChallengeResult`; `logout` blacklists JTI and deletes primary + grace session keys; `refresh` delegates to `TokenManagerService.reissuePlatformTokens()`; `getMe` returns `SafeAuthPlatformUser` (no credential fields); `revokeAllPlatformSessions` atomically deletes all session keys via `invalidateUserSessions()` Lua script; platform sessions are always bearer-mode (never cookies)
+- `OAuthService` (`src/server/oauth/`) — provider-agnostic Authorization Code flow; `initiateOAuth` validates provider name format, generates 64-char hex CSRF state nonce stored under `os:{sha256(state)}` (10-min TTL), and redirects to provider authorize URL; `handleCallback` atomically consumes state via `getdel()`, exchanges authorization code for access token, fetches normalized profile, calls required `hooks.onOAuthLogin` for account resolution (`'create'` / `'link'` / `'reject'`), and issues dashboard tokens; creates session if `sessions.enabled: true`; currently supports Google OAuth 2.0
+- `InvitationService` (`src/server/services/`) — `invite` validates the target role against the inviter's own role via `hasRole()` (cannot invite higher), stores `StoredInvitation` JSON under `inv:{sha256(token)}`, and emails the raw token; `acceptInvitation` atomically consumes the token via `getdel()`, re-validates role against the hierarchy (prevents Redis tampering), verifies email uniqueness, hashes password, creates the user with `emailVerified: true`, issues dashboard tokens, creates session if enabled, and fires `hooks.afterInvitationAccepted`
+
+**Guards** (`src/server/guards/`)
+- `JwtPlatformGuard` — validates HS256-signed JWTs for platform routes; reads token exclusively from Authorization Bearer header; enforces `type: 'platform'` claim; throws `PLATFORM_AUTH_REQUIRED` (not `TOKEN_INVALID`) when a dashboard token is submitted, enabling precise cross-context error detection; algorithm pinned from `options.jwt.algorithm`; checks `rv:{jti}` revocation blacklist; respects `@Public()`
+- `PlatformRolesGuard` — enforces role-based access on platform routes via `@PlatformRoles()` metadata; requires fully denormalized `roles.platformHierarchy`; denies access by default when hierarchy is missing
+
+**Decorators** (`src/server/decorators/`)
+- `@PlatformRoles(...roles)` — metadata decorator under `PLATFORM_ROLES_KEY` symbol; declares required platform role(s) for a route handler
+
+**Controllers**
+- `PlatformAuthController` (`src/server/controllers/`) — 6 endpoints: `POST /platform/login`, `POST /platform/mfa/challenge`, `GET /platform/me`, `POST /platform/logout`, `POST /platform/refresh`, `DELETE /platform/sessions`; all authenticated routes use `JwtPlatformGuard`; `mfa/challenge` cross-validates token context and throws `PLATFORM_AUTH_REQUIRED` on dashboard-context token submission
+- `OAuthController` (`src/server/oauth/`) — 2 endpoints: `GET /oauth/:provider` (initiate, 302 redirect) and `GET /oauth/:provider/callback` (handle, issues auth tokens); both `@Public()` + `@SkipMfa()`; per-endpoint throttle configs
+- `InvitationController` (`src/server/controllers/`) — 2 endpoints: `POST /invitations` (authenticated, `tenantId` extracted from JWT never from body) and `POST /invitations/accept` (public, returns 201 with auth response)
+
+**DTOs** (`src/server/dto/`)
+- `PlatformLoginDto` — `email` (normalized lowercase) + `password` (12–128 chars)
+- `CreateInvitationDto` — `email`, `role`, optional `tenantName` (max 128 chars)
+- `AcceptInvitationDto` — `token` (exactly 64 hex chars), `name` (2–100 chars), `password` (8–128 chars)
+- `OAuthInitiateQueryDto` — `tenantId` (1–128 chars)
+- `OAuthCallbackQueryDto` — `code` (32–2048 chars), `state` (max 128 chars)
+
+**OAuth module** (`src/server/oauth/`)
+- `OAuthModule` — exposes `getOAuthProviders()` and `getOAuthControllers()` static methods for inline inclusion in `BymaxAuthModule` providers/controllers arrays, avoiding sub-module circular dependency; `buildOAuthPlugins()` factory constructs registered provider plugins from `ResolvedOptions`
+- `OAUTH_PLUGINS` — Symbol injection token for the `OAuthProviderPlugin[]` array; internal to the library (not exported in public API)
+
+**Configuration** (`BymaxAuthModuleOptions`)
+- `platformAdmin.enabled` (default `false`); requires `roles.platformHierarchy`
+- `oauth.google` — `clientId`, `clientSecret`, `callbackUrl` (required), `scope` (optional, default `['openid', 'email', 'profile']`)
+- `invitations.enabled` (default `false`), `invitations.tokenTtlSeconds` (default 172800 — 48 hours)
+- `roles.platformHierarchy` — required when `platformAdmin.enabled: true`
+
+**Module integration** (`src/server/bymax-auth.module.ts`)
+- `controllers.platformAuth: true` opt-in gate with three startup cross-validations: requires `platformAdmin.enabled: true`, the `mfa` config group, and `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` in `extraProviders`
+- `controllers.oauth: true` opt-in gate with startup cross-validation: requires `oauth` config group; `OAUTH_PLUGINS` built lazily via factory provider after `BYMAX_AUTH_OPTIONS` resolves
+- `controllers.invitations: true` opt-in gate with startup cross-validation: requires `invitations.enabled: true`
+- `OAuthService` exported individually (not `OAUTH_PLUGINS` — internal token not part of the public integration surface)
+
+**Phase 5 barrel export** — adds `PlatformAuthService`, `OAuthService`, `InvitationService`, `JwtPlatformGuard`, `PlatformRolesGuard`, `PlatformRoles`, `PLATFORM_ROLES_KEY`, `PlatformLoginDto`, `CreateInvitationDto`, `AcceptInvitationDto`, `SafeAuthPlatformUser`, `IPlatformUserRepository`, `OAuthProfile`, `OAuthProviderPlugin`
 
 ---
 
@@ -163,14 +238,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OTP key deleted on max-attempt exhaustion** — `verify()` now calls `redis.del(key)` when `attempts >= MAX_ATTEMPTS` before throwing `OTP_MAX_ATTEMPTS`, preventing further probing after lockout
 - **`refreshCookiePath` validation is now a hard error** — mismatched `routePrefix` without explicit `refreshCookiePath` previously logged a warning; now throws at startup to prevent misconfigured cookie paths reaching production
 - **`validateRefreshGraceWindowSeconds`** — startup validation added: throws if `refreshGraceWindowSeconds >= refreshExpiresInDays * 86400` to prevent a grace window larger than the token's lifetime
+- **Anti-enumeration timing normalization** — `initiateReset` and `resendOtp` apply a 300ms minimum floor via `sleep()` so response time cannot reveal whether an email is registered
+- **Single-use token enforcement** — password-reset tokens, OTP `verifiedToken`, OAuth CSRF state, and invitation tokens all consumed atomically via `redis.getdel()`, preventing concurrent redemption races
+- **Session ownership verification** — `revokeSession` performs an SISMEMBER check before deletion; throws `SESSION_NOT_FOUND` for sessions not owned by the requesting user, preventing cross-user revocation
+- **OAuth CSRF protection** — state nonce is 64 hex chars (256 bits), stored under `os:{sha256(state)}` and consumed in a single atomic `getdel()` call; provider format validated before the state is touched to prevent probe-and-consume attacks
+- **Platform token type isolation** — `JwtPlatformGuard` throws `PLATFORM_AUTH_REQUIRED` (not the generic `TOKEN_INVALID`) when a dashboard-context token is submitted to a platform route, enabling clients to distinguish wrong-context from expired/invalid token errors
+- **Tenant spoofing prevention** — `InvitationController` extracts `tenantId` exclusively from the authenticated JWT payload; body field is absent from `CreateInvitationDto`, making tenant injection structurally impossible
+- **Invitation role re-validation on acceptance** — `acceptInvitation` re-validates the stored role against the live `roles.hierarchy` after consuming the token, preventing privilege escalation via Redis tampering between invite creation and acceptance
+- **Platform brute-force HMAC identifiers** — `PlatformAuthService` uses `hmacSha256(email, jwt.secret)` as the brute-force counter key, consistent with dashboard pattern; no PII stored in Redis key segments
 
 ---
 
 ### Tests
 
-- 561 tests across 34 co-located spec files (`*.spec.ts`), including `mfa-integration.spec.ts` with 11 Phase 3 end-to-end scenarios
+- 561 tests across 34 co-located spec files through Phase 3; Phase 4 and Phase 5 add spec files for `session.service`, `password-reset.service`, `platform-auth.service`, `oauth.service`, `invitation.service`, `jwt-platform.guard`, and `platform-roles.guard`
 - **100% coverage** on all metrics (Statements, Branches, Functions, Lines) across every source file
 - Per-directory coverage thresholds enforced: 95% for `crypto/` and `guards/`, 80% global
 - Every `it()` block has an English comment explaining the branch under test
 - All spec files have a file-level JSDoc docblock describing strategy, mocks, and special setup
-- Phase 3 integration smoke test validates: full setup→enable→challenge flow, idempotency, recovery codes, anti-replay, brute-force lockout, counter namespacing, platform context, session invalidation, disable TOTP-only enforcement, and `@SkipMfa()` guard bypass
+- Phase 3 integration smoke test (`mfa-integration.spec.ts`) validates: full setup→enable→challenge flow, idempotency, recovery codes, anti-replay, brute-force lockout, counter namespacing, platform context, session invalidation, disable TOTP-only enforcement, and `@SkipMfa()` guard bypass
+- Phase 4 session tests cover: `createSession` FIFO eviction, `listSessions` `isCurrent` marking, `revokeSession` ownership check, `revokeAllExceptCurrent` current-session preservation, `rotateSession` atomic rename, and stale member cleanup
+- Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
+- Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
