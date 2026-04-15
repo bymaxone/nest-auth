@@ -122,7 +122,7 @@ Funcionalidades para administração da plataforma:
 
 | Módulo                  | Ativação                           | Responsabilidade                      |
 | ----------------------- | ---------------------------------- | ------------------------------------- |
-| **PlatformAuthService** | `platformAdmin: { enabled: true }` | Login e JWT para admins da plataforma |
+| **PlatformAuthService** | `platform: { enabled: true }` | Login e JWT para admins da plataforma |
 | **InvitationService**   | `invitations: { enabled: true }`   | Convites de usuários por email        |
 
 #### Integrations (opt-in via configuração)
@@ -665,7 +665,7 @@ export interface BymaxAuthModuleOptions {
   /**
    * Configuração do módulo de administração da plataforma.
    */
-  platformAdmin?: {
+  platform?: {
     /** Habilita endpoints e lógica de admin da plataforma. Padrão: false */
     enabled?: boolean;
   };
@@ -702,7 +702,7 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * Hierarquia de roles da plataforma (super-admins).
-     * Opcional — necessário apenas se platformAdmin.enabled = true.
+     * Opcional — necessário apenas se platform.enabled = true.
      */
     platformHierarchy?: Record<string, string[]>;
   };
@@ -770,8 +770,8 @@ export interface BymaxAuthModuleOptions {
     /** Habilita SessionController. Padrão: true (se sessions.enabled) */
     sessions?: boolean;
 
-    /** Habilita PlatformAuthController. Padrão: true (se platformAdmin.enabled) */
-    platformAuth?: boolean;
+    /** Habilita PlatformAuthController. Padrão: true (se platform.enabled) */
+    platform?: boolean;
 
     /** Habilita InvitationController. Padrão: true (se invitations.enabled) */
     invitations?: boolean;
@@ -820,7 +820,7 @@ export interface BymaxAuthModuleOptions {
 | `passwordReset.otpLength`         | `number`                         | Não         | `6`                                   | Comprimento do OTP                                |
 | `emailVerification.required`      | `boolean`                        | Não         | `false`                               | Exige verificação de email                        |
 | `emailVerification.otpTtlSeconds` | `number`                         | Não         | `600`                                 | TTL do OTP de verificação                         |
-| `platformAdmin.enabled`           | `boolean`                        | Não         | `false`                               | Habilita admin da plataforma                      |
+| `platform.enabled`           | `boolean`                        | Não         | `false`                               | Habilita admin da plataforma                      |
 | `invitations.enabled`             | `boolean`                        | Não         | `false`                               | Habilita sistema de convites                      |
 | `invitations.tokenTtlSeconds`     | `number`                         | Não         | `604800`                              | TTL do token de convite (7 dias)                  |
 | `roles.hierarchy`                 | `Record<string, string[]>`       | Sim         | —                                     | Hierarquia de roles                               |
@@ -915,7 +915,7 @@ import { RedisService } from "./redis/redis.service";
         emailVerification: {
           required: true,
         },
-        platformAdmin: {
+        platform: {
           enabled: true,
         },
         invitations: {
@@ -993,7 +993,7 @@ export const BYMAX_AUTH_USER_REPOSITORY = Symbol("BYMAX_AUTH_USER_REPOSITORY");
 
 /**
  * Token para o repositório de usuários da plataforma.
- * Necessário apenas se platformAdmin.enabled = true.
+ * Necessário apenas se platform.enabled = true.
  */
 export const BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol(
   "BYMAX_AUTH_PLATFORM_USER_REPOSITORY",
@@ -1023,7 +1023,7 @@ export const BYMAX_AUTH_REDIS_CLIENT = Symbol("BYMAX_AUTH_REDIS_CLIENT");
 | Token                                 | Interface                 | Obrigatório | Descrição                                          |
 | ------------------------------------- | ------------------------- | ----------- | -------------------------------------------------- |
 | `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Sim         | Repositório de usuários                            |
-| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | Condicional | Repositório de admins (se `platformAdmin.enabled`) |
+| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | Condicional | Repositório de admins (se `platform.enabled`) |
 | `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Sim         | Provider de envio de emails                        |
 | `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Não         | Hooks de ciclo de vida                             |
 | `BYMAX_AUTH_REDIS_CLIENT`             | `Redis` (ioredis)         | Sim         | Instância do cliente Redis                         |
@@ -2000,7 +2000,7 @@ class MfaService {
 // Dependências injetadas pelo MfaService:
 // - BYMAX_AUTH_OPTIONS (configuração do módulo)
 // - IUserRepository (buscar usuário para desafio dashboard)
-// - IPlatformUserRepository (buscar admin para desafio platform, quando platformAdmin.enabled)
+// - IPlatformUserRepository (buscar admin para desafio platform, quando platform.enabled)
 // - AuthRedisService (armazenar/recuperar secrets temporários, marcar recovery codes usados)
 // - TokenManagerService (emitir tokens após MFA completado)
 // - SessionService (criar sessão após MFA, quando sessions.enabled)

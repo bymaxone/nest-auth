@@ -82,7 +82,7 @@ export const DEFAULT_OPTIONS = {
     otpTtlSeconds: 600
   },
 
-  platformAdmin: {
+  platform: {
     enabled: false
   },
 
@@ -104,7 +104,7 @@ export const DEFAULT_OPTIONS = {
     mfa: false,
     passwordReset: true,
     sessions: false,
-    platformAuth: false,
+    platform: false,
     oauth: false,
     invitations: false
   },

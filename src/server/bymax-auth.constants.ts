@@ -30,7 +30,7 @@ export const BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY')
 
 /**
  * Token for the `IPlatformUserRepository` implementation.
- * **Conditional** — required when `platformAdmin.enabled = true`.
+ * **Conditional** — required when `platform.enabled = true`.
  * Bound to a class that implements `IPlatformUserRepository`.
  */
 export const BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol('BYMAX_AUTH_PLATFORM_USER_REPOSITORY')

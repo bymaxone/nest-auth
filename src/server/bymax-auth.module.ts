@@ -107,7 +107,7 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
  *   in the factory return value. Omitting either leaves `MfaService` and
  *   `MfaRequiredGuard` completely unregistered. Setting `controllers.mfa: true`
  *   without the `mfa` configuration group causes a startup error.
- * - **Platform MFA.** When `controllers.mfa: true` and `platformAdmin.enabled: true`,
+ * - **Platform MFA.** When `controllers.mfa: true` and `platform.enabled: true`,
  *   supply `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` in `extraProviders` so that platform
  *   admin MFA challenges can resolve the admin identity. Omitting the token causes an
  *   `AUTH_ERROR_CODES.TOKEN_INVALID` response on the first platform MFA challenge.
@@ -148,10 +148,10 @@ export class BymaxAuthModule {
     // register endpoints that return stale/empty data.
     const includeSessions = options.controllers?.sessions === true
 
-    // PlatformAuthController — opt-in. Requires platformAdmin.enabled: true in the resolved
+    // PlatformAuthController — opt-in. Requires platform.enabled: true in the resolved
     // options. MfaService is also required (platform MFA challenge endpoint) so the mfa group
     // must be configured as well.
-    const includePlatformAuth = options.controllers?.platformAuth === true
+    const includePlatform = options.controllers?.platform === true
 
     // OAuthController — opt-in. Requires the oauth group to be configured in the factory.
     // OAUTH_PLUGINS is built lazily via a factory provider so that buildOAuthPlugins()
@@ -189,29 +189,29 @@ export class BymaxAuthModule {
           )
         }
 
-        // Cross-validate: controllers.platformAuth: true requires platformAdmin.enabled: true
+        // Cross-validate: controllers.platform: true requires platform.enabled: true
         // in the resolved options and the mfa group (MfaService backs the platform MFA challenge
         // endpoint). Also requires BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders —
         // without it, all platform auth requests fail at runtime rather than at startup.
-        if (includePlatformAuth && !resolved.platformAdmin?.enabled) {
+        if (includePlatform && !resolved.platform?.enabled) {
           throw new Error(
-            '[BymaxAuthModule] controllers.platformAuth: true requires ' +
-              'platformAdmin.enabled: true in the useFactory return value.'
+            '[BymaxAuthModule] controllers.platform: true requires ' +
+              'platform.enabled: true in the useFactory return value.'
           )
         }
-        if (includePlatformAuth && resolved.mfa === undefined) {
+        if (includePlatform && resolved.mfa === undefined) {
           throw new Error(
-            '[BymaxAuthModule] controllers.platformAuth: true requires the mfa group ' +
+            '[BymaxAuthModule] controllers.platform: true requires the mfa group ' +
               '(encryptionKey and issuer) to be configured — MfaService is used for ' +
               'platform admin MFA challenges.'
           )
         }
         if (
-          includePlatformAuth &&
+          includePlatform &&
           !hasProviderToken(extraProviders, BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
         ) {
           throw new Error(
-            '[BymaxAuthModule] controllers.platformAuth: true requires ' +
+            '[BymaxAuthModule] controllers.platform: true requires ' +
               'BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders. ' +
               'Omitting it will cause TOKEN_INVALID on all platform auth requests.'
           )
@@ -258,7 +258,7 @@ export class BymaxAuthModule {
       ...(includeMfa ? [MfaController] : []),
       ...(includePasswordReset ? [PasswordResetController] : []),
       ...(includeSessions ? [SessionController] : []),
-      ...(includePlatformAuth ? [PlatformAuthController] : []),
+      ...(includePlatform ? [PlatformAuthController] : []),
       ...(includeOAuth ? [OAuthController] : []),
       ...(includeInvitations ? [InvitationController] : [])
     ]
@@ -271,16 +271,16 @@ export class BymaxAuthModule {
 
     // MfaService is also required by PlatformAuthController for the MFA challenge endpoint.
     // Only register it here when MFA controllers are disabled — avoids duplicate registration
-    // when both controllers.mfa and controllers.platformAuth are true.
-    const platformMfaProvider: Provider[] = includePlatformAuth && !includeMfa ? [MfaService] : []
+    // when both controllers.mfa and controllers.platform are true.
+    const platformMfaProvider: Provider[] = includePlatform && !includeMfa ? [MfaService] : []
 
     // PasswordResetService is registered as a named provider array so providers/exports
     // stay in sync (same pattern as mfaProviders).
     const passwordResetProviders: Provider[] = includePasswordReset ? [PasswordResetService] : []
 
     // PlatformAuthService, JwtPlatformGuard, and PlatformRolesGuard — only when
-    // controllers.platformAuth: true.
-    const platformAuthProviders: Provider[] = includePlatformAuth
+    // controllers.platform: true.
+    const platformProviders: Provider[] = includePlatform
       ? [PlatformAuthService, JwtPlatformGuard, PlatformRolesGuard]
       : []
 
@@ -354,8 +354,8 @@ export class BymaxAuthModule {
         ...platformMfaProvider,
         // Password reset service — only registered when controllers.passwordReset !== false.
         ...passwordResetProviders,
-        // Platform admin components — only when controllers.platformAuth: true.
-        ...platformAuthProviders,
+        // Platform admin components — only when controllers.platform: true.
+        ...platformProviders,
         // OAuth providers — only when controllers.oauth: true.
         ...oauthProviders,
         // Invitation service — only when controllers.invitations: true.
@@ -388,7 +388,7 @@ export class BymaxAuthModule {
         ...passwordResetProviders,
         // Export platform admin components — allows host-app modules to apply
         // JwtPlatformGuard and PlatformRolesGuard without re-registering them.
-        ...platformAuthProviders,
+        ...platformProviders,
         // Export OAuthService — allows host-app modules to extend OAuth flows.
         // NOTE: oauthProviders is NOT spread here because OAUTH_PLUGINS is an internal
         // injection token — host-app modules have no reason to inject the plugin array

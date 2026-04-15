@@ -404,76 +404,76 @@ describe('BymaxAuthModule', () => {
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
-  // platformAuth, oauth, and invitations cross-validations
+  // platform, oauth, and invitations cross-validations
   // ---------------------------------------------------------------------------
 
-  describe('platformAuth, oauth, and invitations cross-validations', () => {
+  describe('platform, oauth, and invitations cross-validations', () => {
     const extraProviders = [
       { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
       { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
     ]
 
-    /** Valid MFA config — 32-byte key encoded in base64, required for platformAuth. */
+    /** Valid MFA config — 32-byte key encoded in base64, required for platform. */
     const MFA_ENCRYPTION_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 
-    /** Options that satisfy platformAdmin.enabled + platformHierarchy requirements. */
+    /** Options that satisfy platform.enabled + platformHierarchy requirements. */
     const platformOptions = {
       ...validOptions,
       roles: {
         hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] },
         platformHierarchy: { SUPER_ADMIN: [] }
       },
-      platformAdmin: { enabled: true }
+      platform: { enabled: true }
     }
 
-    /** Options that also include a valid mfa group (required by the third platformAuth gate). */
+    /** Options that also include a valid mfa group (required by the third platform gate). */
     const platformWithMfaOptions = {
       ...platformOptions,
       mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' }
     }
 
-    // Verifies that controllers.platformAuth: true without platformAdmin.enabled: true throws
+    // Verifies that controllers.platform: true without platform.enabled: true throws
     // at startup — prevents silent registration of admin endpoints without proper config.
-    it('should throw when controllers.platformAuth: true but platformAdmin.enabled is false', async () => {
+    it('should throw when controllers.platform: true but platform.enabled is false', async () => {
       await expect(
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => validOptions, // no platformAdmin.enabled: true
-              controllers: { platformAuth: true },
+              useFactory: () => validOptions, // no platform.enabled: true
+              controllers: { platform: true },
               extraProviders
             })
           ]
         }).compile()
-      ).rejects.toThrow(/controllers\.platformAuth.*requires.*platformAdmin\.enabled/)
+      ).rejects.toThrow(/controllers\.platform.*requires.*platform\.enabled/)
     })
 
-    // Verifies that controllers.platformAuth: true without the mfa group throws at startup —
+    // Verifies that controllers.platform: true without the mfa group throws at startup —
     // MfaService is used by the platform MFA challenge endpoint and needs encryptionKey + issuer.
-    it('should throw when controllers.platformAuth: true but the mfa group is missing', async () => {
+    it('should throw when controllers.platform: true but the mfa group is missing', async () => {
       await expect(
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => platformOptions, // has platformAdmin.enabled but no mfa
-              controllers: { platformAuth: true },
+              useFactory: () => platformOptions, // has platform.enabled but no mfa
+              controllers: { platform: true },
               extraProviders
             })
           ]
         }).compile()
-      ).rejects.toThrow(/controllers\.platformAuth.*requires.*mfa group/)
+      ).rejects.toThrow(/controllers\.platform.*requires.*mfa group/)
     })
 
-    // Verifies that controllers.platformAuth: true without BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+    // Verifies that controllers.platform: true without BYMAX_AUTH_PLATFORM_USER_REPOSITORY
     // in extraProviders throws at startup — without the token, all platform auth requests would
     // fail at runtime with TOKEN_INVALID rather than at startup.
-    it('should throw when controllers.platformAuth: true but BYMAX_AUTH_PLATFORM_USER_REPOSITORY is missing from extraProviders', async () => {
+    it('should throw when controllers.platform: true but BYMAX_AUTH_PLATFORM_USER_REPOSITORY is missing from extraProviders', async () => {
       await expect(
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
               useFactory: () => platformWithMfaOptions,
-              controllers: { platformAuth: true },
+              controllers: { platform: true },
               extraProviders // no BYMAX_AUTH_PLATFORM_USER_REPOSITORY
             })
           ]
@@ -481,16 +481,16 @@ describe('BymaxAuthModule', () => {
       ).rejects.toThrow(/BYMAX_AUTH_PLATFORM_USER_REPOSITORY/)
     })
 
-    // Verifies that controllers.platformAuth: true with all required config and
+    // Verifies that controllers.platform: true with all required config and
     // BYMAX_AUTH_PLATFORM_USER_REPOSITORY provided compiles and registers PlatformAuthController.
-    it('should compile when controllers.platformAuth: true with all required config', async () => {
+    it('should compile when controllers.platform: true with all required config', async () => {
       const mockPlatformUserRepo = { findByEmail: jest.fn(), findById: jest.fn() }
 
       const module = await Test.createTestingModule({
         imports: [
           BymaxAuthModule.registerAsync({
             useFactory: () => platformWithMfaOptions,
-            controllers: { platformAuth: true },
+            controllers: { platform: true },
             extraProviders: [
               ...extraProviders,
               { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo }

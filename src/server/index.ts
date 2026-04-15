@@ -156,7 +156,7 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 
 export { AuthService } from './services/auth.service'
 // NOTE: MfaService is only registered in the NestJS container when
-// controllers.mfa: true OR controllers.platformAuth: true. Importing it here for
+// controllers.mfa: true OR controllers.platform: true. Importing it here for
 // use in a host-app module without those flags set will cause an injection error —
 // register it in extraProviders in that case.
 export { MfaService } from './services/mfa.service'

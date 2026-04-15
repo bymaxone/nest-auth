@@ -35,7 +35,7 @@ export type ResolvedOptions = Omit<
   | 'bruteForce'
   | 'passwordReset'
   | 'emailVerification'
-  | 'platformAdmin'
+  | 'platform'
   | 'invitations'
   | 'controllers'
   | 'blockedStatuses'
@@ -55,7 +55,7 @@ export type ResolvedOptions = Omit<
   bruteForce: Required<NonNullable<BymaxAuthModuleOptions['bruteForce']>>
   passwordReset: Required<NonNullable<BymaxAuthModuleOptions['passwordReset']>>
   emailVerification: Required<NonNullable<BymaxAuthModuleOptions['emailVerification']>>
-  platformAdmin: Required<NonNullable<BymaxAuthModuleOptions['platformAdmin']>>
+  platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
@@ -115,7 +115,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateJwt(userOptions.jwt)
   validateMfaEncryptionKey(userOptions.mfa)
   validateRolesHierarchy(userOptions.roles)
-  validatePlatformAdmin(userOptions.platformAdmin, userOptions.roles)
+  validatePlatformAdmin(userOptions.platform, userOptions.roles)
   validatePasswordResetOtpLength(userOptions.passwordReset)
   validatePasswordCostFactor(userOptions.password)
   validateOAuthProviders(userOptions.oauth)
@@ -166,9 +166,9 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       ...userOptions.emailVerification
     },
 
-    platformAdmin: {
-      ...DEFAULT_OPTIONS.platformAdmin,
-      ...userOptions.platformAdmin
+    platform: {
+      ...DEFAULT_OPTIONS.platform,
+      ...userOptions.platform
     },
 
     invitations: {
@@ -311,12 +311,12 @@ function validateRolesHierarchy(roles: BymaxAuthModuleOptions['roles']): void {
 }
 
 function validatePlatformAdmin(
-  platformAdmin: BymaxAuthModuleOptions['platformAdmin'],
+  platform: BymaxAuthModuleOptions['platform'],
   roles: BymaxAuthModuleOptions['roles']
 ): void {
-  if (platformAdmin?.enabled && !roles.platformHierarchy) {
+  if (platform?.enabled && !roles.platformHierarchy) {
     throw new Error(
-      `[BymaxAuthModule] roles.platformHierarchy is required when platformAdmin.enabled is true. ` +
+      `[BymaxAuthModule] roles.platformHierarchy is required when platform.enabled is true. ` +
         `Define the platform role hierarchy (e.g. { SUPER_ADMIN: ['SUPPORT'], SUPPORT: [] }).`
     )
   }

@@ -190,12 +190,12 @@ describe('resolveOptions — success', () => {
     expect(resolved.mfa).toBeUndefined()
   })
 
-  // Verifies that platformAdmin.enabled is accepted when platformHierarchy is also configured.
-  it('should accept platformAdmin.enabled with platformHierarchy', () => {
+  // Verifies that platform.enabled is accepted when platformHierarchy is also configured.
+  it('should accept platform.enabled with platformHierarchy', () => {
     expect(() =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
-        platformAdmin: { enabled: true },
+        platform: { enabled: true },
         roles: {
           hierarchy: { ADMIN: [] },
           platformHierarchy: { SUPER_ADMIN: [] }
@@ -381,15 +381,15 @@ describe('resolveOptions — roles.hierarchy validation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Validation failures — platformAdmin
+// Validation failures — platform
 // ---------------------------------------------------------------------------
 
-describe('resolveOptions — platformAdmin validation', () => {
-  // Verifies that enabling platformAdmin without a platformHierarchy is rejected.
-  it('should throw when platformAdmin.enabled is true without platformHierarchy', () => {
+describe('resolveOptions — platform validation', () => {
+  // Verifies that enabling platform without a platformHierarchy is rejected.
+  it('should throw when platform.enabled is true without platformHierarchy', () => {
     const options: BymaxAuthModuleOptions = {
       ...MINIMAL_OPTIONS,
-      platformAdmin: { enabled: true }
+      platform: { enabled: true }
     }
     expect(() => resolveOptions(options)).toThrow(/platformHierarchy is required/)
   })

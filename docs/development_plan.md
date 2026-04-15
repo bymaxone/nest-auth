@@ -109,7 +109,7 @@ O desenvolvimento segue uma abordagem **incremental por camadas**, onde cada fas
 
 | Arquivo                                                | Conteúdo                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/interfaces/auth-module-options.interface.ts`      | Interface `BymaxAuthModuleOptions` completa conforme seção 4.1 da spec — todos os 15 grupos de opções (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platformAdmin, invitations, roles, blockedStatuses, oauth, controllers)                                                                                                                                                                       |
+| `src/server/interfaces/auth-module-options.interface.ts`      | Interface `BymaxAuthModuleOptions` completa conforme seção 4.1 da spec — todos os 15 grupos de opções (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platform, invitations, roles, blockedStatuses, oauth, controllers)                                                                                                                                                                       |
 | `src/server/interfaces/user-repository.interface.ts`          | Interface `AuthUser` (15 campos) e `IUserRepository` (11 métodos: findById, findByEmail, create, updatePassword, updateMfa, updateLastLogin, updateStatus, updateEmailVerified, findByOAuthId, linkOAuth, createWithOAuth)                                                                                                                                                                                                                               |
 | `src/server/interfaces/platform-user-repository.interface.ts` | Interface `AuthPlatformUser` (13 campos) e `IPlatformUserRepository` (6 métodos: findById, findByEmail, updateLastLogin, updateMfa, updatePassword, updateStatus)                                                                                                                                                                                                                                                                                        |
 | `src/server/interfaces/email-provider.interface.ts`           | Interface `IEmailProvider` com 7 métodos: sendPasswordResetToken, sendPasswordResetOtp, sendEmailVerificationOtp, sendMfaEnabledNotification, sendMfaDisabledNotification, sendNewSessionAlert, sendInvitation — todos com parâmetro `locale?`                                                                                                                                                                                                           |
@@ -158,7 +158,7 @@ O desenvolvimento segue uma abordagem **incremental por camadas**, onde cada fas
    - Validação de `jwt.algorithm`: se fornecido, deve ser exatamente `'HS256'` — lançar erro se outro valor
    - Validação condicional de `mfa.encryptionKey`: se `mfa` fornecido, `encryptionKey` obrigatório, verificar que decodifica para exatamente 32 bytes
    - Validação de `roles.hierarchy`: não pode ser vazio
-   - Validação de `platformHierarchy`: obrigatório se `platformAdmin.enabled`
+   - Validação de `platformHierarchy`: obrigatório se `platform.enabled`
    - Validação de `passwordReset.otpLength`: se fornecido, deve ser <= 8 (acima de 8, `crypto.randomInt(0, 10**length)` excede `Number.MAX_SAFE_INTEGER` e lança `RangeError`)
    - Aviso (log warning, não erro) se `routePrefix` difere de `'auth'` e `cookies.refreshCookiePath` não está explicitamente configurado — o cookie de refresh pode não ser enviado para o endpoint correto
    - Lançar exceção descritiva para cada validação falhada
@@ -688,7 +688,7 @@ Adicionar ao `index.ts`:
 **Tarefas detalhadas:**
 
 1. Injetar: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `@Optional() BYMAX_AUTH_PLATFORM_USER_REPOSITORY`, `AuthRedisService`, `TokenManagerService`, `@Optional() SessionService`, `BruteForceService`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `PasswordService`
-   - `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` é `@Optional()` pois só existe quando `platformAdmin.enabled`. Se `context === 'platform'` e o repositório não está disponível, lançar erro descritivo
+   - `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` é `@Optional()` pois só existe quando `platform.enabled`. Se `context === 'platform'` e o repositório não está disponível, lançar erro descritivo
    - `SessionService` é `@Optional()` pois só existe quando `sessions.enabled`
 
 2. **Implementar `setup(userId)`:**
@@ -1210,7 +1210,7 @@ Adicionar ao `index.ts`:
 
 ### 6.4 Integração no módulo dinâmico
 
-- Registrar `PlatformAuthService` e controllers se `platformAdmin.enabled`
+- Registrar `PlatformAuthService` e controllers se `platform.enabled`
 - Registrar `OAuthModule` se `oauth` configurado
 - Registrar `InvitationService` e controller se `invitations.enabled`
 - Atualizar barrel export

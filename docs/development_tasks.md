@@ -123,7 +123,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/auth-module-options.interface.ts. Implement interface BymaxAuthModuleOptions with all 15 groups from section 4.1 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: jwt (secret, algorithm, accessExpiresIn, refreshExpiresInDays, refreshGraceWindowSeconds), password (saltRounds, minLength, maxLength), tokenDelivery ('cookie'|'bearer'|'both'), cookies (accessTokenName, refreshTokenName, sessionSignalName, secure, sameSite, httpOnly, refreshCookiePath, resolveDomains), mfa (encryptionKey, issuer, totpWindow, recoveryCodeCount), sessions (enabled, maxSessions, maxSessionsResolver, newSessionAlert), bruteForce (maxAttempts, windowSeconds), passwordReset (method, otpLength, otpTtlSeconds, tokenTtlSeconds), emailVerification (required, otpTtlSeconds), platformAdmin (enabled, platformHierarchy), invitations (enabled, tokenTtlDays, maxPendingPerTenant), roles (hierarchy), blockedStatuses, oauth (google, github, etc.), controllers (auth, mfa, sessions, passwordReset, platform, oauth, invitations). Type tenantIdResolver as (req: import('express').Request) => string | Promise<string>. Add routePrefix (default 'auth'), namespace for Redis. Add JSDoc to every property. All groups except jwt should be optional.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/interfaces/auth-module-options.interface.ts. Implement interface BymaxAuthModuleOptions with all 15 groups from section 4.1 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md: jwt (secret, algorithm, accessExpiresIn, refreshExpiresInDays, refreshGraceWindowSeconds), password (saltRounds, minLength, maxLength), tokenDelivery ('cookie'|'bearer'|'both'), cookies (accessTokenName, refreshTokenName, sessionSignalName, secure, sameSite, httpOnly, refreshCookiePath, resolveDomains), mfa (encryptionKey, issuer, totpWindow, recoveryCodeCount), sessions (enabled, maxSessions, maxSessionsResolver, newSessionAlert), bruteForce (maxAttempts, windowSeconds), passwordReset (method, otpLength, otpTtlSeconds, tokenTtlSeconds), emailVerification (required, otpTtlSeconds), platform (enabled, platformHierarchy), invitations (enabled, tokenTtlDays, maxPendingPerTenant), roles (hierarchy), blockedStatuses, oauth (google, github, etc.), controllers (auth, mfa, sessions, passwordReset, platform, oauth, invitations). Type tenantIdResolver as (req: import('express').Request) => string | Promise<string>. Add routePrefix (default 'auth'), namespace for Redis. Add JSDoc to every property. All groups except jwt should be optional.
 
 ---
 
@@ -283,7 +283,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 128, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platformAdmin.enabled false.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/default-options.ts. Export a DEFAULT_OPTIONS constant (typed as DeepPartial<BymaxAuthModuleOptions> or a dedicated DefaultOptions type) with all default values from table 4.2 of /Users/maximiliano/Documents/My Apps/nest-auth/docs/technical_specification.md. Key defaults: jwt.algorithm 'HS256', jwt.accessExpiresIn '15m', jwt.refreshExpiresInDays 7, jwt.refreshGraceWindowSeconds 30, password.saltRounds 12, password.minLength 8, password.maxLength 128, tokenDelivery 'cookie', cookies (accessTokenName 'access_token', refreshTokenName 'refresh_token', sessionSignalName 'has_session', secure true, sameSite 'strict', httpOnly true), mfa.totpWindow 1, mfa.recoveryCodeCount 8, sessions.enabled false, sessions.maxSessions 5, bruteForce.maxAttempts 5, bruteForce.windowSeconds 900, passwordReset.method 'token', passwordReset.otpLength 6, passwordReset.otpTtlSeconds 600, passwordReset.tokenTtlSeconds 3600, emailVerification.required false, emailVerification.otpTtlSeconds 600, routePrefix 'auth', namespace 'auth', blockedStatuses ['BANNED','INACTIVE','SUSPENDED'], platform.enabled false.
 
 ---
 
@@ -299,7 +299,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platformAdmin.enabled. (7) Validar que clientId e clientSecret estão configurados para cada provider OAuth habilitado. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.ts. Export type ResolvedOptions (BymaxAuthModuleOptions with all defaults applied — all optional groups become required). Export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions. Implementation: (1) Shallow merge per group using spread: { ...defaults.jwt, ...userOptions.jwt } — NOT JSON.parse/stringify, to preserve function properties like maxSessionsResolver, tenantIdResolver, resolveDomains. (2) Validate jwt.secret: length >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns (e.g., 'aaaa...', '1234...' repeating). (3) Validate jwt.algorithm: if provided must be exactly 'HS256', throw if different. (4) Validate mfa.encryptionKey conditionally: if mfa group provided, encryptionKey required, must decode from base64 to exactly 32 bytes. (5) Validate roles.hierarchy: cannot be empty object. (6) Validate platformHierarchy required if platform.enabled. (7) Validar que clientId e clientSecret estão configurados para cada provider OAuth habilitado. (8) Validate passwordReset.otpLength <= 8 (above 8 crypto.randomInt exceeds MAX_SAFE_INTEGER). (9) Log warning if routePrefix differs from 'auth' and cookies.refreshCookiePath not explicitly configured. Throw descriptive exceptions for each validation failure.
 
 ---
 
@@ -315,7 +315,7 @@
 
 **Prompt para o agente:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.spec.ts. Test cases: (1) Success with valid minimal config (jwt.secret of 32+ chars with high entropy). (2) Reject jwt.secret shorter than 32 chars. (3) Reject jwt.secret with low entropy (e.g., 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'). (4) Reject jwt.algorithm other than HS256. (5) Accept jwt.algorithm HS256 explicitly. (6) Reject mfa.encryptionKey that doesn't decode to 32 bytes. (7) Accept valid mfa.encryptionKey (32 bytes base64). (8) Reject empty roles.hierarchy. (9) Reject platformAdmin.enabled without platformHierarchy. (10) Verify functions are preserved after merge (pass a tenantIdResolver function, assert it's still a function after resolve). (11) Verify shallow merge doesn't deep-clone functions. (12) Reject otpLength > 8. (13) Warning logged when routePrefix differs from 'auth' without explicit refreshCookiePath. All tests should use descriptive names and verify exact error messages.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/src/server/config/resolved-options.spec.ts. Test cases: (1) Success with valid minimal config (jwt.secret of 32+ chars with high entropy). (2) Reject jwt.secret shorter than 32 chars. (3) Reject jwt.secret with low entropy (e.g., 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'). (4) Reject jwt.algorithm other than HS256. (5) Accept jwt.algorithm HS256 explicitly. (6) Reject mfa.encryptionKey that doesn't decode to 32 bytes. (7) Accept valid mfa.encryptionKey (32 bytes base64). (8) Reject empty roles.hierarchy. (9) Reject platform.enabled without platformHierarchy. (10) Verify functions are preserved after merge (pass a tenantIdResolver function, assert it's still a function after resolve). (11) Verify shallow merge doesn't deep-clone functions. (12) Reject otpLength > 8. (13) Warning logged when routePrefix differs from 'auth' without explicit refreshCookiePath. All tests should use descriptive names and verify exact error messages.
 
 ---
 
@@ -2348,7 +2348,7 @@
 > - Usa `Reflector` para ler os roles requeridos setados por `@PlatformRoles()`.
 > - Extrai o role do `request.user` (do JWT payload).
 > - Verifica se o role do usuário é >= ao role requerido usando `platformHierarchy` das opções do módulo (análogo ao `RolesGuard` da Fase 2 que usa `roles.hierarchy`).
-> - Se a hierarquia não está configurada (`platformAdmin.roles.hierarchy`), lança `ForbiddenException` com `INSUFFICIENT_ROLE`.
+> - Se a hierarquia não está configurada (`platform.roles.hierarchy`), lança `ForbiddenException` com `INSUFFICIENT_ROLE`.
 > - Usar a mesma lógica utilitária `hasRole()` de `src/server/utils/roles.util.ts`.
 >   Critérios de aceitação: admin com role suficiente passa, role insuficiente recebe 403 INSUFFICIENT_ROLE.
 
@@ -2860,7 +2860,7 @@
 
 > Atualizar o arquivo `src/server/bymax-auth.module.ts` (o módulo dinâmico principal) para:
 >
-> 1. Registrar `PlatformAuthService`, `PlatformAuthController`, `JwtPlatformStrategy`, `JwtPlatformGuard`, `PlatformRolesGuard` se `platformAdmin.enabled` é true na configuração.
+> 1. Registrar `PlatformAuthService`, `PlatformAuthController`, `JwtPlatformStrategy`, `JwtPlatformGuard`, `PlatformRolesGuard` se `platform.enabled` é true na configuração.
 > 2. Importar `OAuthModule` se `oauth` está presente e configurado.
 > 3. Registrar `InvitationService` e `InvitationController` se `invitations.enabled` é true.
 > 4. Garantir que controllers são adicionados ao array `controllers` dinamicamente (não hardcoded).
@@ -3476,7 +3476,7 @@
 >
 > 1. Verificar que `jwt.secret` é obrigatório e não vazio. Mensagem: "BymaxAuthModule: jwt.secret is required".
 > 2. Verificar que `userRepository` é fornecido. Mensagem: "BymaxAuthModule: userRepository is required".
-> 3. Se `platformAdmin.enabled`, verificar que `platformUserRepository` é fornecido. Mensagem: "BymaxAuthModule: platformUserRepository is required when platformAdmin is enabled".
+> 3. Se `platform.enabled`, verificar que `platformUserRepository` é fornecido. Mensagem: "BymaxAuthModule: platformUserRepository is required when platform is enabled".
 > 4. Se `oauth` configurado, verificar que pelo menos um provider tem `clientId` e `clientSecret`.
 > 5. Se `mfa.enabled`, verificar que `mfa.encryptionKey` é fornecido e tem 32 bytes (256 bits).
 > 6. Verificar que `resolveOptions` usa shallow merge por grupo (spread), NÃO `JSON.parse/stringify` (que strip funções/hooks).

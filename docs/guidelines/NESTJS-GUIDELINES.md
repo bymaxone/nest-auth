@@ -103,7 +103,7 @@ export interface AuthModuleOptions {
   mfa?: { issuer: string };
   sessions?: { enabled: boolean; maxPerUser?: number };
   oauth?: { google?: GoogleOAuthConfig };
-  platformAdmin?: { enabled: boolean };
+  platform?: { enabled: boolean };
   invitations?: { enabled: boolean };
   controllers?: {
     auth?: boolean;

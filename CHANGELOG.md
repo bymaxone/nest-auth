@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License, `.gitignore`, `AGENTS.md`, `CLAUDE.md`
 
 **Interfaces**
-- `BymaxAuthModuleOptions` — full module configuration interface with 15 optional groups (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platformAdmin, invitations, roles, blockedStatuses, oauth, controllers)
+- `BymaxAuthModuleOptions` — full module configuration interface with 15 optional groups (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platform, invitations, roles, blockedStatuses, oauth, controllers)
 - `AuthUser` and `SafeAuthUser` — user entity interfaces (15 fields) with credential-free safe variant
 - `IUserRepository` — data access interface with 11 methods (findById, findByEmail, create, updatePassword, updateMfa, updateLastLogin, updateStatus, updateEmailVerified, findByOAuthId, linkOAuth, createWithOAuth)
 - `AuthPlatformUser` and `IPlatformUserRepository` — platform admin entity and repository interfaces
@@ -208,13 +208,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OAUTH_PLUGINS` — Symbol injection token for the `OAuthProviderPlugin[]` array; internal to the library (not exported in public API)
 
 **Configuration** (`BymaxAuthModuleOptions`)
-- `platformAdmin.enabled` (default `false`); requires `roles.platformHierarchy`
+- `platform.enabled` (default `false`); requires `roles.platformHierarchy`
 - `oauth.google` — `clientId`, `clientSecret`, `callbackUrl` (required), `scope` (optional, default `['openid', 'email', 'profile']`)
 - `invitations.enabled` (default `false`), `invitations.tokenTtlSeconds` (default 172800 — 48 hours)
-- `roles.platformHierarchy` — required when `platformAdmin.enabled: true`
+- `roles.platformHierarchy` — required when `platform.enabled: true`
 
 **Module integration** (`src/server/bymax-auth.module.ts`)
-- `controllers.platformAuth: true` opt-in gate with three startup cross-validations: requires `platformAdmin.enabled: true`, the `mfa` config group, and `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` in `extraProviders`
+- `controllers.platform: true` opt-in gate with three startup cross-validations: requires `platform.enabled: true`, the `mfa` config group, and `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` in `extraProviders`
 - `controllers.oauth: true` opt-in gate with startup cross-validation: requires `oauth` config group; `OAUTH_PLUGINS` built lazily via factory provider after `BYMAX_AUTH_OPTIONS` resolves
 - `controllers.invitations: true` opt-in gate with startup cross-validation: requires `invitations.enabled: true`
 - `OAuthService` exported individually (not `OAUTH_PLUGINS` — internal token not part of the public integration surface)

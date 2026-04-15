@@ -316,7 +316,7 @@ export interface BymaxAuthModuleOptions {
    * Platform administration module configuration.
    * When enabled, registers platform admin endpoints and guards.
    */
-  platformAdmin?: {
+  platform?: {
     /**
      * Enables platform admin login, guards, and controllers.
      * Requires `roles.platformHierarchy` to be defined.
@@ -370,7 +370,7 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * Platform admin role hierarchy.
-     * Required when `platformAdmin.enabled = true`.
+     * Required when `platform.enabled = true`.
      */
     platformHierarchy?: Record<string, string[]>
   }
@@ -494,8 +494,8 @@ export interface BymaxAuthModuleOptions {
     /** Enables `SessionController`. Default: `true` when `sessions.enabled = true`. */
     sessions?: boolean
 
-    /** Enables `PlatformAuthController`. Default: `true` when `platformAdmin.enabled = true`. */
-    platformAuth?: boolean
+    /** Enables `PlatformAuthController`. Default: `true` when `platform.enabled = true`. */
+    platform?: boolean
 
     /**
      * Enables `OAuthController` and `OAuthService`.
