@@ -153,7 +153,7 @@ describe('NoOpEmailProvider', () => {
     const inviteData = {
       inviterName: 'Alice',
       tenantName: 'Acme Corp',
-      inviteUrl: 'https://app.example.com/invite/token',
+      inviteToken: 'a'.repeat(64),
       expiresAt: new Date('2026-05-01T00:00:00Z')
     }
 

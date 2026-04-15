@@ -402,11 +402,10 @@ export class TokenManagerService {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     // Older sessions written before `mfaEnabled` was added to RefreshSession will
-    // have an absent key. Default to false so rotation is safe for legacy sessions.
-    if (typeof rec['mfaEnabled'] !== 'boolean') {
-      rec['mfaEnabled'] = false
-    }
-    return parsed as RefreshSession
+    // have an absent key. Build a new object with the defaulted field rather than
+    // mutating the parsed value to keep the function side-effect free.
+    const mfaEnabled = typeof rec['mfaEnabled'] === 'boolean' ? rec['mfaEnabled'] : false
+    return { ...(parsed as RefreshSession), mfaEnabled }
   }
 
   /** Constructs a session record from identity fields and request metadata. */
@@ -451,6 +450,166 @@ export class TokenManagerService {
 
     return {
       session: { userId: session.userId, tenantId: session.tenantId, role: session.role },
+      accessToken,
+      rawRefreshToken
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Platform token rotation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Atomically rotates a platform admin refresh token.
+   * Mirror of {@link reissueTokens} — uses `prt:` (platform refresh) and
+   * `prp:` (platform refresh pointer / grace window) key prefixes.
+   *
+   * @param oldRefresh - The raw platform refresh token being exchanged.
+   * @param ip - Client IP address for session audit.
+   * @param userAgent - User-Agent for session description.
+   * @returns A {@link RotatedTokenResult} with new tokens and minimal session identity.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` if no valid session found.
+   */
+  async reissuePlatformTokens(
+    oldRefresh: string,
+    ip: string,
+    userAgent: string
+  ): Promise<RotatedTokenResult> {
+    const oldHash = sha256(oldRefresh)
+    const newRawRefresh = randomUUID()
+    const newHash = sha256(newRawRefresh)
+
+    const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
+    const graceTtl = this.options.jwt.refreshGraceWindowSeconds
+
+    const oldSessionKey = `prt:${oldHash}`
+    const newSessionKey = `prt:${newHash}`
+    const graceKey = `prp:${oldHash}`
+
+    const oldSessionJson = (await this.redis.eval(ROTATE_LUA, [oldSessionKey], [])) as string | null
+
+    if (oldSessionJson !== null) {
+      return this.rotatePlatformFromPrimary(
+        oldSessionJson,
+        oldHash,
+        ip,
+        userAgent,
+        newRawRefresh,
+        newSessionKey,
+        graceKey,
+        refreshTtl,
+        graceTtl
+      )
+    }
+
+    const graceSessionJson = await this.redis.getdel(graceKey)
+    if (graceSessionJson !== null) {
+      return this.rotatePlatformFromGrace(
+        graceSessionJson,
+        oldHash,
+        ip,
+        userAgent,
+        refreshTtl,
+        graceTtl
+      )
+    }
+
+    throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+  }
+
+  /**
+   * Handles the primary rotation path for platform tokens: old session found in Redis.
+   *
+   * Writes the new session and a grace pointer (using `oldHash` as the grace key)
+   * so that concurrent requests carrying the old token can still succeed within
+   * the grace window.
+   */
+  private async rotatePlatformFromPrimary(
+    oldSessionJson: string,
+    oldHash: string,
+    ip: string,
+    userAgent: string,
+    newRawRefresh: string,
+    newSessionKey: string,
+    graceKey: string,
+    refreshTtl: number,
+    graceTtl: number
+  ): Promise<RotatedTokenResult> {
+    const old = this.parseSession(oldSessionJson)
+    const newHash = sha256(newRawRefresh)
+    const newSession = this.buildSession(old.userId, '', old.role, ip, userAgent, old.mfaEnabled)
+
+    await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
+    await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
+    await this.redis.srem(`sess:${old.userId}`, `prt:${oldHash}`)
+    await this.redis.sadd(`sess:${old.userId}`, `prt:${newHash}`)
+    await this.redis.sadd(`sess:${old.userId}`, graceKey)
+    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
+
+    return this.buildPlatformRotatedResult(newSession, newRawRefresh)
+  }
+
+  /**
+   * Handles the grace-window rotation path for platform tokens: old session gone but grace pointer found.
+   *
+   * Issues a new token pair and writes both a new session key and a new grace pointer
+   * for the newly issued token, mirroring the symmetry of the primary rotation path.
+   * Removes the consumed grace pointer from the per-user sess: SET to keep it accurate.
+   */
+  private async rotatePlatformFromGrace(
+    graceSessionJson: string,
+    oldHash: string,
+    ip: string,
+    userAgent: string,
+    refreshTtl: number,
+    graceTtl: number
+  ): Promise<RotatedTokenResult> {
+    const graceSession = this.parseSession(graceSessionJson)
+    const anotherNewRefresh = randomUUID()
+    const anotherNewHash = sha256(anotherNewRefresh)
+    const anotherSession = this.buildSession(
+      graceSession.userId,
+      '',
+      graceSession.role,
+      ip,
+      userAgent,
+      graceSession.mfaEnabled
+    )
+
+    await this.redis.set(`prt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
+    await this.redis.set(`prp:${anotherNewHash}`, JSON.stringify(anotherSession), graceTtl)
+    // Remove the consumed grace pointer from the per-user SET — the key was deleted
+    // atomically by getdel() in reissuePlatformTokens; the SET entry is now stale.
+    await this.redis.srem(`sess:${graceSession.userId}`, `prp:${oldHash}`)
+    await this.redis.sadd(`sess:${graceSession.userId}`, `prt:${anotherNewHash}`)
+    await this.redis.sadd(`sess:${graceSession.userId}`, `prp:${anotherNewHash}`)
+    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
+
+    return this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
+  }
+
+  /**
+   * Issues a platform access token and assembles a {@link RotatedTokenResult} from a session record.
+   *
+   * @remarks
+   * `mfaVerified` is always `false` after rotation — same semantics as {@link buildRotatedResult}.
+   * Platform admins must re-complete the MFA challenge flow to re-acquire a verified token.
+   */
+  private buildPlatformRotatedResult(
+    session: RefreshSession,
+    rawRefreshToken: string
+  ): RotatedTokenResult {
+    // mfaVerified is always false after rotation (same semantics as buildRotatedResult).
+    const accessToken = this.issuePlatformAccess({
+      sub: session.userId,
+      role: session.role,
+      type: 'platform',
+      mfaEnabled: session.mfaEnabled,
+      mfaVerified: false
+    })
+
+    return {
+      session: { userId: session.userId, tenantId: '', role: session.role },
       accessToken,
       rawRefreshToken
     }

@@ -28,27 +28,10 @@ import { MfaService } from '../services/mfa.service'
 import type {
   BearerAuthResponse,
   BothAuthResponse,
-  CookieAuthResponse
+  CookieAuthResponse,
+  PlatformBearerAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
-
-// ---------------------------------------------------------------------------
-// Local types
-// ---------------------------------------------------------------------------
-
-/**
- * HTTP response body for a successful platform admin MFA challenge.
- *
- * Mirrors {@link PlatformAuthResult} but exposes the refresh token as
- * `refreshToken` rather than `rawRefreshToken`. The `raw` prefix is an
- * internal naming convention to flag the unsalted form for in-process code;
- * it does not need to appear in the serialised HTTP response.
- */
-interface PlatformChallengeResponse {
-  admin: PlatformAuthResult['admin']
-  accessToken: string
-  refreshToken: string
-}
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -157,22 +140,18 @@ export class MfaController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<
-    CookieAuthResponse | BearerAuthResponse | BothAuthResponse | PlatformChallengeResponse
+    CookieAuthResponse | BearerAuthResponse | BothAuthResponse | PlatformBearerAuthResponse
   > {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
     const result = await this.mfaService.challenge(dto.mfaTempToken, dto.code, ip, userAgent)
 
     // Discriminate by result shape: PlatformAuthResult carries `admin`, AuthResult carries `user`.
-    // Platform tokens are returned directly — cookie delivery does not apply to platform sessions.
-    // `rawRefreshToken` is mapped to `refreshToken` to keep internal naming conventions out of
-    // the serialised HTTP response.
+    // Platform tokens are returned via deliverPlatformAuthResponse — cookie delivery does not apply
+    // to platform sessions. Using the shared method keeps the response shape in sync with
+    // PlatformAuthController so the two sites never diverge.
     if (isPlatformResult(result)) {
-      return {
-        admin: result.admin,
-        accessToken: result.accessToken,
-        refreshToken: result.rawRefreshToken
-      }
+      return this.tokenDelivery.deliverPlatformAuthResponse(result)
     }
 
     return this.tokenDelivery.deliverAuthResponse(res, result, req)

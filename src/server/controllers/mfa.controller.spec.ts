@@ -89,7 +89,8 @@ const mockMfaService = {
 }
 
 const mockTokenDelivery = {
-  deliverAuthResponse: jest.fn()
+  deliverAuthResponse: jest.fn(),
+  deliverPlatformAuthResponse: jest.fn()
 }
 
 const mockReq = {
@@ -234,20 +235,26 @@ describe('MfaController', () => {
       expect(result).toEqual({ user: SAFE_USER })
     })
 
-    // Verifies that a platform challenge returns a PlatformChallengeResponse with refreshToken
-    // (not rawRefreshToken) so the internal naming convention is not leaked to clients.
+    // Verifies that a platform challenge delegates to deliverPlatformAuthResponse (not
+    // deliverAuthResponse) so the response shape stays consistent with PlatformAuthController.
     it('should return PlatformChallengeResponse with refreshToken field for platform challenges', async () => {
+      const platformResponse = {
+        admin: SAFE_ADMIN,
+        accessToken: PLATFORM_AUTH_RESULT.accessToken,
+        refreshToken: PLATFORM_AUTH_RESULT.rawRefreshToken
+      }
       mockMfaService.challenge.mockResolvedValue(PLATFORM_AUTH_RESULT)
+      mockTokenDelivery.deliverPlatformAuthResponse.mockReturnValue(platformResponse)
 
       const result = await controller.challenge(dto as never, mockReq, mockRes)
 
       // Must NOT call deliverAuthResponse — cookies are not set for platform admins.
       expect(mockTokenDelivery.deliverAuthResponse).not.toHaveBeenCalled()
-      expect(result).toEqual({
-        admin: SAFE_ADMIN,
-        accessToken: PLATFORM_AUTH_RESULT.accessToken,
-        refreshToken: PLATFORM_AUTH_RESULT.rawRefreshToken
-      })
+      // Must delegate to deliverPlatformAuthResponse for consistent response shape.
+      expect(mockTokenDelivery.deliverPlatformAuthResponse).toHaveBeenCalledWith(
+        PLATFORM_AUTH_RESULT
+      )
+      expect(result).toEqual(platformResponse)
       // Ensure rawRefreshToken is not present in the serialised response.
       expect((result as unknown as Record<string, unknown>)['rawRefreshToken']).toBeUndefined()
     })

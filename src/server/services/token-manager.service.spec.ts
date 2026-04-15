@@ -460,4 +460,109 @@ describe('TokenManagerService', () => {
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // reissuePlatformTokens
+  // ---------------------------------------------------------------------------
+
+  describe('reissuePlatformTokens', () => {
+    /** Minimal valid platform session JSON — matches the RefreshSession shape used for platform admins. */
+    const OLD_PLATFORM_SESSION = JSON.stringify({
+      userId: 'admin-1',
+      tenantId: '',
+      role: 'super-admin',
+      device: 'Browser',
+      ip: '1.2.3.4',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      mfaEnabled: false
+    })
+
+    // Verifies the primary rotation path: the old prt: session is found via Lua eval,
+    // a new session is issued, and a RotatedTokenResult is returned with the expected fields.
+    it('should return new tokens when the primary prt: session is found via Lua eval', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      const result = await service.reissuePlatformTokens(
+        'old-platform-refresh',
+        '1.2.3.4',
+        'Browser'
+      )
+
+      expect(mockRedis.eval).toHaveBeenCalled()
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.session.userId).toBe('admin-1')
+      expect(result.session.tenantId).toBe('')
+      expect(result.session.role).toBe('super-admin')
+    })
+
+    // Verifies that primary rotation writes two Redis entries: a new session under prt:
+    // and a grace-window pointer under prp: — both are required to handle concurrent requests.
+    it('should write a new prt: session and a prp: grace pointer on primary rotation', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
+      expect(keys.some((k) => k.startsWith('prt:'))).toBe(true)
+      expect(keys.some((k) => k.startsWith('prp:'))).toBe(true)
+    })
+
+    // Verifies that primary rotation uses the grace-window path: Lua eval returns null (primary
+    // session gone) but getdel finds and consumes the prp: grace pointer, issuing a new token pair.
+    it('should return new tokens from the prp: grace pointer when the primary session is gone', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      const result = await service.reissuePlatformTokens(
+        'old-platform-refresh',
+        '1.2.3.4',
+        'Browser'
+      )
+
+      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^prp:/))
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.session.userId).toBe('admin-1')
+    })
+
+    // Verifies that grace-window rotation also writes a new prt: session and a new prp: pointer
+    // for the freshly issued token, mirroring the symmetry of the primary rotation path.
+    it('should write a new prt: session and a new prp: pointer on grace-window rotation', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
+      expect(keys.some((k) => k.startsWith('prt:'))).toBe(true)
+      expect(keys.some((k) => k.startsWith('prp:'))).toBe(true)
+    })
+
+    // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the primary session nor
+    // the grace pointer exists — the refresh token has expired or was already consumed.
+    it('should throw REFRESH_TOKEN_INVALID when neither prt: session nor prp: grace pointer exists', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(
+        service.reissuePlatformTokens('expired-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      try {
+        await service.reissuePlatformTokens('expired-token-2', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect(e).toBeInstanceOf(AuthException)
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID })
+        })
+      }
+    })
+  })
 })

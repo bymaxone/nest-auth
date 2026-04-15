@@ -45,8 +45,12 @@ export interface InviteData {
   inviterName: string
   /** Name of the tenant (workspace/organization) the invitee is joining. */
   tenantName: string
-  /** Fully-qualified URL the invitee must visit to accept the invitation. */
-  inviteUrl: string
+  /**
+   * Raw invitation token (64 hex chars) that the consumer must embed into an accept URL.
+   * The `IEmailProvider` implementation is responsible for constructing the full URL
+   * (e.g. `https://app.example.com/accept-invite?token=<inviteToken>`).
+   */
+  inviteToken: string
   /** UTC timestamp after which the invitation link is no longer valid. */
   expiresAt: Date
 }

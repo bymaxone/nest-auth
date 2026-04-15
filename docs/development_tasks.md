@@ -36,7 +36,7 @@
 | Fase 2 — Autenticacao Core                  | 22      | 0       | 22     | 100%      |
 | Fase 3 — Autenticacao Multi-Fator (MFA)     | 15      | 0       | 15     | 100%      |
 | Fase 4 — Sessoes e Reset de Senha           | 17      | 0       | 17     | 100%      |
-| Fase 5 — Plataforma, OAuth e Convites       | 25      | 25      | 0      | 0%        |
+| Fase 5 — Plataforma, OAuth e Convites       | 25      | 0       | 25     | 100%      |
 | Fase 6 — Integracao, Polimento e Publicacao | 30      | 30      | 0      | 0%        |
 | Fase 7 — Shared + Client Subpath            | 9       | 9       | 0      | 0%        |
 | Fase 8 — React Subpath                      | 8       | 8       | 0      | 0%        |
@@ -2277,7 +2277,7 @@
 ### NEST-097: JwtPlatformGuard nativo
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-042, NEST-034, NEST-027
 - **Agente:** code-reviewer
@@ -2302,7 +2302,7 @@
 ### NEST-098: JwtPlatformGuard unit tests
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-097
 - **Agente:** security-reviewer
@@ -2334,7 +2334,7 @@
 ### NEST-099: Platform Roles Guard
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-098
 - **Agente:** code-reviewer
@@ -2357,7 +2357,7 @@
 ### NEST-100: PlatformRoles Decorator
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** Nenhuma
 - **Agente:** typescript-reviewer
@@ -2379,7 +2379,7 @@
 ### NEST-101: PlatformLoginDto
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** Nenhuma
 - **Agente:** typescript-reviewer
@@ -2401,7 +2401,7 @@
 ### NEST-102: PlatformAuthService - login()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-097, NEST-101, NEST-010, NEST-050
 - **Agente:** code-reviewer
@@ -2430,7 +2430,7 @@
 ### NEST-103: PlatformAuthService - logout()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-102
 - **Agente:** code-reviewer
@@ -2452,7 +2452,7 @@
 ### NEST-104: PlatformAuthService - refresh()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-102
 - **Agente:** code-reviewer
@@ -2474,7 +2474,7 @@
 ### NEST-105: PlatformAuthService - getMe()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-102
 - **Agente:** code-reviewer
@@ -2495,7 +2495,7 @@
 ### NEST-106: PlatformAuthService - revokeAllPlatformSessions()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-102
 - **Agente:** code-reviewer
@@ -2518,7 +2518,7 @@
 ### NEST-107: PlatformAuthController - 6 endpoints
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-098, NEST-099, NEST-100, NEST-102, NEST-103, NEST-104, NEST-105, NEST-106
 - **Agente:** code-reviewer
@@ -2544,7 +2544,7 @@
 ### NEST-108: Platform Auth Unit Tests
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-107
 - **Agente:** tester
@@ -2577,7 +2577,7 @@
 ### NEST-109: OAuthModule - Module Setup
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-035
 - **Agente:** architect
@@ -2600,7 +2600,7 @@
 ### NEST-110: OAuthService - initiateOAuth()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-109
 - **Agente:** code-reviewer
@@ -2624,7 +2624,7 @@
 ### NEST-111: OAuthService - handleCallback()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-110
 - **Agente:** code-reviewer
@@ -2654,7 +2654,7 @@
 ### NEST-112: Google OAuth Plugin
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-109
 - **Agente:** code-reviewer
@@ -2676,7 +2676,7 @@
 ### NEST-113: OAuth Unit Tests
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-111, NEST-112
 - **Agente:** tester
@@ -2703,7 +2703,7 @@
 ### NEST-114: CreateInvitationDto
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** Nenhuma
 - **Agente:** typescript-reviewer
@@ -2725,7 +2725,7 @@
 ### NEST-115: AcceptInvitationDto
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** Nenhuma
 - **Agente:** typescript-reviewer
@@ -2747,7 +2747,7 @@
 ### NEST-116: InvitationService - invite()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-114, NEST-010
 - **Agente:** code-reviewer
@@ -2774,7 +2774,7 @@
 ### NEST-117: InvitationService - acceptInvitation()
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-116, NEST-115
 - **Agente:** code-reviewer
@@ -2800,7 +2800,7 @@
 ### NEST-118: InvitationController
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-116, NEST-117
 - **Agente:** code-reviewer
@@ -2821,7 +2821,7 @@
 ### NEST-119: Invitation Unit Tests
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-118
 - **Agente:** tester
@@ -2849,7 +2849,7 @@
 ### NEST-120: Phase 5 Dynamic Module Integration
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-107, NEST-109, NEST-118
 - **Agente:** architect
@@ -2872,7 +2872,7 @@
 ### NEST-121: Phase 5 Barrel Export Update
 
 - **Fase:** 5
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-120
 - **Agente:** architect

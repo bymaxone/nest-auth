@@ -10,9 +10,11 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY
 } from './bymax-one-nest-auth.constants'
+import { OAuthController } from './oauth/oauth.controller'
 import { AuthController } from './controllers/auth.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
 import { SessionController } from './controllers/session.controller'
@@ -400,6 +402,164 @@ describe('BymaxAuthModule', () => {
   // ---------------------------------------------------------------------------
   // Phase 4 — Sessions and Password Reset integration smoke tests
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // Phase 5 cross-validations
+  // ---------------------------------------------------------------------------
+
+  describe('Phase 5: platformAuth, oauth, and invitations cross-validations', () => {
+    const extraProviders = [
+      { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+    ]
+
+    /** Valid MFA config — 32-byte key encoded in base64, required for platformAuth. */
+    const MFA_ENCRYPTION_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
+
+    /** Options that satisfy platformAdmin.enabled + platformHierarchy requirements. */
+    const platformOptions = {
+      ...validOptions,
+      roles: {
+        hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] },
+        platformHierarchy: { SUPER_ADMIN: [] }
+      },
+      platformAdmin: { enabled: true }
+    }
+
+    /** Options that also include a valid mfa group (required by the third platformAuth gate). */
+    const platformWithMfaOptions = {
+      ...platformOptions,
+      mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' }
+    }
+
+    // Verifies that controllers.platformAuth: true without platformAdmin.enabled: true throws
+    // at startup — prevents silent registration of admin endpoints without proper config.
+    it('should throw when controllers.platformAuth: true but platformAdmin.enabled is false', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => validOptions, // no platformAdmin.enabled: true
+              controllers: { platformAuth: true },
+              extraProviders
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.platformAuth.*requires.*platformAdmin\.enabled/)
+    })
+
+    // Verifies that controllers.platformAuth: true without the mfa group throws at startup —
+    // MfaService is used by the platform MFA challenge endpoint and needs encryptionKey + issuer.
+    it('should throw when controllers.platformAuth: true but the mfa group is missing', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => platformOptions, // has platformAdmin.enabled but no mfa
+              controllers: { platformAuth: true },
+              extraProviders
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.platformAuth.*requires.*mfa group/)
+    })
+
+    // Verifies that controllers.platformAuth: true without BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+    // in extraProviders throws at startup — without the token, all platform auth requests would
+    // fail at runtime with TOKEN_INVALID rather than at startup.
+    it('should throw when controllers.platformAuth: true but BYMAX_AUTH_PLATFORM_USER_REPOSITORY is missing from extraProviders', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => platformWithMfaOptions,
+              controllers: { platformAuth: true },
+              extraProviders // no BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/BYMAX_AUTH_PLATFORM_USER_REPOSITORY/)
+    })
+
+    // Verifies that controllers.platformAuth: true with all required config and
+    // BYMAX_AUTH_PLATFORM_USER_REPOSITORY provided compiles and registers PlatformAuthController.
+    it('should compile when controllers.platformAuth: true with all required config', async () => {
+      const mockPlatformUserRepo = { findByEmail: jest.fn(), findById: jest.fn() }
+
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => platformWithMfaOptions,
+            controllers: { platformAuth: true },
+            extraProviders: [
+              ...extraProviders,
+              { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo }
+            ]
+          })
+        ]
+      }).compile()
+
+      expect(module).toBeDefined()
+    })
+
+    // Verifies that controllers.oauth: true without the oauth config group throws at startup —
+    // registering OAuthService without configured plugins would cause all OAuth requests to fail.
+    it('should throw when controllers.oauth: true but the oauth config group is absent', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => validOptions, // no oauth group
+              controllers: { oauth: true },
+              extraProviders
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.oauth.*requires the oauth group/)
+    })
+
+    // Verifies that controllers.oauth: true with a valid oauth.google config compiles
+    // successfully and registers OAuthController — also exercises the OAUTH_PLUGINS
+    // factory provider body (line 294 in bymax-one-nest-auth.module.ts).
+    it('should compile and register OAuthController when controllers.oauth: true with valid oauth config', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => ({
+              ...validOptions,
+              oauth: {
+                google: {
+                  clientId: 'test-client-id',
+                  clientSecret: 'test-client-secret',
+                  callbackUrl: 'https://app.example.com/callback'
+                }
+              }
+            }),
+            controllers: { oauth: true },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(OAuthController)).toBeDefined()
+    })
+
+    // Verifies that controllers.invitations: true without invitations.enabled: true throws
+    // at startup — the default for invitations.enabled is false, so an explicit opt-in is required.
+    it('should throw when controllers.invitations: true but invitations.enabled is false', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => validOptions, // invitations.enabled defaults to false
+              controllers: { invitations: true },
+              extraProviders
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/controllers\.invitations.*requires.*invitations\.enabled/)
+    })
+  })
 
   describe('Phase 4: SessionService and PasswordResetService wiring', () => {
     const extraProviders = [

@@ -3,7 +3,7 @@ import type { Request, Response } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-one-nest-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import type { AuthResult } from '../interfaces/auth-result.interface'
+import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 
 /** Hostname validation — allows only alphanumeric, dots, and hyphens. */
 const HOSTNAME_RE = /^[a-z0-9.-]+$/i
@@ -29,6 +29,20 @@ export interface BearerAuthResponse {
  * Auth response for both mode — tokens in body AND cookies.
  */
 export interface BothAuthResponse extends BearerAuthResponse {}
+
+/**
+ * Auth response for platform administrator sessions.
+ *
+ * Platform admins use an operator dashboard (not a browser session), so token
+ * delivery is always bearer-mode — cookies do not apply. The `rawRefreshToken`
+ * field is renamed to `refreshToken` in this response to keep internal naming
+ * conventions out of the serialised HTTP response.
+ */
+export interface PlatformBearerAuthResponse {
+  admin: PlatformAuthResult['admin']
+  accessToken: string
+  refreshToken: string
+}
 
 /**
  * Manages token delivery and extraction for all three delivery modes.
@@ -112,6 +126,27 @@ export class TokenDeliveryService {
     return this.deliverAuthResponse(res, authResult, req)
   }
 
+  /**
+   * Delivers an auth response for a platform administrator session.
+   *
+   * Platform sessions are always bearer-mode — the operator dashboard is not
+   * a browser session and does not use HttpOnly cookies. The response always
+   * returns `admin`, `accessToken`, and `refreshToken` in the body regardless
+   * of the module-level `tokenDelivery` configuration.
+   *
+   * @param result - Tokens and admin record from a successful platform login or MFA challenge.
+   * @returns Bearer response with tokens in the body.
+   */
+  deliverPlatformAuthResponse(result: PlatformAuthResult): PlatformBearerAuthResponse {
+    return {
+      admin: result.admin,
+      accessToken: result.accessToken,
+      // Rename rawRefreshToken → refreshToken so internal naming conventions
+      // do not leak into the serialised HTTP response shape.
+      refreshToken: result.rawRefreshToken
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Extract
   // ---------------------------------------------------------------------------
@@ -140,6 +175,36 @@ export class TokenDeliveryService {
 
     // both — cookie first, then header
     return this.readCookie(req, cookieName) ?? this.readBearerHeader(req)
+  }
+
+  /**
+   * Extracts the platform administrator access token from an incoming request.
+   *
+   * Platform sessions are **always bearer-mode** — the operator dashboard sends the
+   * access token via the `Authorization: Bearer <token>` header regardless of the
+   * module-level `tokenDelivery` configuration. This method always reads from the
+   * header, bypassing the mode switch in {@link extractAccessToken}.
+   *
+   * @param req - Incoming Express request.
+   * @returns The raw access token string, or `undefined` if not found.
+   */
+  extractPlatformAccessToken(req: Request): string | undefined {
+    return this.readBearerHeader(req)
+  }
+
+  /**
+   * Extracts the platform administrator refresh token from an incoming request.
+   *
+   * Platform sessions are **always bearer-mode** — the operator dashboard sends the
+   * refresh token in `req.body.refreshToken` regardless of the module-level
+   * `tokenDelivery` configuration. This method always reads from the body,
+   * bypassing the mode switch in {@link extractRefreshToken}.
+   *
+   * @param req - Incoming Express request.
+   * @returns The raw refresh token string, or `undefined` if not found.
+   */
+  extractPlatformRefreshToken(req: Request): string | undefined {
+    return this.readBodyRefresh(req)
   }
 
   /**

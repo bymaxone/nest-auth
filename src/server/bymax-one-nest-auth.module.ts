@@ -4,27 +4,38 @@ import { JwtModule } from '@nestjs/jwt'
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
-  BYMAX_AUTH_OPTIONS
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
 } from './bymax-one-nest-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
 import { AuthController } from './controllers/auth.controller'
+import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
+import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { SessionController } from './controllers/session.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
+import { JwtPlatformGuard } from './guards/jwt-platform.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
+import { PlatformRolesGuard } from './guards/platform-roles.guard'
 import { RolesGuard } from './guards/roles.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
+import { OAUTH_PLUGINS } from './oauth/oauth.constants'
+import { OAuthController } from './oauth/oauth.controller'
+import { buildOAuthPlugins } from './oauth/oauth.module'
+import { OAuthService } from './oauth/oauth.service'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
+import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
 import { PasswordResetService } from './services/password-reset.service'
 import { PasswordService } from './services/password.service'
+import { PlatformAuthService } from './services/platform-auth.service'
 import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
@@ -114,6 +125,16 @@ export class BymaxAuthModule {
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
     const extraProviders = options.extraProviders ?? []
 
+    // ---------------------------------------------------------------------------
+    // Feature flags — evaluated synchronously from the registerAsync() call options.
+    // These control which providers and controllers are registered at module build time.
+    // Cross-validation (checking that the required config groups are present) happens
+    // inside the async factory below, after resolveOptions() has run.
+    // ---------------------------------------------------------------------------
+
+    // AuthController — opt-out. Enabled by default, disable via controllers.auth: false.
+    const includeAuth = options.controllers?.auth !== false
+
     // MfaController — opt-in only. The consumer must set controllers.mfa: true when
     // they configure the `mfa` group. This prevents MfaService from being registered
     // without a valid mfa.encryptionKey/issuer in the resolved options.
@@ -126,6 +147,19 @@ export class BymaxAuthModule {
     // in the factory return value. Enabling the controller without session tracking active would
     // register endpoints that return stale/empty data.
     const includeSessions = options.controllers?.sessions === true
+
+    // PlatformAuthController — opt-in. Requires platformAdmin.enabled: true in the resolved
+    // options. MfaService is also required (platform MFA challenge endpoint) so the mfa group
+    // must be configured as well.
+    const includePlatformAuth = options.controllers?.platformAuth === true
+
+    // OAuthController — opt-in. Requires the oauth group to be configured in the factory.
+    // OAUTH_PLUGINS is built lazily via a factory provider so that buildOAuthPlugins()
+    // runs after BYMAX_AUTH_OPTIONS is resolved rather than at module build time.
+    const includeOAuth = options.controllers?.oauth === true
+
+    // InvitationController — opt-in. Requires invitations.enabled: true in the resolved options.
+    const includeInvitations = options.controllers?.invitations === true
 
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {
@@ -155,6 +189,51 @@ export class BymaxAuthModule {
           )
         }
 
+        // Cross-validate: controllers.platformAuth: true requires platformAdmin.enabled: true
+        // in the resolved options and the mfa group (MfaService backs the platform MFA challenge
+        // endpoint). Also requires BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders —
+        // without it, all platform auth requests fail at runtime rather than at startup.
+        if (includePlatformAuth && !resolved.platformAdmin?.enabled) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.platformAuth: true requires ' +
+              'platformAdmin.enabled: true in the useFactory return value.'
+          )
+        }
+        if (includePlatformAuth && resolved.mfa === undefined) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.platformAuth: true requires the mfa group ' +
+              '(encryptionKey and issuer) to be configured — MfaService is used for ' +
+              'platform admin MFA challenges.'
+          )
+        }
+        if (
+          includePlatformAuth &&
+          !hasProviderToken(extraProviders, BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
+        ) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.platformAuth: true requires ' +
+              'BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders. ' +
+              'Omitting it will cause TOKEN_INVALID on all platform auth requests.'
+          )
+        }
+
+        // Cross-validate: controllers.oauth: true without the oauth group would register
+        // OAuthService without any plugins, causing all OAuth requests to throw OAUTH_FAILED.
+        if (includeOAuth && !resolved.oauth) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.oauth: true requires the oauth group ' +
+              'to be configured in the useFactory return value.'
+          )
+        }
+
+        // Cross-validate: controllers.invitations: true requires invitations.enabled: true.
+        if (includeInvitations && !resolved.invitations?.enabled) {
+          throw new Error(
+            '[BymaxAuthModule] controllers.invitations: true requires ' +
+              'invitations.enabled: true in the useFactory return value.'
+          )
+        }
+
         return resolved
       },
       inject: options.inject ?? []
@@ -171,17 +250,17 @@ export class BymaxAuthModule {
       : [{ provide: BYMAX_AUTH_HOOKS, useClass: NoOpAuthHooks }]
 
     // ---------------------------------------------------------------------------
-    // Conditional controller registration (all evaluated synchronously).
+    // Controllers and provider arrays — built from the feature flags above.
     // ---------------------------------------------------------------------------
-
-    // AuthController — enabled by default, opt-out via controllers.auth: false.
-    const includeAuth = options.controllers?.auth !== false
 
     const controllers = [
       ...(includeAuth ? [AuthController] : []),
       ...(includeMfa ? [MfaController] : []),
       ...(includePasswordReset ? [PasswordResetController] : []),
-      ...(includeSessions ? [SessionController] : [])
+      ...(includeSessions ? [SessionController] : []),
+      ...(includePlatformAuth ? [PlatformAuthController] : []),
+      ...(includeOAuth ? [OAuthController] : []),
+      ...(includeInvitations ? [InvitationController] : [])
     ]
 
     // MfaService and MfaRequiredGuard are only registered when MFA is enabled so
@@ -190,9 +269,37 @@ export class BymaxAuthModule {
     // components are added in the future.
     const mfaProviders: Provider[] = includeMfa ? [MfaService, MfaRequiredGuard] : []
 
+    // MfaService is also required by PlatformAuthController for the MFA challenge endpoint.
+    // Only register it here when MFA controllers are disabled — avoids duplicate registration
+    // when both controllers.mfa and controllers.platformAuth are true.
+    const platformMfaProvider: Provider[] = includePlatformAuth && !includeMfa ? [MfaService] : []
+
     // PasswordResetService is registered as a named provider array so providers/exports
     // stay in sync (same pattern as mfaProviders).
     const passwordResetProviders: Provider[] = includePasswordReset ? [PasswordResetService] : []
+
+    // PlatformAuthService, JwtPlatformGuard, and PlatformRolesGuard — only when
+    // controllers.platformAuth: true.
+    const platformAuthProviders: Provider[] = includePlatformAuth
+      ? [PlatformAuthService, JwtPlatformGuard, PlatformRolesGuard]
+      : []
+
+    // OAuth providers — OAUTH_PLUGINS is built lazily from BYMAX_AUTH_OPTIONS so that
+    // buildOAuthPlugins() runs after the resolved options are available. OAuthService
+    // is registered as a class provider alongside it.
+    const oauthProviders: Provider[] = includeOAuth
+      ? [
+          {
+            provide: OAUTH_PLUGINS,
+            useFactory: (opts: ResolvedOptions) => buildOAuthPlugins(opts),
+            inject: [BYMAX_AUTH_OPTIONS]
+          },
+          OAuthService
+        ]
+      : []
+
+    // InvitationService — only when controllers.invitations: true.
+    const invitationProviders: Provider[] = includeInvitations ? [InvitationService] : []
 
     return {
       module: BymaxAuthModule,
@@ -243,8 +350,16 @@ export class BymaxAuthModule {
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.
         ...mfaProviders,
+        // MfaService for platform admin MFA challenges (when controllers.mfa is disabled).
+        ...platformMfaProvider,
         // Password reset service — only registered when controllers.passwordReset !== false.
-        ...passwordResetProviders
+        ...passwordResetProviders,
+        // Platform admin components — only when controllers.platformAuth: true.
+        ...platformAuthProviders,
+        // OAuth providers — only when controllers.oauth: true.
+        ...oauthProviders,
+        // Invitation service — only when controllers.invitations: true.
+        ...invitationProviders
       ],
       controllers,
       exports: [
@@ -266,9 +381,21 @@ export class BymaxAuthModule {
         // MfaService and apply MfaRequiredGuard without re-registering them.
         // Spreads mfaProviders directly so providers and exports always stay in sync.
         ...mfaProviders,
+        // MfaService exported for platform admin use when MFA controllers are disabled.
+        ...platformMfaProvider,
         // Export PasswordResetService when enabled — allows host-app modules to call
         // service methods (e.g. initiateReset) from custom controllers.
-        ...passwordResetProviders
+        ...passwordResetProviders,
+        // Export platform admin components — allows host-app modules to apply
+        // JwtPlatformGuard and PlatformRolesGuard without re-registering them.
+        ...platformAuthProviders,
+        // Export OAuthService — allows host-app modules to extend OAuth flows.
+        // NOTE: oauthProviders is NOT spread here because OAUTH_PLUGINS is an internal
+        // injection token — host-app modules have no reason to inject the plugin array
+        // directly. Only OAuthService is part of the public integration surface.
+        ...(includeOAuth ? [OAuthService] : []),
+        // Export InvitationService — allows host-app modules to send or manage invitations.
+        ...invitationProviders
       ]
     }
   }

@@ -94,15 +94,19 @@ export const DEFAULT_OPTIONS = {
   },
 
   controllers: {
-    // All controllers are enabled by default for quick onboarding.
-    // Disable unused groups to reduce attack surface:
-    //   controllers: { invitations: false, platformAuth: false, ... }
+    // auth and passwordReset are opt-out (enabled by default).
+    // All other controllers are opt-in (disabled by default) — they require
+    // explicit feature configuration before they can be safely enabled.
+    // These defaults only affect the resolved options object exposed via
+    // BYMAX_AUTH_OPTIONS; the module's feature flags are read from
+    // AuthModuleAsyncOptions.controllers directly, not from resolved options.
     auth: true,
-    mfa: true,
+    mfa: false,
     passwordReset: true,
-    sessions: true,
-    platformAuth: true,
-    invitations: true
+    sessions: false,
+    platformAuth: false,
+    oauth: false,
+    invitations: false
   },
 
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],

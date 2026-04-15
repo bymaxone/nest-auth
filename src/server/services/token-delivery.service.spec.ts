@@ -499,4 +499,184 @@ describe('TokenDeliveryService', () => {
       expect(resolveDomains).toHaveBeenCalledWith('')
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // deliverPlatformAuthResponse
+  // ---------------------------------------------------------------------------
+
+  describe('deliverPlatformAuthResponse', () => {
+    const SAFE_ADMIN = {
+      id: 'admin-1',
+      email: 'admin@platform.com',
+      name: 'Platform Admin',
+      role: 'super_admin',
+      status: 'active',
+      mfaEnabled: false,
+      lastLoginAt: null,
+      updatedAt: new Date('2026-01-01'),
+      createdAt: new Date('2026-01-01')
+    }
+
+    const PLATFORM_RESULT = {
+      admin: SAFE_ADMIN,
+      accessToken: 'platform.access.jwt',
+      rawRefreshToken: 'raw-platform-refresh-uuid'
+    }
+
+    // Verifies that deliverPlatformAuthResponse returns admin, accessToken, and refreshToken
+    // where refreshToken is the renamed rawRefreshToken.
+    it('should return { admin, accessToken, refreshToken } with refreshToken equal to rawRefreshToken', async () => {
+      const service = await buildService('cookie')
+
+      const result = service.deliverPlatformAuthResponse(PLATFORM_RESULT)
+
+      expect(result).toEqual({
+        admin: SAFE_ADMIN,
+        accessToken: 'platform.access.jwt',
+        refreshToken: 'raw-platform-refresh-uuid'
+      })
+      expect(result.refreshToken).toBe(PLATFORM_RESULT.rawRefreshToken)
+    })
+
+    // Verifies that deliverPlatformAuthResponse does NOT set any cookies — it takes no res parameter.
+    it('should not set any cookies — the method accepts no res parameter', async () => {
+      // deliverPlatformAuthResponse has no res parameter so there is no mechanism to call res.cookie().
+      // This test ensures the signature stays that way — if a res parameter were accidentally added
+      // and used, the mock res would record those calls.
+      const service = await buildService('cookie')
+      const res = makeRes()
+
+      // Call the method; res is intentionally NOT passed.
+      service.deliverPlatformAuthResponse(PLATFORM_RESULT)
+
+      // No cookie should have been set.
+      expect(res.cookie).not.toHaveBeenCalled()
+    })
+
+    // Verifies that the result does NOT contain a 'rawRefreshToken' key — the internal naming
+    // convention must not leak into the serialised HTTP response.
+    it('should expose refreshToken in the response (not rawRefreshToken)', async () => {
+      const service = await buildService('bearer')
+
+      const result = service.deliverPlatformAuthResponse(PLATFORM_RESULT)
+
+      expect(result).toHaveProperty('refreshToken')
+      expect(result).not.toHaveProperty('rawRefreshToken')
+    })
+
+    // Verifies behaviour is the same regardless of the configured tokenDelivery mode.
+    it('should always return bearer body regardless of the module tokenDelivery mode', async () => {
+      const cookieService = await buildService('cookie')
+      const bearerService = await buildService('bearer')
+      const bothService = await buildService('both')
+
+      const cookieResult = cookieService.deliverPlatformAuthResponse(PLATFORM_RESULT)
+      const bearerResult = bearerService.deliverPlatformAuthResponse(PLATFORM_RESULT)
+      const bothResult = bothService.deliverPlatformAuthResponse(PLATFORM_RESULT)
+
+      const expected = {
+        admin: SAFE_ADMIN,
+        accessToken: 'platform.access.jwt',
+        refreshToken: 'raw-platform-refresh-uuid'
+      }
+      expect(cookieResult).toEqual(expected)
+      expect(bearerResult).toEqual(expected)
+      expect(bothResult).toEqual(expected)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // extractPlatformRefreshToken
+  // ---------------------------------------------------------------------------
+
+  describe('extractPlatformRefreshToken', () => {
+    // Returns the refresh token string from req.body.refreshToken when present.
+    it('should return req.body.refreshToken when it is a string', async () => {
+      const service = await buildService('cookie') // mode does not matter
+      const req = makeReq({ body: { refreshToken: 'platform-rt-value' } })
+
+      expect(service.extractPlatformRefreshToken(req as Request)).toBe('platform-rt-value')
+    })
+
+    // Returns undefined when the body contains no refreshToken key.
+    it('should return undefined when body has no refreshToken property', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ body: {} })
+
+      expect(service.extractPlatformRefreshToken(req as Request)).toBeUndefined()
+    })
+
+    // Returns undefined when req.body is absent entirely.
+    it('should return undefined when req.body is absent', async () => {
+      const service = await buildService('cookie')
+      // Cast through unknown to allow omitting body in the test stub.
+      const req = { headers: {}, cookies: {} } as unknown as Request
+
+      expect(service.extractPlatformRefreshToken(req)).toBeUndefined()
+    })
+
+    // Non-string body.refreshToken values are rejected — only strings are valid tokens.
+    it('should return undefined when body.refreshToken is not a string (e.g. a number)', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ body: { refreshToken: 12345 } })
+
+      expect(service.extractPlatformRefreshToken(req as Request)).toBeUndefined()
+    })
+
+    // Always reads from body regardless of the module-level tokenDelivery mode.
+    it('should always read from req.body regardless of the configured tokenDelivery mode', async () => {
+      const cookieService = await buildService('cookie')
+      const bearerService = await buildService('bearer')
+      const bothService = await buildService('both')
+
+      const req = makeReq({ body: { refreshToken: 'body-rt' } })
+
+      expect(cookieService.extractPlatformRefreshToken(req as Request)).toBe('body-rt')
+      expect(bearerService.extractPlatformRefreshToken(req as Request)).toBe('body-rt')
+      expect(bothService.extractPlatformRefreshToken(req as Request)).toBe('body-rt')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // extractPlatformAccessToken
+  // ---------------------------------------------------------------------------
+
+  describe('extractPlatformAccessToken', () => {
+    // Returns the bearer token from the Authorization header when correctly formatted.
+    it('should return the bearer token from Authorization: Bearer <token> header', async () => {
+      const service = await buildService('cookie') // mode does not matter
+      const req = makeReq({ headers: { authorization: 'Bearer platform-access-jwt' } })
+
+      expect(service.extractPlatformAccessToken(req as Request)).toBe('platform-access-jwt')
+    })
+
+    // Returns undefined when there is no Authorization header at all.
+    it('should return undefined when the Authorization header is absent', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ headers: {} })
+
+      expect(service.extractPlatformAccessToken(req as Request)).toBeUndefined()
+    })
+
+    // Returns undefined when the Authorization header does not use the Bearer scheme.
+    it('should return undefined when Authorization header uses a non-Bearer scheme', async () => {
+      const service = await buildService('cookie')
+      const req = makeReq({ headers: { authorization: 'Basic dXNlcjpwYXNz' } })
+
+      expect(service.extractPlatformAccessToken(req as Request)).toBeUndefined()
+    })
+
+    // Always reads from the Authorization header regardless of the module-level tokenDelivery mode.
+    it('should always read from the Authorization header regardless of the configured tokenDelivery mode', async () => {
+      const cookieService = await buildService('cookie')
+      const bearerService = await buildService('bearer')
+      const bothService = await buildService('both')
+
+      const req = makeReq({ headers: { authorization: 'Bearer always-bearer' } })
+
+      expect(cookieService.extractPlatformAccessToken(req as Request)).toBe('always-bearer')
+      expect(bearerService.extractPlatformAccessToken(req as Request)).toBe('always-bearer')
+      expect(bothService.extractPlatformAccessToken(req as Request)).toBe('always-bearer')
+    })
+  })
 })

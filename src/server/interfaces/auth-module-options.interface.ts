@@ -337,7 +337,7 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * TTL for invitation tokens in seconds.
-     * Default: `604800` (7 days)
+     * Default: `172800` (48 hours)
      */
     tokenTtlSeconds?: number
   }
@@ -410,6 +410,16 @@ export interface BymaxAuthModuleOptions {
       clientSecret: string
       /** Absolute URL for the OAuth callback (must match Google Console configuration). */
       callbackUrl: string
+      /**
+       * OAuth scopes to request from Google.
+       * Defaults to `['openid', 'email', 'profile']` when not specified.
+       *
+       * @example
+       * ```typescript
+       * scope: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly']
+       * ```
+       */
+      scope?: string[]
     }
   }
 
@@ -486,6 +496,16 @@ export interface BymaxAuthModuleOptions {
 
     /** Enables `PlatformAuthController`. Default: `true` when `platformAdmin.enabled = true`. */
     platformAuth?: boolean
+
+    /**
+     * Enables `OAuthController` and `OAuthService`.
+     *
+     * **Opt-in** — requires the `oauth` group to be configured in the `useFactory` return
+     * value. Omitting the `oauth` group causes a startup error when this flag is `true`.
+     *
+     * Default: `false`
+     */
+    oauth?: boolean
 
     /** Enables `InvitationController`. Default: `true` when `invitations.enabled = true`. */
     invitations?: boolean

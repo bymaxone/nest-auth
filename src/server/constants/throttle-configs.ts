@@ -78,6 +78,9 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/password/resend-otp — 3 requests per 5 minutes per IP. */
   resendPasswordOtp: { default: { limit: 3, ttl: 300_000 } },
 
+  /** POST /auth/invitations — 10 requests per hour per IP. Prevents email abuse and invitation flooding. */
+  invitationCreate: { default: { limit: 10, ttl: 3_600_000 } },
+
   /** POST /auth/invitations/accept — 5 requests per minute per IP. */
   invitationAccept: { default: { limit: 5, ttl: 60_000 } },
 
@@ -88,5 +91,21 @@ export const AUTH_THROTTLE_CONFIGS = {
   revokeSession: { default: { limit: 10, ttl: 60_000 } },
 
   /** DELETE /auth/sessions/all — 5 requests per minute per IP. */
-  revokeAllSessions: { default: { limit: 5, ttl: 60_000 } }
+  revokeAllSessions: { default: { limit: 5, ttl: 60_000 } },
+
+  /**
+   * GET /auth/oauth/:provider — 10 requests per minute per IP.
+   *
+   * Each successful OAuth flow requires one initiate + one callback (= two requests).
+   * Capping initiate at 10 ensures the effective login-round-trips-per-minute stays at
+   * ≤ 5 — matching the `login` and `platformLogin` limits for consistent brute-force
+   * protection across all login paths.
+   */
+  oauthInitiate: { default: { limit: 10, ttl: 60_000 } },
+
+  /**
+   * GET /auth/oauth/:provider/callback — 10 requests per minute per IP.
+   * Matches `oauthInitiate` to prevent callback-only flooding attacks.
+   */
+  oauthCallback: { default: { limit: 10, ttl: 60_000 } }
 } as const

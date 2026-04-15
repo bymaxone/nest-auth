@@ -364,7 +364,7 @@ function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
 
   for (const [provider, config] of Object.entries(oauth) as [
     string,
-    Record<string, string | undefined>
+    Record<string, string | string[] | undefined>
   ][]) {
     for (const field of REQUIRED_OAUTH_FIELDS) {
       // eslint-disable-next-line security/detect-object-injection -- field is from a const tuple
@@ -374,6 +374,21 @@ function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
             `OAuth provider is configured.`
         )
       }
+    }
+
+    // Enforce HTTPS for the OAuth callback URL in production environments.
+    // An HTTP callback URL causes the authorization code to transit over an unencrypted
+    // connection, making it vulnerable to interception.
+    const callbackUrl = config['callbackUrl']
+    if (
+      typeof callbackUrl === 'string' &&
+      !callbackUrl.startsWith('https://') &&
+      process.env['NODE_ENV'] === 'production'
+    ) {
+      throw new Error(
+        `[BymaxAuthModule] oauth.${provider}.callbackUrl must use HTTPS in production ` +
+          `(got: '${callbackUrl}'). Use an HTTPS URL to prevent authorization code interception.`
+      )
     }
   }
 }

@@ -115,7 +115,9 @@ export { NoOpEmailProvider } from './providers/no-op-email.provider'
 // ---------------------------------------------------------------------------
 
 export { JwtAuthGuard } from './guards/jwt-auth.guard'
+export { JwtPlatformGuard } from './guards/jwt-platform.guard'
 export { MfaRequiredGuard } from './guards/mfa-required.guard'
+export { PlatformRolesGuard } from './guards/platform-roles.guard'
 export { RolesGuard } from './guards/roles.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 
@@ -124,6 +126,7 @@ export { UserStatusGuard } from './guards/user-status.guard'
 // ---------------------------------------------------------------------------
 
 export { CurrentUser } from './decorators/current-user.decorator'
+export { PLATFORM_ROLES_KEY, PlatformRoles } from './decorators/platform-roles.decorator'
 export { IS_PUBLIC_KEY, Public } from './decorators/public.decorator'
 export { ROLES_KEY, Roles } from './decorators/roles.decorator'
 export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
@@ -132,11 +135,14 @@ export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
 // DTOs
 // ---------------------------------------------------------------------------
 
+export { AcceptInvitationDto } from './dto/accept-invitation.dto'
+export { CreateInvitationDto } from './dto/create-invitation.dto'
 export { ForgotPasswordDto } from './dto/forgot-password.dto'
 export { LoginDto } from './dto/login.dto'
 export { MfaChallengeDto } from './dto/mfa-challenge.dto'
 export { MfaDisableDto } from './dto/mfa-disable.dto'
 export { MfaVerifyDto } from './dto/mfa-verify.dto'
+export { PlatformLoginDto } from './dto/platform-login.dto'
 export { RegisterDto } from './dto/register.dto'
 export { ResendOtpDto } from './dto/resend-otp.dto'
 export { ResendVerificationDto } from './dto/resend-verification.dto'
@@ -149,6 +155,10 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+// NOTE: MfaService is only registered in the NestJS container when
+// controllers.mfa: true OR controllers.platformAuth: true. Importing it here for
+// use in a host-app module without those flags set will cause an injection error —
+// register it in extraProviders in that case.
 export { MfaService } from './services/mfa.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
@@ -161,6 +171,10 @@ export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).
 export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
+// NOTE: OAuthService is only registered in the NestJS container when
+// controllers.oauth: true. Importing it here for use in a host-app module without
+// that flag set will cause an injection error.
+export { OAuthService } from './oauth/oauth.service'
 
 // ---------------------------------------------------------------------------
 // Utilities

@@ -529,6 +529,34 @@ describe('resolveOptions — oauth provider validation', () => {
   it('should not throw when oauth is not configured', () => {
     expect(() => resolveOptions(MINIMAL_OPTIONS)).not.toThrow()
   })
+
+  // Verifies that an HTTP callbackUrl is rejected when NODE_ENV is 'production' —
+  // an unencrypted callback URL allows the authorization code to be intercepted in transit.
+  it('should throw when oauth.google.callbackUrl uses HTTP in a production environment', () => {
+    const originalNodeEnv = process.env['NODE_ENV']
+    process.env['NODE_ENV'] = 'production'
+    try {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            google: {
+              clientId: 'client-id',
+              clientSecret: 'client-secret',
+              callbackUrl: 'http://app.com/callback'
+            }
+          }
+        })
+      ).toThrow(/callbackUrl must use HTTPS in production/)
+    } finally {
+      // Restore NODE_ENV to prevent contaminating other tests that rely on the default value.
+      if (originalNodeEnv === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = originalNodeEnv
+      }
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
