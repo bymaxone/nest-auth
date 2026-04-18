@@ -16,10 +16,14 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   rootDir: '.',
-  testMatch: ['<rootDir>/src/**/*.spec.ts', '<rootDir>/test/e2e/**/*.e2e-spec.ts'],
-  moduleFileExtensions: ['ts', 'js', 'json'],
+  testMatch: [
+    '<rootDir>/src/**/*.spec.ts',
+    '<rootDir>/src/**/*.spec.tsx',
+    '<rootDir>/test/e2e/**/*.e2e-spec.ts'
+  ],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   transform: {
-    '^.+\\.ts$': [
+    '^.+\\.tsx?$': [
       'ts-jest',
       {
         tsconfig: '<rootDir>/tsconfig.e2e.json'
@@ -28,8 +32,11 @@ const config: Config = {
   },
   collectCoverageFrom: [
     'src/**/*.ts',
+    'src/**/*.tsx',
     '!src/**/*.spec.ts',
+    '!src/**/*.spec.tsx',
     '!src/**/*.test.ts',
+    '!src/**/__tests__/**',
     '!src/**/index.ts',
     '!src/**/*.d.ts'
   ],

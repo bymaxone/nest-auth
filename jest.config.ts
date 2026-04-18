@@ -4,17 +4,26 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   rootDir: 'src',
-  testMatch: ['**/*.spec.ts', '**/*.test.ts'],
-  moduleFileExtensions: ['ts', 'js', 'json'],
+  testMatch: ['**/*.spec.ts', '**/*.spec.tsx', '**/*.test.ts'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   transform: {
-    '^.+\\.ts$': [
+    '^.+\\.tsx?$': [
       'ts-jest',
       {
         tsconfig: '<rootDir>/../tsconfig.jest.json'
       }
     ]
   },
-  collectCoverageFrom: ['**/*.ts', '!**/*.spec.ts', '!**/*.test.ts', '!**/index.ts', '!**/*.d.ts'],
+  collectCoverageFrom: [
+    '**/*.ts',
+    '**/*.tsx',
+    '!**/*.spec.ts',
+    '!**/*.spec.tsx',
+    '!**/*.test.ts',
+    '!**/__tests__/**',
+    '!**/index.ts',
+    '!**/*.d.ts'
+  ],
   coverageThreshold: {
     global: {
       branches: 80,

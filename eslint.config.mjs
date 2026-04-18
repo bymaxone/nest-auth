@@ -18,7 +18,7 @@ export default [
 
   // TypeScript production files
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['**/*.spec.ts', '**/*.spec.tsx'],
     languageOptions: {
       parser: tsParser,
@@ -26,10 +26,14 @@ export default [
         project: './tsconfig.json',
         tsconfigRootDir: import.meta.dirname,
         ecmaVersion: 2022,
-        sourceType: 'module'
+        sourceType: 'module',
+        ecmaFeatures: {
+          jsx: true
+        }
       },
       globals: {
-        ...globals.node
+        ...globals.node,
+        ...globals.browser
       }
     },
     plugins: {
