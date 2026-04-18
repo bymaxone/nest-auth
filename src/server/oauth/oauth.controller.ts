@@ -52,7 +52,9 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @Public()
 @SkipMfa()
 @Controller('oauth')
-@UsePipes(new ValidationPipe({ whitelist: true, forbidUnknownValues: true }))
+@UsePipes(
+  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
+)
 export class OAuthController {
   constructor(
     private readonly oauthService: OAuthService,

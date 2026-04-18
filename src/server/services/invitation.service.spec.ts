@@ -16,7 +16,7 @@
  * indirectly through the acceptInvitation() tests that feed various Redis payloads.
  */
 
-import { ForbiddenException, Logger } from '@nestjs/common'
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -297,10 +297,10 @@ describe('InvitationService', () => {
     })
 
     // Verifies that a role not present in the hierarchy causes ForbiddenException before any DB lookup.
-    it('should throw ForbiddenException with INSUFFICIENT_ROLE for an unknown role', async () => {
+    it('should throw AuthException with INSUFFICIENT_ROLE for an unknown role', async () => {
       await expect(
         service.invite('inviter-1', 'invited@example.com', 'unknown-role', 'tenant-1')
-      ).rejects.toThrow(ForbiddenException)
+      ).rejects.toThrow(AuthException)
 
       expect(mockUserRepo.findById).not.toHaveBeenCalled()
     })
@@ -330,14 +330,14 @@ describe('InvitationService', () => {
     })
 
     // Verifies that an inviter whose role is below the requested role (member inviting admin) is rejected.
-    it('should throw ForbiddenException with INSUFFICIENT_ROLE when inviter role is insufficient', async () => {
+    it('should throw AuthException with INSUFFICIENT_ROLE when inviter role is insufficient', async () => {
       // A member inviter cannot invite an admin (member has no inherited roles).
       const memberInviter = { ...INVITER, role: 'member' }
       mockUserRepo.findById.mockResolvedValue(memberInviter)
 
       await expect(
         service.invite('inviter-1', 'invited@example.com', 'admin', 'tenant-1')
-      ).rejects.toThrow(ForbiddenException)
+      ).rejects.toThrow(AuthException)
     })
   })
 

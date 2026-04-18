@@ -22,6 +22,8 @@
  * 11. @SkipMfa() bypasses MfaRequiredGuard
  */
 
+import { createHash } from 'node:crypto'
+
 import { Reflector } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 
@@ -55,8 +57,17 @@ const VALID_ENCRYPTION_KEY = Buffer.from('nest-auth-test-encryption-key-32').toS
 /** TEST FIXTURE ONLY — not a real JWT secret. */
 const JWT_SECRET = 'nest-auth-test-jwt-secret-32chars+'
 
+/**
+ * HMAC key derivation — MUST mirror `resolveOptions.deriveHmacKey`. Recomputed
+ * locally so any drift in the derivation surface fails loudly at test time.
+ */
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
+  hmacKey: HMAC_KEY,
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
     issuer: 'TestApp',
@@ -491,9 +502,9 @@ describe('MFA — integration smoke tests', () => {
       AuthException
     )
 
-    const expectedBfId = hmacSha256(`challenge:user-1`, JWT_SECRET)
-    const plainBfId = hmacSha256('user-1', JWT_SECRET) // login-style identifier
-    const disableBfId = hmacSha256('disable:user-1', JWT_SECRET) // disable-style identifier
+    const expectedBfId = hmacSha256(`challenge:user-1`, HMAC_KEY)
+    const plainBfId = hmacSha256('user-1', HMAC_KEY) // login-style identifier
+    const disableBfId = hmacSha256('disable:user-1', HMAC_KEY) // disable-style identifier
 
     expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedBfId)
     expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(expectedBfId)

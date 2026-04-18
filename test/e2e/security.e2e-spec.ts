@@ -141,10 +141,13 @@ describe('security scenarios (E2E)', () => {
         .set('Authorization', `Bearer ${accessToken}`)
 
       // Assert — JwtAuthGuard short-circuits on the `rv:{jti}` revocation key.
+      // The public surface deliberately maps this to TOKEN_INVALID (not
+      // TOKEN_REVOKED) so HTTP clients cannot use the response code to
+      // distinguish "valid but logged out" from "malformed" tokens.
       expect(me.status).toBe(401)
       expect(me.body).toEqual(
         expect.objectContaining({
-          error: expect.objectContaining({ code: 'auth.token_revoked' })
+          error: expect.objectContaining({ code: 'auth.token_invalid' })
         })
       )
     })

@@ -4,6 +4,8 @@
  * fire-and-forget hook/side-effect error handling.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { Request } from 'express'
@@ -121,8 +123,14 @@ const mockSessionService = {
   rotateSession: jest.fn()
 }
 
+const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 const mockOptions = {
-  jwt: { secret: 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long' },
+  jwt: { secret: JWT_SECRET },
+  hmacKey: HMAC_KEY,
   emailVerification: { required: false, otpTtlSeconds: 600 },
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   bruteForce: { maxAttempts: 5, windowSeconds: 900 },
@@ -711,40 +719,52 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('verifyEmail', () => {
-    // Verifies that verifyEmail calls otpService.verify and updates the user's emailVerified flag.
-    it('should verify OTP and update emailVerified', async () => {
+    // Verifies that verifyEmail resolves the user from (tenantId, email) and updates the flag.
+    it('should verify OTP and update emailVerified for the resolved user', async () => {
       mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
-      mockUserRepo.findById.mockResolvedValue(USER)
       mockHooks.afterEmailVerified.mockResolvedValue(undefined)
 
-      await service.verifyEmail('tenant-1', 'user@example.com', 'user-1', '123456')
+      await service.verifyEmail('tenant-1', 'user@example.com', '123456')
 
       expect(mockOtpService.verify).toHaveBeenCalledWith(
         'email_verification',
         expect.any(String),
         '123456'
       )
-      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith('user-1', true)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
+      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
     })
 
     // Verifies that OTP verification errors from otpService propagate to the caller.
     it('should propagate OTP errors', async () => {
       mockOtpService.verify.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.OTP_INVALID))
-      await expect(
-        service.verifyEmail('tenant-1', 'user@example.com', 'user-1', 'wrong')
-      ).rejects.toThrow(AuthException)
+      await expect(service.verifyEmail('tenant-1', 'user@example.com', 'wrong')).rejects.toThrow(
+        AuthException
+      )
+    })
+
+    // Defends against the ownership-bypass path: valid OTP but user not found → OTP_INVALID.
+    it('should throw OTP_INVALID when user does not exist after OTP succeeds', async () => {
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await expect(service.verifyEmail('tenant-1', 'ghost@example.com', '123456')).rejects.toThrow(
+        AuthException
+      )
+      expect(mockUserRepo.updateEmailVerified).not.toHaveBeenCalled()
     })
 
     // Verifies that an error thrown by the afterEmailVerified hook is logged and does not propagate.
     it('should log and swallow afterEmailVerified hook errors (fire-and-forget)', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
-      mockUserRepo.findById.mockResolvedValue(USER)
       mockHooks.afterEmailVerified.mockRejectedValue(new Error('hook error'))
 
-      await service.verifyEmail('tenant-1', 'user@example.com', 'user-1', '123456')
+      await service.verifyEmail('tenant-1', 'user@example.com', '123456')
 
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))

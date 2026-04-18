@@ -11,13 +11,12 @@
  * so mocks are cleanly reset between every test.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
-import {
-  BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
-} from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_PLATFORM_USER_REPOSITORY } from '../bymax-auth.constants'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -81,6 +80,16 @@ const ROTATED_TOKEN_RESULT = {
 // JWT secret used in mockOptions — must be ≥32 chars for hmacSha256 key material.
 const JWT_SECRET = 'test-jwt-secret-32bytes-exact-here!!'
 
+/**
+ * HMAC key derivation — MUST mirror {@link resolveOptions.deriveHmacKey}.
+ * Tests that assert Redis-identifier shapes recompute the key here rather than
+ * depending on a runtime export so that any drift in the derivation surface
+ * fails loudly at test time.
+ */
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 // ---------------------------------------------------------------------------
 // Mock collaborators
 // ---------------------------------------------------------------------------
@@ -120,7 +129,8 @@ const mockRedis = {
 }
 
 const mockOptions = {
-  jwt: { secret: JWT_SECRET }
+  jwt: { secret: JWT_SECRET },
+  hmacKey: HMAC_KEY
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +192,7 @@ describe('PlatformAuthService', () => {
     // so the stored Redis key cannot be reversed via dictionary lookup to reveal the admin email.
     it('should build the brute-force identifier as hmacSha256("platform:email", jwt.secret)', async () => {
       await service.login(dto, ip, userAgent)
-      const expectedId = hmacSha256('platform:' + dto.email, JWT_SECRET)
+      const expectedId = hmacSha256('platform:' + dto.email, HMAC_KEY)
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedId)
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(expectedId)
     })

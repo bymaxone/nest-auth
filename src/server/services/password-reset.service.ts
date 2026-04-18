@@ -16,7 +16,7 @@ import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
   AuthUser,
@@ -24,6 +24,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
 // ---------------------------------------------------------------------------
@@ -315,11 +316,13 @@ export class PasswordResetService {
     const context = this.parseResetContext(contextJson)
 
     // Defence-in-depth: verify email and tenantId match the stored context.
-    // Both comparisons use timingSafeCompare — the email is low-entropy but
-    // the comparison is against a stored value, not a user-controlled target.
+    // Compare SHA-256 digests rather than the raw variable-length strings — the
+    // underlying `timingSafeCompare` returns `false` on length mismatch, which
+    // would leak whether the submitted email is the same length as the stored
+    // one. Hashing to a fixed 64-char digest removes that length oracle.
     if (
-      !timingSafeCompare(context.email, email) ||
-      !timingSafeCompare(context.tenantId, tenantId)
+      !timingSafeCompare(sha256(context.email), sha256(email)) ||
+      !timingSafeCompare(sha256(context.tenantId), sha256(tenantId))
     ) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
@@ -366,9 +369,11 @@ export class PasswordResetService {
 
     const context = this.parseResetContext(contextJson)
 
+    // Compare SHA-256 digests to eliminate the variable-length oracle in
+    // `timingSafeCompare`. See `resetWithToken` for the full rationale.
     if (
-      !timingSafeCompare(context.email, email) ||
-      !timingSafeCompare(context.tenantId, tenantId)
+      !timingSafeCompare(sha256(context.email), sha256(email)) ||
+      !timingSafeCompare(sha256(context.tenantId), sha256(tenantId))
     ) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
@@ -408,7 +413,7 @@ export class PasswordResetService {
       const user = await this.userRepo.findById(userId)
       if (user) {
         void Promise.resolve(
-          this.hooks.afterPasswordReset(toSafeUser(user), {} as HookContext)
+          this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
         ).catch((err: unknown) => {
           this.logger.error('afterPasswordReset hook threw', err)
         })
@@ -476,11 +481,12 @@ export class PasswordResetService {
    *
    * HMAC is used (not bare SHA-256) because `email` is low-entropy — a bare
    * SHA-256 hash could be reversed by dictionary or rainbow-table lookup if
-   * the Redis keyspace were ever exposed. The JWT secret is reused as the HMAC
-   * key, matching the pattern established in `AuthService`.
+   * the Redis keyspace were ever exposed. The derived `hmacKey` (distinct
+   * from `jwt.secret`) is used as the HMAC key so that a JWT-secret
+   * compromise does not directly reveal Redis identifiers.
    */
   private otpIdentifier(tenantId: string, email: string): string {
-    return hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
+    return hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
   }
 
   /**

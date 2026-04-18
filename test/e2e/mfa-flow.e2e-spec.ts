@@ -140,8 +140,10 @@ describe('mfa flow (E2E)', () => {
       expect(Array.isArray(recoveryCodes)).toBe(true)
       expect(recoveryCodes.length).toBeGreaterThanOrEqual(8)
       expect(recoveryCodes.length).toBeLessThanOrEqual(10)
+      // Recovery codes are 6 groups of 4 uppercase hex chars (96 bits of entropy),
+      // separated by hyphens — XXXX-XXXX-XXXX-XXXX-XXXX-XXXX.
       for (const code of recoveryCodes) {
-        expect(code).toMatch(/^\d{4}-\d{4}-\d{4}$/)
+        expect(code).toMatch(/^[0-9A-F]{4}(?:-[0-9A-F]{4}){5}$/)
       }
     })
 

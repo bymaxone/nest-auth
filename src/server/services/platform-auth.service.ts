@@ -74,10 +74,9 @@ export class PlatformAuthService {
     userAgent: string
   ): Promise<PlatformAuthResult | MfaChallengeResult> {
     // HMAC-SHA-256 of 'platform:' + email prevents PII in Redis keys and blocks
-    // rainbow-table reversal. The JWT secret is the HMAC key so the identifier
-    // is specific to this deployment (same email → different hash on each instance
-    // with a different secret).
-    const bfIdentifier = hmacSha256('platform:' + dto.email, this.options.jwt.secret)
+    // rainbow-table reversal. The derived `hmacKey` is used so the Redis-identifier
+    // security domain stays independent from the JWT-signing secret.
+    const bfIdentifier = hmacSha256('platform:' + dto.email, this.options.hmacKey)
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {

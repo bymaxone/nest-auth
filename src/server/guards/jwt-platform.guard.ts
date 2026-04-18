@@ -12,6 +12,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
  * Authentication guard for platform administrator routes.
@@ -76,11 +77,14 @@ export class JwtPlatformGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // Require jti as a UUID v4 string — needed for revocation checks and prevents key-shape injection.
-    const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-    if (typeof payload.jti !== 'string' || !UUID_V4_RE.test(payload.jti)) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
+    // Require jti as a well-formed UUID v4 — the shared helper keeps this check
+    // in lockstep with {@link JwtAuthGuard} so the key space is uniform across
+    // platform and dashboard revocation lists.
+    assertValidJti(payload.jti)
+
+    // Require sub as a bounded non-empty string — downstream Redis keys and HMAC
+    // identifiers depend on a well-formed subject. Same check as dashboard guard.
+    assertValidSub(payload.sub)
 
     // Cannot use assertTokenType() here — we need PLATFORM_AUTH_REQUIRED, not TOKEN_INVALID,
     // so that callers can distinguish a wrong-token-context from a malformed token.

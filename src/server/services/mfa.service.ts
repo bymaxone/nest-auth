@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
@@ -177,10 +177,18 @@ export class MfaService {
   }
 
   /**
-   * Generates `count` numeric recovery codes in `dddd-dddd-dddd` format.
+   * Generates `count` recovery codes in `XXXX-XXXX-XXXX-XXXX-XXXX-XXXX` format
+   * (96 bits of entropy per code, hex-encoded).
    *
    * Returns both the plain-text (shown once to the user) and scrypt-hashed
    * versions (stored in the database).
+   *
+   * @remarks
+   * Each code carries 96 bits of entropy (12 random bytes → 24 hex chars grouped
+   * as 6 × 4). This is well above the NIST SP 800-63B recommendation for
+   * offline-resistant credentials. The previous 12-digit decimal format offered
+   * ~40 bits, which relied entirely on the scrypt hash for offline resistance —
+   * any database leak would have put the raw codes within offline reach.
    */
   private async hashRecoveryCodes(
     count: number
@@ -189,10 +197,16 @@ export class MfaService {
     const hashedCodes: string[] = []
 
     for (let i = 0; i < count; i++) {
-      const g1 = randomInt(0, 10_000).toString().padStart(4, '0')
-      const g2 = randomInt(0, 10_000).toString().padStart(4, '0')
-      const g3 = randomInt(0, 10_000).toString().padStart(4, '0')
-      const code = `${g1}-${g2}-${g3}`
+      // 12 random bytes → 24 hex characters → 96-bit entropy.
+      // Grouped as 6 × 4 for better user readability when typed manually.
+      // Build the groups via a deterministic slice loop rather than RegExp.match,
+      // so the type narrows cleanly without a non-null assertion.
+      const hex = randomBytes(12).toString('hex')
+      const groups: string[] = []
+      for (let offset = 0; offset < hex.length; offset += 4) {
+        groups.push(hex.slice(offset, offset + 4))
+      }
+      const code = groups.join('-').toUpperCase()
       plainCodes.push(code)
       hashedCodes.push(await this.passwordService.hash(code))
     }
@@ -277,7 +291,7 @@ export class MfaService {
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
-    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.jwt.secret)}`
+    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
 
     // Generate the data unconditionally first, then attempt an atomic SET-NX to claim
     // the key. This prevents the TOCTOU race of GET → generate → SET where two
@@ -347,7 +361,7 @@ export class MfaService {
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
-    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.jwt.secret)}`
+    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
@@ -363,10 +377,16 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    // Atomically consume the setup key — this acts as the completion gate that
-    // prevents a double-enable race where two concurrent valid submissions both
-    // persist to the database and send duplicate notification emails.
-    await this.redis.del(setupKey)
+    // Atomic completion gate: GETDEL returns the stored value and deletes the key
+    // in one round-trip. Only the first concurrent caller observes a non-null
+    // value and proceeds to the DB write + email. Any racing request that arrived
+    // with the same valid TOTP code sees `null` and is treated as MFA_SETUP_REQUIRED,
+    // preventing duplicate `updateMfa` writes and duplicate enablement emails.
+    const consumed = await this.redis.getdel(setupKey)
+    if (consumed === null) {
+      this.logger.warn(`verifyAndEnable: setup key consumed by concurrent request userId=${userId}`)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+    }
 
     await this.userRepo.updateMfa(userId, {
       mfaEnabled: true,
@@ -428,7 +448,7 @@ export class MfaService {
     // The 'challenge:' prefix namespaces this counter away from the 'disable' counter —
     // preventing a pre-auth attacker (who only has a mfaTempToken) from exhausting the
     // lockout threshold and blocking the authenticated user's ability to call disable().
-    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.jwt.secret)
+    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`challenge: account locked userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -468,7 +488,11 @@ export class MfaService {
     if (usedRecoveryIndex >= 0) {
       // mfaRecoveryCodes is guaranteed non-empty here: verifyRecoveryCode only returns ≥ 0
       // when it found a match by iterating the array, so the array cannot be empty or undefined.
-      const updatedCodes = [...(user.mfaRecoveryCodes as string[])]
+      const existingCodes =
+        user.mfaRecoveryCodes ??
+        /* istanbul ignore next -- verifyRecoveryCode returns ≥0 only after iterating a non-null array */
+        []
+      const updatedCodes = [...existingCodes]
       updatedCodes.splice(usedRecoveryIndex, 1)
       const mfaUpdate = {
         mfaEnabled: true as const,
@@ -570,7 +594,7 @@ export class MfaService {
     // 'disable:' prefix namespaces this counter away from the 'challenge' counter —
     // preventing a pre-auth attacker from exhausting the lockout threshold via the
     // challenge endpoint and blocking the authenticated user from disabling MFA.
-    const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.jwt.secret)
+    const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`disable: account locked userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -647,7 +671,7 @@ export class MfaService {
 
     // The HMAC ties the replay key to both the user identity and the specific code,
     // preventing cross-user replay and avoiding plaintext code storage in Redis.
-    const replayKey = `tu:${hmacSha256(`${userId}:${code}`, this.options.jwt.secret)}`
+    const replayKey = `tu:${hmacSha256(`${userId}:${code}`, this.options.hmacKey)}`
     const isNew = await this.redis.setnx(replayKey, TOTP_ANTI_REPLAY_TTL_SECONDS)
     if (!isNew) return false
 

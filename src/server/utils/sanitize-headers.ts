@@ -71,3 +71,21 @@ export function sanitizeHeaders(
       .filter(([key]) => !BLOCKED_HEADERS.has(key) && !SENSITIVE_HEADER_PATTERN.test(key))
   )
 }
+
+/**
+ * Returns a well-formed `HookContext` carrying the minimum required fields
+ * (`ip`, `userAgent`, `sanitizedHeaders`) populated with empty defaults.
+ *
+ * Used for fire-and-forget hook invocations that are triggered from code paths
+ * without access to a live `Request` object (e.g. internal service calls,
+ * email-verification confirmations). Consumers reading `context.ip` in a hook
+ * implementation receive `''` rather than `undefined` — a documented contract
+ * rather than a runtime surprise.
+ */
+export function createEmptyHookContext(): {
+  ip: string
+  userAgent: string
+  sanitizedHeaders: Record<string, string | string[] | undefined>
+} {
+  return { ip: '', userAgent: '', sanitizedHeaders: {} }
+}

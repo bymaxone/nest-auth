@@ -249,7 +249,7 @@ export class TokenDeliveryService {
     if (this.options.tokenDelivery === 'bearer') return
 
     const domains = this.resolveCookieDomains(req)
-    const clearOn = domains.length > 0 ? domains : [undefined as string | undefined]
+    const clearOn: (string | undefined)[] = domains.length > 0 ? domains : [undefined]
 
     for (const domain of clearOn) {
       const cookieOpts = this.baseCookieOptions(domain)
@@ -320,6 +320,7 @@ export class TokenDeliveryService {
     const base = this.baseCookieOptions(domain)
     const isProd = this.options.secureCookies
     const accessMaxAge = this.options.jwt.accessCookieMaxAgeMs
+    const refreshMaxAge = this.options.jwt.refreshExpiresInDays * 86_400 * 1_000
 
     res.cookie(this.options.cookies.accessTokenName, accessToken, {
       ...base,
@@ -333,15 +334,18 @@ export class TokenDeliveryService {
       httpOnly: true,
       secure: isProd,
       path: this.options.cookies.refreshCookiePath,
-      maxAge: this.options.jwt.refreshExpiresInDays * 86_400 * 1_000
+      maxAge: refreshMaxAge
     })
 
-    // Non-HttpOnly signal cookie: readable by client JS to detect active session.
+    // Non-HttpOnly signal cookie: readable by client JS to detect an active
+    // refresh session. Its lifetime mirrors the refresh cookie (not the access
+    // cookie) so the client can still trigger a silent refresh in the window
+    // after the access token expires but before the refresh session does.
     res.cookie(this.options.cookies.sessionSignalName, '1', {
       ...base,
       httpOnly: false,
       secure: isProd,
-      maxAge: accessMaxAge
+      maxAge: refreshMaxAge
     })
   }
 

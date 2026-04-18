@@ -6,6 +6,8 @@
  * mocking crypto internals, consistent with the project's testing guidelines.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Test } from '@nestjs/testing'
 
 import {
@@ -133,8 +135,14 @@ const mockHooks = {
 }
 
 // TEST FIXTURE ONLY — not a real JWT secret.
+const JWT_SECRET = 'nest-auth-test-jwt-secret-32chars+'
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 const mockOptions = {
-  jwt: { secret: 'nest-auth-test-jwt-secret-32chars+' },
+  jwt: { secret: JWT_SECRET },
+  hmacKey: HMAC_KEY,
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
     issuer: 'TestApp',
@@ -267,7 +275,8 @@ describe('MfaService', () => {
     it('should use DEFAULT_RECOVERY_CODE_COUNT when recoveryCodeCount is not configured', async () => {
       const { Test: NestTest } = await import('@nestjs/testing')
       const optionsWithoutCount = {
-        jwt: { secret: 'nest-auth-test-jwt-secret-32chars+' },
+        jwt: { secret: JWT_SECRET },
+        hmacKey: HMAC_KEY,
         mfa: {
           encryptionKey: VALID_ENCRYPTION_KEY,
           issuer: 'TestApp',
@@ -406,6 +415,7 @@ describe('MfaService', () => {
       }
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       mockRedis.setnx.mockResolvedValue(true) // anti-replay: new code
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(setupData)) // completion gate wins
 
       await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
 
@@ -414,6 +424,34 @@ describe('MfaService', () => {
         expect.objectContaining({ mfaEnabled: true })
       )
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+    })
+
+    // Defends against the verify-enable race: two concurrent valid submissions
+    // must not both persist MFA state. The completion gate (GETDEL) returns a
+    // non-null value to the first caller only; the loser observes null and must
+    // throw MFA_SETUP_REQUIRED without touching the database.
+    it('should throw MFA_SETUP_REQUIRED when the setup key was consumed by a concurrent request', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      // The racing caller already consumed the setup key — GETDEL returns null.
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(
+        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
     // Verifies that the email notification is sent after enabling MFA.

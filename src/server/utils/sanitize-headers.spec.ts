@@ -1,4 +1,4 @@
-import { sanitizeHeaders } from './sanitize-headers'
+import { createEmptyHookContext, sanitizeHeaders } from './sanitize-headers'
 
 describe('sanitizeHeaders', () => {
   // ---------------------------------------------------------------------------
@@ -193,5 +193,27 @@ describe('sanitizeHeaders', () => {
       expect(result).toHaveProperty('content-type', 'application/json')
       expect(result).toHaveProperty('x-request-id', 'abc-123')
     })
+  })
+})
+
+describe('createEmptyHookContext', () => {
+  // Verifies the factory returns all three required HookContext fields populated with
+  // empty defaults — never undefined — so hook implementations reading context.ip or
+  // context.userAgent never receive a surprise undefined at runtime.
+  it('should return a context with ip/userAgent/sanitizedHeaders as empty values', () => {
+    const ctx = createEmptyHookContext()
+    expect(ctx).toEqual({ ip: '', userAgent: '', sanitizedHeaders: {} })
+    expect(typeof ctx.ip).toBe('string')
+    expect(typeof ctx.userAgent).toBe('string')
+    expect(ctx.sanitizedHeaders).toEqual({})
+  })
+
+  // Verifies that each invocation returns a fresh object so callers cannot accidentally
+  // pollute a shared reference by mutating their copy.
+  it('should return a fresh object on each call (no shared reference)', () => {
+    const a = createEmptyHookContext()
+    const b = createEmptyHookContext()
+    expect(a).not.toBe(b)
+    expect(a.sanitizedHeaders).not.toBe(b.sanitizedHeaders)
   })
 })

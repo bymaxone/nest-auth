@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
@@ -31,13 +33,26 @@ const mockRedis = {
   expire: jest.fn().mockResolvedValue(undefined)
 }
 
+const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
+
+/**
+ * HMAC key — mirrors the derivation in `resolveOptions.deriveHmacKey`.
+ * Required because `TokenManagerService` reads `options.hmacKey` (not
+ * `options.jwt.secret`) for Redis identifier HMACs.
+ */
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 const mockOptions = {
   jwt: {
     accessExpiresIn: '15m',
     refreshExpiresInDays: 7,
     refreshGraceWindowSeconds: 30,
-    algorithm: 'HS256'
-  }
+    algorithm: 'HS256',
+    secret: JWT_SECRET
+  },
+  hmacKey: HMAC_KEY
 }
 
 const SAFE_USER = {
@@ -278,23 +293,26 @@ describe('TokenManagerService', () => {
       expect(result.rawRefreshToken).toBe(FIXED_UUID)
     })
 
-    // Verifies that grace-window rotation also writes a new session and a new grace pointer.
-    it('should write new session AND new grace pointer on grace-window rotation', async () => {
+    // Verifies that grace-window rotation writes ONLY the new session key (rt:), never another
+    // grace pointer (rp:). Chaining grace pointers would allow an attacker with a single captured
+    // refresh token to indefinitely extend the session by consuming consecutive grace windows.
+    it('should write only a new session (no new grace pointer) on grace-window rotation', async () => {
       mockRedis.eval.mockResolvedValue(null)
       mockRedis.getdel.mockResolvedValue(OLD_SESSION)
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      // Two redis.set calls: new session (rt:) and new grace pointer (rp:)
-      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const keys = mockRedis.set.mock.calls.map((c: unknown[]) => String(c[0]))
       expect(keys.some((k) => k.startsWith('rt:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('rp:'))).toBe(true)
+      expect(keys.some((k) => k.startsWith('rp:'))).toBe(false)
     })
 
-    // Verifies that grace-window rotation also tracks the new grace pointer in sess:{userId} SET.
-    it('should add the new grace pointer key to sess:{userId} SET on grace-window rotation', async () => {
+    // Verifies that grace-window rotation registers only the new `rt:` session under sess:{userId}.
+    // No `rp:` pointer is added because none is created — the grace window is intentionally
+    // single-shot to prevent an indefinite-refresh attack from a captured token.
+    it('should add only the new rt: key to sess:{userId} SET on grace-window rotation', async () => {
       mockRedis.eval.mockResolvedValue(null)
       mockRedis.getdel.mockResolvedValue(OLD_SESSION)
       mockRedis.set.mockResolvedValue(undefined)
@@ -303,7 +321,8 @@ describe('TokenManagerService', () => {
 
       const saddCalls = mockRedis.sadd.mock.calls as unknown[][]
       const addedKeys = saddCalls.map((c) => String(c[1]))
-      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(true)
+      expect(addedKeys.some((k) => k.startsWith('rt:'))).toBe(true)
+      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(false)
     })
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when the session contains invalid JSON.
@@ -383,6 +402,7 @@ describe('TokenManagerService', () => {
     // Verifies that an MFA challenge token is signed with type 'mfa_challenge' and stored in Redis with a 300s TTL.
     it('should sign an MFA JWT and store it in Redis with 300s TTL', async () => {
       mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
 
       const token = await service.issueMfaTempToken('user-1', 'dashboard')
 
@@ -397,6 +417,7 @@ describe('TokenManagerService', () => {
     // Verifies that platform MFA challenges use context 'platform' in the token payload.
     it('should use context:platform for platform MFA challenges', async () => {
       mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
 
       await service.issueMfaTempToken('admin-1', 'platform')
 
@@ -404,6 +425,18 @@ describe('TokenManagerService', () => {
         expect.objectContaining({ context: 'platform', sub: 'admin-1' }),
         expect.any(Object)
       )
+    })
+
+    // Verifies that issuing a fresh MFA temp token resets the per-user MFA challenge
+    // brute-force counter (`lf:{hmacSha256('challenge:{userId}')}`), so that failed
+    // attempts from an abandoned prior login session do not compound against the user.
+    it('should reset the MFA challenge brute-force counter on new token issuance', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.issueMfaTempToken('user-1', 'dashboard')
+
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^lf:/))
     })
   })
 
@@ -551,19 +584,20 @@ describe('TokenManagerService', () => {
       expect(result.session.userId).toBe('admin-1')
     })
 
-    // Verifies that grace-window rotation also writes a new prt: session and a new prp: pointer
-    // for the freshly issued token, mirroring the symmetry of the primary rotation path.
-    it('should write a new prt: session and a new prp: pointer on grace-window rotation', async () => {
+    // Verifies that platform grace-window rotation writes ONLY a new prt: session — never a
+    // new prp: grace pointer. Single-shot grace semantics prevent indefinite session extension
+    // from a captured refresh token (matches dashboard-side `rt:` / `rp:` behavior).
+    it('should write only a new prt: session (no new prp: pointer) on grace-window rotation', async () => {
       mockRedis.eval.mockResolvedValue(null)
       mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
       expect(keys.some((k) => k.startsWith('prt:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('prp:'))).toBe(true)
+      expect(keys.some((k) => k.startsWith('prp:'))).toBe(false)
     })
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the primary session nor

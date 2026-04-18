@@ -112,6 +112,36 @@ describe('GoogleOAuthPlugin', () => {
       // URLSearchParams.get() decodes percent-encoding, so we get the original value back.
       expect(parsed.searchParams.get('state')).toBe(stateWithSpecialChars)
     })
+
+    // Verifies that the PKCE code_challenge and code_challenge_method=S256 are added
+    // when a challenge is provided — omitting PKCE would leave the flow vulnerable to
+    // authorization-code interception attacks.
+    it('should include PKCE code_challenge and S256 method when codeChallenge is supplied', () => {
+      const url = plugin.authorizeUrl('s', 'challenge-value-abc')
+      const parsed = new URL(url)
+
+      expect(parsed.searchParams.get('code_challenge')).toBe('challenge-value-abc')
+      expect(parsed.searchParams.get('code_challenge_method')).toBe('S256')
+    })
+
+    // Verifies that PKCE fields are omitted when no challenge is supplied — plugins
+    // must remain usable by callers that do not yet opt in to PKCE.
+    it('should omit PKCE parameters when no codeChallenge is supplied', () => {
+      const url = plugin.authorizeUrl('s')
+      const parsed = new URL(url)
+
+      expect(parsed.searchParams.get('code_challenge')).toBeNull()
+      expect(parsed.searchParams.get('code_challenge_method')).toBeNull()
+    })
+
+    // Verifies that an empty string for codeChallenge is treated as "no PKCE" rather
+    // than producing a malformed code_challenge query value.
+    it('should omit PKCE parameters when codeChallenge is an empty string', () => {
+      const url = plugin.authorizeUrl('s', '')
+      const parsed = new URL(url)
+
+      expect(parsed.searchParams.get('code_challenge')).toBeNull()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -199,6 +229,48 @@ describe('GoogleOAuthPlugin', () => {
       expect(body.get('redirect_uri')).toBe('https://app.example.com/callback')
       expect(body.get('grant_type')).toBe('authorization_code')
     })
+
+    // Verifies that the PKCE code_verifier is forwarded to the token endpoint when
+    // supplied — this is what lets Google's token endpoint validate the challenge.
+    it('should forward code_verifier to the token endpoint when supplied', async () => {
+      mockFetch.mockResolvedValue(
+        makeFetchResponse({ access_token: 'at', token_type: 'Bearer' }, true)
+      )
+
+      await plugin.exchangeCode('code', 'verifier-xyz')
+
+      const [, init] = mockFetch.mock.calls[0] as [string, { body?: string }]
+      const body = new URLSearchParams(init.body as string)
+      expect(body.get('code_verifier')).toBe('verifier-xyz')
+    })
+
+    // Verifies that code_verifier is NOT added to the body when the caller does not
+    // supply one — plugins must remain backward compatible for non-PKCE callers.
+    it('should omit code_verifier from the body when not supplied', async () => {
+      mockFetch.mockResolvedValue(
+        makeFetchResponse({ access_token: 'at', token_type: 'Bearer' }, true)
+      )
+
+      await plugin.exchangeCode('code')
+
+      const [, init] = mockFetch.mock.calls[0] as [string, { body?: string }]
+      const body = new URLSearchParams(init.body as string)
+      expect(body.get('code_verifier')).toBeNull()
+    })
+
+    // Verifies that an empty-string code_verifier is treated as absent — prevents
+    // forwarding a malformed empty `code_verifier=` parameter to the provider.
+    it('should omit code_verifier from the body when supplied as an empty string', async () => {
+      mockFetch.mockResolvedValue(
+        makeFetchResponse({ access_token: 'at', token_type: 'Bearer' }, true)
+      )
+
+      await plugin.exchangeCode('code', '')
+
+      const [, init] = mockFetch.mock.calls[0] as [string, { body?: string }]
+      const body = new URLSearchParams(init.body as string)
+      expect(body.get('code_verifier')).toBeNull()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -253,16 +325,19 @@ describe('GoogleOAuthPlugin', () => {
       await expect(plugin.fetchProfile('at')).resolves.toBeDefined()
     })
 
-    // Verifies that when verified_email is absent from the response (legacy UserInfo v2
-    // behaviour), no error is thrown — the field is strictly optional per the API spec.
-    it('should succeed when verified_email is absent (undefined)', async () => {
+    // Verifies the defence-in-depth default: when `verified_email` is absent from
+    // the UserInfo response, the plugin rejects the profile. Standard Google
+    // sign-in flows always emit `verified_email: true`; a missing field indicates
+    // a non-standard or future-changed response, and an auth library must never
+    // promote such a profile to a trusted subject.
+    it('should throw when verified_email is absent (undefined)', async () => {
       mockFetch.mockResolvedValue(
         makeFetchResponse({ id: 'g-123', email: 'user@example.com' }, true)
       )
 
-      const profile = await plugin.fetchProfile('at')
-
-      expect(profile.email).toBe('user@example.com')
+      await expect(plugin.fetchProfile('at')).rejects.toThrow(
+        'Google OAuth: email address is not verified.'
+      )
     })
 
     // Verifies that when the name field is absent from UserInfo, profile.name is

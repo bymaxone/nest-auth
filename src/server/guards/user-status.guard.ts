@@ -15,7 +15,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
  * Maps lowercase blocked status values to specific auth error codes.
  * Always normalize the status to lowercase before lookup.
  */
-const STATUS_ERROR_MAP: Record<string, string> = {
+const STATUS_ERROR_MAP: Record<string, AuthErrorCode> = {
   banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
   inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
   suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
@@ -82,9 +82,9 @@ export class UserStatusGuard implements CanActivate {
     const normalizedStatus = status.toLowerCase()
     const blockedStatuses = this.options.blockedStatuses.map((s) => s.toLowerCase())
     if (blockedStatuses.includes(normalizedStatus)) {
-      // eslint-disable-next-line security/detect-object-injection -- normalizedStatus is lowercased DB value
-      const errorCode = (STATUS_ERROR_MAP[normalizedStatus] ??
-        AUTH_ERROR_CODES.ACCOUNT_INACTIVE) as AuthErrorCode
+      const errorCode: AuthErrorCode =
+        // eslint-disable-next-line security/detect-object-injection -- normalizedStatus is a lowercased DB status value
+        STATUS_ERROR_MAP[normalizedStatus] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
       throw new AuthException(errorCode, HttpStatus.FORBIDDEN)
     }
 

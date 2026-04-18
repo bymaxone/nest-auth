@@ -78,10 +78,14 @@ function createMockGooglePlugin(): OAuthProviderPlugin {
   return {
     name: 'google',
     authorizeUrl: jest.fn(
-      (state: string): string => `https://example.com/oauth/google?state=${state}`
+      (state: string, _codeChallenge?: string): string =>
+        `https://example.com/oauth/google?state=${state}`
     ),
     exchangeCode: jest.fn(
-      async (_code: string): Promise<{ access_token: string; token_type: string }> => ({
+      async (
+        _code: string,
+        _codeVerifier?: string
+      ): Promise<{ access_token: string; token_type: string }> => ({
         access_token: 'mock_access_token',
         token_type: 'Bearer'
       })
@@ -233,7 +237,7 @@ describe('oauth flow (E2E)', () => {
       expect(state.length).toBeGreaterThan(0)
       // The library generates a 32-byte hex nonce — 64 lowercase hex chars.
       expect(state).toMatch(/^[0-9a-f]{64}$/)
-      expect(plugin.authorizeUrl).toHaveBeenCalledWith(state)
+      expect(plugin.authorizeUrl).toHaveBeenCalledWith(state, expect.any(String))
 
       // Capture for scenario 2.
       initiateState = state

@@ -15,6 +15,8 @@
  * Implement `onOAuthLogin` to enable it and enforce tenant membership.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Response } from 'express'
 
@@ -51,13 +53,31 @@ const OAUTH_STATE_TTL_SECONDS = 600
 interface StoredOAuthState {
   /** Tenant identifier passed by the caller when initiating the flow. */
   tenantId: string
+  /**
+   * PKCE `code_verifier` (RFC 7636), held server-side for the lifetime of the
+   * authorization flow and forwarded to the provider's token endpoint on
+   * callback. Absent for legacy entries and plugins that do not support PKCE.
+   */
+  codeVerifier?: string
 }
 
 /** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
 function isStoredOAuthState(value: unknown): value is StoredOAuthState {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
-  return typeof v['tenantId'] === 'string'
+  if (typeof v['tenantId'] !== 'string') return false
+  if (v['codeVerifier'] !== undefined && typeof v['codeVerifier'] !== 'string') return false
+  return true
+}
+
+/**
+ * URL-safe base64 (RFC 4648 §5) — no padding, `+` → `-`, `/` → `_`.
+ *
+ * Used for the PKCE `code_challenge` derivation. Node's `Buffer.toString('base64url')`
+ * handles all three substitutions natively.
+ */
+function base64url(input: Buffer): string {
+  return input.toString('base64url')
 }
 
 /** Strips credential fields from an `AuthUser` to produce a `SafeAuthUser`. */
@@ -119,10 +139,16 @@ export class OAuthService {
     const state = generateSecureToken(32)
     const stateKey = `os:${sha256(state)}`
 
-    const stored: StoredOAuthState = { tenantId }
+    // PKCE code_verifier: RFC 7636 requires 43–128 URL-safe chars. A 32-byte
+    // random value base64url-encoded gives 43 chars. The verifier is stored
+    // server-side; only the challenge (its sha256 hash) is sent to the provider.
+    const codeVerifier = generateSecureToken(32)
+    const codeChallenge = base64url(createHash('sha256').update(codeVerifier, 'utf8').digest())
+
+    const stored: StoredOAuthState = { tenantId, codeVerifier }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
 
-    const authUrl = plugin.authorizeUrl(state)
+    const authUrl = plugin.authorizeUrl(state, codeChallenge)
     res.redirect(authUrl)
   }
 
@@ -195,12 +221,12 @@ export class OAuthService {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
-    const { tenantId } = parsedState
+    const { tenantId, codeVerifier } = parsedState
 
     // Exchange code and fetch profile — wrap in try/catch for observability.
     let profile: Awaited<ReturnType<typeof plugin.fetchProfile>>
     try {
-      const tokenResponse = await plugin.exchangeCode(code)
+      const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
       profile = await plugin.fetchProfile(tokenResponse.access_token)
     } catch (err: unknown) {
       this.logger.error(
@@ -239,9 +265,14 @@ export class OAuthService {
     let authUser: AuthUser
     switch (hookResult.action) {
       case 'create': {
+        // `String.prototype.split` always returns at least one element on a
+        // non-empty input (which `@IsEmail` has already validated), so the
+        // `?? profile.email` defence-in-depth branch is not expected at runtime.
+        /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
+        const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
         authUser = await this.userRepo.createWithOAuth({
           email: profile.email,
-          name: profile.name ?? (profile.email.split('@')[0] as string),
+          name: derivedName,
           tenantId,
           emailVerified: true,
           oauthProvider: provider,

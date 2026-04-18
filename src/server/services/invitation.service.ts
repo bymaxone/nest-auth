@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -133,7 +133,7 @@ export class InvitationService {
 
     // Validate that the requested role exists in the configured hierarchy.
     if (!Object.hasOwn(hierarchy, role)) {
-      throw new ForbiddenException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
     }
 
     // Fetch the inviter to validate their role authorization.
@@ -145,7 +145,7 @@ export class InvitationService {
 
     // The inviter must hold a role >= the role being invited.
     if (!hasRole(inviter.role, role, hierarchy)) {
-      throw new ForbiddenException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
     }
 
     // Generate a cryptographically secure single-use token (64 hex chars).

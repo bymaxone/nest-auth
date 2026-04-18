@@ -31,7 +31,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { maskEmail } from '../utils/mask-email'
-import { sanitizeHeaders } from '../utils/sanitize-headers'
+import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
 /** Minimum response time in ms for anti-enumeration endpoints. */
@@ -182,7 +182,7 @@ export class AuthService {
     // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
     // The ':' separator ensures 'tenantABC' + 'x@y.com' and 'tenantABCx' + '@y.com'
     // never produce the same input string (prefix-collision resistance).
-    const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.jwt.secret)
+    const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.hmacKey)
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
@@ -201,7 +201,11 @@ export class AuthService {
 
     const user = await this.userRepo.findByEmail(dto.email, tenantId)
 
-    // Use constant-time approach: always compare password (even for not-found).
+    // User-not-found path: we do NOT attempt a dummy scrypt compare. The brute-force
+    // counter lockout is the primary protection against credential probing — a constant-time
+    // dummy compare would add CPU amplification to every unknown-email request. The timing
+    // difference is intentionally bounded by `recordFailure` latency (a single Redis op) and
+    // masked by the brute-force lockout threshold.
     if (!user || !user.passwordHash) {
       await this.bruteForce.recordFailure(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
@@ -305,7 +309,7 @@ export class AuthService {
     }
 
     if (this.hooks?.afterLogout) {
-      void Promise.resolve(this.hooks.afterLogout(userId, {} as HookContext)).catch(
+      void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
           this.logger.error('afterLogout hook threw', err)
         }
@@ -376,27 +380,39 @@ export class AuthService {
   /**
    * Verifies the user's email address using a one-time password.
    *
+   * The user is identified by the `(tenantId, email)` pair — the OTP is keyed on
+   * the same pair, so only the user who received the OTP can consume it. The
+   * server derives `userId` from the repository after OTP validation; the client
+   * never supplies it, preventing a caller with a valid OTP from verifying a
+   * different user's account.
+   *
    * @param tenantId - Tenant scope.
    * @param email - The email address being verified.
-   * @param userId - The user's internal ID (from the verified JWT).
    * @param otp - The OTP supplied by the user.
+   * @throws {@link AuthException} with `OTP_INVALID` when the OTP does not match
+   *   or the user does not exist (response shape is identical to prevent
+   *   account enumeration via this endpoint).
    */
-  async verifyEmail(tenantId: string, email: string, userId: string, otp: string): Promise<void> {
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
+  async verifyEmail(tenantId: string, email: string, otp: string): Promise<void> {
+    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
     await this.otpService.verify('email_verification', identifier, otp)
-    await this.userRepo.updateEmailVerified(userId, true)
-    this.logger.log(`verifyEmail: email verified userId=${userId} tenantId=${tenantId}`)
+
+    const user = await this.userRepo.findByEmail(email, tenantId)
+    if (!user) {
+      // Treat as OTP_INVALID rather than USER_NOT_FOUND to avoid a timing oracle
+      // for callers probing email existence after a brute-forced OTP.
+      throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
+    }
+
+    await this.userRepo.updateEmailVerified(user.id, true)
+    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${tenantId}`)
 
     if (this.hooks?.afterEmailVerified) {
-      // Fetch user for hook (credential fields stripped).
-      const user = await this.userRepo.findById(userId)
-      if (user) {
-        void Promise.resolve(
-          this.hooks.afterEmailVerified(toSafeUser(user), {} as HookContext)
-        ).catch((err: unknown) => {
-          this.logger.error('afterEmailVerified hook threw', err)
-        })
-      }
+      void Promise.resolve(
+        this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
+      ).catch((err: unknown) => {
+        this.logger.error('afterEmailVerified hook threw', err)
+      })
     }
   }
 
@@ -412,7 +428,7 @@ export class AuthService {
    */
   async resendVerificationEmail(tenantId: string, email: string): Promise<void> {
     const start = Date.now()
-    const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)}`
+    const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)}`
 
     // Atomic NX: only one send allowed per 60 seconds. SET NX EX is atomic — no TOCTOU race.
     const wasSet = await this.redis.setnx(cooldownKey, 60)
@@ -469,7 +485,7 @@ export class AuthService {
   private assertUserNotBlocked(user: AuthUser): void {
     const blocked = this.options.blockedStatuses.map((s) => s.toLowerCase())
     if (blocked.includes(user.status.toLowerCase())) {
-      const codeMap: Record<string, string> = {
+      const codeMap: Record<string, AuthErrorCode> = {
         banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
         inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
         suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
@@ -477,8 +493,9 @@ export class AuthService {
         pending_approval: AUTH_ERROR_CODES.PENDING_APPROVAL
       }
 
-      const code = codeMap[user.status.toLowerCase()] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
-      throw new AuthException(code as AuthErrorCode, 403)
+      const code: AuthErrorCode =
+        codeMap[user.status.toLowerCase()] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
+      throw new AuthException(code, 403)
     }
   }
 
@@ -492,7 +509,7 @@ export class AuthService {
       return
     }
 
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
+    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
     const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
     const ttl = this.options.emailVerification.otpTtlSeconds
     const otp = this.otpService.generate(length)

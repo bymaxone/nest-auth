@@ -12,6 +12,8 @@
 // Mock sleep so tests don't wait 300ms in timing normalization paths
 jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefined) }))
 
+import { createHash } from 'node:crypto'
+
 import { Logger } from '@nestjs/common'
 import { Test, type TestingModule } from '@nestjs/testing'
 
@@ -51,6 +53,11 @@ async function flushMicrotasks(ticks = 2): Promise<void> {
 // Test doubles
 // ---------------------------------------------------------------------------
 
+const JWT_SECRET = 'test-secret-32-characters-minimum'
+const HMAC_KEY = createHash('sha256')
+  .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+  .digest('hex')
+
 const mockOptions = {
   passwordReset: {
     method: 'token' as const,
@@ -59,7 +66,8 @@ const mockOptions = {
     otpTtlSeconds: 300
   },
   blockedStatuses: ['banned', 'suspended'],
-  jwt: { secret: 'test-secret-32-characters-minimum' }
+  jwt: { secret: JWT_SECRET },
+  hmacKey: HMAC_KEY
 }
 
 const mockUserRepo = {

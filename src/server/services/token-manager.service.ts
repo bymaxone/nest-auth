@@ -6,7 +6,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { sha256 } from '../crypto/secure-token'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {
@@ -350,15 +350,22 @@ export class TokenManagerService {
   /**
    * Handles the grace-window rotation path: old session gone but grace pointer found.
    *
-   * Issues a new token pair and writes both a new session key and a new grace pointer
-   * for the newly issued token, mirroring the symmetry of the primary rotation path.
+   * Issues a new session but **does NOT** create another grace pointer. A grace
+   * rotation is the terminal step of one rotation cycle — chaining grace pointers
+   * would allow an attacker who captured a refresh token to indefinitely keep a
+   * session alive by consuming consecutive grace windows, each one producing a
+   * fresh grace pointer.
+   *
+   * Concurrent legitimate retries are served by the primary `rt:` session; the
+   * grace pointer exists only to cover the narrow window in which the old token
+   * was already consumed but the client has not yet received the new one.
    */
   private async rotateFromGrace(
     graceSessionJson: string,
     ip: string,
     userAgent: string,
     refreshTtl: number,
-    graceTtl: number
+    _graceTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
     const anotherNewRefresh = randomUUID()
@@ -372,11 +379,8 @@ export class TokenManagerService {
       graceSession.mfaEnabled
     )
     await this.redis.set(`rt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
-    await this.redis.set(`rp:${anotherNewHash}`, JSON.stringify(anotherSession), graceTtl)
-    // Add new session AND its grace pointer to the per-user SET so that
-    // invalidateUserSessions deletes both keys on logout or MFA state change.
+    // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
     await this.redis.sadd(`sess:${graceSession.userId}`, `rt:${anotherNewHash}`)
-    await this.redis.sadd(`sess:${graceSession.userId}`, `rp:${anotherNewHash}`)
     await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
     return this.buildRotatedResult(anotherSession, anotherNewRefresh)
   }
@@ -561,9 +565,11 @@ export class TokenManagerService {
   /**
    * Handles the grace-window rotation path for platform tokens: old session gone but grace pointer found.
    *
-   * Issues a new token pair and writes both a new session key and a new grace pointer
-   * for the newly issued token, mirroring the symmetry of the primary rotation path.
-   * Removes the consumed grace pointer from the per-user sess: SET to keep it accurate.
+   * Issues a new session but **does NOT** create another grace pointer. The grace
+   * window is deliberately single-shot — chaining grace pointers would allow an
+   * attacker who captured a platform refresh token to indefinitely keep a session
+   * alive by consuming consecutive grace windows. See `rotateFromGrace` for the
+   * matching dashboard-side semantics.
    */
   private async rotatePlatformFromGrace(
     graceSessionJson: string,
@@ -571,7 +577,7 @@ export class TokenManagerService {
     ip: string,
     userAgent: string,
     refreshTtl: number,
-    graceTtl: number
+    _graceTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
     const anotherNewRefresh = randomUUID()
@@ -586,12 +592,11 @@ export class TokenManagerService {
     )
 
     await this.redis.set(`prt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
-    await this.redis.set(`prp:${anotherNewHash}`, JSON.stringify(anotherSession), graceTtl)
+    // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
     // Remove the consumed grace pointer from the per-user SET — the key was deleted
     // atomically by getdel() in reissuePlatformTokens; the SET entry is now stale.
     await this.redis.srem(`sess:${graceSession.userId}`, `prp:${oldHash}`)
     await this.redis.sadd(`sess:${graceSession.userId}`, `prt:${anotherNewHash}`)
-    await this.redis.sadd(`sess:${graceSession.userId}`, `prp:${anotherNewHash}`)
     await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
 
     return this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
@@ -689,6 +694,18 @@ export class TokenManagerService {
     } as unknown as JwtSignOptions)
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
+
+    // Reset the per-user MFA challenge brute-force counter so that failed attempts
+    // from a prior (now-abandoned) login session do not compound against the
+    // legitimate user. A fresh login proves renewed possession of the password
+    // and starts the MFA brute-force budget from zero. The counter still
+    // protects within a single session — five wrong codes under one issued temp
+    // token flow will lock the account as expected until `windowSeconds` elapses.
+    // Identifier must match the one MfaService uses in `challenge`: namespaced
+    // with `'challenge:'` and HMAC-keyed on the same derived `hmacKey` so the key
+    // space aligns exactly across issue and verify.
+    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.hmacKey)
+    await this.redis.del(`lf:${bfIdentifier}`)
 
     return token
   }

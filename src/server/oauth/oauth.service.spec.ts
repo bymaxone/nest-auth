@@ -15,6 +15,8 @@
  * between tests.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { Response } from 'express'
@@ -80,12 +82,14 @@ const AUTH_RESULT = {
 }
 
 // Stored state payload JSON that would be stored in Redis.
-const STORED_STATE = JSON.stringify({ tenantId: 'tenant-1' })
+const STORED_STATE = JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 'verifier-xyz' })
+/** Legacy stored state without PKCE — used to exercise the backward-compatible branch. */
+const STORED_STATE_NO_PKCE = JSON.stringify({ tenantId: 'tenant-1' })
 
 // Mock plugin — implements the OAuthProviderPlugin interface.
 const mockPlugin = {
   name: 'google',
-  authorizeUrl: jest.fn<string, [string]>(),
+  authorizeUrl: jest.fn<string, [string, string | undefined]>(),
   exchangeCode: jest.fn(),
   fetchProfile: jest.fn()
 }
@@ -161,22 +165,52 @@ describe('OAuthService', () => {
 
       await service.initiateOAuth('google', 'tenant-1', mockRes)
 
-      // Verify that the plugin's authorizeUrl was called with the generated state.
+      // Verify that the plugin's authorizeUrl was called with the generated state
+      // and a PKCE code challenge (second positional parameter).
       expect(mockPlugin.authorizeUrl).toHaveBeenCalledTimes(1)
-      const generatedState = (mockPlugin.authorizeUrl.mock.calls[0] as [string])[0]
+      const [generatedState, codeChallenge] = mockPlugin.authorizeUrl.mock.calls[0] as [
+        string,
+        string | undefined
+      ]
 
       // Redis key must be 'os:{sha256(state)}' so the raw state is never server-persisted.
       const expectedKey = `os:${sha256(generatedState)}`
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expectedKey,
-        JSON.stringify({ tenantId: 'tenant-1' }),
-        600 // OAUTH_STATE_TTL_SECONDS
-      )
+      const [keyArg, payloadArg, ttlArg] = mockRedis.set.mock.calls[0] as [string, string, number]
+      expect(keyArg).toBe(expectedKey)
+      expect(ttlArg).toBe(600) // OAUTH_STATE_TTL_SECONDS
+
+      // Stored payload contains the tenant AND the PKCE code_verifier — the
+      // verifier stays server-side; only the challenge hash travels to the provider.
+      const parsedPayload = JSON.parse(payloadArg) as { tenantId: string; codeVerifier: string }
+      expect(parsedPayload.tenantId).toBe('tenant-1')
+      expect(parsedPayload.codeVerifier).toMatch(/^[0-9a-f]{64}$/)
+      expect(codeChallenge).toBeDefined()
+      expect(codeChallenge!.length).toBeGreaterThanOrEqual(43)
 
       // The response must redirect to the URL returned by the plugin.
       expect(mockRes.redirect).toHaveBeenCalledWith(
         'https://accounts.google.com/o/oauth2/v2/auth?state=abc'
       )
+    })
+
+    // Verifies that the code_challenge passed to the plugin is the base64url-encoded
+    // SHA-256 of the stored code_verifier. This is the PKCE S256 derivation (RFC 7636)
+    // that binds the authorize URL to the server-held verifier.
+    it('should pass the SHA-256 base64url(code_verifier) as the PKCE challenge', async () => {
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
+      await service.initiateOAuth('google', 'tenant-1', mockRes)
+
+      const [, codeChallenge] = mockPlugin.authorizeUrl.mock.calls[0] as [
+        string,
+        string | undefined
+      ]
+      const [, payloadArg] = mockRedis.set.mock.calls[0] as [string, string, number]
+      const { codeVerifier } = JSON.parse(payloadArg) as { codeVerifier: string }
+
+      const expectedChallenge = createHash('sha256')
+        .update(codeVerifier, 'utf8')
+        .digest('base64url')
+      expect(codeChallenge).toBe(expectedChallenge)
     })
 
     // Verifies that the generated CSRF state is 64 hexadecimal characters (32 bytes),
@@ -186,7 +220,7 @@ describe('OAuthService', () => {
 
       await service.initiateOAuth('google', 'tenant-1', mockRes)
 
-      const state = (mockPlugin.authorizeUrl.mock.calls[0] as [string])[0]
+      const [state] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
       expect(state).toMatch(/^[0-9a-f]{64}$/)
     })
 
@@ -284,6 +318,35 @@ describe('OAuthService', () => {
         'TestBrowser/1.0'
       )
       expect(result).toBe(AUTH_RESULT)
+    })
+
+    // Verifies that the PKCE code_verifier from the stored state is forwarded to
+    // `plugin.exchangeCode` — without this the token exchange would be unable to
+    // prove possession of the verifier to the provider's token endpoint.
+    it('should forward the stored code_verifier to plugin.exchangeCode', async () => {
+      setupHappyPathCreate()
+      await callCallback()
+      expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', 'verifier-xyz')
+    })
+
+    // Verifies backward compatibility: a legacy stored state without codeVerifier
+    // still completes the flow — exchangeCode receives `undefined` for the verifier.
+    it('should forward undefined verifier when the stored state predates PKCE', async () => {
+      setupHappyPathCreate()
+      mockRedis.getdel.mockResolvedValue(STORED_STATE_NO_PKCE)
+      await callCallback()
+      expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', undefined)
+    })
+
+    // Verifies that a stored state whose `codeVerifier` is not a string is rejected
+    // with OAUTH_FAILED — the type guard prevents malformed shapes from flowing into
+    // the plugin's exchangeCode call.
+    it('should reject stored state with a non-string codeVerifier field', async () => {
+      setupHappyPathCreate()
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 123 })
+      )
+      await expect(callCallback()).rejects.toThrow(AuthException)
     })
 
     // Verifies that passwordHash, mfaSecret, and mfaRecoveryCodes are NOT passed to
