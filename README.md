@@ -452,28 +452,46 @@ export class UsersController {
 
 ### 6. Frontend Integration (React)
 
+Build an `AuthClient` once with `createAuthClient`, then hand it to
+`AuthProvider`. Hooks (`useSession`, `useAuth`, `useAuthStatus`) read
+the context populated by the provider.
+
 ```tsx
-// app.tsx
+// app/providers.tsx
+'use client'
 import { AuthProvider } from '@bymax-one/nest-auth/react'
+import { createAuthClient } from '@bymax-one/nest-auth/client'
 
-export function App({ children }) {
-  return <AuthProvider apiUrl="https://api.example.com/auth">{children}</AuthProvider>
+const authClient = createAuthClient({
+  // Same-origin calls go through the Next.js proxy routes under
+  // `/api/auth/*`. Set `baseUrl` only when calling a cross-origin API.
+})
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <AuthProvider client={authClient} onSessionExpired={() => (location.href = '/login')}>
+      {children}
+    </AuthProvider>
+  )
 }
+```
 
-// profile.tsx
-import { useSession, useAuth } from '@bymax-one/nest-auth/react'
+```tsx
+// app/(dashboard)/profile.tsx
+'use client'
+import { useAuth, useSession } from '@bymax-one/nest-auth/react'
 
 export function Profile() {
   const { user, status } = useSession()
   const { logout } = useAuth()
 
-  if (status === 'loading') return <div>Loading...</div>
+  if (status === 'loading') return <div>Loading…</div>
   if (status === 'unauthenticated') return <div>Please log in</div>
 
   return (
     <div>
       <p>Welcome, {user.name}!</p>
-      <button onClick={logout}>Sign out</button>
+      <button onClick={() => logout()}>Sign out</button>
     </div>
   )
 }
@@ -481,14 +499,44 @@ export function Profile() {
 
 ### 7. Frontend Integration (Next.js 16)
 
+Mount the Edge-Runtime auth proxy at the project root and expose the
+three `/api/auth/*` route handlers. The proxy handles anti-redirect-
+loop protection, RBAC, status blocking, and background-request
+detection; the route handlers bridge the browser to your NestJS
+backend.
+
 ```typescript
-// proxy.ts (Next.js 16 — formerly middleware.ts)
+// proxy.ts — Next.js 16 Edge middleware
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 
-export const { proxy, config } = createAuthProxy({
-  backendUrl: process.env.BACKEND_URL!,
-  publicRoutes: ['/', '/login', '/register']
+export const { proxy } = createAuthProxy({
+  publicRoutes: ['/', '/auth/login', '/auth/register'],
+  publicRoutesRedirectIfAuthenticated: ['/auth/login', '/auth/register'],
+  protectedRoutes: [
+    { pattern: '/dashboard/:path*', allowedRoles: ['admin', 'member'] },
+    { pattern: '/admin/:path*', allowedRoles: ['admin'] }
+  ],
+  loginPath: '/auth/login',
+  getDefaultDashboard: (role) => (role === 'admin' ? '/dashboard/admin' : '/dashboard'),
+  apiBase: process.env.API_BASE_URL!,
+  jwtSecret: process.env.JWT_SECRET,
+  cookieNames: {
+    access: 'access_token',
+    refresh: 'refresh_token',
+    hasSession: 'has_session'
+  },
+  userHeaders: {
+    userId: 'x-user-id',
+    role: 'x-user-role',
+    tenantId: 'x-tenant-id',
+    tenantDomain: 'x-tenant-domain'
+  },
+  blockedUserStatuses: ['BANNED', 'INACTIVE', 'EXPIRED']
 })
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)']
+}
 ```
 
 ```typescript
@@ -496,7 +544,36 @@ export const { proxy, config } = createAuthProxy({
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 
 export const GET = createSilentRefreshHandler({
-  backendUrl: process.env.BACKEND_URL!
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login',
+  cookieNames: {
+    access: 'access_token',
+    refresh: 'refresh_token',
+    hasSession: 'has_session'
+  }
+})
+```
+
+```typescript
+// app/api/auth/client-refresh/route.ts
+import { createClientRefreshHandler } from '@bymax-one/nest-auth/nextjs'
+
+export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_URL! })
+```
+
+```typescript
+// app/api/auth/logout/route.ts
+import { createLogoutHandler } from '@bymax-one/nest-auth/nextjs'
+
+export const POST = createLogoutHandler({
+  apiBase: process.env.API_BASE_URL!,
+  mode: 'redirect',
+  loginPath: '/auth/login',
+  cookieNames: {
+    access: 'access_token',
+    refresh: 'refresh_token',
+    hasSession: 'has_session'
+  }
 })
 ```
 
