@@ -38,10 +38,10 @@
 | Fase 4 — Sessoes e Reset de Senha           | 17      | 0       | 17     | 100%      |
 | Fase 5 — Plataforma, OAuth e Convites       | 25      | 0       | 25     | 100%      |
 | Fase 6 — Integracao, Polimento e Publicacao | 30      | 0       | 30     | 100%      |
-| Fase 7 — Shared + Client Subpath            | 9       | 9       | 0      | 0%        |
+| Fase 7 — Shared + Client Subpath            | 9       | 0       | 9      | 100%      |
 | Fase 8 — React Subpath                      | 8       | 8       | 0      | 0%        |
 | Fase 9 — Next.js Subpath                    | 17      | 17      | 0      | 0%        |
-| **TOTAL**                                   | **185** | **59**  | **126**| **68%**   |
+| **TOTAL**                                   | **185** | **50**  | **135**| **73%**   |
 
 ---
 
@@ -3675,7 +3675,7 @@
 ### NEST-152: Shared types - AuthUserClient, AuthResult, AuthErrorResponse
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-151
 - **Agente:** typescript-reviewer
@@ -3706,7 +3706,7 @@
 ### NEST-153: Shared constants - cookies, error codes, routes
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-152
 - **Agente:** security-reviewer
@@ -3739,7 +3739,7 @@
 ### NEST-154: Shared barrel export and compilation tests
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-152, NEST-153
 - **Agente:** architect
@@ -3766,7 +3766,7 @@
 ### NEST-155: createAuthFetch - fetch wrapper core
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-154
 - **Agente:** security-reviewer
@@ -3802,7 +3802,7 @@
 ### NEST-156: shouldSkipRefreshOnUrl implementation
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-154
 - **Agente:** code-reviewer
@@ -3837,7 +3837,7 @@
 ### NEST-157: Single-flight refresh dedup
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-155
 - **Agente:** security-reviewer
@@ -3868,7 +3868,7 @@
 ### NEST-158: createAuthClient factory
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-155, NEST-156, NEST-157
 - **Agente:** architect
@@ -3911,7 +3911,7 @@
 ### NEST-159: Client barrel export and tests
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-158
 - **Agente:** code-reviewer
@@ -3941,7 +3941,7 @@
 ### NEST-160: Phase 7 validation
 
 - **Fase:** 7
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-154, NEST-159
 - **Agente:** architect

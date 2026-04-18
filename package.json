@@ -76,7 +76,7 @@
     "test:e2e": "jest --config jest.e2e.config.ts",
     "test:all": "pnpm test && pnpm test:e2e",
     "test:cov:all": "jest --config jest.coverage.config.ts --coverage",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "clean": "rm -rf dist coverage",
     "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "release": "pnpm publish --provenance"

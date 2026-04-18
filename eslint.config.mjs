@@ -168,7 +168,10 @@ export default [
     }
   },
 
-  // Test files — TS parser, Jest globals, relaxed rules
+  // Test files — TS parser, Jest + Node + browser globals, relaxed rules.
+  // Browser globals are included because the client/react/nextjs subpaths
+  // exercise DOM types (Response, fetch, Headers, AbortController) under
+  // test, and the no-undef rule cannot resolve them otherwise.
   {
     files: ['**/*.spec.ts', '**/*.spec.tsx', '**/*.test.ts'],
     languageOptions: {
@@ -179,7 +182,8 @@ export default [
       },
       globals: {
         ...globals.jest,
-        ...globals.node
+        ...globals.node,
+        ...globals.browser
       }
     },
     rules: {
@@ -188,6 +192,10 @@ export default [
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
       'no-unused-vars': 'off',
+      // TypeScript type names (RequestInit, Response, etc.) are erased at
+      // compile time but flagged by the lint-only `no-undef` rule.
+      // Disabling it is consistent with the production-files block above.
+      'no-undef': 'off',
       'no-console': 'off',
       // Warn (not error) on banned imports in tests — normalizing bad patterns is still undesirable
       'no-restricted-imports': [

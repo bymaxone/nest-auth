@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(Future changes will be listed here.)
+### Added
+
+**Client subpath (`@bymax-one/nest-auth/client`)**
+- `createAuthFetch(config)` — fetch wrapper with cookie-mode defaults, single-flight 401 refresh interception, per-instance dedup, configurable timeout (`AbortController`-based), prototype-pollution-safe header merging, and `routePrefix` option for deployments mounted under non-default prefixes
+- `createAuthClient(config)` — typed `AuthClient` facade with `login`, `register`, `logout`, `refresh`, `getMe`, `mfaChallenge`, `forgotPassword`, and `resetPassword` methods; composes on top of `createAuthFetch` and supports a pre-built `authFetch` override for sharing dedup state across clients
+- `AuthFetch`, `AuthFetchConfig`, `AuthClient`, `AuthClientConfig`, `LoginInput`, `RegisterInput`, `ResetPasswordInput` types exported from the subpath barrel
+
+**Shared subpath (`@bymax-one/nest-auth/shared`)**
+- `buildAuthRefreshSkipSuffixes(routePrefix?)` — factory producing the pathname-suffix skip list used by the client's 401 refresh interception, parameterized by the NestJS `routePrefix`; backwards-compat `AUTH_REFRESH_SKIP_PATH_SUFFIXES` retained for the default `'auth'` prefix
+- `AuthResponseCode` type — `AuthErrorCode | (string & {})` union so consumers get autocomplete on known codes while preserving flexibility for non-auth Nest exceptions (e.g. `ValidationPipe` 400s)
+
+### Changed
+
+- `AuthErrorResponse.code` and `AuthClientError.code` retyped from plain `string` to `AuthResponseCode`, enabling exhaustive narrowing on `AUTH_ERROR_CODES` values at consumer call sites
+- `parseJsonOrThrow` inside `createAuthClient` now throws `AuthClientError` on an empty 2xx body instead of silently returning `undefined` cast as `T`; void endpoints continue to route through `expectNoContent`
+- `AuthResult.accessToken` and `PlatformAuthResult.accessToken` JSDoc now carries a `@warning` block explicitly forbidding persistent storage (`localStorage`, `sessionStorage`, `IndexedDB`) in bearer mode — consumers must hold the token in memory only
+- `AuthFetch` JSDoc now documents that `Request` objects carrying stream bodies are unsupported when a refresh-retry may occur (the retry would fail with `body already used`)
+- `onSessionExpired` callback errors are now surfaced via `console.warn` instead of being silently swallowed, aiding consumer debugging without breaking the fetch contract
+
+### Security
+
+- Split `tsconfig.json` into a root config (used for editors, client, react, nextjs) and a dedicated `tsconfig.server.json` (lib `ES2022` only, no `DOM`) so server-side code cannot silently typecheck against browser globals like `window`, `document`, or `localStorage`; `pnpm typecheck` now runs both configs
+
+### Tests
+
+- New `createAuthFetch.spec.ts` and `createAuthClient.spec.ts` covering refresh interception, timeout, header merge, prototype-pollution guards, MFA handshake, error body parsing, and retry semantics
+- New `routes.spec.ts` giving `buildAuthRefreshSkipSuffixes` 100% statement/branch/function coverage (default prefix, custom prefix, slash normalization, empty-prefix branch, unprefixed proxy routes)
+- New `barrel.spec.ts` asserting the `shared` subpath public surface
+- Existing `error-codes.spec.ts` drift guard between `server` and `shared` `AUTH_ERROR_CODES`
 
 ## [1.0.0] - 2026-04-16
 
