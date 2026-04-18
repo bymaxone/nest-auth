@@ -1,10 +1,14 @@
 name: CI
 
+# Manual-only trigger while repo secrets and npm/GitHub settings are still being
+# configured. To re-enable automatic CI, restore the `push` / `pull_request`
+# blocks below.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 # Cancel in-progress runs for the same ref when a new commit is pushed.
 concurrency:

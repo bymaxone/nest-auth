@@ -1,9 +1,13 @@
 name: Release
 
+# Manual-only trigger while `NPM_TOKEN` is still being configured in
+# GitHub Secrets. To re-enable tag-driven releases, restore the `push.tags`
+# block below.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_dispatch:
+  # push:
+  #   tags:
+  #     - 'v*.*.*'
 
 # A release is a destructive, shared-state operation — only one at a time.
 concurrency:
