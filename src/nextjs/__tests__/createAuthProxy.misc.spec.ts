@@ -132,6 +132,45 @@ describe('createAuthProxy — decode-only mode warning', () => {
       warnSpy.mockRestore()
     }
   })
+
+  // Production hard-fail: the proxy must throw — not warn — when NODE_ENV=production
+  // and jwtSecret is absent. Silent decode-only mode in production is almost always
+  // an unintended deployment misconfiguration (missing env var) that would let
+  // crafted tokens impersonate any role, so the factory refuses to construct.
+  it('throws when NODE_ENV=production and jwtSecret is absent', () => {
+    const originalNodeEnv = process.env['NODE_ENV']
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      process.env['NODE_ENV'] = 'production'
+      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
+      void _secret
+      expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required in production/)
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = originalNodeEnv
+      }
+      warnSpy.mockRestore()
+    }
+  })
+
+  // Production with a valid jwtSecret remains accepted — the guard must not trigger
+  // false positives on well-configured deployments.
+  it('accepts a configured jwtSecret in production', () => {
+    const originalNodeEnv = process.env['NODE_ENV']
+    try {
+      process.env['NODE_ENV'] = 'production'
+      expect(() => createAuthProxy(DEFAULT_PROXY_CONFIG)).not.toThrow()
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = originalNodeEnv
+      }
+    }
+  })
 })
 
 describe('createAuthProxy — classifier branches', () => {

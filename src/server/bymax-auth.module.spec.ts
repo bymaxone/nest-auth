@@ -285,6 +285,21 @@ describe('BymaxAuthModule', () => {
       ).toThrow(/BYMAX_AUTH_USER_REPOSITORY is required/)
     })
 
+    // Verifies that omitting BYMAX_AUTH_REDIS_CLIENT produces a matching descriptive
+    // startup error. The user-repository guard fires first; this test proves that
+    // the Redis-client guard also fires when the repository is present.
+    it('should throw a descriptive startup error when BYMAX_AUTH_REDIS_CLIENT is missing', () => {
+      expect(() =>
+        BymaxAuthModule.registerAsync({
+          useFactory: () => validOptions,
+          extraProviders: [
+            { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+            // BYMAX_AUTH_REDIS_CLIENT intentionally omitted
+          ]
+        })
+      ).toThrow(/BYMAX_AUTH_REDIS_CLIENT is required/)
+    })
+
     // Verifies that NoOpEmailProvider is registered as the fallback when no email provider is given.
     it('should use NoOpEmailProvider when no email provider is given', async () => {
       const module = await Test.createTestingModule({

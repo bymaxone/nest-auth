@@ -14,7 +14,7 @@
  * stable constants exported from `@bymax-one/nest-auth/shared`.
  */
 
-import { AUTH_PROXY_ROUTES, buildAuthRefreshSkipSuffixes } from '../shared'
+import { AUTH_PROXY_ROUTES, buildAuthRefreshSkipSuffixes } from '@bymax-one/nest-auth/shared'
 
 /**
  * Configuration options for {@link createAuthFetch}.

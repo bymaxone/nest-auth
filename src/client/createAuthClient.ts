@@ -18,7 +18,8 @@ import {
   type LoginResult,
   type MfaChallengeResult,
   type AuthResult
-} from '../shared'
+} from '@bymax-one/nest-auth/shared'
+
 import { type AuthFetch, type AuthFetchConfig, createAuthFetch } from './createAuthFetch'
 
 /**

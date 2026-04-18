@@ -40,7 +40,7 @@ import { PasswordResetService } from '../services/password-reset.service'
  */
 @Public()
 @Controller('password')
-@UsePipes(new ValidationPipe({ whitelist: true }))
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class PasswordResetController {
   constructor(private readonly passwordResetService: PasswordResetService) {}
 

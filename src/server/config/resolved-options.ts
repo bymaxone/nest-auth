@@ -6,8 +6,17 @@
  * fast rather than silently using weak settings.
  */
 
+import { createHash } from 'node:crypto'
+
 import { DEFAULT_OPTIONS } from './default-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+
+/**
+ * Domain-separation label for the HMAC key derivation. Changing this value is
+ * a breaking change — it invalidates every existing Redis identifier keyed by
+ * `hmacKey` across a deployment.
+ */
+const HMAC_KEY_DERIVATION_LABEL = 'bymax-auth:hmac-key:v1'
 
 // ---------------------------------------------------------------------------
 // ResolvedOptions — BymaxAuthModuleOptions with all defaults applied
@@ -64,6 +73,17 @@ export type ResolvedOptions = Omit<
   userStatusCacheTtlSeconds: number
   /** `true` if auth cookies should carry the `Secure` flag. */
   secureCookies: boolean
+  /**
+   * Server-side HMAC key derived from `jwt.secret` at startup and used to
+   * compute Redis identifier hashes (brute-force, OTP, MFA setup, anti-replay).
+   *
+   * Key-separation: this value is distinct from `jwt.secret` so that HMAC
+   * operations do not share a key with JWT signing. The derivation uses
+   * SHA-256 with a fixed domain-separation label, so rotating `jwt.secret`
+   * automatically rotates the HMAC key while keeping the two concerns
+   * cryptographically independent.
+   */
+  hmacKey: string
   /** When provided, all sub-fields are resolved with defaults applied. */
   mfa?: Required<NonNullable<BymaxAuthModuleOptions['mfa']>>
 }
@@ -71,6 +91,20 @@ export type ResolvedOptions = Omit<
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Derives the HMAC key used for Redis identifier hashing from the JWT secret.
+ *
+ * Key-separation rationale: using the JWT signing secret directly as an HMAC
+ * key creates a coupling where a compromise of one security domain leaks the
+ * other. The derivation is deterministic (no stored state, no extra config)
+ * and cryptographically independent from the signing operation.
+ */
+function deriveHmacKey(jwtSecret: string): string {
+  return createHash('sha256')
+    .update(`${HMAC_KEY_DERIVATION_LABEL}:${jwtSecret}`, 'utf8')
+    .digest('hex')
+}
 
 /**
  * Computes the Shannon entropy of a string in bits per character.
@@ -192,6 +226,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     // Evaluated once at startup — not re-evaluated per request.
     secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
+
+    hmacKey: deriveHmacKey(userOptions.jwt.secret),
 
     ...(userOptions.mfa !== undefined && {
       mfa: { ...DEFAULT_OPTIONS.mfa, ...userOptions.mfa } as Required<
@@ -373,10 +409,11 @@ const REQUIRED_OAUTH_FIELDS = ['clientId', 'clientSecret', 'callbackUrl'] as con
 function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
   if (!oauth) return
 
-  for (const [provider, config] of Object.entries(oauth) as [
-    string,
-    Record<string, string | string[] | undefined>
-  ][]) {
+  for (const [provider, rawConfig] of Object.entries(oauth)) {
+    // Treat the provider config as a string-keyed record only for field-level
+    // access; the public type is preserved elsewhere in ResolvedOptions.
+    const config = rawConfig as Record<string, unknown>
+
     for (const field of REQUIRED_OAUTH_FIELDS) {
       // eslint-disable-next-line security/detect-object-injection -- field is from a const tuple
       if (!config[field]) {

@@ -24,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **React subpath (`@bymax-one/nest-auth/react`)**
 - `AuthProvider({ client, onSessionExpired?, revalidateInterval? })` — React 19 provider that owns the `loading → authenticated / unauthenticated` state machine, bridges a `createAuthClient` instance into the auth context, and schedules a best-effort revalidation loop (default 5 minutes) so long-lived UIs surface role/status changes without a manual refresh. `onSessionExpired` fires only on a live `authenticated → unauthenticated` transition (not on initial mount or explicit logout).
-- `useAuth()` — imperative API: `login`, `register`, `logout`, `mfaChallenge`, `forgotPassword`, `resetPassword`, and `revalidate` bound to the provider's client with stable identity.
-- `useSession()` — reactive snapshot: `{ user, status, lastValidation }` read from context.
+- `useAuth()` — imperative API: `login`, `register`, `logout`, `forgotPassword`, and `resetPassword`, bound to the provider's client with stable identity. The MFA challenge is exposed through `AuthClient.mfaChallenge()`; session revalidation is exposed through `useSession().refresh()`.
+- `useSession()` — reactive snapshot: `{ user, status, isLoading, refresh, lastValidation }` read from context (the `refresh` method triggers an ad-hoc revalidation).
 - `useAuthStatus()` — lightweight selector returning just the `AuthStatus` string for components that only need to branch on it.
 - `AuthContext`, `AuthContextValue`, `AuthStatus`, `AuthProviderProps` types exported from the subpath barrel.
 

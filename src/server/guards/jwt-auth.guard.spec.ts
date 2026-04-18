@@ -14,7 +14,7 @@ import { JwtAuthGuard } from './jwt-auth.guard'
 // ---------------------------------------------------------------------------
 
 const VALID_PAYLOAD = {
-  jti: 'some-jti-uuid',
+  jti: '11111111-2222-4333-8444-555555555555',
   sub: 'user-1',
   tenantId: 'tenant-1',
   role: 'member',
@@ -189,8 +189,10 @@ describe('JwtAuthGuard', () => {
 
   describe('revocation check', () => {
     // Verifies that a token whose jti appears in the Redis revocation blacklist is rejected
-    // with the specific TOKEN_REVOKED error code (not TOKEN_INVALID).
-    it('should throw TOKEN_REVOKED when jti is in the blacklist', async () => {
+    // with TOKEN_INVALID. TOKEN_REVOKED is kept off the wire so HTTP clients cannot
+    // use the response code to distinguish "token was valid but logged out" from
+    // "token was malformed" — that distinction is logged server-side only.
+    it('should throw TOKEN_INVALID when jti is in the blacklist', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
       mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
       mockRedis.get.mockResolvedValue('1') // blacklisted
@@ -204,7 +206,7 @@ describe('JwtAuthGuard', () => {
       }
       expect(caught).toBeInstanceOf(AuthException)
       expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
-        AUTH_ERROR_CODES.TOKEN_REVOKED
+        AUTH_ERROR_CODES.TOKEN_INVALID
       )
     })
 

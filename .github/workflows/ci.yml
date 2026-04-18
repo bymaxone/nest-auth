@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref when a new commit is pushed.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (typecheck · lint · test · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24.x]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+          run_install: false
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit + E2E tests with coverage (100% enforced)
+        run: pnpm test:cov:all
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node-${{ matrix.node-version }}
+          path: coverage/
+          retention-days: 14
+
+      - name: Build all subpaths
+        run: pnpm build
+
+      - name: Verify build output integrity
+        # Confirms every declared subpath produced both ESM and CJS bundles
+        # plus type declarations. A missing artifact here indicates a tsup
+        # misconfiguration that would ship a broken package to npm.
+        run: |
+          for subpath in server shared client react nextjs; do
+            for ext in mjs cjs d.ts d.cts; do
+              if [ ! -f "dist/$subpath/index.$ext" ]; then
+                echo "Missing dist/$subpath/index.$ext"
+                exit 1
+              fi
+            done
+          done
+          echo "All 5 subpaths produced ESM + CJS + .d.ts + .d.cts"

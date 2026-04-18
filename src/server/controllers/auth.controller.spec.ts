@@ -297,22 +297,16 @@ describe('AuthController', () => {
     const body = {
       tenantId: 'tenant-1',
       email: 'user@example.com',
-      userId: 'user-1',
       otp: '123456'
     }
 
-    // Verifies that verifyEmail delegates to authService with all required fields.
-    it('should call verifyEmail with all required fields', async () => {
+    // Verifies that verifyEmail delegates to authService with (tenantId, email, otp) only.
+    it('should call verifyEmail without accepting a client-supplied userId', async () => {
       mockAuthService.verifyEmail.mockResolvedValue(undefined)
 
       await controller.verifyEmail(body as never)
 
-      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(
-        body.tenantId,
-        body.email,
-        body.userId,
-        body.otp
-      )
+      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(body.tenantId, body.email, body.otp)
     })
 
     // Verifies that OTP validation errors from the service are propagated to the caller.

@@ -15,8 +15,9 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
 
-import type { AuthClient, RegisterInput, ResetPasswordInput } from '../client'
-import { AuthClientError, type AuthUserClient, type LoginResult } from '../shared'
+import type { AuthClient, RegisterInput, ResetPasswordInput } from '@bymax-one/nest-auth/client'
+import { AuthClientError, type AuthUserClient, type LoginResult } from '@bymax-one/nest-auth/shared'
+
 import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 
 /**

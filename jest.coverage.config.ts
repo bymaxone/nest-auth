@@ -22,6 +22,17 @@ const config: Config = {
     '<rootDir>/test/e2e/**/*.e2e-spec.ts'
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
+  // Mirror the subpath aliases declared in tsconfig.json "paths" so tests and
+  // production code resolve the same module instance — a dual-package hazard
+  // would make `instanceof AuthClientError` return false across subpath
+  // boundaries.
+  moduleNameMapper: {
+    '^@bymax-one/nest-auth$': '<rootDir>/src/server/index.ts',
+    '^@bymax-one/nest-auth/shared$': '<rootDir>/src/shared/index.ts',
+    '^@bymax-one/nest-auth/client$': '<rootDir>/src/client/index.ts',
+    '^@bymax-one/nest-auth/react$': '<rootDir>/src/react/index.ts',
+    '^@bymax-one/nest-auth/nextjs$': '<rootDir>/src/nextjs/index.ts'
+  },
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',

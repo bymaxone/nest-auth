@@ -12,7 +12,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
-import { assertTokenType } from './utils/assert-token-type'
+import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -70,18 +70,26 @@ export class JwtAuthGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // Require jti string — needed for revocation checks.
-    if (typeof payload.jti !== 'string') {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
+    // Require jti as a well-formed UUID v4 — used for revocation checks (`rv:{jti}`)
+    // and session tracking. Rejecting malformed shapes keeps the Redis key space
+    // uniform and matches the symmetric check performed by JwtPlatformGuard.
+    assertValidJti(payload.jti)
+
+    // Require sub as a bounded non-empty string — used downstream in Redis keys
+    // (`us:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting empty
+    // and pathological shapes keeps the key space well-formed.
+    assertValidSub(payload.sub)
 
     // Reject platform tokens and MFA challenge tokens in dashboard context.
     assertTokenType(payload, 'dashboard')
 
-    // Revocation check: rv:{jti} is set on logout with remaining TTL.
+    // Revocation check: rv:{jti} is set on logout with remaining TTL. A hit is
+    // surfaced to callers as TOKEN_INVALID — exposing TOKEN_REVOKED would let an
+    // HTTP client distinguish "token was valid but logged out" from "token was
+    // malformed", which is a small but unnecessary information oracle.
     const revoked = await this.redis.get(`rv:${payload.jti}`)
     if (revoked !== null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_REVOKED)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     request.user = payload

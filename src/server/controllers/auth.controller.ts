@@ -12,7 +12,6 @@ import {
   ValidationPipe
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator'
 import type { Request, Response } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
@@ -20,6 +19,8 @@ import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { LoginDto } from '../dto/login.dto'
 import { RegisterDto } from '../dto/register.dto'
+import { ResendVerificationDto } from '../dto/resend-verification.dto'
+import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -32,29 +33,15 @@ import type {
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 
-// ---------------------------------------------------------------------------
-// Inline request body DTOs — scoped to auth endpoints that do not have standalone DTO files
-// ---------------------------------------------------------------------------
-
-class VerifyEmailBody {
-  @IsString() @IsNotEmpty() tenantId!: string
-
-  @IsEmail() email!: string
-
-  /**
-   * User ID from the verification link sent by email.
-   * The OTP is the primary security mechanism — the userId is used only after
-   * the OTP is validated, so spoofing this field without the correct OTP has no effect.
-   */
-  @IsString() @IsNotEmpty() userId!: string
-
-  @IsString() @IsNotEmpty() otp!: string
-}
-
-class ResendVerificationBody {
-  @IsString() @IsNotEmpty() tenantId!: string
-
-  @IsEmail() email!: string
+/**
+ * Narrows `AuthResult | MfaChallengeResult` to `MfaChallengeResult` using the
+ * literal `mfaRequired: true` discriminant. Extracted as a named type guard so
+ * the compiler narrows the `else` branch to `AuthResult` without resorting to a
+ * raw `as AuthResult` cast — `in` alone does not fully eliminate the MFA arm
+ * under the union's structural overlap.
+ */
+function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaChallengeResult {
+  return 'mfaRequired' in result && result.mfaRequired === true
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +59,7 @@ class ResendVerificationBody {
  * NestJS global prefix — this controller uses no explicit path prefix.
  */
 @Controller()
-@UsePipes(new ValidationPipe({ whitelist: true }))
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
@@ -119,11 +106,11 @@ export class AuthController {
     const result = await this.authService.login(dto, req)
 
     // Discriminate MFA challenge via the literal boolean `mfaRequired` field.
-    if ('mfaRequired' in result && result.mfaRequired) {
+    if (isMfaChallenge(result)) {
       return result
     }
 
-    return this.tokenDelivery.deliverAuthResponse(res, result as AuthResult, req)
+    return this.tokenDelivery.deliverAuthResponse(res, result, req)
   }
 
   /**
@@ -194,14 +181,16 @@ export class AuthController {
   /**
    * Verifies the user's email address using a one-time password.
    *
-   * @param body - Verification payload: tenantId, email, userId, and OTP.
+   * @param dto - Verification payload: tenantId, email, and OTP. The user is
+   *   resolved server-side from `(tenantId, email)` — no userId is accepted
+   *   from the caller.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.verifyEmail)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-email')
-  async verifyEmail(@Body() body: VerifyEmailBody): Promise<void> {
-    await this.authService.verifyEmail(body.tenantId, body.email, body.userId, body.otp)
+  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
+    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp)
   }
 
   /**
@@ -209,13 +198,13 @@ export class AuthController {
    *
    * Always returns 204 — the response never reveals whether the email exists.
    *
-   * @param body - Payload: tenantId and email.
+   * @param dto - Payload: tenantId and email.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.resendVerification)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('resend-verification')
-  async resendVerification(@Body() body: ResendVerificationBody): Promise<void> {
-    await this.authService.resendVerificationEmail(body.tenantId, body.email)
+  async resendVerification(@Body() dto: ResendVerificationDto): Promise<void> {
+    await this.authService.resendVerificationEmail(dto.tenantId, dto.email)
   }
 }

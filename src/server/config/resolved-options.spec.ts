@@ -4,6 +4,8 @@
  * Covers success paths, every validation error branch, and the new refreshGraceWindow check.
  */
 
+import { createHash } from 'node:crypto'
+
 import type { Request } from 'express'
 
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
@@ -127,6 +129,30 @@ describe('resolveOptions — success', () => {
   it('should apply default userStatusCacheTtlSeconds', () => {
     const resolved = resolveOptions(MINIMAL_OPTIONS)
     expect(resolved.userStatusCacheTtlSeconds).toBe(60)
+  })
+
+  // Verifies that `hmacKey` is a deterministic 64-char hex SHA-256 digest derived
+  // from the JWT secret and a fixed domain-separation label, so HMAC operations
+  // never share a key with JWT signing.
+  it('should derive hmacKey as sha256("bymax-auth:hmac-key:v1:" + jwt.secret)', () => {
+    const expected = createHash('sha256')
+      .update(`bymax-auth:hmac-key:v1:${VALID_SECRET}`, 'utf8')
+      .digest('hex')
+    const resolved = resolveOptions(MINIMAL_OPTIONS)
+    expect(resolved.hmacKey).toBe(expected)
+    expect(resolved.hmacKey).not.toBe(VALID_SECRET)
+    expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  // Verifies that changing the JWT secret produces a different hmacKey (deterministic
+  // derivation, not a constant), confirming key separation works per deployment.
+  it('should produce distinct hmacKey values for distinct JWT secrets', () => {
+    const resolvedA = resolveOptions(MINIMAL_OPTIONS)
+    const resolvedB = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: makeTestableHighEntropyString(64) }
+    })
+    expect(resolvedA.hmacKey).not.toBe(resolvedB.hmacKey)
   })
 
   // Verifies that explicitly setting algorithm to HS256 does not throw.

@@ -24,20 +24,26 @@ export class MfaChallengeDto {
   mfaTempToken!: string
 
   /**
-   * Either a 6-digit TOTP code or a recovery code in `xxxx-xxxx-xxxx` format.
+   * Either a 6-digit TOTP code or a 24-hex-char recovery code in
+   * `XXXX-XXXX-XXXX-XXXX-XXXX-XXXX` format (96 bits of entropy).
    *
    * Accepted formats:
    * - TOTP: exactly 6 decimal digits (e.g. `"123456"`)
-   * - Recovery code: three 4-digit groups separated by hyphens (e.g. `"1234-5678-9012"`)
+   * - Recovery code: six 4-hex-char groups separated by hyphens
+   *   (e.g. `"A1B2-C3D4-E5F6-0789-ABCD-EF01"`)
    *
    * The service layer determines the code type from the format. Non-matching
    * strings are rejected at the DTO layer before any service logic runs.
    */
-  @Matches(/^(\d{6}|\d{4}-\d{4}-\d{4})$/, {
-    message: 'code must be a 6-digit TOTP code or a recovery code in xxxx-xxxx-xxxx format'
-  })
+  @Matches(
+    /^(\d{6}|[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})$/,
+    {
+      message:
+        'code must be a 6-digit TOTP code or a recovery code in XXXX-XXXX-XXXX-XXXX-XXXX-XXXX format'
+    }
+  )
   @IsString()
   @IsNotEmpty()
-  @MaxLength(14)
+  @MaxLength(29)
   code!: string
 }

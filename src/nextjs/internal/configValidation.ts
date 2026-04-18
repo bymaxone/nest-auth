@@ -92,20 +92,39 @@ export function resolveConfig(config: AuthProxyConfig): ResolvedAuthProxyConfig 
 }
 
 /**
- * Emit a warning when the proxy is configured without a `jwtSecret`.
+ * Enforce the trust-boundary choice for the proxy's `jwtSecret`.
  *
- * In that mode `readTokenState` uses `decodeJwtToken`, which
- * performs NO signature verification — the JWT is trusted on expiry
- * alone. That is only safe when the upstream gateway verifies
- * signatures BEFORE requests reach the server components that read
- * the injected identity headers.
+ * When `jwtSecret` is absent, `readTokenState` falls back to
+ * `decodeJwtToken`, which performs NO signature verification — the
+ * JWT is trusted on expiry alone. Every RBAC and status-blocking
+ * decision then trusts the raw token contents, and an attacker with
+ * a crafted token carrying a future `exp` can impersonate any role.
  *
- * The warning is a best-effort side effect; we guard against
- * environments that do not expose `console` (some minimal Edge
- * sandboxes) so the factory never throws because of telemetry.
+ * **Production behaviour** (`NODE_ENV === 'production'`): absence of
+ * `jwtSecret` is a hard error. Silent decode-only mode in production
+ * is almost always unintended and an easy deployment mistake (e.g. a
+ * missing env var), so the factory refuses to construct.
+ *
+ * **Non-production behaviour**: warn via `console.warn` so local
+ * development and preview environments continue to work while the
+ * decision is still visible to the developer. The warning is a
+ * best-effort side effect; we guard against environments that do not
+ * expose `console` (some minimal Edge sandboxes) so the factory
+ * never throws because of telemetry alone.
  */
 export function warnOnInsecureConfiguration(config: ResolvedAuthProxyConfig): void {
   if (config.jwtSecret !== undefined && config.jwtSecret.length > 0) return
+
+  if (isProductionEnv()) {
+    throw new Error(
+      'createAuthProxy: jwtSecret is required in production. ' +
+        'Without it the proxy runs in decode-only mode where RBAC and status-blocking ' +
+        'trust unverified tokens — a crafted token with a future `exp` can impersonate ' +
+        'any role. Provide `jwtSecret` or move signature verification to an upstream ' +
+        'gateway and explicitly opt out by running outside of a production environment.'
+    )
+  }
+
   /* istanbul ignore next -- defensive guard for minimal Edge sandboxes without a `console`; unreachable under jsdom/node */
   if (typeof console === 'undefined' || typeof console.warn !== 'function') return
 
@@ -115,6 +134,16 @@ export function warnOnInsecureConfiguration(config: ResolvedAuthProxyConfig): vo
       'Every RBAC and status-blocking decision trusts the raw token contents, ' +
       'and forged tokens with a future `exp` can impersonate any role. ' +
       'Ensure an upstream gateway verifies signatures before requests reach downstream ' +
-      'server components that read the injected identity headers.'
+      'server components that read the injected identity headers. ' +
+      'In production this condition throws instead of warning.'
   )
+}
+
+/**
+ * Returns `true` when the current process is running in a production
+ * environment. Read once per call rather than captured at module load
+ * so tests can toggle `process.env['NODE_ENV']` per case.
+ */
+function isProductionEnv(): boolean {
+  return process.env['NODE_ENV'] === 'production'
 }

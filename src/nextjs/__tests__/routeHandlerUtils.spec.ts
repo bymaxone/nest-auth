@@ -20,13 +20,14 @@ import {
 } from '../helpers/routeHandlerUtils'
 
 describe('serializeClearCookie', () => {
-  // Canonical cookie-clear shape. The `Max-Age=0` is what actually
-  // expires the cookie; `HttpOnly`/`Secure`/`SameSite=Lax` are
-  // reapplied because browsers reject overwrites whose security
-  // attributes are weaker than the original cookie's.
-  it('produces a Max-Age=0 string with HttpOnly/Secure/SameSite=Lax', () => {
+  // Canonical cookie-clear shape. The `Max-Age=0` is what actually expires the
+  // cookie; `HttpOnly`/`Secure`/`SameSite=Strict` are reapplied so the overwrite
+  // matches the attributes the NestJS server originally set — RFC 6265bis
+  // requires the clear's `SameSite` to be at least as strict as the original
+  // or the browser may drop the overwrite and leave a stale cookie behind.
+  it('produces a Max-Age=0 string with HttpOnly/Secure/SameSite=Strict', () => {
     expect(serializeClearCookie('access_token', '/')).toBe(
-      'access_token=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
+      'access_token=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict'
     )
   })
 

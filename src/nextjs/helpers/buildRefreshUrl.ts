@@ -12,8 +12,9 @@
  *   - the factory-time validation rules for `apiBase`.
  */
 
+import { AUTH_DASHBOARD_ROUTES } from '@bymax-one/nest-auth/shared'
+
 import { isSafeUpstreamPath, trimTrailingSlash } from './routeHandlerUtils'
-import { AUTH_DASHBOARD_ROUTES } from '../../shared'
 
 /** Default upstream refresh pathname, matching the NestJS module defaults. */
 export const DEFAULT_REFRESH_PATH = `/auth/${AUTH_DASHBOARD_ROUTES.refresh}`

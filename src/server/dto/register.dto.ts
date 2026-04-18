@@ -9,9 +9,12 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-valid
 export class RegisterDto {
   /**
    * User's primary email address.
-   * Must be a valid RFC 5321 email format.
+   * Must be a valid RFC 5321 email format. Bounded to 255 characters — the
+   * RFC-recommended practical maximum for addr-spec — matching the limit on
+   * every other email-accepting DTO in the library.
    */
   @IsEmail()
+  @MaxLength(255)
   email!: string
 
   /**
@@ -29,17 +32,20 @@ export class RegisterDto {
 
   /**
    * User's display name.
-   * Must be at least 2 characters to prevent single-character placeholders.
+   * At least 2 characters (prevents single-character placeholders); capped at
+   * 128 characters so an unbounded string cannot inflate DB columns or logs.
    */
   @IsString()
   @MinLength(2)
+  @MaxLength(128)
   name!: string
 
   /**
    * Tenant identifier that scopes the new user to a specific organization.
-   * Must be a non-empty string.
+   * Bounded to 128 characters — part of HMAC pre-images and Redis keys.
    */
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   tenantId!: string
 }

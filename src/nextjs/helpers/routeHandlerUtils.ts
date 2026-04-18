@@ -12,10 +12,11 @@
  * Build a `Set-Cookie` string that clears a cookie with the given
  * name on the given path.
  *
- * `HttpOnly`, `Secure`, and `SameSite=Lax` are re-applied so the
- * browser accepts the overwrite — browsers require the new cookie's
- * security attributes to match the original before the previous
- * value is dropped.
+ * `HttpOnly`, `Secure`, and `SameSite=Strict` are re-applied to match
+ * the attributes the NestJS server uses when the cookie was originally
+ * set. RFC 6265bis requires the overwrite to carry the same (or
+ * stricter) `SameSite` value, otherwise strict-mode browsers may
+ * silently ignore the clear and leave the cookie alive after logout.
  *
  * PRE-CONDITION: `name` and `path` must have been validated against
  * CR/LF/NUL and other header-smuggling characters via
@@ -24,7 +25,7 @@
  * of its own.
  */
 export function serializeClearCookie(name: string, path: string): string {
-  return `${name}=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+  return `${name}=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
 }
 
 /**

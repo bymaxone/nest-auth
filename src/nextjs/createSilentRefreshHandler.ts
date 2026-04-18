@@ -54,7 +54,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-import { AUTH_PROXY_ROUTES } from '../shared'
+import { AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
+
 import {
   assertValidApiBase,
   assertValidUpstreamPath,

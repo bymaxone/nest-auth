@@ -68,9 +68,11 @@ export const DEFAULT_OPTIONS = {
 
   passwordReset: {
     method: 'token' as const,
-    // 3600 s (1 h) is the conservative upper bound for production.
-    // Security-sensitive deployments should use 600–1800 s (10–30 min) per OWASP guidance.
-    tokenTtlSeconds: 3_600,
+    // 600 s (10 min) aligns with OWASP guidance for time-sensitive credential
+    // recovery tokens. Consumers who need a longer window (e.g. invitation-style
+    // onboarding) can raise this to up to 1800 s (30 min); values beyond that
+    // meaningfully widen the window for stolen-email replay.
+    tokenTtlSeconds: 600,
     otpTtlSeconds: 600,
     otpLength: 6
   },

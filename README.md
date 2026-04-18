@@ -12,6 +12,8 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@bymax-one/nest-auth"><img src="https://img.shields.io/npm/v/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/@bymax-one/nest-auth"><img src="https://img.shields.io/npm/dm/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="npm downloads" /></a>
+  <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bymaxone/nest-auth/ci.yml?branch=main&style=flat-square&colorA=000000&label=CI" alt="CI status" /></a>
+  <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square&colorA=000000" alt="coverage" /></a>
   <a href="https://github.com/bymaxone/nest-auth/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="license" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" /></a>
@@ -588,7 +590,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `algorithm` | `15m`, `7d`, `HS256`      |
 | **password**      | `costFactor`, `blockSize`, `parallelization`                                | scrypt N=2¹⁵, r=8, p=1    |
 | **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                        | `'cookie'`                |
-| **cookies**       | `secure`, `sameSite`, `httpOnly`, `refreshCookiePath`                       | `true`, `'lax'`, `true`   |
+| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `resolveDomains` | — (see cookie section)   |
 | **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                | —                         |
 | **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`  | `false`, `5`, —, `'fifo'` |
 | **bruteForce**    | `maxAttempts`, `windowSeconds`                                              | `5`, `900`                |
@@ -699,7 +701,7 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 | Token Generation  | `crypto.randomBytes(32)` — 256 bits of entropy     |
 | Secret Comparison | `crypto.timingSafeEqual` (constant-time)           |
 | JWT               | HS256 via `@nestjs/jwt`, JTI blacklist via Redis   |
-| Cookies           | HttpOnly, Secure, SameSite=Lax, path-scoped        |
+| Cookies           | HttpOnly, Secure, SameSite=Strict, path-scoped     |
 | Brute-Force       | Redis atomic counters per HMAC(email, jwt.secret)  |
 | CSRF (OAuth)      | 64-char hex state nonce, single-use via `getdel()` |
 
@@ -771,7 +773,7 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | `PlatformRolesGuard` | `@PlatformRoles('super_admin')` | Platform role hierarchy enforcement                         |
 
 > [!NOTE]
-> The source tree contains additional guards (`SelfOrAdminGuard`, `OptionalAuthGuard`, `WsJwtGuard`) that are not yet re-exported from the public `@bymax-one/nest-auth` barrel. They will be added in a follow-up release; until then, only the guards listed above are part of the supported public API.
+> Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above.
 
 ### Server Decorators
 
@@ -785,11 +787,11 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 ### React Hooks
 
-| Hook              | Returns                                               |
-| ----------------- | ----------------------------------------------------- |
-| `useSession()`    | `{ user, status, refresh() }` — current session state |
-| `useAuth()`       | `{ login(), logout(), register() }` — auth actions    |
-| `useAuthStatus()` | `{ isAuthenticated, isLoading }` — derived state      |
+| Hook              | Returns                                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `useSession()`    | `{ user, status, isLoading, refresh(), lastValidation }` — current session state and revalidation helper |
+| `useAuth()`       | `{ login(), logout(), register(), forgotPassword(), resetPassword() }` — auth actions                    |
+| `useAuthStatus()` | `{ isAuthenticated, isLoading }` — derived state                                                         |
 
 ### Next.js Factories
 
@@ -799,6 +801,26 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | `createSilentRefreshHandler()` | GET handler  | iframe-based token refresh      |
 | `createClientRefreshHandler()` | POST handler | Client-triggered token refresh  |
 | `createLogoutHandler()`        | POST handler | Clear tokens and session        |
+
+---
+
+## 🗺️ Roadmap
+
+The items below are on deck for future minor / major releases. None are shipping today — the list exists so contributors can see where the library is headed and where help is most useful. Open an issue if you'd like to discuss priorities or propose a design.
+
+| Area                        | Item                                                                                                                    | Status    |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
+| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core  | Planned   |
+| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults stay Portuguese; English preset)   | Planned   |
+| Refresh-token families      | Family-level revocation: detect grace-window reuse as a stolen-token signal and invalidate the entire session family    | Planned   |
+| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API | Exploring |
+| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module            | Exploring |
+| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                  | Exploring |
+| Absolute session lifetime   | Hard cap on refresh chains so a session rotated every 6 days does not live forever                                      | Planned   |
+| Pluggable password policy   | `IPasswordPolicy` interface for disallow-lists, complexity classes, and per-tenant rules                                | Planned   |
+| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)      | Exploring |
+
+> Track progress and discuss proposals on the [issues board](https://github.com/bymaxone/nest-auth/issues).
 
 ---
 

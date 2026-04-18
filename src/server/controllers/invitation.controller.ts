@@ -50,7 +50,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * a global prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
  */
 @Controller('invitations')
-@UsePipes(new ValidationPipe({ whitelist: true }))
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class InvitationController {
   constructor(
     private readonly invitationService: InvitationService,

@@ -6,6 +6,17 @@ const config: Config = {
   rootDir: 'src',
   testMatch: ['**/*.spec.ts', '**/*.spec.tsx', '**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
+  // Mirror the subpath aliases declared in tsconfig.json "paths" so that tests
+  // exercise the exact same import specifiers that consumers and the tsup
+  // bundler use. Without this, tests would need relative imports while build
+  // uses package specifiers — an easy source of drift.
+  moduleNameMapper: {
+    '^@bymax-one/nest-auth$': '<rootDir>/server/index.ts',
+    '^@bymax-one/nest-auth/shared$': '<rootDir>/shared/index.ts',
+    '^@bymax-one/nest-auth/client$': '<rootDir>/client/index.ts',
+    '^@bymax-one/nest-auth/react$': '<rootDir>/react/index.ts',
+    '^@bymax-one/nest-auth/nextjs$': '<rootDir>/nextjs/index.ts'
+  },
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',

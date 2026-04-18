@@ -61,7 +61,9 @@ function isPlatformResult(result: AuthResult | PlatformAuthResult): result is Pl
  * a global prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
  */
 @Controller('mfa')
-@UsePipes(new ValidationPipe({ whitelist: true, forbidUnknownValues: true }))
+@UsePipes(
+  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
+)
 export class MfaController {
   constructor(
     private readonly mfaService: MfaService,

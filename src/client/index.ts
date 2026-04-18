@@ -36,5 +36,5 @@ export type {
 // types). Constants like `AUTH_ERROR_CODES` and `AUTH_ROUTES` stay
 // behind the `@bymax-one/nest-auth/shared` import path so callers
 // who need the full surface go to a single, authoritative place.
-export { AuthClientError } from '../shared'
-export type { AuthErrorCode, AuthErrorResponse } from '../shared'
+export { AuthClientError } from '@bymax-one/nest-auth/shared'
+export type { AuthErrorCode, AuthErrorResponse } from '@bymax-one/nest-auth/shared'

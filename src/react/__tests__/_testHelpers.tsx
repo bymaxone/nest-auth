@@ -25,8 +25,8 @@
  * all exports fully typed.
  */
 
-import type { AuthClient } from '../../client'
-import type { AuthResult, AuthUserClient, MfaChallengeResult } from '../../shared'
+import type { AuthClient } from '@bymax-one/nest-auth/client'
+import type { AuthResult, AuthUserClient, MfaChallengeResult } from '@bymax-one/nest-auth/shared'
 
 /**
  * A representative authenticated user. Values are chosen to be

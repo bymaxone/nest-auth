@@ -47,25 +47,6 @@
       "require": "./dist/nextjs/index.cjs"
     }
   },
-  "typesVersions": {
-    "*": {
-      ".": [
-        "./dist/server/index.d.ts"
-      ],
-      "shared": [
-        "./dist/shared/index.d.ts"
-      ],
-      "client": [
-        "./dist/client/index.d.ts"
-      ],
-      "react": [
-        "./dist/react/index.d.ts"
-      ],
-      "nextjs": [
-        "./dist/nextjs/index.d.ts"
-      ]
-    }
-  },
   "scripts": {
     "build": "pnpm clean && tsup",
     "lint": "eslint src",
@@ -87,8 +68,10 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/throttler": "^6.0.0",
     "@nestjs/websockets": "^11.0.0",
+    "@types/express": "^5.0.0",
     "class-transformer": "^0.5.0",
     "class-validator": "^0.14.0 || ^0.15.0",
+    "express": "^5.0.0",
     "ioredis": "^5.0.0",
     "next": "^16.0.0",
     "react": "^19.0.0",
@@ -114,6 +97,12 @@
       "optional": true
     },
     "class-validator": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    },
+    "@types/express": {
       "optional": true
     },
     "ioredis": {

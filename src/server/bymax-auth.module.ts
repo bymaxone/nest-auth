@@ -6,6 +6,7 @@ import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
+  BYMAX_AUTH_REDIS_CLIENT,
   BYMAX_AUTH_USER_REPOSITORY
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
@@ -136,6 +137,18 @@ export class BymaxAuthModule {
         '[BymaxAuthModule] BYMAX_AUTH_USER_REPOSITORY is required in extraProviders. ' +
           'Provide your IUserRepository implementation: ' +
           '{ provide: BYMAX_AUTH_USER_REPOSITORY, useClass: YourUserRepository }.'
+      )
+    }
+
+    // BYMAX_AUTH_REDIS_CLIENT is required by AuthRedisService and therefore by every
+    // downstream service (token rotation, brute-force, OTP, sessions, MFA setup). The
+    // same synchronous check as above gives a clear startup error instead of a cryptic
+    // NestJS DI failure at the first request.
+    if (!hasProviderToken(extraProviders, BYMAX_AUTH_REDIS_CLIENT)) {
+      throw new Error(
+        '[BymaxAuthModule] BYMAX_AUTH_REDIS_CLIENT is required in extraProviders. ' +
+          'Provide your ioredis client instance: ' +
+          '{ provide: BYMAX_AUTH_REDIS_CLIENT, useValue: new Redis(url) }.'
       )
     }
 

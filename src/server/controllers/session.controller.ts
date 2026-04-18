@@ -53,7 +53,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  */
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, UserStatusGuard)
-@UsePipes(new ValidationPipe({ whitelist: true }))
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService,

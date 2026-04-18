@@ -13,7 +13,8 @@
 
 import { useContext } from 'react'
 
-import type { AuthUserClient } from '../shared'
+import type { AuthUserClient } from '@bymax-one/nest-auth/shared'
+
 import { AuthContext, type AuthStatus } from './context'
 
 /**

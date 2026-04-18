@@ -50,6 +50,18 @@ function isPlatformResult(result: AuthResult | PlatformAuthResult): result is Pl
   return 'admin' in result
 }
 
+/**
+ * Narrows `PlatformAuthResult | MfaChallengeResult` to `MfaChallengeResult` via
+ * the literal `mfaRequired: true` discriminant. Extracted as a named type guard
+ * so the compiler narrows the `else` branch to `PlatformAuthResult` without
+ * resorting to a raw `as PlatformAuthResult` cast.
+ */
+function isMfaChallenge(
+  result: PlatformAuthResult | MfaChallengeResult
+): result is MfaChallengeResult {
+  return 'mfaRequired' in result && result.mfaRequired === true
+}
+
 // ---------------------------------------------------------------------------
 // PlatformAuthController
 // ---------------------------------------------------------------------------
@@ -85,7 +97,7 @@ function isPlatformResult(result: AuthResult | PlatformAuthResult): result is Pl
  * is still valid at the time of suspension.
  */
 @Controller('platform')
-@UsePipes(new ValidationPipe({ whitelist: true }))
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class PlatformAuthController {
   constructor(
     private readonly platformAuthService: PlatformAuthService,
@@ -122,11 +134,11 @@ export class PlatformAuthController {
     const result = await this.platformAuthService.login(dto, ip, userAgent)
 
     // MFA challenge path: return the temp token for the client to exchange.
-    if ('mfaRequired' in result && result.mfaRequired) {
+    if (isMfaChallenge(result)) {
       return result
     }
 
-    return this.tokenDelivery.deliverPlatformAuthResponse(result as PlatformAuthResult)
+    return this.tokenDelivery.deliverPlatformAuthResponse(result)
   }
 
   // ---------------------------------------------------------------------------

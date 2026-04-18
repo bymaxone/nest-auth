@@ -13,7 +13,7 @@ import { OptionalAuthGuard } from './optional-auth.guard'
 // ---------------------------------------------------------------------------
 
 const VALID_PAYLOAD = {
-  jti: 'some-jti-uuid',
+  jti: '11111111-2222-4333-8444-555555555555',
   sub: 'user-1',
   tenantId: 'tenant-1',
   role: 'member',

@@ -29,17 +29,19 @@ describe('LoginDto', () => {
     expect(errors.some((e) => e.property === 'password')).toBe(true)
   })
 
-  // Verifies that LoginDto deliberately has no @MinLength on password to prevent min-length enumeration.
-  it('should pass validation for a short password (no MinLength restriction)', async () => {
-    // Deliberate: login allows any password length to prevent min-length enumeration.
+  // Verifies that LoginDto accepts a 1-character password — the only floor is @MinLength(1).
+  // A 1-char password still reaches scrypt, which is what we want; the point of the floor is
+  // solely to reject the empty string without leaking any policy minimum as a timing oracle.
+  it('should pass validation for a short (1-char) password', async () => {
     const errors = await validate(buildDto({ password: '1' }))
     expect(errors).toHaveLength(0)
   })
 
-  // Verifies that an empty password passes validation in LoginDto (anti-enumeration design decision).
-  it('should pass validation for an empty password (anti-enumeration)', async () => {
+  // Verifies that empty passwords are rejected at the DTO boundary so an attacker cannot
+  // trigger a full scrypt computation against "" as a DoS amplification vector.
+  it('should fail validation for an empty password (scrypt DoS amplification guard)', async () => {
     const errors = await validate(buildDto({ password: '' }))
-    expect(errors).toHaveLength(0)
+    expect(errors.some((e) => e.property === 'password')).toBe(true)
   })
 
   // Verifies that an empty tenantId string is rejected because @IsNotEmpty is applied.

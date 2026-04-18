@@ -12,8 +12,8 @@
 
 import { createContext } from 'react'
 
-import type { RegisterInput, ResetPasswordInput } from '../client'
-import type { AuthResult, AuthUserClient, LoginResult } from '../shared'
+import type { RegisterInput, ResetPasswordInput } from '@bymax-one/nest-auth/client'
+import type { AuthResult, AuthUserClient, LoginResult } from '@bymax-one/nest-auth/shared'
 
 /**
  * Lifecycle state of the authenticated session.
