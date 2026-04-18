@@ -121,13 +121,23 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
     // Best-effort upstream logout. We intentionally ignore the
     // response: whether the upstream succeeds or fails, the browser
     // cookies MUST be cleared so the user is locally logged out.
+    //
+    // Forward both `cookie` (cookie-mode tokenDelivery) and `authorization`
+    // (bearer-mode tokenDelivery). Without forwarding `authorization`, the
+    // upstream JwtAuthGuard rejects the request and the access-token JTI is
+    // never added to the revocation list — leaving the bearer token valid
+    // until natural expiry on every bearer-mode logout.
+    const upstreamHeaders: Record<string, string> = {
+      cookie: request.headers.get('cookie') ?? '',
+      accept: 'application/json'
+    }
+    const incomingAuth = request.headers.get('authorization')
+    if (incomingAuth) upstreamHeaders.authorization = incomingAuth
+
     try {
       await fetch(logoutUrl, {
         method: 'POST',
-        headers: {
-          cookie: request.headers.get('cookie') ?? '',
-          accept: 'application/json'
-        },
+        headers: upstreamHeaders,
         redirect: 'manual'
       })
     } catch {

@@ -254,11 +254,14 @@ describe('MfaService', () => {
       await expect(service.setup('unknown-user')).rejects.toThrow(AuthException)
     })
 
-    // Verifies the rare race-condition branch: setIfAbsent returns false (key existed) but get
-    // returns null (key expired between the two calls). Service falls back to redis.set.
-    it('should fall back to redis.set when setIfAbsent returns false and get returns null', async () => {
-      mockRedis.setIfAbsent.mockResolvedValue(false)
-      mockRedis.get.mockResolvedValue(null) // key expired between setIfAbsent and get
+    // Verifies the rare race-condition branch: the fast-path GET returns null
+    // (no setup pending), the service generates fresh data, then setIfAbsent
+    // loses the race against another concurrent setup, and the second GET (after
+    // setIfAbsent) also returns null because the winner's key already expired.
+    // Service falls back to redis.set with its own freshly generated data.
+    it('should fall back to redis.set when fast-path GET, setIfAbsent and second GET all return null/false', async () => {
+      mockRedis.get.mockResolvedValue(null) // both fast-path and post-setIfAbsent GETs return null
+      mockRedis.setIfAbsent.mockResolvedValue(false) // racing request claimed the key first
 
       const result = await service.setup('user-1')
 
@@ -269,6 +272,32 @@ describe('MfaService', () => {
         expect.any(Number)
       )
       expect(result.secret).toMatch(/^[A-Z2-7]+$/)
+    })
+
+    // Verifies the recovery branch where the fast-path GET misses but a concurrent
+    // request claims the SET-NX key first. The post-setIfAbsent GET retrieves
+    // the winner's payload and the loser returns it for idempotency.
+    it('should return winner setup data when fast-path GET is null but setIfAbsent loses the race', async () => {
+      const winningSecret = 'WINNERSECRETBASE32ABCDEFGHIJKLMN'
+      const winningCodes = ['AAAA-BBBB-CCCC', 'DDDD-EEEE-FFFF']
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const winnerSetupData = {
+        encryptedSecret: encrypt(winningSecret, VALID_ENCRYPTION_KEY),
+        hashedCodes: ['hash1', 'hash2'],
+        encryptedPlainCodes: encrypt(JSON.stringify(winningCodes), VALID_ENCRYPTION_KEY)
+      }
+
+      mockRedis.get
+        .mockResolvedValueOnce(null) // fast-path GET — no setup pending yet
+        .mockResolvedValueOnce(JSON.stringify(winnerSetupData)) // post-setIfAbsent — winner wrote it
+      mockRedis.setIfAbsent.mockResolvedValue(false)
+
+      const result = await service.setup('user-1')
+
+      expect(result.secret).toBe(winningSecret)
+      expect(result.recoveryCodes).toEqual(winningCodes)
+      // redis.set must NOT be called — we returned the winner's data, not our own
+      expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
     // Verifies that DEFAULT_RECOVERY_CODE_COUNT (8) is used when recoveryCodeCount is absent from mfa options.
@@ -308,12 +337,13 @@ describe('MfaService', () => {
       expect(result.recoveryCodes).toHaveLength(8)
     })
 
-    // Verifies idempotency: when setIfAbsent returns false (key exists), returns existing data.
-    it('should return existing setup data when setIfAbsent returns false (idempotent)', async () => {
+    // Verifies the fast-path idempotency: when an existing setup payload is found by
+    // the initial GET, the service returns it WITHOUT generating a new TOTP secret or
+    // running scrypt on recovery codes (CPU-amplification defence).
+    it('should fast-path-return existing setup data without re-running scrypt', async () => {
       const existingSecret = 'EXISTINGSECRETFROMREDIS32CHARS=='
       const existingCodes = ['1111-2222-3333', '4444-5555-6666']
 
-      // Import encrypt to build valid stored data
       const { encrypt } = await import('../crypto/aes-gcm')
       const setupData = {
         encryptedSecret: encrypt(existingSecret, VALID_ENCRYPTION_KEY),
@@ -321,12 +351,48 @@ describe('MfaService', () => {
         encryptedPlainCodes: encrypt(JSON.stringify(existingCodes), VALID_ENCRYPTION_KEY)
       }
 
-      mockRedis.setIfAbsent.mockResolvedValue(false)
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockPasswordService.hash.mockClear()
 
       const result = await service.setup('user-1')
 
       expect(result.recoveryCodes).toEqual(existingCodes)
+      expect(result.secret).toBe(existingSecret)
+      // Critical assertion: no scrypt work performed on the fast path.
+      expect(mockPasswordService.hash).not.toHaveBeenCalled()
+      // Critical assertion: setIfAbsent was NOT called — the fast path returned earlier.
+      expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+    })
+
+    // Verifies that a corrupted Redis payload on the fast path surfaces opaquely as
+    // MFA_SETUP_REQUIRED rather than leaking SyntaxError. Anti-tampering defence.
+    it('should throw MFA_SETUP_REQUIRED when fast-path Redis payload is corrupted JSON', async () => {
+      mockRedis.get.mockResolvedValue('{not-valid-json')
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      try {
+        await service.setup('user-1')
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuthException)
+        const code = (err as AuthException).getResponse() as { error: { code: string } }
+        expect(code.error.code).toBe(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+      }
+    })
+
+    // Verifies that a corrupted decrypted recovery-code payload surfaces opaquely as
+    // MFA_SETUP_REQUIRED — defence against tampering on the encrypted blob in Redis.
+    it('should throw MFA_SETUP_REQUIRED when decrypted recovery codes are not valid JSON', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const setupData = {
+        encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
+        hashedCodes: ['hash1'],
+        // Encrypt a non-JSON payload so the decrypt succeeds but JSON.parse fails.
+        encryptedPlainCodes: encrypt('not-json', VALID_ENCRYPTION_KEY)
+      }
+
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
     })
   })
 
@@ -371,6 +437,22 @@ describe('MfaService', () => {
     it('should throw MFA_SETUP_REQUIRED when no setup data is in Redis', async () => {
       expect.assertions(1)
       mockRedis.get.mockResolvedValue(null)
+
+      try {
+        await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_SETUP_REQUIRED })
+        })
+      }
+    })
+
+    // Verifies that verifyAndEnable surfaces a corrupted Redis payload opaquely as
+    // MFA_SETUP_REQUIRED — preventing an attacker with Redis write access from
+    // crashing the route handler with an unhandled SyntaxError.
+    it('should throw MFA_SETUP_REQUIRED when Redis setup payload is corrupted JSON', async () => {
+      expect.assertions(1)
+      mockRedis.get.mockResolvedValue('{not-json-at-all')
 
       try {
         await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
@@ -679,8 +761,12 @@ describe('MfaService', () => {
       expect(result).toBe(MOCK_AUTH_RESULT)
     })
 
-    // Verifies that challenge iterates ALL recovery codes even after finding a match (constant-time).
-    it('should call passwordService.compare for ALL recovery codes (constant-time iteration)', async () => {
+    // Verifies that challenge stops iterating recovery codes after the first match
+    // (early exit). Position-timing leakage is not exploitable here — the matched
+    // code is consumed immediately afterwards (its position is no longer secret) —
+    // and avoiding the remaining scrypt hashes prevents an O(N) CPU-amplification
+    // window an attacker could otherwise force on every challenge attempt.
+    it('should early-exit recovery code iteration after the first match', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
@@ -692,7 +778,7 @@ describe('MfaService', () => {
         mfaRecoveryCodes: hashedCodes
       })
       // '1234-5678-9012' does not match /^\d{6}$/ so the recovery code path is used (not TOTP).
-      // First code matches — but service should still check the remaining two.
+      // First code matches — service should NOT continue past it.
       mockPasswordService.compare
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false)
@@ -700,14 +786,39 @@ describe('MfaService', () => {
 
       await service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
 
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(3)
-      // Also verify the first code (index 0) was the one removed.
+      expect(mockPasswordService.compare).toHaveBeenCalledTimes(1)
+      // Verify the first code (index 0) was the one removed.
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
         expect.objectContaining({
           mfaRecoveryCodes: ['$scrypt$hash2', '$scrypt$hash3']
         })
       )
+    })
+
+    // Verifies that no match across all stored recovery codes still iterates every entry
+    // before returning -1, so attackers cannot infer "no match found before code N" via timing.
+    it('should iterate every recovery code when none match (full scan on miss)', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const hashedCodes = ['$scrypt$hash1', '$scrypt$hash2', '$scrypt$hash3']
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: hashedCodes
+      })
+      mockPasswordService.compare
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+
+      await expect(
+        service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      expect(mockPasswordService.compare).toHaveBeenCalledTimes(3)
     })
 
     // Verifies that TOTP anti-replay prevents a code from being used twice.

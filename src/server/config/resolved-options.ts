@@ -291,8 +291,11 @@ function validateJwtAlgorithm(algorithm: BymaxAuthModuleOptions['jwt']['algorith
   }
 }
 
-/** Valid base64 characters only: A-Z, a-z, 0-9, +, /, and up to two = padding characters. */
-const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/
+/** Valid standard base64 characters: A-Z, a-z, 0-9, +, /, and up to two = padding characters. */
+const BASE64_STANDARD_RE = /^[A-Za-z0-9+/]+={0,2}$/
+
+/** Valid base64url characters: A-Z, a-z, 0-9, -, _, padding optional. */
+const BASE64_URL_RE = /^[A-Za-z0-9_-]+={0,2}$/
 
 function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
   if (mfa === undefined) return
@@ -304,13 +307,22 @@ function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
     )
   }
 
-  if (!BASE64_RE.test(mfa.encryptionKey) || mfa.encryptionKey.length % 4 !== 0) {
+  // Accept both standard base64 and base64url alphabets so consumers using
+  // `randomBytes(32).toString('base64url')` (which produces `-` and `_` in
+  // place of `+` and `/`) do not hit a confusing "invalid base64" error.
+  const isStandard = BASE64_STANDARD_RE.test(mfa.encryptionKey)
+  const isUrlSafe = BASE64_URL_RE.test(mfa.encryptionKey)
+
+  if (!isStandard && !isUrlSafe) {
     throw new Error(
-      `[BymaxAuthModule] mfa.encryptionKey must be valid base64 (standard alphabet, optional = padding). ` +
+      `[BymaxAuthModule] mfa.encryptionKey must be valid base64 — accepted alphabets: ` +
+        `standard (A-Z a-z 0-9 + /) or base64url (A-Z a-z 0-9 - _), padding optional. ` +
         `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
   }
 
+  // Buffer's 'base64' decoder accepts both alphabets (treating `-` and `_` as `+` and `/`),
+  // so a single decode call works for both formats.
   const decoded = Buffer.from(mfa.encryptionKey, 'base64')
   if (decoded.length !== 32) {
     throw new Error(

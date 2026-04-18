@@ -121,6 +121,20 @@ describe('OtpService', () => {
       )
     })
 
+    // Verifies that a corrupted Redis payload (invalid JSON) is opaquely surfaced as
+    // OTP_EXPIRED (matching the response for missing-key) so an attacker with Redis
+    // write access cannot distinguish corruption from natural expiry, and the unusable
+    // key is deleted to free Redis space sooner than its natural TTL.
+    it('should throw OTP_EXPIRED and delete key when Redis value is corrupted JSON', async () => {
+      mockRedis.get.mockResolvedValue('{not-valid-json')
+      mockRedis.del.mockResolvedValue(1)
+
+      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
+        AuthException
+      )
+      expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
+    })
+
     // ---------------------------------------------------------------------------
     // verify — wrong code
     // ---------------------------------------------------------------------------

@@ -375,7 +375,7 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       // a broken redirect without breaking the fetch contract.
       try {
         onSessionExpired?.()
-      } catch (err) {
+      } catch (err: unknown) {
         console.warn('[nest-auth] onSessionExpired callback threw:', err)
       }
       return response

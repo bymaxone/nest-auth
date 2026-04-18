@@ -53,6 +53,54 @@ describe('sanitizeHeaders', () => {
       const result = sanitizeHeaders({ 'x-session-id': 'session-123' })
       expect(result).not.toHaveProperty('x-session-id')
     })
+
+    // Verifies that 'x-forwarded-for' is stripped — the framework's trusted-proxy
+    // resolver populates HookContext.ip; raw forwarding headers are spoofable and
+    // must not reach hooks or audit logs as authoritative IP information.
+    it('should remove "x-forwarded-for" header (spoofable forwarding)', () => {
+      const result = sanitizeHeaders({ 'x-forwarded-for': '203.0.113.1, 198.51.100.2' })
+      expect(result).not.toHaveProperty('x-forwarded-for')
+    })
+
+    // Verifies that 'x-forwarded-host' is stripped to prevent host-header injection
+    // pretending to be authoritative routing metadata in audit logs.
+    it('should remove "x-forwarded-host" header', () => {
+      const result = sanitizeHeaders({ 'x-forwarded-host': 'attacker.example.com' })
+      expect(result).not.toHaveProperty('x-forwarded-host')
+    })
+
+    // Verifies that 'x-real-ip' is stripped — same rationale as x-forwarded-for.
+    it('should remove "x-real-ip" header', () => {
+      const result = sanitizeHeaders({ 'x-real-ip': '203.0.113.1' })
+      expect(result).not.toHaveProperty('x-real-ip')
+    })
+
+    // Verifies that 'x-original-forwarded-for' (envoy-style nested forward chain)
+    // is stripped to prevent attackers from injecting fake upstream IP chains.
+    it('should remove "x-original-forwarded-for" header', () => {
+      const result = sanitizeHeaders({ 'x-original-forwarded-for': '203.0.113.1' })
+      expect(result).not.toHaveProperty('x-original-forwarded-for')
+    })
+
+    // Verifies that 'cf-connecting-ip' (Cloudflare) is stripped — when running
+    // behind a Cloudflare proxy, the trusted-proxy resolver should already inject
+    // the real IP into req.ip; the raw header must not be re-trusted by hooks.
+    it('should remove "cf-connecting-ip" header', () => {
+      const result = sanitizeHeaders({ 'cf-connecting-ip': '203.0.113.1' })
+      expect(result).not.toHaveProperty('cf-connecting-ip')
+    })
+
+    // Verifies that 'true-client-ip' (Akamai/Cloudflare Enterprise) is stripped.
+    it('should remove "true-client-ip" header', () => {
+      const result = sanitizeHeaders({ 'true-client-ip': '203.0.113.1' })
+      expect(result).not.toHaveProperty('true-client-ip')
+    })
+
+    // Verifies that 'x-cluster-client-ip' (legacy/cluster-aware proxies) is stripped.
+    it('should remove "x-cluster-client-ip" header', () => {
+      const result = sanitizeHeaders({ 'x-cluster-client-ip': '203.0.113.1' })
+      expect(result).not.toHaveProperty('x-cluster-client-ip')
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -134,8 +182,8 @@ describe('sanitizeHeaders', () => {
 
     // Verifies that array-valued safe headers are preserved as-is in the output.
     it('should pass through array-valued safe headers', () => {
-      const result = sanitizeHeaders({ 'x-forwarded-for': ['1.2.3.4', '5.6.7.8'] })
-      expect(result).toHaveProperty('x-forwarded-for', ['1.2.3.4', '5.6.7.8'])
+      const result = sanitizeHeaders({ accept: ['application/json', 'text/plain'] })
+      expect(result).toHaveProperty('accept', ['application/json', 'text/plain'])
     })
   })
 

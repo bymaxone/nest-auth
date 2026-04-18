@@ -177,6 +177,41 @@ export class MfaService {
   }
 
   /**
+   * Safely parses a Redis-stored {@link MfaSetupData} JSON payload.
+   *
+   * A corrupted or tampered Redis value would otherwise raise an unhandled
+   * `SyntaxError` from the service boundary (uncaught 500). We translate the
+   * failure into an opaque `MFA_SETUP_REQUIRED`, which mirrors the response
+   * the caller would receive if the key were absent — preventing an attacker
+   * with Redis write access from distinguishing "no setup pending" from
+   * "setup payload corrupted".
+   */
+  private parseSetupData(raw: string): MfaSetupData {
+    try {
+      return JSON.parse(raw) as MfaSetupData
+    } catch {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+    }
+  }
+
+  /**
+   * Safely parses the AES-decrypted JSON array of plain-text recovery codes.
+   *
+   * A decrypted value that fails JSON parsing indicates either a downgrade of
+   * the stored payload (highly unlikely, since AES-GCM authenticates the
+   * ciphertext) or an internal bug. Both cases are surfaced opaquely as
+   * `MFA_SETUP_REQUIRED` so callers do not learn structural details of the
+   * encrypted payload.
+   */
+  private parsePlainRecoveryCodes(raw: string): string[] {
+    try {
+      return JSON.parse(raw) as string[]
+    } catch {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+    }
+  }
+
+  /**
    * Generates `count` recovery codes in `XXXX-XXXX-XXXX-XXXX-XXXX-XXXX` format
    * (96 bits of entropy per code, hex-encoded).
    *
@@ -217,18 +252,20 @@ export class MfaService {
   /**
    * Compares a submitted recovery code against all stored scrypt hashes.
    *
-   * Always evaluates every hash (constant-time iteration) to avoid leaking the
-   * position of the matching code via timing.
+   * Iterates the stored hashes and stops at the first match. Position-timing
+   * leakage is not exploitable here because the matched code is consumed
+   * immediately afterwards (its position is no longer secret); avoiding the
+   * remaining scrypt evaluations prevents an O(N) CPU amplification window
+   * an attacker could otherwise force on every challenge attempt.
    *
    * @returns Index of the matching hash, or `-1` if none match.
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
-    let matchIndex = -1
     for (const [i, hashedCode] of hashedCodes.entries()) {
       const isMatch = await this.passwordService.compare(code, hashedCode)
-      if (isMatch) matchIndex = i
+      if (isMatch) return i
     }
-    return matchIndex
+    return -1
   }
 
   /**
@@ -293,9 +330,28 @@ export class MfaService {
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
     const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
 
-    // Generate the data unconditionally first, then attempt an atomic SET-NX to claim
-    // the key. This prevents the TOCTOU race of GET → generate → SET where two
-    // concurrent requests both see null and each stores a different secret.
+    // Fast-path idempotency check: if a setup payload already exists for this user,
+    // return it without performing the expensive scrypt + AES work. This prevents a
+    // CPU-amplification vector where an attacker who has captured a user's access
+    // token could repeatedly hit /mfa/setup and force N × scrypt calls per request
+    // (each request would hash `recoveryCodeCount` codes only to lose the SET-NX race).
+    // The narrow TOCTOU window between this fast-path GET and the SET-NX below is
+    // benign — at worst, two concurrent first-time setups race and one's payload is
+    // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
+    const existingFast = await this.redis.get(setupKey)
+    if (existingFast !== null) {
+      const data = this.parseSetupData(existingFast)
+      const existingSecret = this.decryptSecret(data.encryptedSecret)
+      const decryptedCodesJson = decrypt(data.encryptedPlainCodes, this.mfaOptions.encryptionKey)
+      const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
+      const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
+      return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
+    }
+
+    // First-time setup: generate the data, then attempt an atomic SET-NX to claim
+    // the key. The pre-generation is required to keep SET-NX atomic — two concurrent
+    // requests both see null in the fast path, both generate, and SET-NX awards the
+    // key to one of them. The losing request reads the winner's payload below.
     const { base32: secretBase32 } = generateTotpSecret()
     const encryptedSecret = this.encryptSecret(secretBase32)
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
@@ -311,10 +367,10 @@ export class MfaService {
       // Another request already started setup — return their data for idempotency.
       const existing = await this.redis.get(setupKey)
       if (existing !== null) {
-        const data = JSON.parse(existing) as MfaSetupData
+        const data = this.parseSetupData(existing)
         const existingSecret = this.decryptSecret(data.encryptedSecret)
         const decryptedCodesJson = decrypt(data.encryptedPlainCodes, this.mfaOptions.encryptionKey)
-        const existingCodes = JSON.parse(decryptedCodesJson) as string[]
+        const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
       }
@@ -365,7 +421,7 @@ export class MfaService {
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
-    const data = JSON.parse(raw) as MfaSetupData
+    const data = this.parseSetupData(raw)
     const secretBase32 = this.decryptSecret(data.encryptedSecret)
 
     const totpWindow = this.mfaOptions.totpWindow

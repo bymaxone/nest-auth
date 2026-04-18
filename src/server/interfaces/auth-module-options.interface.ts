@@ -11,15 +11,24 @@ import type { AuthUser } from './user-repository.interface'
 /**
  * Main configuration interface for BymaxAuthModule.
  *
- * Passed to `BymaxAuthModule.register()` or `BymaxAuthModule.registerAsync()`.
- * All groups except `jwt` and `roles` are optional — unconfigured features are
- * not registered in the NestJS container (zero overhead).
+ * Passed to `BymaxAuthModule.registerAsync()`. All groups except `jwt` and
+ * `roles` are optional — unconfigured features are not registered in the
+ * NestJS container (zero overhead).
+ *
+ * @remarks
+ * Only the asynchronous registration entry point (`registerAsync`) is exposed
+ * by the module. A synchronous `register()` is intentionally omitted because
+ * the module always validates the resolved options at startup, which fits the
+ * `useFactory` flow used by virtually every NestJS app (e.g. injecting
+ * `ConfigService`).
  *
  * @example
  * ```ts
- * BymaxAuthModule.register({
- *   jwt: { secret: process.env.JWT_SECRET },
- *   roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+ * BymaxAuthModule.registerAsync({
+ *   useFactory: () => ({
+ *     jwt: { secret: process.env.JWT_SECRET! },
+ *     roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+ *   })
  * })
  * ```
  */

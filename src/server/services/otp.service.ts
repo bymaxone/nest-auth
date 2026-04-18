@@ -118,7 +118,17 @@ export class OtpService {
       throw new AuthException(AUTH_ERROR_CODES.OTP_EXPIRED)
     }
 
-    const record = JSON.parse(raw) as OtpRecord
+    let record: OtpRecord
+    try {
+      record = JSON.parse(raw) as OtpRecord
+    } catch {
+      // Corrupted Redis value — delete the unusable key and surface as OTP_EXPIRED
+      // so callers cannot distinguish corruption from natural expiry (timing oracle
+      // safe, anti-enumeration safe).
+      await this.redis.del(key)
+      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      throw new AuthException(AUTH_ERROR_CODES.OTP_EXPIRED)
+    }
 
     if (record.attempts >= MAX_ATTEMPTS) {
       // Delete the exhausted key so it no longer occupies Redis until TTL expires.

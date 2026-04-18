@@ -441,6 +441,46 @@ describe('createLogoutHandler', () => {
     expect(response.status).toBe(405)
   })
 
+  // Forwards `cookie` and `accept` to the upstream. In bearer-mode tokenDelivery
+  // the access token lives in the `Authorization` header, not a cookie — without
+  // forwarding it the upstream JwtAuthGuard rejects the request and the
+  // access-token JTI is never added to the revocation list.
+  it('forwards Authorization header to upstream when present (bearer-mode tokenDelivery)', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST',
+      headers: { authorization: 'Bearer abc.def.ghi', cookie: 'access_token=ck' }
+    })
+
+    await handler(request as never)
+    const fetchInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined
+    const sentHeaders = fetchInit?.headers as Record<string, string>
+    expect(sentHeaders.authorization).toBe('Bearer abc.def.ghi')
+    expect(sentHeaders.cookie).toBe('access_token=ck')
+  })
+
+  // The Authorization header is OMITTED when not present on the incoming request,
+  // so the upstream receives only the cookie/accept pair (cookie-mode tokenDelivery).
+  it('omits Authorization header from upstream call when caller did not send one', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST',
+      headers: { cookie: 'access_token=ck' }
+    })
+
+    await handler(request as never)
+    const fetchInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined
+    const sentHeaders = fetchInit?.headers as Record<string, string>
+    expect(sentHeaders).not.toHaveProperty('authorization')
+    expect(sentHeaders.cookie).toBe('access_token=ck')
+  })
+
   // Canonical route constant.
   it('exports the canonical logout route constant', () => {
     expect(LOGOUT_ROUTE).toBe('/api/auth/logout')

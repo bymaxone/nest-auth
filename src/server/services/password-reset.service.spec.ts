@@ -98,6 +98,7 @@ const mockPasswordService = {
 const mockRedis = {
   set: jest.fn(),
   get: jest.fn(),
+  del: jest.fn(),
   getdel: jest.fn(),
   setnx: jest.fn(),
   invalidateUserSessions: jest.fn()
@@ -148,6 +149,7 @@ describe('PasswordResetService', () => {
     mockPasswordService.hash.mockResolvedValue('$hashed$')
     mockRedis.set.mockResolvedValue(undefined)
     mockRedis.get.mockResolvedValue(null)
+    mockRedis.del.mockResolvedValue(undefined)
     mockRedis.getdel.mockResolvedValue(null)
     mockRedis.setnx.mockResolvedValue(true)
     mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
@@ -192,7 +194,9 @@ describe('PasswordResetService', () => {
     })
 
     // Verifies that does NOT throw even when email provider throws.
-    it('does NOT throw even when email provider throws', async () => {
+    // Also verifies the Redis token rollback fires so an undeliverable token does not
+    // linger in Redis until natural TTL expiry.
+    it('does NOT throw even when email provider throws (and rolls back Redis token)', async () => {
       // The service intentionally logs the provider error via its
       // Nest `Logger`. Silence that log in the test output — the
       // assertion below verifies the public contract (the call
@@ -206,6 +210,31 @@ describe('PasswordResetService', () => {
         // Act & Assert
         await expect(service.initiateReset(dto)).resolves.toBeUndefined()
         await flushMicrotasks()
+
+        // Rollback: the pw_reset:{hash} key written before the email send must be
+        // deleted after the email failure so it does not linger until natural TTL.
+        expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^pw_reset:/))
+      } finally {
+        loggerSpy.mockRestore()
+      }
+    })
+
+    // Verifies that the rollback's `del` failure is also caught and logged — never
+    // propagates out of `initiateReset` (the public contract is fire-and-forget).
+    it('does NOT throw when both email AND rollback Redis del fail', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      try {
+        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
+        mockRedis.del.mockRejectedValueOnce(new Error('Redis down'))
+
+        await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+        await flushMicrotasks()
+
+        // Both errors must be logged: the original email failure AND the rollback failure.
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+        expect(logged).toMatch(/sendPasswordResetToken failed/)
+        expect(logged).toMatch(/pw_reset rollback delete failed/)
       } finally {
         loggerSpy.mockRestore()
       }

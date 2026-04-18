@@ -380,6 +380,39 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
     }
     expect(() => resolveOptions(options)).toThrow(/mfa.issuer is required/)
   })
+
+  // Verifies that an encryptionKey produced via Node's `base64url` alphabet
+  // (containing `-`/`_` instead of `+`/`/`) is accepted. Common consumer mistake:
+  // copying `randomBytes(32).toString('base64url')` into the config — the previous
+  // strict-base64-only regex rejected this with a confusing "must be valid base64"
+  // error even though Node's Buffer decoder accepts it transparently.
+  it('should accept a base64url-encoded encryptionKey (with `-`/`_` chars)', () => {
+    // Use a buffer that, when std-base64-encoded, would produce both '+' and '/'.
+    // Buffer.from([0xff, 0xfe, ..]) → 'std' has /+ chars → 'base64url' replaces them.
+    const buf = Buffer.alloc(32, 0xfb)
+    const stdKey = buf.toString('base64')
+    const urlKey = buf.toString('base64url')
+    // Sanity-check that the two encodings actually differ (so this test exercises the
+    // base64url branch and not just the standard alphabet branch).
+    expect(stdKey).not.toBe(urlKey)
+    expect(urlKey).toMatch(/[-_]/)
+
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: urlKey, issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Verifies the diagnostic message references both accepted alphabets so consumers
+  // hitting the failure are pointed at the actual root cause (wrong character set).
+  it('should mention both base64 and base64url alphabets in the format error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: 'AAAA****AAAA', issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/standard.*base64url/i)
+  })
 })
 
 // ---------------------------------------------------------------------------

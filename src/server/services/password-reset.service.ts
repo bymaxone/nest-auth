@@ -436,16 +436,24 @@ export class PasswordResetService {
     }
 
     const rawToken = generateSecureToken()
+    const tokenKey = `pw_reset:${sha256(rawToken)}`
     const context: ResetContext = { userId, email, tenantId }
     await this.redis.set(
-      `pw_reset:${sha256(rawToken)}`,
+      tokenKey,
       JSON.stringify(context),
       this.options.passwordReset.tokenTtlSeconds
     )
 
+    // Rollback the Redis key if email delivery fails so an undeliverable token
+    // does not linger in Redis until natural TTL expiry. A leaked Redis snapshot
+    // could otherwise expose unconsumed reset tokens for accounts that never
+    // received the email.
     void Promise.resolve(this.emailProvider.sendPasswordResetToken(email, rawToken)).catch(
       (err: unknown) => {
         this.logger.error(`sendPasswordResetToken failed for user ${userId}`, err)
+        void this.redis.del(tokenKey).catch((delErr: unknown) => {
+          this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
+        })
       }
     )
   }

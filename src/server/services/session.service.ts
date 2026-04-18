@@ -274,7 +274,12 @@ export class SessionService {
         .findById(userId)
         .then((user) => {
           if (!user) return
-          Promise.resolve(onNewSession(toSafeUser(user), minimalSessionInfo, context)).catch(
+          // Explicit `void` so the inner promise's lifecycle is unambiguous —
+          // the .catch() attaches a rejection handler, but neither `return`ing
+          // the chain nor leaving it bare reads cleanly. The hook is fire-and-
+          // forget by contract; this matches the pattern used elsewhere in the
+          // codebase (auth.service afterLogin/afterRegister, mfa.service afterLogin).
+          void Promise.resolve(onNewSession(toSafeUser(user), minimalSessionInfo, context)).catch(
             (err: unknown) => {
               this.logger.error('onNewSession hook threw', err)
             }

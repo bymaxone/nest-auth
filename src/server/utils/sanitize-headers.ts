@@ -9,8 +9,22 @@
  * All output keys are normalized to lowercase for consistent downstream handling.
  */
 
+import type { HookContext } from '../interfaces/auth-hooks.interface'
+
 /**
- * Exact-match blocklist of known sensitive header names (lowercase).
+ * Exact-match blocklist of known sensitive or trust-sensitive header names (lowercase).
+ *
+ * Two categories of headers are stripped:
+ * - **Credential-bearing:** `authorization`, `cookie`, `proxy-authorization`,
+ *   `www-authenticate`, `x-api-key`, `x-auth-token`, `x-csrf-token`, `x-session-id`.
+ *   These leak secrets if forwarded to logs or external sinks.
+ * - **Forwarded-identity:** `x-forwarded-for`, `x-forwarded-host`, `x-real-ip`,
+ *   `x-original-forwarded-for`, `cf-connecting-ip`, `true-client-ip`,
+ *   `x-cluster-client-ip`. These are easily spoofed by clients when proxy trust
+ *   is misconfigured. Hooks receiving the sanitized context must derive the
+ *   client IP from `HookContext.ip` (extracted via the framework's trusted-proxy
+ *   resolver), not from raw forwarding headers.
+ *
  * Add new entries here when additional built-in sensitive headers are identified.
  */
 const BLOCKED_HEADERS = new Set([
@@ -21,7 +35,14 @@ const BLOCKED_HEADERS = new Set([
   'x-api-key',
   'x-auth-token',
   'x-csrf-token',
-  'x-session-id'
+  'x-session-id',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-real-ip',
+  'x-original-forwarded-for',
+  'cf-connecting-ip',
+  'true-client-ip',
+  'x-cluster-client-ip'
 ])
 
 /**
@@ -82,10 +103,6 @@ export function sanitizeHeaders(
  * implementation receive `''` rather than `undefined` — a documented contract
  * rather than a runtime surprise.
  */
-export function createEmptyHookContext(): {
-  ip: string
-  userAgent: string
-  sanitizedHeaders: Record<string, string | string[] | undefined>
-} {
+export function createEmptyHookContext(): HookContext {
   return { ip: '', userAgent: '', sanitizedHeaders: {} }
 }
