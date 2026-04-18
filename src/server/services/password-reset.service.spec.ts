@@ -185,13 +185,22 @@ describe('PasswordResetService', () => {
 
     // Verifies that does NOT throw even when email provider throws.
     it('does NOT throw even when email provider throws', async () => {
-      // Arrange
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
-      mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
+      // The service intentionally logs the provider error via its
+      // Nest `Logger`. Silence that log in the test output — the
+      // assertion below verifies the public contract (the call
+      // resolves) which is the real behaviour under test.
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      try {
+        // Arrange
+        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
 
-      // Act & Assert
-      await expect(service.initiateReset(dto)).resolves.toBeUndefined()
-      await flushMicrotasks()
+        // Act & Assert
+        await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+        await flushMicrotasks()
+      } finally {
+        loggerSpy.mockRestore()
+      }
     })
 
     // Verifies that calls sendToken path (token method) when user exists and is not blocked.

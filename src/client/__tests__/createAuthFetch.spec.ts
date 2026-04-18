@@ -337,17 +337,26 @@ describe('createAuthFetch — refresh on 401', () => {
   // 401 into an unhandled rejection — the contract says the wrapper
   // always returns the 401 Response when refresh fails.
   it('swallows errors from onSessionExpired and still returns the 401', async () => {
-    spy.mockResolvedValueOnce(makeResponse(401))
-    spy.mockResolvedValueOnce(makeResponse(401))
+    // The wrapper logs a `console.warn` when the callback throws
+    // (see `createAuthFetch.ts`). Silence it here so the test output
+    // stays clean — the assertion below verifies the 401 is still
+    // returned, which is the real contract.
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      spy.mockResolvedValueOnce(makeResponse(401))
+      spy.mockResolvedValueOnce(makeResponse(401))
 
-    const onSessionExpired = jest.fn(() => {
-      throw new Error('boom')
-    })
-    const authFetch = createAuthFetch({ onSessionExpired })
+      const onSessionExpired = jest.fn(() => {
+        throw new Error('boom')
+      })
+      const authFetch = createAuthFetch({ onSessionExpired })
 
-    const res = await authFetch('/api/users')
-    expect(res.status).toBe(401)
-    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+      const res = await authFetch('/api/users')
+      expect(res.status).toBe(401)
+      expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 

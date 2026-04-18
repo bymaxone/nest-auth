@@ -39,9 +39,9 @@
 | Fase 5 — Plataforma, OAuth e Convites       | 25      | 0       | 25     | 100%      |
 | Fase 6 — Integracao, Polimento e Publicacao | 30      | 0       | 30     | 100%      |
 | Fase 7 — Shared + Client Subpath            | 9       | 0       | 9      | 100%      |
-| Fase 8 — React Subpath                      | 8       | 8       | 0      | 0%        |
-| Fase 9 — Next.js Subpath                    | 17      | 17      | 0      | 0%        |
-| **TOTAL**                                   | **185** | **50**  | **135**| **73%**   |
+| Fase 8 — React Subpath                      | 8       | 0       | 8      | 100%      |
+| Fase 9 — Next.js Subpath                    | 17      | 0       | 17     | 100%      |
+| **TOTAL**                                   | **185** | **0**   | **185**| **100%**  |
 
 ---
 
@@ -3974,7 +3974,7 @@
 ### NEST-161: AuthContext and types
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-160
 - **Agente:** typescript-reviewer
@@ -4012,7 +4012,7 @@
 ### NEST-162: AuthProvider component
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-161
 - **Agente:** code-reviewer
@@ -4049,7 +4049,7 @@
 ### NEST-163: useSession hook
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-162
 - **Agente:** code-reviewer
@@ -4081,7 +4081,7 @@
 ### NEST-164: useAuth hook
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-162
 - **Agente:** code-reviewer
@@ -4114,7 +4114,7 @@
 ### NEST-165: useAuthStatus hook
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Baixa
 - **Dependencias:** NEST-163
 - **Agente:** code-reviewer
@@ -4143,7 +4143,7 @@
 ### NEST-166: React barrel export
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-161, NEST-162, NEST-163, NEST-164, NEST-165
 - **Agente:** architect
@@ -4172,7 +4172,7 @@
 ### NEST-167: React hooks tests
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-166
 - **Agente:** code-reviewer
@@ -4213,7 +4213,7 @@
 ### NEST-168: Phase 8 validation
 
 - **Fase:** 8
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-167
 - **Agente:** architect
@@ -4245,7 +4245,7 @@
 ### NEST-169: isBackgroundRequest helper
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-160
 - **Agente:** code-reviewer
@@ -4261,7 +4261,7 @@
 ### NEST-170: buildSilentRefreshUrl helper
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-160
 - **Agente:** code-reviewer
@@ -4277,7 +4277,7 @@
 ### NEST-171: dedupeSetCookieHeaders + parseSetCookieHeader
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-160
 - **Agente:** security-reviewer
@@ -4297,7 +4297,7 @@
 ### NEST-172: JWT helpers (decodeJwtToken, verifyJwtToken)
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-160
 - **Agente:** security-reviewer
@@ -4318,7 +4318,7 @@
 ### NEST-173: createAuthProxy - config interface and factory skeleton
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-169, NEST-170, NEST-171, NEST-172
 - **Agente:** architect
@@ -4339,7 +4339,7 @@
 ### NEST-174: createAuthProxy - public route handling
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-173
 - **Agente:** security-reviewer
@@ -4362,7 +4362,7 @@
 ### NEST-175: createAuthProxy - protected route handling
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-173
 - **Agente:** security-reviewer
@@ -4386,7 +4386,7 @@
 ### NEST-176: createAuthProxy - background request handling + user headers
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-173
 - **Agente:** code-reviewer
@@ -4407,7 +4407,7 @@
 ### NEST-177: createSilentRefreshHandler
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-171
 - **Agente:** security-reviewer
@@ -4431,7 +4431,7 @@
 ### NEST-178: createClientRefreshHandler
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-171
 - **Agente:** code-reviewer
@@ -4454,7 +4454,7 @@
 ### NEST-179: createLogoutHandler
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Media
 - **Dependencias:** NEST-171
 - **Agente:** code-reviewer
@@ -4476,7 +4476,7 @@
 ### NEST-180: Next.js barrel export
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-173, NEST-174, NEST-175, NEST-176, NEST-177, NEST-178, NEST-179
 - **Agente:** architect
@@ -4497,7 +4497,7 @@
 ### NEST-181: Proxy tests - redirect loop prevention
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-180
 - **Agente:** security-reviewer
@@ -4522,7 +4522,7 @@
 ### NEST-182: Proxy tests - background requests, RBAC, status blocking
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-180
 - **Agente:** code-reviewer
@@ -4551,7 +4551,7 @@
 ### NEST-183: Route handler tests
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-180
 - **Agente:** code-reviewer
@@ -4579,7 +4579,7 @@
 ### NEST-184: JWT helper tests
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-172
 - **Agente:** security-reviewer
@@ -4609,7 +4609,7 @@
 ### NEST-185: Phase 9 validation
 
 - **Fase:** 9
-- **Status:** TODO ⬜
+- **Status:** DONE ✅
 - **Prioridade:** Alta
 - **Dependencias:** NEST-180, NEST-181, NEST-182, NEST-183, NEST-184
 - **Agente:** architect
