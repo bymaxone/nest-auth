@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(Future changes will be listed here.)
+
+## [1.0.0] - 2026-04-16
+
 ### Added
 
 #### Phase 1 — Foundation and Infrastructure (NEST-001 to NEST-042)
@@ -220,6 +224,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OAuthService` exported individually (not `OAUTH_PLUGINS` — internal token not part of the public integration surface)
 
 **Phase 5 barrel export** — adds `PlatformAuthService`, `OAuthService`, `InvitationService`, `JwtPlatformGuard`, `PlatformRolesGuard`, `PlatformRoles`, `PLATFORM_ROLES_KEY`, `PlatformLoginDto`, `CreateInvitationDto`, `AcceptInvitationDto`, `SafeAuthPlatformUser`, `IPlatformUserRepository`, `OAuthProfile`, `OAuthProviderPlugin`
+
+---
+
+#### Phase 6 — Integration, Polish, and Publication (NEST-122 to NEST-151)
+
+**Additional guards** (3)
+- `WsJwtGuard` — WebSocket dashboard JWT guard (header-only, soft peer-dep on `@nestjs/websockets`, runtime check via dynamic import)
+- `SelfOrAdminGuard` — self-access or admin override with strict SHA-256 session-hash validation; documents multi-tenant ownership limitation
+- `OptionalAuthGuard` — extends `JwtAuthGuard`, allows unauthenticated access while validating tokens when present
+
+**E2E test suite** (`test/e2e/`)
+- Full auth flow (bearer + cookie modes)
+- MFA flow (setup, verify, challenge with TOTP and recovery codes)
+- Sessions flow (3-device login, list, revoke single, revoke all-except-current)
+- Password reset flow (token method + OTP method)
+- Invitations flow (admin creates, invitee accepts, login)
+- OAuth flow (mocked Google plugin, create/link actions, CSRF state)
+- FIFO session eviction (sessions.defaultMaxSessions exceeded → oldest evicted)
+- Refresh concurrency (Promise.all on /refresh, grace window served distinct rotated tokens, original invalidated after grace expiry)
+- Security scenarios (brute-force lockout, blacklist, missing jti, MFA cross-context token rejection, OTP cooldown)
+
+**Security audits**
+- Password & crypto audit — scrypt parameters, AES-256-GCM, recovery code hashing, opaque refresh tokens, `crypto.timingSafeEqual` (PASS)
+- Token & session audit — refresh rotation grace window, blacklist, HttpOnly+SameSite cookies, algorithm pinning HS256, SHA-256 Redis keys (PASS)
+- Anti-enumeration & brute-force audit — per-tenant identifier (fixed prefix-collision in identifier separator), rate limiting on 15 sensitive endpoints, generic error responses, PII masking, TOTP anti-replay, OTP attempt limit, hook header sanitization
+
+**Documentation**
+- README.md — install, configuration, IUserRepository + IEmailProvider reference implementations with XSS warning, endpoints table, guards/decorators table, security checklist, throttler version note
+- JSDoc completion across all public services, guards, and decorators
+
+**Test infrastructure**
+- Jest E2E config (`jest.e2e.config.ts`)
+- ioredis-mock + supertest test harness
+- Shared bootstrap helper (`test/e2e/setup.ts`) with mock repositories, email capture, and in-memory Redis
+
+---
+
+### Fixed
+
+#### Phase 6 — Bug fixes
+- `auth.service.ts` brute-force identifier separator: added explicit `:` between tenantId and email to prevent prefix-collision (e.g., tenant `'abc'` + email `'x@y.com'` no longer collides with tenant `'abcx'` + email `'@y.com'`)
+- `self-or-admin.guard.ts` (during initial implementation): replaced `ForbiddenException` wrapping `AuthException` with direct `AuthException` throw for correct error response shape
+- `ws-jwt.guard.ts` (during initial implementation): replaced `require.resolve` with dynamic `await import()` for ESM compatibility
 
 ---
 

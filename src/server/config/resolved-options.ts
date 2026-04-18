@@ -218,6 +218,17 @@ function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
 }
 
 function validateJwtSecret(secret: string): void {
+  // Guard against runtime-nullish values (e.g. ConfigService returning undefined for an
+  // unset environment variable). The interface declares `secret: string` but callers
+  // frequently use `config.get('JWT_SECRET')` which returns `string | undefined`.
+  // Without this check the subsequent `.length` access would throw a raw TypeError
+  // instead of the descriptive [BymaxAuthModule] startup error.
+  if (!secret) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.secret is required and must not be empty. ` +
+        `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
+    )
+  }
   if (secret.length < 32) {
     throw new Error(
       `[BymaxAuthModule] jwt.secret must be at least 32 characters long. ` +

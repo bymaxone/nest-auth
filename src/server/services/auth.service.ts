@@ -30,6 +30,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { maskEmail } from '../utils/mask-email'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
@@ -142,6 +143,8 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
+    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${tenantId}`)
+
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
@@ -177,10 +180,13 @@ export class AuthService {
     const userAgent = String(req.headers['user-agent'] ?? '')
 
     // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
-    const bfIdentifier = hmacSha256(`${tenantId}${dto.email}`, this.options.jwt.secret)
+    // The ':' separator ensures 'tenantABC' + 'x@y.com' and 'tenantABCx' + '@y.com'
+    // never produce the same input string (prefix-collision resistance).
+    const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.jwt.secret)
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
+      this.logger.warn(`login: account locked email=${maskEmail(dto.email)} tenantId=${tenantId}`)
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
         retryAfterSeconds: remainingSeconds
@@ -212,6 +218,9 @@ export class AuthService {
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
       await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(
+        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${tenantId}`
+      )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -221,6 +230,7 @@ export class AuthService {
     // MFA challenge path.
     if (user.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(user.id, 'dashboard')
+      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${tenantId}`)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -231,6 +241,8 @@ export class AuthService {
     if (this.options.sessions.enabled) {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
+
+    this.logger.log(`login: success userId=${safeUser.id} tenantId=${tenantId}`)
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
@@ -257,6 +269,7 @@ export class AuthService {
    * @param userId - The authenticated user's ID (for hook context).
    */
   async logout(accessToken: string, rawRefreshToken: string, userId: string): Promise<void> {
+    this.logger.log(`logout: userId=${userId}`)
     // Decode without verifying — the token may be expired at logout time.
     try {
       const payload = this.tokenManager.decodeToken(accessToken)
@@ -372,6 +385,7 @@ export class AuthService {
     const identifier = hmacSha256(`${tenantId}:${email}`, this.options.jwt.secret)
     await this.otpService.verify('email_verification', identifier, otp)
     await this.userRepo.updateEmailVerified(userId, true)
+    this.logger.log(`verifyEmail: email verified userId=${userId} tenantId=${tenantId}`)
 
     if (this.hooks?.afterEmailVerified) {
       // Fetch user for hook (credential fields stripped).

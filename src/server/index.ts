@@ -117,9 +117,12 @@ export { NoOpEmailProvider } from './providers/no-op-email.provider'
 export { JwtAuthGuard } from './guards/jwt-auth.guard'
 export { JwtPlatformGuard } from './guards/jwt-platform.guard'
 export { MfaRequiredGuard } from './guards/mfa-required.guard'
+export { OptionalAuthGuard } from './guards/optional-auth.guard'
 export { PlatformRolesGuard } from './guards/platform-roles.guard'
 export { RolesGuard } from './guards/roles.guard'
+export { SelfOrAdminGuard } from './guards/self-or-admin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
+export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // ---------------------------------------------------------------------------
 // Decorators

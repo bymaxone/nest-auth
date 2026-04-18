@@ -180,6 +180,7 @@ export class OAuthService {
     const rawState = await this.redis.getdel(stateKey)
 
     if (!rawState) {
+      this.logger.warn(`handleCallback: invalid or expired OAuth state provider=${provider}`)
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
@@ -280,6 +281,9 @@ export class OAuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
+    this.logger.log(
+      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${tenantId} action=${hookResult.action}`
+    )
     return result
   }
 

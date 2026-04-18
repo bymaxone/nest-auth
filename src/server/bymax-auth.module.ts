@@ -5,7 +5,8 @@ import {
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
-  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
+  BYMAX_AUTH_USER_REPOSITORY
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
 import { AuthController } from './controllers/auth.controller'
@@ -124,6 +125,19 @@ export class BymaxAuthModule {
    */
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
     const extraProviders = options.extraProviders ?? []
+
+    // BYMAX_AUTH_USER_REPOSITORY is required by AuthService, UserStatusGuard, SessionService,
+    // MfaService, OAuthService, InvitationService, and PasswordResetService. Without it every
+    // request that touches user data fails with a NestJS injection error at runtime. Catching
+    // the omission here — at synchronous module-build time — gives a clear startup error
+    // instead of a cryptic "No provider for BYMAX_AUTH_USER_REPOSITORY" from NestJS internals.
+    if (!hasProviderToken(extraProviders, BYMAX_AUTH_USER_REPOSITORY)) {
+      throw new Error(
+        '[BymaxAuthModule] BYMAX_AUTH_USER_REPOSITORY is required in extraProviders. ' +
+          'Provide your IUserRepository implementation: ' +
+          '{ provide: BYMAX_AUTH_USER_REPOSITORY, useClass: YourUserRepository }.'
+      )
+    }
 
     // ---------------------------------------------------------------------------
     // Feature flags — evaluated synchronously from the registerAsync() call options.

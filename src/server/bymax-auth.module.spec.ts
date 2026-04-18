@@ -258,20 +258,31 @@ describe('BymaxAuthModule', () => {
     })
 
     // Verifies that omitting extraProviders entirely triggers the ?? [] branch in registerAsync.
-    it('should use the ?? [] fallback when extraProviders is not provided at all', async () => {
-      // Without extraProviders, the module defaults to [] internally but cannot resolve
-      // BYMAX_AUTH_REDIS_CLIENT or BYMAX_AUTH_USER_REPOSITORY — compilation must fail.
-      // The ?? [] branch is exercised even though the result is a rejection.
-      await expect(
-        Test.createTestingModule({
-          imports: [
-            BymaxAuthModule.registerAsync({
-              useFactory: () => validOptions
-              // extraProviders intentionally omitted — exercises the ?? [] branch
-            })
+    // registerAsync now throws synchronously when BYMAX_AUTH_USER_REPOSITORY is missing,
+    // so this test uses a sync toThrow() assertion instead of rejects.
+    it('should use the ?? [] fallback when extraProviders is not provided at all', () => {
+      // Without extraProviders the ?? [] branch is exercised and the synchronous
+      // BYMAX_AUTH_USER_REPOSITORY guard fires before any async work begins.
+      expect(() =>
+        BymaxAuthModule.registerAsync({
+          useFactory: () => validOptions
+          // extraProviders intentionally omitted — exercises the ?? [] branch
+        })
+      ).toThrow(/BYMAX_AUTH_USER_REPOSITORY is required/)
+    })
+
+    // Verifies that omitting BYMAX_AUTH_USER_REPOSITORY produces a descriptive startup error
+    // rather than a cryptic NestJS injection error at the first request.
+    it('should throw a descriptive startup error when BYMAX_AUTH_USER_REPOSITORY is missing', () => {
+      expect(() =>
+        BymaxAuthModule.registerAsync({
+          useFactory: () => validOptions,
+          extraProviders: [
+            { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient }
+            // BYMAX_AUTH_USER_REPOSITORY intentionally omitted
           ]
-        }).compile()
-      ).rejects.toThrow()
+        })
+      ).toThrow(/BYMAX_AUTH_USER_REPOSITORY is required/)
     })
 
     // Verifies that NoOpEmailProvider is registered as the fallback when no email provider is given.

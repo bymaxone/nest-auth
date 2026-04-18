@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 
-import { Inject, Injectable, Optional } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -118,6 +118,8 @@ interface MfaSetupData {
  */
 @Injectable()
 export class MfaService {
+  private readonly logger = new Logger(MfaService.name)
+
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
@@ -310,6 +312,7 @@ export class MfaService {
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
+    this.logger.log(`setup: MFA setup initiated userId=${userId}`)
     return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
   }
 
@@ -356,6 +359,7 @@ export class MfaService {
     // from being reused via the challenge endpoint within the acceptance window.
     const codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
     if (!codeValid) {
+      this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
@@ -374,6 +378,7 @@ export class MfaService {
     // with the MFA challenge. Access tokens up to 15 min remain valid — accepted tradeoff.
     await this.redis.invalidateUserSessions(userId)
 
+    this.logger.log(`verifyAndEnable: MFA enabled userId=${userId}`)
     await this.emailProvider.sendMfaEnabledNotification(user.email)
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
@@ -425,6 +430,7 @@ export class MfaService {
     // lockout threshold and blocking the authenticated user's ability to call disable().
     const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.jwt.secret)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(`challenge: account locked userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
@@ -452,6 +458,7 @@ export class MfaService {
 
     if (!codeValid) {
       await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(`challenge: invalid MFA code userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
@@ -474,6 +481,8 @@ export class MfaService {
         await this.userRepo.updateMfa(userId, mfaUpdate)
       }
     }
+
+    this.logger.log(`challenge: MFA challenge passed userId=${userId} context=${context}`)
 
     // Step 6: Issue full tokens with mfaVerified: true.
     if (context === 'dashboard') {
@@ -563,6 +572,7 @@ export class MfaService {
     // challenge endpoint and blocking the authenticated user from disabling MFA.
     const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.jwt.secret)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(`disable: account locked userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
@@ -577,6 +587,7 @@ export class MfaService {
     const codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
     if (!codeValid) {
       await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(`disable: invalid MFA code userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
@@ -592,6 +603,7 @@ export class MfaService {
     // Invalidate all sessions so subsequent rotations produce tokens with mfaEnabled: false.
     await this.redis.invalidateUserSessions(userId)
 
+    this.logger.log(`disable: MFA disabled userId=${userId} context=${context}`)
     await this.emailProvider.sendMfaDisabledNotification(user.email)
 
     const safeUser =

@@ -20,7 +20,7 @@ export default defineConfig([
       'express'
     ],
     target: 'node24',
-    clean: true,
+    clean: false,
     splitting: false,
     treeshake: true,
     sourcemap: false

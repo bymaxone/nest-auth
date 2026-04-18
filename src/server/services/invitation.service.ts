@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common'
+import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -19,6 +19,7 @@ import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { maskEmail } from '../utils/mask-email'
 import { hasRole } from '../utils/roles.util'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
@@ -80,6 +81,8 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
  */
 @Injectable()
 export class InvitationService {
+  private readonly logger = new Logger(InvitationService.name)
+
   constructor(
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
@@ -172,6 +175,9 @@ export class InvitationService {
       inviteToken: rawToken,
       expiresAt
     })
+    this.logger.log(
+      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${tenantId} inviterUserId=${inviterUserId}`
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -268,12 +274,22 @@ export class InvitationService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    // Notify hooks — fire-and-forget; hook errors do not roll back account creation.
-    await this.hooks.afterInvitationAccepted?.(safeUser, {
-      ip,
-      userAgent,
-      sanitizedHeaders: sanitizeHeaders(headers)
-    })
+    this.logger.log(
+      `acceptInvitation: invitation accepted userId=${safeUser.id} tenantId=${invitation.tenantId} role=${invitation.role}`
+    )
+
+    // afterInvitationAccepted — fire-and-forget; errors must not propagate.
+    if (this.hooks?.afterInvitationAccepted) {
+      void Promise.resolve(
+        this.hooks.afterInvitationAccepted(safeUser, {
+          ip,
+          userAgent,
+          sanitizedHeaders: sanitizeHeaders(headers)
+        })
+      ).catch((err: unknown) => {
+        this.logger.error('afterInvitationAccepted hook threw', err)
+      })
+    }
 
     return result
   }

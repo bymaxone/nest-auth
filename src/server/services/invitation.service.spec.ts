@@ -16,7 +16,7 @@
  * indirectly through the acceptInvitation() tests that feed various Redis payloads.
  */
 
-import { ForbiddenException } from '@nestjs/common'
+import { ForbiddenException, Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -594,6 +594,28 @@ describe('InvitationService', () => {
       await expect(
         svcNoHook.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
       ).resolves.toBe(AUTH_RESULT)
+    })
+
+    // Verifies that a throwing afterInvitationAccepted hook is logged and does not propagate.
+    it('should log the error and still return AuthResult when afterInvitationAccepted hook throws', async () => {
+      // Arrange
+      mockHooks.afterInvitationAccepted.mockRejectedValue(new Error('hook failed'))
+      const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      // Act — service must resolve even though the hook will reject
+      const result = await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+
+      // Flush microtask queue so the fire-and-forget .catch handler runs
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      // Assert
+      expect(result).toBe(AUTH_RESULT)
+      expect(loggerSpy).toHaveBeenCalledWith(
+        'afterInvitationAccepted hook threw',
+        expect.any(Error)
+      )
+      loggerSpy.mockRestore()
     })
   })
 })

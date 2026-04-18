@@ -127,7 +127,7 @@ yarn add @bymax-one/nest-auth
 
 ```bash
 # Server subpath (required)
-pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler ioredis class-validator class-transformer reflect-metadata
+pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/websockets ioredis class-validator class-transformer reflect-metadata
 
 # React subpath (optional)
 pnpm add react
@@ -136,33 +136,242 @@ pnpm add react
 pnpm add next react
 ```
 
+> [!IMPORTANT]
+> Requires `@nestjs/throttler >= 6.0.0` for `AUTH_THROTTLE_CONFIGS` decorators to be honored.
+
 ### 2. Implement the Repository Interface
 
-The package defines **what** it needs — your app provides **how**:
+The package defines **what** it needs — your app provides **how**. The consumer maps the abstract `AuthUser` fields onto its own database schema (column names, indexes, soft-delete columns are entirely up to you). The only invariant is that `passwordHash` MUST be persisted exactly as supplied by the library — it is the output of `node:crypto` scrypt and re-hashing or transforming it will break login.
 
 ```typescript
 // user.repository.ts
-import { IUserRepository, AuthUser } from '@bymax-one/nest-auth'
+import { Injectable } from '@nestjs/common'
+import type {
+  AuthUser,
+  CreateUserData,
+  CreateWithOAuthData,
+  IUserRepository,
+  UpdateMfaData
+} from '@bymax-one/nest-auth'
 import { PrismaService } from './prisma.service'
 
+@Injectable()
 export class PrismaUserRepository implements IUserRepository {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findById(id: string, tenantId?: string): Promise<AuthUser | null> {
+    const where = tenantId ? { id, tenantId } : { id }
+    return this.prisma.user.findFirst({ where })
+  }
 
   async findByEmail(email: string, tenantId: string): Promise<AuthUser | null> {
     return this.prisma.user.findUnique({
-      where: { email_tenantId: { email, tenantId } }
+      where: { email_tenantId: { email: email.toLowerCase(), tenantId } }
     })
   }
 
-  async create(data: Partial<AuthUser>): Promise<AuthUser> {
-    return this.prisma.user.create({ data })
+  async create(data: CreateUserData): Promise<AuthUser> {
+    return this.prisma.user.create({
+      data: {
+        email: data.email.toLowerCase(),
+        name: data.name,
+        passwordHash: data.passwordHash,
+        role: data.role ?? 'user',
+        status: data.status ?? 'pending',
+        tenantId: data.tenantId,
+        emailVerified: data.emailVerified ?? false,
+        mfaEnabled: false
+      }
+    })
   }
 
-  // ... implement all IUserRepository methods
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { passwordHash } })
+  }
+
+  async updateMfa(id: string, data: UpdateMfaData): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        mfaEnabled: data.mfaEnabled,
+        mfaSecret: data.mfaSecret,
+        mfaRecoveryCodes: data.mfaRecoveryCodes ?? []
+      }
+    })
+  }
+
+  async updateLastLogin(id: string): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { lastLoginAt: new Date() } })
+  }
+
+  async updateStatus(id: string, status: string): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { status } })
+  }
+
+  async updateEmailVerified(id: string, verified: boolean): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { emailVerified: verified } })
+  }
+
+  async findByOAuthId(
+    provider: string,
+    providerId: string,
+    tenantId: string
+  ): Promise<AuthUser | null> {
+    return this.prisma.user.findFirst({
+      where: { oauthProvider: provider, oauthProviderId: providerId, tenantId }
+    })
+  }
+
+  async linkOAuth(userId: string, provider: string, providerId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { oauthProvider: provider, oauthProviderId: providerId }
+    })
+  }
+
+  async createWithOAuth(data: CreateWithOAuthData): Promise<AuthUser> {
+    return this.prisma.user.create({
+      data: {
+        email: data.email.toLowerCase(),
+        name: data.name,
+        passwordHash: null,
+        role: data.role ?? 'user',
+        status: data.status ?? 'active',
+        tenantId: data.tenantId,
+        emailVerified: data.emailVerified ?? true,
+        oauthProvider: data.oauthProvider,
+        oauthProviderId: data.oauthProviderId,
+        mfaEnabled: false
+      }
+    })
+  }
 }
 ```
 
-### 3. Register the Module
+### 3. Implement the Email Provider Interface
+
+Email delivery is fully delegated to the consumer — the library never imports a mailer SDK. Implement `IEmailProvider` with your transport of choice (Resend, SendGrid, SES, Nodemailer) and bind it to the `BYMAX_AUTH_EMAIL_PROVIDER` token.
+
+> [!WARNING]
+> Any user-supplied value (display name, tenant name, inviter name) interpolated into HTML email bodies MUST be escaped to prevent stored XSS in notification content. Tokens and OTPs are library-generated and safe, but `inviterName`, `tenantName`, device strings, and any consumer-supplied placeholder are attacker-controllable.
+
+```typescript
+// email.provider.ts
+import { Injectable } from '@nestjs/common'
+import type { IEmailProvider, InviteData, SessionInfo } from '@bymax-one/nest-auth'
+import { Resend } from 'resend'
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+
+@Injectable()
+export class ResendEmailProvider implements IEmailProvider {
+  private readonly client = new Resend(process.env.RESEND_API_KEY!)
+  private readonly from = 'no-reply@example.com'
+  private readonly appUrl = process.env.APP_URL!
+
+  async sendPasswordResetToken(email: string, token: string, _locale?: string): Promise<void> {
+    const url = `${this.appUrl}/reset-password?token=${encodeURIComponent(token)}`
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'Reset your password',
+      html: `<p>Click <a href="${url}">here</a> to reset your password.</p>`
+    })
+  }
+
+  async sendPasswordResetOtp(email: string, otp: string, _locale?: string): Promise<void> {
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'Your password reset code',
+      html: `<p>Your code is <strong>${otp}</strong>. It expires in 10 minutes.</p>`
+    })
+  }
+
+  async sendEmailVerificationOtp(email: string, otp: string, _locale?: string): Promise<void> {
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'Verify your email',
+      html: `<p>Your verification code is <strong>${otp}</strong>.</p>`
+    })
+  }
+
+  async sendMfaEnabledNotification(email: string, _locale?: string): Promise<void> {
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'MFA enabled on your account',
+      html: '<p>Two-factor authentication has been enabled. If this was not you, contact support immediately.</p>'
+    })
+  }
+
+  async sendMfaDisabledNotification(email: string, _locale?: string): Promise<void> {
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'MFA disabled on your account',
+      html: '<p>Two-factor authentication has been disabled. If this was not you, contact support immediately.</p>'
+    })
+  }
+
+  async sendNewSessionAlert(
+    email: string,
+    sessionInfo: SessionInfo,
+    _locale?: string
+  ): Promise<void> {
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: 'New sign-in to your account',
+      html: `
+        <p>New session detected:</p>
+        <ul>
+          <li>Device: ${escapeHtml(sessionInfo.device)}</li>
+          <li>IP: ${escapeHtml(sessionInfo.ip)}</li>
+          <li>Session: ${escapeHtml(sessionInfo.sessionHash)}</li>
+        </ul>
+      `
+    })
+  }
+
+  async sendInvitation(
+    email: string,
+    inviteData: InviteData,
+    _locale?: string
+  ): Promise<void> {
+    const url = `${this.appUrl}/accept-invite?token=${encodeURIComponent(inviteData.inviteToken)}`
+    await this.client.emails.send({
+      from: this.from,
+      to: email,
+      subject: `You have been invited to ${inviteData.tenantName}`,
+      html: `
+        <p><strong>${escapeHtml(inviteData.inviterName)}</strong> invited you to join
+           <strong>${escapeHtml(inviteData.tenantName)}</strong>.</p>
+        <p><a href="${url}">Accept invitation</a></p>
+        <p>This link expires on ${inviteData.expiresAt.toUTCString()}.</p>
+      `
+    })
+  }
+}
+```
+
+Wire it via `extraProviders` alongside the user repository:
+
+```typescript
+import { BYMAX_AUTH_EMAIL_PROVIDER } from '@bymax-one/nest-auth'
+
+extraProviders: [
+  { provide: BYMAX_AUTH_EMAIL_PROVIDER, useClass: ResendEmailProvider }
+]
+```
+
+### 4. Register the Module
 
 The user repository and Redis client are provided via NestJS dependency injection tokens — not as direct config fields. This follows the [NestJS custom providers pattern](https://docs.nestjs.com/fundamentals/custom-providers) and ensures the DI container manages all dependencies correctly.
 
@@ -212,7 +421,7 @@ import {
 export class AppModule {}
 ```
 
-### 4. Protect Routes
+### 5. Protect Routes
 
 ```typescript
 // users.controller.ts
@@ -241,7 +450,7 @@ export class UsersController {
 }
 ```
 
-### 5. Frontend Integration (React)
+### 6. Frontend Integration (React)
 
 ```tsx
 // app.tsx
@@ -270,7 +479,7 @@ export function Profile() {
 }
 ```
 
-### 6. Frontend Integration (Next.js 16)
+### 7. Frontend Integration (Next.js 16)
 
 ```typescript
 // proxy.ts (Next.js 16 — formerly middleware.ts)
@@ -390,6 +599,17 @@ Passwords are hashed with **scrypt** via `node:crypto`, which is memory-hard and
 
 All security-critical operations use the OpenSSL-backed `node:crypto` module — no bcrypt, argon2, otpauth, uuid, or nanoid packages. This eliminates the supply chain attack surface for the most sensitive code paths.
 
+### Security Checklist
+
+When integrating `@bymax-one/nest-auth` in production, verify each of the following:
+
+- `cookies.resolveDomains` MUST validate against an allowlist of configured domains
+- MFA recovery without TOTP requires admin intervention (no self-service)
+- `@MaxLength(128)` on password DTOs prevents algorithmic-DoS via oversized scrypt inputs
+- JWT algorithm pinning to HS256 prevents algorithm-confusion attacks
+- Constant-time comparisons via `crypto.timingSafeEqual` for all secret comparisons
+- HttpOnly cookies; `Secure` enforced in production; `SameSite=Strict` for refresh tokens
+
 ---
 
 ## 🛡️ Security Table
@@ -427,19 +647,54 @@ All security-critical operations use the OpenSSL-backed `node:crypto` module —
 
 ## 📖 API Reference
 
+### HTTP Endpoints
+
+Conditionally registered controllers (mfa, sessions, platform, invitations, oauth, password-reset) only mount their endpoints when the corresponding feature is enabled in `BymaxAuthModule.registerAsync()`.
+
+| Method | Path                          | Auth / Guard                                | Description                                                |
+| ------ | ----------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| POST   | `/register`                   | Public                                      | Register a new dashboard user and issue tokens             |
+| POST   | `/login`                      | Public                                      | Authenticate with email/password (may return MFA challenge) |
+| POST   | `/logout`                     | `JwtAuthGuard`                              | Revoke tokens and clear session                            |
+| POST   | `/refresh`                    | Public (refresh cookie)                     | Rotate refresh token, issue new access token               |
+| GET    | `/me`                         | `JwtAuthGuard`                              | Current dashboard user payload                             |
+| POST   | `/verify-email`               | Public                                      | Verify email with OTP                                      |
+| POST   | `/resend-verification`        | Public                                      | Resend email-verification OTP                              |
+| POST   | `/password/forgot-password`   | Public                                      | Request password reset (token or OTP)                      |
+| POST   | `/password/reset-password`    | Public                                      | Submit new password with reset token                       |
+| POST   | `/password/verify-otp`        | Public                                      | Verify password-reset OTP                                  |
+| POST   | `/password/resend-otp`        | Public                                      | Resend password-reset OTP                                  |
+| POST   | `/mfa/setup`                  | `JwtAuthGuard`                              | Generate TOTP secret and recovery codes                    |
+| POST   | `/mfa/verify-enable`          | `JwtAuthGuard`                              | Confirm setup and enable MFA                               |
+| POST   | `/mfa/challenge`              | Public + `@SkipMfa()`                       | Submit TOTP/recovery code after login                      |
+| POST   | `/mfa/disable`                | `JwtAuthGuard`                              | Disable MFA for the current user                           |
+| GET    | `/sessions`                   | `JwtAuthGuard`, `UserStatusGuard`           | List active sessions for the current user                  |
+| DELETE | `/sessions/all`               | `JwtAuthGuard`, `UserStatusGuard`           | Revoke all sessions                                        |
+| DELETE | `/sessions/:id`               | `JwtAuthGuard`, `UserStatusGuard`           | Revoke a specific session                                  |
+| POST   | `/invitations`                | `JwtAuthGuard`                              | Create a tenant invitation                                 |
+| POST   | `/invitations/accept`         | Public                                      | Accept an invitation and create the user                   |
+| POST   | `/platform/login`             | Public                                      | Platform admin login (separate token context)              |
+| POST   | `/platform/mfa/challenge`     | Public                                      | Platform admin MFA challenge                               |
+| GET    | `/platform/me`                | `JwtPlatformGuard`                          | Current platform admin payload                             |
+| POST   | `/platform/logout`            | `JwtPlatformGuard`                          | Revoke platform tokens                                     |
+| POST   | `/platform/refresh`           | Public (platform refresh cookie)            | Rotate platform refresh token                              |
+| DELETE | `/platform/sessions`          | `JwtPlatformGuard`                          | Revoke all platform sessions                               |
+| GET    | `/oauth/:provider`            | Public + `@SkipMfa()`                       | Initiate OAuth authorization redirect                      |
+| GET    | `/oauth/:provider/callback`   | Public + `@SkipMfa()`                       | Handle OAuth callback, exchange code, issue tokens         |
+
 ### Server Guards
 
-| Guard                | Decorator                       | Purpose                                                         |
-| -------------------- | ------------------------------- | --------------------------------------------------------------- |
-| `JwtAuthGuard`       | —                               | Validates JWT from cookie or `Authorization: Bearer` header     |
-| `RolesGuard`         | `@Roles('admin')`               | Hierarchical role check                                         |
-| `UserStatusGuard`    | —                               | Blocks inactive/banned users (Redis-cached status)              |
-| `MfaRequiredGuard`   | `@SkipMfa()`                    | Enforces MFA verification on protected routes                   |
-| `JwtPlatformGuard`   | —                               | Platform admin JWT validation (Bearer only)                     |
-| `PlatformRolesGuard` | `@PlatformRoles('super_admin')` | Platform role hierarchy enforcement                             |
-| `SelfOrAdminGuard`   | —                               | Allows access only to the resource owner or an admin            |
-| `OptionalAuthGuard`  | —                               | Attaches user if authenticated, proceeds unauthenticated if not |
-| `WsJwtGuard`         | —                               | WebSocket JWT validation from handshake headers                 |
+| Guard                | Decorator                       | Purpose                                                     |
+| -------------------- | ------------------------------- | ----------------------------------------------------------- |
+| `JwtAuthGuard`       | —                               | Validates JWT from cookie or `Authorization: Bearer` header |
+| `RolesGuard`         | `@Roles('admin')`               | Hierarchical role check                                     |
+| `UserStatusGuard`    | —                               | Blocks inactive/banned users (Redis-cached status)          |
+| `MfaRequiredGuard`   | `@SkipMfa()`                    | Enforces MFA verification on protected routes               |
+| `JwtPlatformGuard`   | —                               | Platform admin JWT validation (Bearer only)                 |
+| `PlatformRolesGuard` | `@PlatformRoles('super_admin')` | Platform role hierarchy enforcement                         |
+
+> [!NOTE]
+> The source tree contains additional guards (`SelfOrAdminGuard`, `OptionalAuthGuard`, `WsJwtGuard`) that are not yet re-exported from the public `@bymax-one/nest-auth` barrel. They will be added in a follow-up release; until then, only the guards listed above are part of the supported public API.
 
 ### Server Decorators
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions } from '@nestjs/jwt'
 
@@ -88,6 +88,8 @@ interface RefreshSession {
  */
 @Injectable()
 export class TokenManagerService {
+  private readonly logger = new Logger(TokenManagerService.name)
+
   constructor(
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
@@ -300,6 +302,9 @@ export class TokenManagerService {
       return this.rotateFromGrace(graceSessionJson, ip, userAgent, refreshTtl, graceTtl)
     }
 
+    this.logger.warn(
+      'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+    )
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 
@@ -390,6 +395,7 @@ export class TokenManagerService {
     try {
       parsed = JSON.parse(json)
     } catch {
+      this.logger.warn('parseSession: malformed session JSON in Redis')
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     const rec = parsed as Record<string, unknown>
@@ -514,6 +520,9 @@ export class TokenManagerService {
       )
     }
 
+    this.logger.warn(
+      'reissuePlatformTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+    )
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 

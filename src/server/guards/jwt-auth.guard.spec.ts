@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
@@ -187,14 +188,36 @@ describe('JwtAuthGuard', () => {
   // ---------------------------------------------------------------------------
 
   describe('revocation check', () => {
-    // Verifies that a token whose jti appears in the Redis revocation blacklist is rejected.
+    // Verifies that a token whose jti appears in the Redis revocation blacklist is rejected
+    // with the specific TOKEN_REVOKED error code (not TOKEN_INVALID).
     it('should throw TOKEN_REVOKED when jti is in the blacklist', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
       mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
       mockRedis.get.mockResolvedValue('1') // blacklisted
 
       const ctx = makeContext('some.jwt.token')
-      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+      let caught: AuthException | undefined
+      try {
+        await guard.canActivate(ctx as never)
+      } catch (e) {
+        caught = e as AuthException
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
+        AUTH_ERROR_CODES.TOKEN_REVOKED
+      )
+    })
+
+    // Verifies that the revocation lookup uses the exact Redis key rv:{jti}.
+    it('should check Redis with the key rv:{jti}', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+
+      const ctx = makeContext('some.jwt.token')
+      await guard.canActivate(ctx as never)
+
+      expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_PAYLOAD.jti}`)
     })
   })
 

@@ -203,6 +203,27 @@ describe('TokenManagerService', () => {
       createdAt: '2026-01-01T00:00:00.000Z'
     })
 
+    // Verifies that mfaEnabled:true in the stored session is propagated into the rotated access token.
+    // This is a critical security property: MfaRequiredGuard must continue to enforce MFA after rotation.
+    it('should propagate mfaEnabled:true from the stored session into the rotated access token', async () => {
+      const sessionWithMfa = JSON.stringify({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        role: 'member',
+        device: 'Browser',
+        ip: '1.2.3.4',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        mfaEnabled: true
+      })
+      mockRedis.eval.mockResolvedValue(sessionWithMfa)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]).toMatchObject({ mfaEnabled: true })
+    })
+
     // Verifies that a primary rotation (existing session found via Lua eval) returns new tokens.
     it('should create a new session and return new tokens when old session exists', async () => {
       mockRedis.eval.mockResolvedValue(OLD_SESSION)

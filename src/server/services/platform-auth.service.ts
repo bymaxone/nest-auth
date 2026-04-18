@@ -19,6 +19,7 @@ import type {
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { maskEmail } from '../utils/mask-email'
 
 /**
  * Core authentication service for platform administrators.
@@ -80,6 +81,7 @@ export class PlatformAuthService {
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
+      this.logger.warn(`login: account locked email=${maskEmail(dto.email)}`)
       const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, { retryAfterSeconds })
     }
@@ -87,12 +89,14 @@ export class PlatformAuthService {
     const admin = await this.platformUserRepo.findByEmail(dto.email)
     if (!admin) {
       await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
     const passwordMatch = await this.passwordService.compare(dto.password, admin.passwordHash)
     if (!passwordMatch) {
       await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -101,6 +105,7 @@ export class PlatformAuthService {
     // MFA challenge path: issue a short-lived temp token and stop here.
     if (admin.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(admin.id, 'platform')
+      this.logger.log(`login: MFA challenge issued adminId=${admin.id}`)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -113,6 +118,7 @@ export class PlatformAuthService {
     } = admin
 
     const result = await this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent)
+    this.logger.log(`login: success adminId=${admin.id}`)
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
     void this.platformUserRepo.updateLastLogin(admin.id).catch((err: unknown) => {
@@ -136,6 +142,7 @@ export class PlatformAuthService {
    * @param rawRefreshToken - The raw opaque platform refresh token.
    */
   async logout(userId: string, jti: string, exp: number, rawRefreshToken: string): Promise<void> {
+    this.logger.log(`logout: adminId=${userId}`)
     const remainingTtl = Math.max(0, exp - Math.floor(Date.now() / 1000))
     if (remainingTtl > 0) {
       await this.redis.set('rv:' + jti, '1', remainingTtl)

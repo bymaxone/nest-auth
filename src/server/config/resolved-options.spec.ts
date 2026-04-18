@@ -223,6 +223,16 @@ describe('resolveOptions — jwt missing', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveOptions — jwt.secret validation', () => {
+  // Verifies that a missing or empty jwt.secret produces a descriptive error rather than a raw
+  // TypeError — covers ConfigService callers where config.get() returns undefined at runtime.
+  it('should throw a descriptive error when jwt.secret is empty (not a raw TypeError)', () => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: '' }
+    } as unknown as BymaxAuthModuleOptions
+    expect(() => resolveOptions(options)).toThrow(/\[BymaxAuthModule\] jwt\.secret is required/)
+  })
+
   // Verifies that a secret shorter than 32 characters is rejected at startup.
   it('should throw when secret is shorter than 32 characters', () => {
     const options: BymaxAuthModuleOptions = {

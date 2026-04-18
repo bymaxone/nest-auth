@@ -38,11 +38,11 @@ import { assertTokenType } from './utils/assert-token-type'
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
-    private readonly jwtService: JwtService,
-    private readonly tokenDelivery: TokenDeliveryService,
-    private readonly redis: AuthRedisService,
-    private readonly reflector: Reflector,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    protected readonly jwtService: JwtService,
+    protected readonly tokenDelivery: TokenDeliveryService,
+    protected readonly redis: AuthRedisService,
+    protected readonly reflector: Reflector,
+    @Inject(BYMAX_AUTH_OPTIONS) protected readonly options: ResolvedOptions
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

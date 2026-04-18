@@ -589,24 +589,37 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('logout', () => {
-    // Verifies that logout revokes the JWT jti in Redis and deletes the refresh session.
+    // Verifies that logout revokes the JWT jti in Redis with the correct key and a positive TTL.
     it('should blacklist the JWT jti and delete the refresh session', async () => {
-      mockTokenManager.decodeToken.mockReturnValue({
-        jti: 'some-jti',
-        sub: 'user-1',
-        exp: Math.floor(Date.now() / 1000) + 900
-      })
+      const jti = 'some-jti'
+      const exp = Math.floor(Date.now() / 1000) + 900
+      mockTokenManager.decodeToken.mockReturnValue({ jti, sub: 'user-1', exp })
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
       await service.logout('access.token', 'raw-refresh', 'user-1')
 
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.stringMatching(/^rv:/),
-        '1',
-        expect.any(Number)
-      )
+      expect(mockRedis.set).toHaveBeenCalledWith(`rv:${jti}`, '1', expect.any(Number))
+      const ttl = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
+      expect(ttl).toBeGreaterThan(800)
+      expect(ttl).toBeLessThanOrEqual(900)
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:/))
+    })
+
+    // Verifies that redis.set is NOT called when the access token is already expired at logout time.
+    it('should skip the revocation redis.set when the token is already expired', async () => {
+      mockTokenManager.decodeToken.mockReturnValue({
+        jti: 'expired-jti',
+        sub: 'user-1',
+        exp: Math.floor(Date.now() / 1000) - 10 // expired 10 s ago
+      })
+      mockRedis.del.mockResolvedValue(undefined)
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+
+      await service.logout('access.token', 'raw-refresh', 'user-1')
+
+      expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:/))
     })
 
