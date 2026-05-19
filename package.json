@@ -127,6 +127,7 @@
     "@nestjs/testing": "^11.1.18",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.18",
+    "@swc/core": "^1.15.30",
     "@testing-library/react": "^16.3.2",
     "@types/express": "^5.0.6",
     "@types/jest": "^29.5.14",

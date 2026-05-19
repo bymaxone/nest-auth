@@ -421,8 +421,19 @@ export class BymaxAuthModule {
         // injection token — host-app modules have no reason to inject the plugin array
         // directly. Only OAuthService is part of the public integration surface.
         ...(includeOAuth ? [OAuthService] : []),
+        // Export email provider — allows host-app modules (e.g. custom invitation flows)
+        // to inject the configured IEmailProvider without re-registering it.
+        BYMAX_AUTH_EMAIL_PROVIDER,
         // Export InvitationService — allows host-app modules to send or manage invitations.
-        ...invitationProviders
+        ...invitationProviders,
+        // Export AuthRedisService so host-app modules that apply JwtPlatformGuard,
+        // WsJwtGuard, or other guards via @UseGuards() have AuthRedisService in scope.
+        // NestJS auto-registers @UseGuards() guards as local providers in the controller's
+        // module; all constructor deps must be resolvable from that module's context.
+        AuthRedisService,
+        // Export JwtModule so host-app modules that apply JWT-dependent guards via
+        // @UseGuards() have JwtService in scope.
+        JwtModule
       ]
     }
   }

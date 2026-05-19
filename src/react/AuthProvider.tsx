@@ -13,7 +13,7 @@
  * coordinates state and React plumbing.
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
 
 import type { AuthClient, RegisterInput, ResetPasswordInput } from '@bymax-one/nest-auth/client'
 import { AuthClientError, type AuthUserClient, type LoginResult } from '@bymax-one/nest-auth/shared'
