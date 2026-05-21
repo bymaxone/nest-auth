@@ -96,7 +96,9 @@ describe('NoOpAuthHooks', () => {
       const mismatchedUser: SafeAuthUser = { ...EXISTING_USER, email: 'other@example.com' }
       const result = hooks.onOAuthLogin(PROFILE, mismatchedUser, CONTEXT)
       expect(result.action).toBe('reject')
-      expect(result.reason).toBeDefined()
+      // Assert the exact reason text — `toBeDefined()` alone passes for an empty
+      // string and lets a `reason: '' ` mutation survive.
+      expect(result.reason).toBe('Email mismatch')
     })
   })
 

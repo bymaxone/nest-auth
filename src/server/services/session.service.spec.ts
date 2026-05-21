@@ -644,6 +644,262 @@ describe('SessionService', () => {
       }
       expect(stored.device).toContain('Linux')
     })
+
+    // Scenario: a clean Chrome UA (no Edg/OPR/Firefox, Safari token but no Version token).
+    // Expected: device contains 'Chrome'. Why: kills the Chrome-branch mutants on line 138
+    // (`else if (false)`), 138:35 (empty block), and 139 (`browser = ''`) — the Chrome browser
+    // label is never asserted by the existing OS-focused tests.
+    it('detects Chrome browser from Chrome/ token', async () => {
+      const chromeUA =
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      await service.createSession(userId, rawToken, ip, chromeUA)
+      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
+        device: string
+      }
+      expect(stored.device).toContain('Chrome')
+    })
+
+    // Scenario: a Firefox UA (no Edg/OPR/Chrome).
+    // Expected: device contains 'Firefox'. Why: kills the Firefox-branch mutants on line 140
+    // (`else if (false)`), 140:36 (empty block), and 141 (`browser = ''`).
+    it('detects Firefox browser from Firefox/ token', async () => {
+      const firefoxUA = 'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0'
+      await service.createSession(userId, rawToken, ip, firefoxUA)
+      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
+        device: string
+      }
+      expect(stored.device).toContain('Firefox')
+    })
+
+    // Scenario: a desktop macOS UA must yield the 'macOS' OS label.
+    // Expected: device contains 'macOS'. Why: kills the macOS-branch mutants on line 155
+    // (`else if (false)`), 155:45 (empty block), and 156 (`os = ''`) — the macOS label is never
+    // asserted by the existing tests (which assert browser labels for Mac UAs).
+    it('detects macOS from a Macintosh UA', async () => {
+      const macUA =
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
+      await service.createSession(userId, rawToken, ip, macUA)
+      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
+        device: string
+      }
+      expect(stored.device).toContain('macOS')
+    })
+
+    // Scenario: an unrecognised UA matches no browser and no OS pattern.
+    // Expected: device === 'Unknown Browser on Unknown OS'. Why: kills the StringLiteral defaults on
+    // line 132 (`'Unknown Browser'` → '') and 147 (`'Unknown OS'` → ''), the Safari `if (true)` mutant
+    // on line 142 and the Linux `if (true)` mutant on line 157 — both would mislabel an unknown UA.
+    it('labels an unrecognised user-agent as Unknown Browser on Unknown OS', async () => {
+      const unknownUA = 'curl/7.88.1'
+      await service.createSession(userId, rawToken, ip, unknownUA)
+      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
+        device: string
+      }
+      expect(stored.device).toBe('Unknown Browser on Unknown OS')
+    })
+
+    // Scenario: a UA with a Safari/ token but NO Version/ token (and no Chrome/Edg/OPR/Firefox).
+    // Expected: device contains 'Unknown Browser', NOT 'Safari'. Why: kills the LogicalOperator mutant
+    // on line 142 (`/Safari\//.test(ua) && /Version\//.test(ua)` → `||`) which would label this as
+    // Safari despite the missing Version token.
+    it('does not label a Safari-token-only UA (no Version) as Safari', async () => {
+      const safariNoVersionUA = 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Safari/605.1.15'
+      await service.createSession(userId, rawToken, ip, safariNoVersionUA)
+      const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
+        device: string
+      }
+      expect(stored.device).toContain('Unknown Browser')
+    })
+
+    // Scenario: the onNewSession hook receives a short (8-char) sessionHash, not the full hash.
+    // Expected: minimalSessionInfo.sessionHash has length 8. Why: kills the MethodExpression mutant
+    // on line 265 (`hash.slice(0, 8)` → `hash`) which would leak the full 64-char hash to the hook.
+    it('passes an 8-character truncated sessionHash to the onNewSession hook', async () => {
+      mockHooks.onNewSession.mockResolvedValue(undefined)
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+      await flushMicrotasks()
+
+      const sessionInfo = mockHooks.onNewSession.mock.calls[0]?.[1] as { sessionHash: string }
+      expect(sessionInfo.sessionHash).toHaveLength(8)
+      expect(sessionInfo.sessionHash).toBe(sha256(rawToken).slice(0, 8))
+    })
+
+    // Scenario: enforceSessionLimit reads the per-user SET via the exact `sess:{userId}` key.
+    // Expected: smembers called with `sess:user-1`. Why: kills the StringLiteral mutant on line 591
+    // (`smembers(\`sess:${userId}\`)` → `smembers('')`).
+    it('reads the session SET using the sess:{userId} key during enforcement', async () => {
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      expect(mockRedis.smembers).toHaveBeenCalledWith(`sess:${userId}`)
+    })
+
+    // Scenario: only `rt:` members count toward the limit — `rp:` grace pointers must be excluded.
+    // Setup: exactly `limit` (5) rt: members plus extra rp: members.
+    // Expected: no eviction (del not called). Why: kills the MethodExpression mutant on line 594
+    // (`members.filter(...)` → `members`) and the StringLiteral on line 594:58 (`startsWith('rt:')`
+    // → `startsWith('')`) — both would count the rp: pointers and trigger a spurious eviction.
+    it('excludes rp: grace pointers from the concurrent-session count', async () => {
+      const rtHashes = Array.from({ length: 5 }, (_, i) => sha256(`rt-count-${i}`))
+      const rpHashes = Array.from({ length: 3 }, (_, i) => sha256(`rp-count-${i}`))
+      mockRedis.smembers.mockResolvedValue([
+        ...rtHashes.map((h) => `rt:${h}`),
+        ...rpHashes.map((h) => `rp:${h}`)
+      ])
+      mockRedis.get.mockResolvedValue(makeDetailJson(Date.now()))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      expect(mockRedis.del).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the active session count is exactly at the limit (5 rt: members).
+    // Expected: early return — no sd: lookups (redis.get) and no eviction. Why: kills the
+    // EqualityOperator mutant on line 598 (`rtMembers.length <= limit` → `< limit`) which, at the
+    // boundary, would not return early and would proceed to fetch sd: records before evicting zero.
+    it('returns early without fetching sd: records when count equals the limit', async () => {
+      const rtHashes = Array.from({ length: 5 }, (_, i) => sha256(`at-limit-${i}`))
+      mockRedis.smembers.mockResolvedValue(rtHashes.map((h) => `rt:${h}`))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      expect(mockRedis.get).not.toHaveBeenCalled()
+      expect(mockRedis.del).not.toHaveBeenCalled()
+    })
+
+    // Scenario: 6 rt: members where the oldest is in the MIDDLE of the member array (createdAt=0).
+    // Expected: only the true oldest is evicted; a newer session is NOT evicted; sd: is read with the
+    // exact `sd:{memberHash}` key. Why: kills the sort-removal (line 629), the comparator `-`→`+`
+    // (629:35), `evictCount = length - limit` → `+` (631), the `.slice(0, evictCount)` removal (632),
+    // the createdAt-parse `false`/`true &&` mutants (612) and `=== 'number'` → `!==` (615), and the
+    // `redis.get(\`sd:${memberHash}\`)` → `get('')` mutant (608).
+    it('evicts only the true oldest session even when it is not first in member order', async () => {
+      // createdAt by index (ms); index 2 is the oldest at 0.
+      const createdAtByIndex = [5_000, 3_000, 0, 8_000, 6_000, 9_000]
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`mid-oldest-${i}`))
+      const oldestHash = hashes[2]
+      const newestHash = hashes[5]
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const hashPart = key.replace(/^sd:/, '')
+        const idx = hashes.indexOf(hashPart)
+        return Promise.resolve(makeDetailJson(createdAtByIndex[idx]!))
+      })
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      // sd: detail must be read with the proper key shape.
+      expect(mockRedis.get).toHaveBeenCalledWith(`sd:${hashes[0]}`)
+      // Exactly the oldest is evicted; the newest is preserved.
+      const delKeys = mockRedis.del.mock.calls.map((c) => c[0])
+      expect(delKeys).toContain(`rt:${oldestHash}`)
+      expect(delKeys).not.toContain(`rt:${newestHash}`)
+      // length - limit = 1 → exactly one rt: deletion (kills evictCount `+` and slice removal).
+      const rtDeletes = delKeys.filter((k) => typeof k === 'string' && k.startsWith('rt:'))
+      expect(rtDeletes).toHaveLength(1)
+    })
+
+    // Scenario: a member whose sd: record has a NON-number createdAt (string) is treated as oldest
+    // (createdAt = 0) and evicted first. Expected: that member is evicted. Why: kills the
+    // `typeof (...)['createdAt'] === 'number'` → `true` mutant on line 615 — under that mutant the
+    // string createdAt would be read as-is instead of defaulting to 0, changing eviction ordering.
+    it('treats a non-number createdAt as oldest (createdAt = 0) during eviction', async () => {
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`nonnum-created-${i}`))
+      const badHash = hashes[3]
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const hashPart = key.replace(/^sd:/, '')
+        if (hashPart === badHash) {
+          // Valid object but createdAt is a string (huge value if read literally).
+          return Promise.resolve(
+            JSON.stringify({
+              device: 'Chrome',
+              ip: '1.2.3.4',
+              createdAt: '99999999999999',
+              lastActivityAt: 1000
+            })
+          )
+        }
+        // All other members are clearly newer.
+        return Promise.resolve(makeDetailJson(1_000_000 + hashes.indexOf(hashPart)))
+      })
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      const delKeys = mockRedis.del.mock.calls.map((c) => c[0])
+      expect(delKeys).toContain(`rt:${badHash}`)
+    })
+
+    // Scenario: a logged eviction-failure message must name the failing session and user.
+    // Expected: logger.error called with the exact enforceSessionLimit failure message. Why: kills the
+    // StringLiteral mutant on line 652 (message → '').
+    it('logs the eviction failure with the session and user in the message', async () => {
+      const hashes = Array.from({ length: 6 }, (_, i) => sha256(`evict-msg-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation((key: string) => {
+        const idx = hashes.indexOf(key.replace(/^sd:/, ''))
+        return Promise.resolve(makeDetailJson(idx === 0 ? 0 : Date.now()))
+      })
+      mockRedis.del.mockRejectedValue(new Error('Redis down'))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        `enforceSessionLimit: failed to evict session ${hashes[0]} for user ${userId}`,
+        expect.any(Error)
+      )
+    })
+
+    // Scenario: when maxSessionsResolver throws, the failure is logged with the exact fallback message.
+    // Expected: logger.error called with the resolver-fallback message. Why: kills the StringLiteral
+    // mutant on line 692 (message → '').
+    it('logs the exact fallback message when maxSessionsResolver throws', async () => {
+      const resolver = jest
+        .fn<Promise<number>, [unknown]>()
+        .mockRejectedValue(new Error('resolver boom'))
+      mockOptions.sessions.maxSessionsResolver = resolver
+      service = await buildModule()
+      const hashes = Array.from({ length: 4 }, (_, i) => sha256(`resolver-msg-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockResolvedValue(makeDetailJson(Date.now()))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        'maxSessionsResolver threw — falling back to defaultMaxSessions',
+        expect.any(Error)
+      )
+    })
+
+    // Scenario: the onNewSession hook rejection is logged with the exact "hook threw" message.
+    // Expected: logger.error called with 'onNewSession hook threw'. Why: kills the StringLiteral mutant
+    // on line 284 (message → '').
+    it('logs the exact message when the onNewSession hook rejects', async () => {
+      mockHooks.onNewSession.mockRejectedValue(new Error('hook boom'))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+      await flushMicrotasks()
+
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        'onNewSession hook threw',
+        expect.any(Error)
+      )
+    })
+
+    // Scenario: a findById rejection inside the onNewSession flow is logged with the exact message.
+    // Expected: logger.error called with 'onNewSession hook — findById failed'. Why: kills the
+    // StringLiteral mutant on line 289 (message → '').
+    it('logs the exact message when findById rejects inside the onNewSession flow', async () => {
+      mockUserRepo.findById.mockRejectedValue(new Error('db boom'))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+      await flushMicrotasks()
+
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        'onNewSession hook — findById failed',
+        expect.any(Error)
+      )
+    })
   })
 
   // =========================================================================
@@ -925,6 +1181,84 @@ describe('SessionService', () => {
       expect(result).toHaveLength(1)
       expect(result[0]!.sessionHash).toBe(rtHash)
     })
+
+    // Scenario: listSessions reads the per-user SET via the exact `sess:{userId}` key.
+    // Expected: smembers called with `sess:user-list`. Why: kills the StringLiteral mutant on line
+    // 313 (`smembers(\`sess:${userId}\`)` → `smembers('')`).
+    it('reads the session SET using the sess:{userId} key', async () => {
+      mockRedis.smembers.mockResolvedValue([])
+
+      await service.listSessions(userId)
+
+      expect(mockRedis.smembers).toHaveBeenCalledWith(`sess:${userId}`)
+    })
+
+    // Scenario: sd: detail with a non-string device is invalid and excluded.
+    // Expected: result length 0. Why: kills the `typeof p['device'] !== 'string'` → false mutant
+    // (line 344) — without that clause a record with a numeric device would be wrongly included.
+    it('excludes a session whose detail has a non-string device', async () => {
+      const hash = sha256('bad-device-type')
+      mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({ device: 123, ip: '1.2.3.4', createdAt: 1000, lastActivityAt: 1000 })
+      )
+      mockRedis.srem.mockResolvedValue(1)
+
+      const result = await service.listSessions(userId)
+
+      expect(result).toHaveLength(0)
+    })
+
+    // Scenario: sd: detail with a non-string ip is invalid and excluded.
+    // Expected: result length 0. Why: kills the `typeof p['ip'] !== 'string'` → false mutant (line 345).
+    it('excludes a session whose detail has a non-string ip', async () => {
+      const hash = sha256('bad-ip-type')
+      mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({ device: 'Chrome', ip: 42, createdAt: 1000, lastActivityAt: 1000 })
+      )
+      mockRedis.srem.mockResolvedValue(1)
+
+      const result = await service.listSessions(userId)
+
+      expect(result).toHaveLength(0)
+    })
+
+    // Scenario: sd: detail with a non-number createdAt is invalid and excluded.
+    // Expected: result length 0. Why: kills the `typeof p['createdAt'] !== 'number'` → false mutant
+    // (line 346).
+    it('excludes a session whose detail has a non-number createdAt', async () => {
+      const hash = sha256('bad-createdat-type')
+      mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({ device: 'Chrome', ip: '1.2.3.4', createdAt: 'nope', lastActivityAt: 1000 })
+      )
+      mockRedis.srem.mockResolvedValue(1)
+
+      const result = await service.listSessions(userId)
+
+      expect(result).toHaveLength(0)
+    })
+
+    // Scenario: when the fire-and-forget SREM of a stale member rejects, the error log truncates the
+    // key to "rt:" + 8 hex chars (never the full hash).
+    // Expected: logger.error called with `listSessions: failed to remove stale key rt:<8hex>`. Why:
+    // kills the StringLiteral mutant on line 376 (message → '') and the MethodExpression on line
+    // 376:71 (`staleKey.slice(0, 11)` → `staleKey`, which would log the full member key).
+    it('logs the stale-key removal failure with a truncated key', async () => {
+      const staleHash = sha256('stale-trunc-token')
+      mockRedis.smembers.mockResolvedValue([`rt:${staleHash}`])
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.srem.mockRejectedValue(new Error('srem failed'))
+
+      await service.listSessions(userId)
+      await flushMicrotasks()
+
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        `listSessions: failed to remove stale key rt:${staleHash.slice(0, 8)}`,
+        expect.any(Error)
+      )
+    })
   })
 
   // =========================================================================
@@ -955,6 +1289,44 @@ describe('SessionService', () => {
         thrownLong = e
       }
       expect(getErrorCode(thrownLong)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+    })
+
+    // Scenario: a valid 64-hex hash with a junk character PREPENDED (length 65, valid tail).
+    // Expected: throws SESSION_NOT_FOUND. Why: kills the `^`-anchor removal on line 29
+    // (`/^[a-f0-9]{64}$/` → `/[a-f0-9]{64}$/`); without the start anchor the regex matches the valid
+    // 64-hex suffix and would wrongly accept this input.
+    it('throws SESSION_NOT_FOUND for a valid hash with an invalid leading character', async () => {
+      const prefixed = `z${sha256('anchor-prefix-token')}`
+      let thrown: unknown
+      try {
+        await service.revokeSession(userId, prefixed)
+      } catch (e) {
+        thrown = e
+      }
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      // The format guard must reject BEFORE any Redis round-trip. Without this
+      // assertion the `^`-anchor mutant survives: it passes the (loosened) regex,
+      // reaches eval, finds no session, and throws the same SESSION_NOT_FOUND.
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a valid 64-hex hash with a junk character APPENDED (length 65, valid head).
+    // Expected: throws SESSION_NOT_FOUND. Why: kills the `$`-anchor removal on line 29
+    // (`/^[a-f0-9]{64}$/` → `/^[a-f0-9]{64}/`); without the end anchor the regex matches the valid
+    // 64-hex prefix and would wrongly accept this input.
+    it('throws SESSION_NOT_FOUND for a valid hash with an invalid trailing character', async () => {
+      const suffixed = `${sha256('anchor-suffix-token')}z`
+      let thrown: unknown
+      try {
+        await service.revokeSession(userId, suffixed)
+      } catch (e) {
+        thrown = e
+      }
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      // The format guard must reject BEFORE any Redis round-trip. Without this
+      // assertion the `$`-anchor mutant survives: it passes the (loosened) regex,
+      // reaches eval, finds no session, and throws the same SESSION_NOT_FOUND.
+      expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
     // Verifies that throws SESSION_NOT_FOUND for a hash containing uppercase hex characters.
@@ -993,6 +1365,22 @@ describe('SessionService', () => {
         [`sess:${userId}`, `rt:${hash}`, `sd:${hash}`],
         [`rt:${hash}`]
       )
+    })
+
+    // Scenario: the revocation Lua must perform the atomic membership check and deletions.
+    // Expected: the script passed to eval contains SISMEMBER, SREM, and DEL calls. Why: kills the
+    // StringLiteral mutant on line 45 (REVOKE_SESSION_LUA → empty string), which would send an empty
+    // script and silently revoke nothing.
+    it('evaluates a Lua script containing SISMEMBER, SREM, and DEL', async () => {
+      const hash = sha256('revoke-script-token')
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeSession(userId, hash)
+
+      const script = (mockRedis.eval.mock.calls[0] as [string, string[], string[]])[0]
+      expect(script).toContain('SISMEMBER')
+      expect(script).toContain('SREM')
+      expect(script).toContain('DEL')
     })
 
     // Verifies that throws SESSION_NOT_FOUND when Lua returns 0 (not a member).
@@ -1071,6 +1459,18 @@ describe('SessionService', () => {
         thrown = e
       }
       expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+    })
+
+    // Scenario: revokeAllExceptCurrent reads the per-user SET via the exact `sess:{userId}` key.
+    // Expected: smembers called with `sess:user-revoke-all`. Why: kills the StringLiteral mutant on
+    // line 428 (`smembers(\`sess:${userId}\`)` → `smembers('')`).
+    it('reads the session SET using the sess:{userId} key', async () => {
+      const currentHash = sha256('rae-smembers-key')
+      mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`])
+
+      await service.revokeAllExceptCurrent(userId, currentHash)
+
+      expect(mockRedis.smembers).toHaveBeenCalledWith(`sess:${userId}`)
     })
 
     // Verifies that revokes all sessions except the current one.
@@ -1310,6 +1710,23 @@ describe('SessionService', () => {
         [`sd:${oldHash}`, `sd:${newHash}`],
         [expect.any(String), String(TTL)]
       )
+    })
+
+    // Scenario: the rotation Lua must atomically DEL the old detail and SET the new one.
+    // Expected: the script passed to eval contains DEL and SET calls. Why: kills the StringLiteral
+    // mutant on line 70 (ROTATE_SESSION_DETAIL_LUA → empty string), which would send an empty script
+    // and silently fail to move the detail record.
+    it('evaluates a rotation Lua script containing DEL and SET', async () => {
+      const oldHash = sha256('rotate-script-old')
+      const newHash = sha256('rotate-script-new')
+      mockRedis.get.mockResolvedValue(makeDetailJson(1000))
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.rotateSession(oldHash, newHash, ip, userAgent)
+
+      const script = (mockRedis.eval.mock.calls[0] as [string, string[], string[]])[0]
+      expect(script).toContain('DEL')
+      expect(script).toContain('SET')
     })
 
     // Verifies that writes refreshed ip in the new sd: record.

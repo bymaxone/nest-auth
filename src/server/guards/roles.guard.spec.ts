@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { ROLES_KEY } from '../decorators/roles.decorator'
 import { AuthException } from '../errors/auth-exception'
 import { RolesGuard } from './roles.guard'
 
@@ -18,9 +19,14 @@ function makeContext(
   getClass: () => jest.Mock
   switchToHttp: () => { getRequest: () => Record<string, unknown> }
 } {
+  // getHandler/getClass return distinct, defined, stable sentinels so that
+  // toHaveBeenCalledWith(KEY, [handler, class]) cannot be satisfied by an empty
+  // array — Jest's argument matcher treats [undefined, undefined] as equal to [].
+  const handlerRef = jest.fn()
+  const classRef = jest.fn()
   return {
-    getHandler: jest.fn(),
-    getClass: jest.fn(),
+    getHandler: jest.fn(() => handlerRef),
+    getClass: jest.fn(() => classRef),
     switchToHttp: () => ({
       getRequest: () => ({
         user: userRole ? { role: userRole } : undefined
@@ -69,6 +75,23 @@ describe('RolesGuard', () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([])
     const ctx = makeContext('member', [])
     expect(guard.canActivate(ctx as never)).toBe(true)
+  })
+
+  /**
+   * Metadata lookup targets.
+   *
+   * The guard must read @Roles metadata from BOTH the handler and the class
+   * (NestJS override order). Pins the targets array passed to the reflector:
+   * collapsing it to [] would make every @Roles() decorator silently ignored,
+   * disabling role enforcement entirely.
+   */
+  it('should read ROLES_KEY metadata from the handler and class', () => {
+    const spy = jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['admin'])
+    const ctx = makeContext('admin', ['admin'])
+
+    guard.canActivate(ctx as never)
+
+    expect(spy).toHaveBeenCalledWith(ROLES_KEY, [ctx.getHandler(), ctx.getClass()])
   })
 
   // Verifies that an exact role match between user and required role grants access.

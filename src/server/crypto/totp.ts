@@ -63,6 +63,7 @@ export function toBase32(input: Buffer): string {
     value = (value << 8) | input.readUInt8(i)
     bits += 8
 
+    // Stryker disable next-line EqualityOperator: `bits` only reaches exactly 5 as the terminal accumulator state (10 → 5 → 0); the original's final emit `(value >>> 0) & 0x1f` equals the trailing-bits emit `(value << 0) & 0x1f`, so `>=` and `>` produce identical Base32 output
     while (bits >= 5) {
       bits -= 5
       output += BASE32_ALPHABET[(value >>> bits) & 0x1f]
@@ -222,6 +223,7 @@ export function generateHotp(secretBase32: string, counter: number): string {
   if (key.length < MIN_SECRET_BYTES) {
     throw new Error(
       `[totp] Secret too short: ${key.length} bytes (minimum ${MIN_SECRET_BYTES}). ` +
+        // Stryker disable next-line StringLiteral: cosmetic remediation hint appended to the error message; callers branch on the thrown error, never on this text
         'Generate secrets with generateTotpSecret().'
     )
   }
@@ -307,17 +309,20 @@ export function generateTotp(secretBase32: string): string {
  * ```
  */
 export function verifyTotp(secretBase32: string, code: string, window = 1): boolean {
+  // Stryker disable next-line ConditionalExpression,Regex: format guard is an optimization, not a behavior gate — any string that is not exactly 6 ASCII digits also fails the constant-time comparison below, so weakening or removing this check yields identical boolean results
   if (!/^\d{6}$/.test(code)) return false
 
   const currentStep = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS)
 
   for (let delta = -window; delta <= window; delta++) {
+    // Stryker disable next-line ArithmeticOperator: the window is symmetric (delta ∈ [-window, +window]); currentStep + delta and currentStep - delta enumerate the same set of time steps, so the result is identical
     const expected = generateHotp(secretBase32, currentStep + delta)
     // Use constant-time comparison to prevent timing attacks.
     // Both strings are always exactly TOTP_DIGITS characters, so the length
     // guard in timingSafeEqual never short-circuits on valid expected values.
     const expectedBuf = Buffer.from(expected, 'utf8')
     const codeBuf = Buffer.from(code, 'utf8')
+    // Stryker disable next-line ConditionalExpression: defensive length guard — the 6-digit format check above guarantees both buffers are 6 bytes here, so this is always true; it shields timingSafeEqual (which throws on length mismatch) if that guard ever changes
     if (expectedBuf.length === codeBuf.length && timingSafeEqual(expectedBuf, codeBuf)) {
       return true
     }

@@ -28,9 +28,17 @@ function makeContext(user: Record<string, unknown> | undefined): {
   getClass: () => jest.Mock
   switchToHttp: () => { getRequest: () => Record<string, unknown> }
 } {
+  // getHandler/getClass return distinct, defined, stable sentinels. Jest's
+  // argument matcher (toHaveBeenCalledWith) ignores trailing undefined array
+  // items, so a mock returning undefined would let [undefined, undefined] match
+  // an empty [] and hide a mutation that drops the metadata targets. Returning
+  // the same reference on every call keeps the assertion's expected array equal
+  // to the array the guard actually passed.
+  const handlerRef = jest.fn()
+  const classRef = jest.fn()
   return {
-    getHandler: jest.fn(),
-    getClass: jest.fn(),
+    getHandler: jest.fn(() => handlerRef),
+    getClass: jest.fn(() => classRef),
     switchToHttp: () => ({ getRequest: () => ({ user }) })
   }
 }

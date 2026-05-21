@@ -14,6 +14,7 @@
   <a href="https://www.npmjs.com/package/@bymax-one/nest-auth"><img src="https://img.shields.io/npm/dm/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="npm downloads" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bymaxone/nest-auth/ci.yml?branch=main&style=flat-square&colorA=000000&label=CI" alt="CI status" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square&colorA=000000" alt="coverage" /></a>
+  <a href="https://github.com/bymaxone/nest-auth/blob/main/docs/mutation_testing_results.md"><img src="https://img.shields.io/badge/mutation-99.10%25-brightgreen?style=flat-square&colorA=000000" alt="mutation score" /></a>
   <a href="https://github.com/bymaxone/nest-auth/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="license" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" /></a>
@@ -38,7 +39,7 @@ Instead of wiring together dozens of packages for JWT, MFA, OAuth, sessions, pas
 
 - **🎯 One package, full stack** — Backend module, shared types, fetch client, React hooks, and Next.js integration all in a single `pnpm add`. Types and constants are shared automatically between server and client — no manual synchronization.
 - **🔌 Your database, your rules** — The library defines TypeScript interfaces (`IUserRepository`, `IEmailProvider`). You implement them with your ORM of choice (Prisma, TypeORM, Drizzle). No vendor lock-in, no hidden database dependencies.
-- **🔒 Native crypto only** — All security-critical code (password hashing, MFA encryption, TOTP, token generation) runs on `node:crypto` — zero third-party crypto packages, zero supply chain risk.
+- **🔒 Native crypto only** — All security-critical code (password hashing, MFA encryption, TOTP, token generation) runs on `node:crypto` — zero third-party crypto packages, so the most sensitive code paths carry no third-party supply-chain risk.
 - **⚡ Pay for what you use** — Features like MFA, sessions, OAuth, and platform admin are opt-in. When not configured, their controllers and services are never registered — zero overhead in your NestJS container.
 - **🏢 Multi-tenant ready** — Every operation is scoped by `tenantId`. Built for SaaS from day one, not bolted on as an afterthought.
 
@@ -636,7 +637,7 @@ The package runs **inside** your NestJS application as a dynamic module — not 
 | -------------------------- | ------------------------------------------------------------------------------------------------------- |
 | **🔌 Interface-Driven**    | Define contracts, inject implementations — works with Prisma, TypeORM, Drizzle, or any SQL ORM          |
 | **🔒 Secure by Default**   | scrypt hashing, HttpOnly cookies, JWT blacklisting, brute-force protection — all enabled out of the box |
-| **🪶 Zero Dependencies**   | `"dependencies": {}` — all crypto via native `node:crypto`, no supply chain risk                        |
+| **🪶 Zero Runtime Deps**   | `"dependencies": {}` — adds no runtime deps of its own; crypto is native `node:crypto`. Required peers (NestJS, ioredis…) come from your app |
 | **🌳 Tree-Shakeable**      | `sideEffects: false`, subpath exports, ESM + CJS dual output                                            |
 | **⚡ Conditional Loading** | Unconfigured features don't register — no wasted memory or startup time                                 |
 
@@ -721,6 +722,26 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
   <img src="https://img.shields.io/badge/Redis-7%2B-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis" />
   <img src="https://img.shields.io/badge/Jest-29-C21325?style=flat-square&logo=jest&logoColor=white" alt="Jest" />
 </p>
+
+---
+
+## 🧪 Testing & Quality
+
+Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
+
+- ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
+- ✅ **99.10% mutation score** — verified with [Stryker](https://stryker-mutator.io/): thousands of small faults are seeded into the source and the suite must catch them
+- ✅ **1,980 tests** — unit and end-to-end, spanning all five subpaths
+- ✅ **Security paths at 100% mutation** — `crypto/` and `guards/` are fully killed; refresh-cookie `HttpOnly`, session-hash validation, TOTP zero-padding, and response-splitting defenses are each pinned by a dedicated test
+
+```bash
+pnpm test          # unit suite
+pnpm test:cov:all  # unit + e2e, 100% coverage gate
+pnpm mutation      # Stryker mutation testing
+```
+
+> [!NOTE]
+> Line coverage proves a line _executed_ under test; mutation testing proves a test _would fail_ if that line were wrong. The full methodology and per-area breakdown are in [docs/mutation_testing_results.md](./docs/mutation_testing_results.md).
 
 ---
 

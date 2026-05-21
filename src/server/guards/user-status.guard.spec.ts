@@ -8,9 +8,16 @@ import { HttpStatus } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { UserStatusGuard } from './user-status.guard'
+
+/** Extracts the canonical error code from a thrown AuthException response body. */
+function errorCodeOf(err: unknown): string {
+  const body = (err as AuthException).getResponse() as { error: { code: string } }
+  return body.error.code
+}
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -101,7 +108,42 @@ describe('UserStatusGuard', () => {
       await guard.canActivate(ctx as never)
     } catch (e) {
       expect((e as AuthException).getStatus()).toBe(HttpStatus.FORBIDDEN)
+      expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.ACCOUNT_BANNED)
     }
+  })
+
+  // Pins the STATUS_ERROR_MAP contents: each blocked status must resolve to its
+  // OWN error code, not a single shared fallback. If the map were emptied, every
+  // status would collapse to the `?? ACCOUNT_INACTIVE` default — so banned,
+  // suspended, and pending statuses returning their distinct codes proves the
+  // map entries are populated and looked up correctly.
+  it.each([
+    ['banned', AUTH_ERROR_CODES.ACCOUNT_BANNED],
+    ['suspended', AUTH_ERROR_CODES.ACCOUNT_SUSPENDED],
+    ['pending', AUTH_ERROR_CODES.PENDING_APPROVAL],
+    ['pending_approval', AUTH_ERROR_CODES.PENDING_APPROVAL]
+  ])('should map blocked status "%s" to its specific error code', async (status, expectedCode) => {
+    const customOptions = {
+      userStatusCacheTtlSeconds: 60,
+      blockedStatuses: ['banned', 'suspended', 'pending', 'pending_approval']
+    }
+    const customModule = await Test.createTestingModule({
+      providers: [
+        UserStatusGuard,
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: customOptions }
+      ]
+    }).compile()
+    const customGuard = customModule.get(UserStatusGuard)
+
+    mockRedis.get.mockResolvedValue(status)
+    const ctx = makeContext({ sub: 'user-1' })
+
+    await expect(customGuard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+
+    const thrown = await customGuard.canActivate(ctx as never).catch((e: unknown) => e)
+    expect(errorCodeOf(thrown)).toBe(expectedCode)
   })
 
   // Verifies that an INACTIVE status causes an AuthException to be thrown.

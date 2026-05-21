@@ -91,6 +91,7 @@ export class SelfOrAdminGuard implements CanActivate {
 }
 
 /** Matches a valid SHA-256 hash — 64 strictly lowercase hex characters. */
+// Stryker disable next-line Regex: this pattern is only ever tested against a value that already passed isHexLooking() (exactly 64 chars), so the `^` and `$` anchors are redundant — on a 64-char input "all 64 are lowercase hex" is identical to "starts/ends with 64 lowercase hex"
 const STRICT_SHA256_RE = /^[a-f0-9]{64}$/
 
 /**
@@ -108,5 +109,6 @@ function resolveParamString(param: string | string[]): string | undefined {
  * user-ID formats that happen to be shorter or contain non-hex characters.
  */
 function isHexLooking(value: string): boolean {
+  // Stryker disable next-line ConditionalExpression,Regex: the length check and the anchored {64} regex are mutually-redundant guards — each independently forces "exactly 64 hex chars", so mutating either one alone (dropping the length test, or removing an anchor) cannot change the result
   return value.length === 64 && /^[a-fA-F0-9]{64}$/.test(value)
 }

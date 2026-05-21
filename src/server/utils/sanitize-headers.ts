@@ -32,8 +32,11 @@ const BLOCKED_HEADERS = new Set([
   'cookie',
   'proxy-authorization',
   'www-authenticate',
+  // Stryker disable next-line StringLiteral: 'x-api-key' is also matched by SENSITIVE_HEADER_PATTERN (ends with -key), so removing it from the Set does not change the filter result
   'x-api-key',
+  // Stryker disable next-line StringLiteral: 'x-auth-token' is also matched by SENSITIVE_HEADER_PATTERN (ends with -token), so removing it from the Set does not change the filter result
   'x-auth-token',
+  // Stryker disable next-line StringLiteral: 'x-csrf-token' is also matched by SENSITIVE_HEADER_PATTERN (ends with -token), so removing it from the Set does not change the filter result
   'x-csrf-token',
   'x-session-id',
   'x-forwarded-for',

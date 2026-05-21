@@ -207,6 +207,7 @@ function jsonBody(value: unknown): string {
  * happy and no-content paths produce identical error envelopes.
  */
 function extractErrorBody(text: string): AuthErrorResponse | undefined {
+  // Stryker disable next-line ConditionalExpression: empty-body fast path is an optimization; an empty string also makes JSON.parse throw, which the surrounding try/catch turns into the same `undefined`
   if (text.length === 0) return undefined
   try {
     const parsed: unknown = JSON.parse(text)
@@ -283,6 +284,7 @@ async function expectNoContent(response: Response): Promise<void> {
  * cannot silently rely on it.
  */
 function isAuthErrorBody(value: unknown): value is AuthErrorResponse {
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: object-type guard precedes the authoritative field checks; a non-object value also fails those checks (or the catch swallows the null-deref), yielding the same `false`
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as Record<string, unknown>
   return (
@@ -304,6 +306,7 @@ function buildUrl(baseUrl: string, routePrefix: string, path: string): string {
   /* istanbul ignore next -- forward-compat: the current public API only
      composes relative AUTH_ROUTES values; the absolute-path branch keeps
      buildUrl correct if a future route is mounted at a non-prefixed path. */
+  // Stryker disable next-line ConditionalExpression,MethodExpression: forward-compat absolute-path branch; every route this builds is relative and none ends with '/', so startsWith('/') vs endsWith('/') vs false are indistinguishable
   if (path.startsWith('/')) {
     return `${baseUrl}${path}`
   }
@@ -343,12 +346,17 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
     createAuthFetch({
       baseUrl,
       routePrefix,
+      // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — createAuthFetch coalesces each option with `??`/falsy checks downstream
       ...(config.refreshEndpoint !== undefined ? { refreshEndpoint: config.refreshEndpoint } : {}),
+      // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — the consumer coalesces this option downstream
       ...(config.credentials !== undefined ? { credentials: config.credentials } : {}),
+      // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — the consumer coalesces this option downstream
       ...(config.defaultHeaders !== undefined ? { defaultHeaders: config.defaultHeaders } : {}),
+      // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — the consumer coalesces this option downstream
       ...(config.onSessionExpired !== undefined
         ? { onSessionExpired: config.onSessionExpired }
         : {}),
+      // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — the consumer coalesces this option downstream
       ...(config.timeout !== undefined ? { timeout: config.timeout } : {})
     })
 

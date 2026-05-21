@@ -80,7 +80,7 @@ describe('AUTH_ERROR_CODES', () => {
     expect(unique.size).toBe(values.length)
   })
 
-  // Verifies that every error code has a corresponding entry in AUTH_ERROR_MESSAGES for Portuguese message lookup.
+  // Verifies that every error code has a corresponding entry in AUTH_ERROR_MESSAGES for message lookup.
   it('should have an AUTH_ERROR_MESSAGES entry for every code', () => {
     for (const code of Object.values(AUTH_ERROR_CODES)) {
       expect(AUTH_ERROR_MESSAGES[code]).toBeDefined()
@@ -105,11 +105,11 @@ describe('AuthException — response format', () => {
     expect(response.error).toHaveProperty('details', null)
   })
 
-  // Verifies that the message in the response is the Portuguese string from AUTH_ERROR_MESSAGES.
-  it('should look up the Portuguese message from AUTH_ERROR_MESSAGES', () => {
+  // Verifies that the message in the response is the default English string from AUTH_ERROR_MESSAGES.
+  it('should look up the default message from AUTH_ERROR_MESSAGES', () => {
     const ex = new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     const response = ex.getResponse() as { error: { message: string } }
-    expect(response.error.message).toBe('Email ou senha inválidos')
+    expect(response.error.message).toBe('Invalid email or password')
   })
 
   // Verifies that the default HTTP status is 401 Unauthorized when no status is provided.

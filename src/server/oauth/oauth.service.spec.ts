@@ -127,6 +127,35 @@ const mockRes = {
   redirect: jest.fn()
 } as unknown as Response
 
+/**
+ * Builds an OAuthService backed by a single plugin whose `name` is provided by
+ * the caller. Used to prove the `resolvePlugin` format guard rejects malformed
+ * provider strings even when a (misconfigured) plugin is registered under that
+ * exact malformed name — i.e. the guard is a real defence, not a redundant
+ * pre-filter of the registry `find`.
+ */
+async function buildServiceWithPluginName(pluginName: string): Promise<OAuthService> {
+  const plugin = {
+    name: pluginName,
+    authorizeUrl: jest.fn().mockReturnValue('https://provider.example.com/auth'),
+    exchangeCode: jest.fn(),
+    fetchProfile: jest.fn()
+  }
+  const module = await Test.createTestingModule({
+    providers: [
+      OAuthService,
+      { provide: OAUTH_PLUGINS, useValue: [plugin] },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: TokenManagerService, useValue: mockTokenManager },
+      { provide: SessionService, useValue: mockSessionService },
+      { provide: BYMAX_AUTH_OPTIONS, useValue: MOCK_OPTIONS }
+    ]
+  }).compile()
+  return module.get(OAuthService)
+}
+
 // ---------------------------------------------------------------------------
 // OAuthService — initiateOAuth
 // ---------------------------------------------------------------------------
@@ -262,6 +291,41 @@ describe('OAuthService', () => {
     it('should throw OAUTH_FAILED for an empty provider string', async () => {
       await expect(service.initiateOAuth('', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
     })
+
+    // Pins that the format guard runs at all (and is not stubbed away). Even when a
+    // plugin is registered under an UPPERCASE name that the registry `find` would
+    // match, the `/^[a-z0-9-]{1,64}$/` guard must reject the malformed provider
+    // BEFORE the lookup — so no state is written. A mutant that removes the guard
+    // (or empties its throw block) would resolve the plugin and write to Redis.
+    it('should reject an uppercase provider even if a plugin is registered under that exact name', async () => {
+      const svc = await buildServiceWithPluginName('GOOGLE')
+
+      await expect(svc.initiateOAuth('GOOGLE', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockRes.redirect).not.toHaveBeenCalled()
+    })
+
+    // Pins the leading `^` anchor of the provider-format regex. A name with an
+    // invalid LEADING character (here a leading space) but an otherwise valid tail
+    // must be rejected. Dropping `^` would let the tail match and resolve the
+    // (matching) plugin, writing state to Redis. Edge-case: anchor regression.
+    it('should reject a provider with a leading space even if a plugin matches that name (pins ^)', async () => {
+      const svc = await buildServiceWithPluginName(' google')
+
+      await expect(svc.initiateOAuth(' google', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // Pins the trailing `$` anchor of the provider-format regex. A name with a
+    // valid prefix but an invalid TRAILING character (here a trailing space) must
+    // be rejected. Dropping `$` would let the prefix match and resolve the
+    // (matching) plugin, writing state to Redis. Edge-case: anchor regression.
+    it('should reject a provider with a trailing space even if a plugin matches that name (pins $)', async () => {
+      const svc = await buildServiceWithPluginName('google ')
+
+      await expect(svc.initiateOAuth('google ', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -318,6 +382,22 @@ describe('OAuthService', () => {
         'TestBrowser/1.0'
       )
       expect(result).toBe(AUTH_RESULT)
+    })
+
+    // Pins the success log message. On a successful OAuth login the service emits a
+    // structured line carrying provider, userId, tenantId, and the resolved action.
+    // These fields are the audit trail for OAuth sign-ins; an emptied log string
+    // would silently drop them. Assert the load-bearing fields are present.
+    it('should log the success line with provider, userId, tenantId and action on create', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
+      setupHappyPathCreate()
+
+      await callCallback()
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('provider=google userId=user-1 tenantId=tenant-1 action=create')
+      )
+      logSpy.mockRestore()
     })
 
     // Verifies that the PKCE code_verifier from the stored state is forwarded to
@@ -480,6 +560,19 @@ describe('OAuthService', () => {
       await expect(callCallback()).rejects.toThrow(AuthException)
     })
 
+    // Pins the diagnostic warn message emitted on an invalid/expired state. The
+    // message must carry the provider so operators can correlate the failure; an
+    // emptied log string would erase that signal. Assert the provider is present
+    // rather than the full sentence (which is otherwise free to be reworded).
+    it('should log a warning that includes the provider when the state is invalid', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('provider=google'))
+      warnSpy.mockRestore()
+    })
+
     // Verifies that malformed JSON in the stored state value results in OAUTH_FAILED,
     // not an unhandled JSON.parse exception.
     it('should throw OAUTH_FAILED when the stored state contains malformed JSON', async () => {
@@ -494,6 +587,26 @@ describe('OAuthService', () => {
       mockRedis.getdel.mockResolvedValue(JSON.stringify({ wrongField: 'value' }))
 
       await expect(callCallback()).rejects.toThrow(AuthException)
+    })
+
+    // Pins the `typeof v['tenantId'] !== 'string'` guard in isStoredOAuthState.
+    // Here the WHOLE downstream flow is wired to succeed, so the ONLY thing that
+    // can make handleCallback throw is the missing-tenantId rejection. If that
+    // guard were removed (or flipped to `return true`), the malformed state would
+    // be accepted, the flow would complete, and no exception would be raised.
+    it('should throw OAUTH_FAILED for state missing tenantId even when the downstream flow would otherwise succeed', async () => {
+      // Full happy-path collaborators — nothing here throws on its own.
+      mockRedis.getdel.mockResolvedValue(JSON.stringify({ wrongField: 'value' }))
+      mockPlugin.exchangeCode.mockResolvedValue({ access_token: 'at-xyz', token_type: 'Bearer' })
+      mockPlugin.fetchProfile.mockResolvedValue(OAUTH_PROFILE)
+      mockUserRepo.findByOAuthId.mockResolvedValue(null)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'create' })
+      mockUserRepo.createWithOAuth.mockResolvedValue(AUTH_USER)
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      // The guard must reject before any token exchange is attempted.
+      expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
     })
 
     // Verifies that a stored state value of JSON null (typeof === 'object' but === null)

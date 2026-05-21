@@ -56,10 +56,12 @@ export function validateConfig(config: AuthProxyConfig): void {
  */
 function validateProtectedRoutePattern(pattern: string): void {
   const segments = pattern.split('/').filter((segment) => segment.length > 0)
+  // Stryker disable next-line EqualityOperator: loop bound off-by-one visits an out-of-range (undefined) segment that is not a glob, leaving the validation result unchanged
   for (let i = 0; i < segments.length; i += 1) {
     /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable within the loop bounds */
     // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop counter.
     const segment = segments[i] ?? ''
+    // Stryker disable next-line ConditionalExpression,StringLiteral: `segment === '*'` is fully subsumed by `segment.endsWith('*')`, so dropping it or comparing against '' cannot change isGlob
     const isGlob = segment === '*' || segment.endsWith('*')
     if (!isGlob) continue
 
@@ -126,6 +128,7 @@ export function warnOnInsecureConfiguration(config: ResolvedAuthProxyConfig): vo
   }
 
   /* istanbul ignore next -- defensive guard for minimal Edge sandboxes without a `console`; unreachable under jsdom/node */
+  // Stryker disable next-line ConditionalExpression: `typeof console === 'undefined'` only differs when console itself is absent, which never happens under Node/jsdom/Edge
   if (typeof console === 'undefined' || typeof console.warn !== 'function') return
 
   console.warn(

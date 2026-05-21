@@ -87,6 +87,7 @@ export function matchesPublicRoute(pathname: string, route: string): boolean {
  * wildcards are rejected at factory time by `validateConfig`.
  */
 export function matchesRoutePattern(pathname: string, pattern: string): boolean {
+  // Stryker disable next-line ConditionalExpression: exact-match fast path; the per-segment loop below returns the same result for an exact match, so the early `true` is redundant
   if (pattern === pathname) return true
 
   const patternSegments = pattern.split('/').filter((segment) => segment.length > 0)
@@ -97,6 +98,7 @@ export function matchesRoutePattern(pathname: string, pattern: string): boolean 
     // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop counter.
     const patternSegment = patternSegments[i] ?? ''
     const isTrailingGlob =
+      // Stryker disable next-line ConditionalExpression,StringLiteral: `patternSegment === '*'` is subsumed by `patternSegment.endsWith('*')`, so dropping it or comparing against '' cannot change the match
       i === patternSegments.length - 1 && (patternSegment === '*' || patternSegment.endsWith('*'))
 
     if (isTrailingGlob) {
@@ -105,6 +107,7 @@ export function matchesRoutePattern(pathname: string, pattern: string): boolean 
       return true
     }
 
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: the final `pathSegments.length === patternSegments.length` check makes this short-path guard's boundary/removal variants behaviorally identical
     if (i >= pathSegments.length) {
       // Path shorter than pattern and no trailing glob to absorb the
       // gap — no match.

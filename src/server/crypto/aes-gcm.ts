@@ -59,6 +59,7 @@ export function encrypt(plaintext: string, keyBase64: string): string {
   if (key.length !== 32) {
     throw new Error(
       `[aes-gcm] Key must decode to exactly 32 bytes (got ${key.length}). ` +
+        // Stryker disable next-line StringLiteral: cosmetic remediation hint appended to the error message; callers branch on the thrown error, never on this text
         `Generate with: crypto.randomBytes(32).toString('base64')`
     )
   }

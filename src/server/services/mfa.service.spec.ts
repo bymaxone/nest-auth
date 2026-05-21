@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto'
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import {
@@ -17,6 +18,7 @@ import {
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -222,6 +224,28 @@ describe('MfaService', () => {
       expect(result.recoveryCodes).toHaveLength(2)
     })
 
+    // Scenario: first-time setup. Expected: each recovery code is 6 groups of 4 UPPERCASE hex
+    // chars joined by '-' (XXXX-XXXX-XXXX-XXXX-XXXX-XXXX). Why: a single canonical-format check
+    // kills the groups=[] prefill (line 240), the slice loop bound/body mutants (line 241),
+    // the slice argument mutants (line 242), the '-' join separator (line 244:32) and the
+    // toUpperCase->toLowerCase mutant (line 244:20) — all break the canonical format.
+    it('should format every recovery code as 6 groups of 4 uppercase hex chars', async () => {
+      const result = await service.setup('user-1')
+      for (const code of result.recoveryCodes) {
+        expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){5}$/)
+      }
+    })
+
+    // Scenario: first-time setup with recoveryCodeCount=2. Expected: the stored payload carries
+    // exactly 2 hashedCodes. Why: kills the hashedCodes=["Stryker"] prefill (line 232), which
+    // would persist 3 hashes instead of 2.
+    it('should persist exactly recoveryCodeCount hashed codes in the setup payload', async () => {
+      await service.setup('user-1')
+      const payload = mockRedis.setIfAbsent.mock.calls[0]?.[1] as string
+      const parsed = JSON.parse(payload) as { hashedCodes: string[] }
+      expect(parsed.hashedCodes).toHaveLength(2)
+    })
+
     // Verifies that setup stores the pending setup data in Redis with a 600s TTL.
     it('should store setup data in Redis via setIfAbsent', async () => {
       await service.setup('user-1')
@@ -231,6 +255,26 @@ describe('MfaService', () => {
         expect.any(String),
         600
       )
+    })
+
+    // Scenario: setIfAbsent wins the race (returns true, the default). Expected: redis.set is NOT
+    // called and an info log carries the userId. Why: kills the `if (!wasSet)` -> `if (true)`
+    // mutant (line 366), which would re-store via set even on the happy path, and pins the
+    // setup log template (line 385).
+    it('should not call redis.set and should log when setIfAbsent succeeds', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      await service.setup('user-1')
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(logSpy).toHaveBeenCalledWith('setup: MFA setup initiated userId=user-1')
+      logSpy.mockRestore()
+    })
+
+    // Scenario: setup for a known user. Expected: the Redis setup key is exactly
+    // 'mfa_setup:' + HMAC(userId). Why: pins the key template so a blanked key would diverge.
+    it('should claim the mfa_setup key derived from the HMAC of the userId', async () => {
+      await service.setup('user-1')
+      const expectedKey = `mfa_setup:${hmacSha256('user-1', HMAC_KEY)}`
+      expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
 
     // Verifies that setup throws MFA_ALREADY_ENABLED when MFA is already active.
@@ -476,10 +520,14 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       // Anti-replay: SETNX returns true (new key) — but code won't match clock anyway
       mockRedis.setnx.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(
         service.verifyAndEnable('user-1', '000000', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
+      // Pin the invalid-code warn template (line 432) so blanking it to '' is caught.
+      expect(warnSpy).toHaveBeenCalledWith('verifyAndEnable: invalid TOTP code userId=user-1')
+      warnSpy.mockRestore()
     })
 
     // Verifies that verifyAndEnable calls userRepo.updateMfa and invalidateUserSessions on success.
@@ -499,6 +547,7 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true) // anti-replay: new code
       mockRedis.getdel.mockResolvedValue(JSON.stringify(setupData)) // completion gate wins
 
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
@@ -506,6 +555,19 @@ describe('MfaService', () => {
         expect.objectContaining({ mfaEnabled: true })
       )
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+      // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(userId): kills line 420 blanking.
+      expect(mockRedis.get).toHaveBeenCalledWith(`mfa_setup:${hmacSha256('user-1', HMAC_KEY)}`)
+      // The anti-replay key must be 'tu:' + HMAC('{userId}:{code}') with a 90s TTL: kills the
+      // empty hmac input on the replay key (line 730).
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `tu:${hmacSha256(`user-1:${validCode}`, HMAC_KEY)}`,
+        90
+      )
+      // The afterMfaEnabled hook must be invoked (kills the BlockStatement emptying at line 461)
+      // and the success log must carry the userId (kills line 457).
+      expect(mockHooks.afterMfaEnabled).toHaveBeenCalledTimes(1)
+      expect(logSpy).toHaveBeenCalledWith('verifyAndEnable: MFA enabled userId=user-1')
+      logSpy.mockRestore()
     })
 
     // Defends against the verify-enable race: two concurrent valid submissions
@@ -527,6 +589,7 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true)
       // The racing caller already consumed the setup key — GETDEL returns null.
       mockRedis.getdel.mockResolvedValue(null)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(
         service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
@@ -534,6 +597,11 @@ describe('MfaService', () => {
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      // Pin the concurrent-consumption warn template (line 443).
+      expect(warnSpy).toHaveBeenCalledWith(
+        'verifyAndEnable: setup key consumed by concurrent request userId=user-1'
+      )
+      warnSpy.mockRestore()
     })
 
     // Verifies that the email notification is sent after enabling MFA.
@@ -664,19 +732,29 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: undefined // undefined → ?? [] fallback at line 442
+        mfaRecoveryCodes: undefined // undefined → ?? [] fallback at line 530
       })
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       // Non-6-digit code routes through the recovery path; empty list → no match → INVALID_CODE
       await expect(
         service.challenge('mfa.temp', 'not-a-totp-code', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
+      // The ?? [] fallback must yield an EMPTY array, so no recovery comparison runs. Kills the
+      // `?? []` -> `?? ["Stryker"]` ArrayDeclaration mutant (line 530), which would compare once.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      // Pin the invalid-code warn template including the context (line 537).
+      expect(warnSpy).toHaveBeenCalledWith(
+        'challenge: invalid MFA code userId=user-1 context=dashboard'
+      )
+      warnSpy.mockRestore()
     })
 
     // Verifies that challenge throws ACCOUNT_LOCKED when brute-force threshold is reached.
     it('should throw ACCOUNT_LOCKED when the user is locked out', async () => {
-      expect.assertions(1)
+      expect.assertions(2)
       mockBruteForce.isLockedOut.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       try {
         await service.challenge('mfa.temp', '123456', '1.2.3.4', 'Browser')
@@ -685,6 +763,9 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
         })
       }
+      // Pin the account-locked warn template (line 509).
+      expect(warnSpy).toHaveBeenCalledWith('challenge: account locked userId=user-1')
+      warnSpy.mockRestore()
     })
 
     // Verifies that challenge throws MFA_INVALID_CODE for a wrong TOTP code.
@@ -720,6 +801,7 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
       })
       mockRedis.setnx.mockResolvedValue(true) // anti-replay: new code
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       const result = await service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
 
@@ -731,6 +813,21 @@ describe('MfaService', () => {
         { mfaVerified: true }
       )
       expect(result).toBe(MOCK_AUTH_RESULT)
+      // A TOTP success must NOT touch the recovery-code list: usedRecoveryIndex stays -1, so the
+      // `if (usedRecoveryIndex >= 0)` block is skipped. Kills the `-1` -> `+1` UnaryOperator
+      // (line 525) and the `if (usedRecoveryIndex >= 0)` -> `if (true)` mutant (line 544), both
+      // of which would (wrongly) call updateMfa.
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      // sessions disabled (default options) -> createSession must NOT run. Kills the
+      // `if (this.options.sessions.enabled)` -> `if (true)` mutant (line 575).
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+      // The afterLogin hook must be invoked (kills the dashboard BlockStatement emptying line 579)
+      // and the success log must carry userId/context (kills line 565).
+      expect(mockHooks.afterLogin).toHaveBeenCalledTimes(1)
+      expect(logSpy).toHaveBeenCalledWith(
+        'challenge: MFA challenge passed userId=user-1 context=dashboard'
+      )
+      logSpy.mockRestore()
     })
 
     // Verifies that a valid recovery code is accepted and the used code is removed.
@@ -862,6 +959,52 @@ describe('MfaService', () => {
         AuthException
       )
       // The service should still call compare for all stored codes (constant-time)
+      expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
+    })
+
+    // Scenario: a 6-digit prefix followed by a non-digit suffix ('123456X'). The canonical
+    // /^\d{6}$/ rejects it (the $ anchor requires the string to END after 6 digits), so it must
+    // route through the RECOVERY path (passwordService.compare runs). Why: kills the
+    // /^\d{6}$/ -> /^\d{6}/ Regex mutant (line 522), which drops the $ anchor and would
+    // (wrongly) treat '123456X' as a TOTP code, skipping the recovery comparison.
+    it('should route a 6-digit-prefixed code with a trailing char through the recovery path', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: ['$scrypt$hash1', '$scrypt$hash2']
+      })
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.challenge('mfa.temp', '123456X', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      // Recovery path was taken -> compare ran for every stored code.
+      expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
+    })
+
+    // Scenario: a non-digit prefix followed by 6 digits ('X123456'). The canonical /^\d{6}$/
+    // rejects it (the ^ anchor requires digits to START the string), so it must route through
+    // the RECOVERY path. Why: kills the /^\d{6}$/ -> /\d{6}$/ Regex mutant (line 522), which
+    // drops the ^ anchor and would (wrongly) treat 'X123456' as a TOTP code.
+    it('should route a code with a non-digit prefix and 6 trailing digits through the recovery path', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: ['$scrypt$hash1', '$scrypt$hash2']
+      })
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.challenge('mfa.temp', 'X123456', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
       expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
     })
 
@@ -1060,6 +1203,16 @@ describe('MfaService', () => {
         { mfaVerified: true }
       )
       expect(result).toBe(PLATFORM_AUTH_RESULT)
+      // The platform afterLogin hook must be invoked (kills the platform BlockStatement emptying
+      // at line 598) with a SafeAuthUser-compatible projection whose platform-sentinel fields are
+      // tenantId='' (kills line 301) and emailVerified=true (kills line 302).
+      expect(mockHooks.afterLogin).toHaveBeenCalledTimes(1)
+      const hookUser = mockHooks.afterLogin.mock.calls[0]?.[0] as {
+        tenantId: string
+        emailVerified: boolean
+      }
+      expect(hookUser.tenantId).toBe('')
+      expect(hookUser.emailVerified).toBe(true)
     })
 
     // Verifies that challenge calls sessionService.createSession when sessions.enabled is true.
@@ -1167,7 +1320,7 @@ describe('MfaService', () => {
 
     // Verifies that disable throws ACCOUNT_LOCKED when the brute-force threshold is reached.
     it('should throw ACCOUNT_LOCKED when user is locked out', async () => {
-      expect.assertions(1)
+      expect.assertions(2)
       const { encrypt } = await import('../crypto/aes-gcm')
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
@@ -1177,6 +1330,7 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
       })
       mockBruteForce.isLockedOut.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       try {
         await service.disable('user-1', '123456', '1.2.3.4', 'Browser')
@@ -1185,6 +1339,11 @@ describe('MfaService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
         })
       }
+      // Pin the disable account-locked warn template including the context (line 655).
+      expect(warnSpy).toHaveBeenCalledWith(
+        'disable: account locked userId=user-1 context=dashboard'
+      )
+      warnSpy.mockRestore()
     })
 
     // Verifies that a valid TOTP code disables MFA, clears the DB fields, and invalidates sessions.
@@ -1199,6 +1358,7 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
       })
       mockRedis.setnx.mockResolvedValue(true)
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.disable('user-1', validCode, '1.2.3.4', 'Browser')
 
@@ -1208,6 +1368,20 @@ describe('MfaService', () => {
         mfaRecoveryCodes: null
       })
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+      // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256('disable:user-1', HMAC_KEY)
+      )
+      // Pin the success log including the context (line 686).
+      expect(logSpy).toHaveBeenCalledWith('disable: MFA disabled userId=user-1 context=dashboard')
+      // The afterMfaDisabled hook must be invoked (kills the BlockStatement emptying at line 694)
+      // with the DASHBOARD projection that retains the real tenantId. The dashboard branch of the
+      // `context === 'platform' ? ... : toSafeUser(...)` ternary (line 690) must be taken — kills
+      // the `true` and `!==` mutants which would force the platform projection (tenantId='').
+      expect(mockHooks.afterMfaDisabled).toHaveBeenCalledTimes(1)
+      const hookUser = mockHooks.afterMfaDisabled.mock.calls[0]?.[0] as { tenantId: string }
+      expect(hookUser.tenantId).toBe('tenant-1')
+      logSpy.mockRestore()
     })
 
     // Verifies that the MFA disabled email notification is sent after a successful disable.
@@ -1241,11 +1415,17 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
       })
       mockRedis.setnx.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(service.disable('user-1', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+      // Pin the disable invalid-code warn template including the context (line 670).
+      expect(warnSpy).toHaveBeenCalledWith(
+        'disable: invalid MFA code userId=user-1 context=dashboard'
+      )
+      warnSpy.mockRestore()
     })
 
     // Verifies that disable with context='platform' uses platformUserRepo.updateMfa instead of userRepo.updateMfa.
@@ -1272,6 +1452,16 @@ describe('MfaService', () => {
         mfaRecoveryCodes: null
       })
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      // The afterMfaDisabled hook must receive the PLATFORM projection: the
+      // `context === 'platform' ? platformUserAsSafeUser(...) : ...` ternary (line 690) takes the
+      // platform branch, so tenantId is the '' sentinel. Kills the `false` and `!==` mutants on
+      // line 690 (which would use toSafeUser and drop the sentinel), plus line 301 (tenantId='').
+      const hookUser = mockHooks.afterMfaDisabled.mock.calls[0]?.[0] as {
+        tenantId: string
+        emailVerified: boolean
+      }
+      expect(hookUser.tenantId).toBe('')
+      expect(hookUser.emailVerified).toBe(true)
     })
 
     // Verifies that errors thrown by the afterMfaDisabled hook are silently suppressed (fire-and-forget).
@@ -1297,6 +1487,44 @@ describe('MfaService', () => {
       // Using Promise.resolve() instead of setTimeout(0) so fake timers don't block execution.
       await Promise.resolve()
       await Promise.resolve()
+    })
+
+    // Scenario: disable succeeds but the consumer registered no afterMfaDisabled hook. Expected:
+    // disable completes without throwing. Why: covers the false branch of
+    // `if (this.hooks.afterMfaDisabled)` (line 695) where the hook is absent.
+    it('should complete disable when no afterMfaDisabled hook is registered', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const module = await Test.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          // Hooks object without afterMfaDisabled — the `if` guard must short-circuit.
+          { provide: BYMAX_AUTH_HOOKS, useValue: {} }
+        ]
+      }).compile()
+      const noHookService = module.get(MfaService)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      await expect(
+        noHookService.disable('user-1', validCode, '1.2.3.4', 'Browser')
+      ).resolves.toBeUndefined()
     })
   })
 })

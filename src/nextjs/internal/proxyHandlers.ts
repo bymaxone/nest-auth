@@ -110,6 +110,7 @@ function handleAuthenticatedOnPublic(
   )
 
   if (isRedirectIfAuth && !reasonPresent) {
+    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
     const destination = safeRelativePath(config.getDefaultDashboard(role), '/')
     return NextResponse.redirect(new URL(destination, request.nextUrl.origin))
   }
@@ -164,6 +165,7 @@ export function handleProtectedRoute(
 
   // RBAC check.
   if (!matched.allowedRoles.includes(role)) {
+    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
     const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)
@@ -281,8 +283,10 @@ export function redirectToLogin(
   config: ResolvedAuthProxyConfig,
   reason?: string
 ): NextResponse {
+  // Stryker disable next-line StringLiteral: loginPath is always factory-validated to a non-empty path, so the '/' fallback is unreachable
   const loginPath = safeRelativePath(config.loginPath, '/')
   const url = new URL(loginPath, request.nextUrl.origin)
+  // Stryker disable next-line EqualityOperator,ConditionalExpression: when defined, `reason` is always a non-empty constant ('expired' or an allowlist entry), so `length > 0` vs `>= 0` vs `true` are indistinguishable
   if (reason !== undefined && reason.length > 0) {
     url.searchParams.set(REASON_PARAM, reason)
   }

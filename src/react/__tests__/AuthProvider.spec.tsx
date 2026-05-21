@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment @stryker-mutator/jest-runner/jest-env/jsdom
  */
 
 /**
@@ -26,7 +26,7 @@
 import { act, render, renderHook } from '@testing-library/react'
 import { useContext, type ReactNode } from 'react'
 
-import { AuthClientError } from '../../shared'
+import { AuthClientError, type LoginResult } from '../../shared'
 import { AuthProvider } from '../AuthProvider'
 import { AuthContext, type AuthContextValue } from '../context'
 
@@ -59,6 +59,53 @@ function renderContext(
       </AuthProvider>
     )
   })
+}
+
+// Props the rerender-driven harness can vary between renders. Mirrors
+// the subset of AuthProviderProps the freshness/dependency-array tests
+// flip (a fresh `client`, a fresh `onSessionExpired`, a new interval).
+interface HarnessProps {
+  client: MockAuthClient
+  onSessionExpired?: () => void
+  revalidateInterval?: number
+}
+
+// Latest context value captured by the in-tree consumer. Reset by
+// `renderProvider` on each setup so reads never bleed across tests.
+let capturedContext: AuthContextValue | null = null
+
+// In-tree consumer that mirrors the live context into `capturedContext`.
+// Using a real child (rather than renderHook) lets the surrounding
+// `render(...).rerender(...)` swap provider PROPS between renders, which
+// is exactly what the ref-freshness and dependency-array mutants need.
+function ContextProbe(): null {
+  capturedContext = useContext(AuthContext)
+  return null
+}
+
+// Render an <AuthProvider> with a real child probe and return the
+// `rerender` handle so a test can hand the provider a different
+// `client` / `onSessionExpired` / `revalidateInterval` on a later
+// render and observe how the effects react.
+function renderProvider(props: HarnessProps): { rerender: (next: HarnessProps) => void } {
+  capturedContext = null
+  const element = (next: HarnessProps): ReactNode => (
+    <AuthProvider
+      client={next.client}
+      {...(next.onSessionExpired ? { onSessionExpired: next.onSessionExpired } : {})}
+      {...(next.revalidateInterval !== undefined
+        ? { revalidateInterval: next.revalidateInterval }
+        : {})}
+    >
+      <ContextProbe />
+    </AuthProvider>
+  )
+  const view = render(element(props))
+  return {
+    rerender: (next: HarnessProps): void => {
+      view.rerender(element(next))
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +307,40 @@ describe('AuthProvider — login', () => {
     })
     expect(result.current?.status).toBe('unauthenticated')
   })
+
+  // While a login request is in flight the reducer's SET_LOADING action
+  // must surface status === 'loading' (isLoading === true) so consumers
+  // can render a spinner. Pinning the intermediate loading state guards
+  // the SET_LOADING reducer arm: if it were dropped (falling through to
+  // the next case), the status would read 'unauthenticated' mid-request
+  // instead of 'loading'. We hold client.login on a deferred promise to
+  // freeze the in-flight window and assert it deterministically.
+  it('exposes loading status while a login request is in flight', async () => {
+    const client = createMockClient()
+    client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
+    let resolveLogin!: (value: LoginResult) => void
+    client.login.mockReturnValue(
+      new Promise<LoginResult>((resolve) => {
+        resolveLogin = resolve
+      })
+    )
+    const { result } = renderContext(client)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current?.status).toBe('unauthenticated')
+    let loginPromise: Promise<unknown> | undefined
+    act(() => {
+      loginPromise = result.current?.login('a@b.test', 'pw')
+    })
+    expect(result.current?.status).toBe('loading')
+    expect(result.current?.isLoading).toBe(true)
+    await act(async () => {
+      resolveLogin(MOCK_AUTH_RESULT)
+      await loginPromise
+    })
+    expect(result.current?.status).toBe('authenticated')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -352,6 +433,30 @@ describe('AuthProvider — imperative methods', () => {
     expect(result.current?.status).toBe('unauthenticated')
   })
 
+  // logout dispatches CLEAR_SESSION, which is the ONE transition that
+  // resets `lastValidation` to null — distinct from SET_ERROR, which
+  // preserves it. After authenticating (so lastValidation is a Date),
+  // logging out must wipe the timestamp. This pins the CLEAR_SESSION
+  // reducer arm specifically: if it fell through to SET_ERROR, status
+  // would still flip to 'unauthenticated' but the stale timestamp would
+  // linger, so we assert on lastValidation (status alone can't tell the
+  // two arms apart).
+  it('clears lastValidation on logout', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValue(MOCK_USER)
+    client.logout.mockResolvedValue(undefined)
+    const { result } = renderContext(client)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current?.lastValidation).toBeInstanceOf(Date)
+    await act(async () => {
+      await result.current?.logout()
+    })
+    expect(result.current?.status).toBe('unauthenticated')
+    expect(result.current?.lastValidation).toBeNull()
+  })
+
   // Explicit refresh re-probes the server. A successful response
   // refreshes `lastValidation` — we control the clock via fake timers
   // and `setSystemTime` so the second timestamp is strictly later
@@ -380,6 +485,30 @@ describe('AuthProvider — imperative methods', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  // refresh() must revalidate as a NON-initial probe: an explicit
+  // refresh that hits a 401 on a previously authenticated session is a
+  // genuine expiry and MUST fire onSessionExpired. This pins the
+  // `revalidate(false)` argument inside refresh — were it `true`, the
+  // call would be treated as an initial mount probe and the
+  // onSessionExpired callback would be suppressed, silently swallowing
+  // the expiry signal for manual refreshes.
+  it('refresh fires onSessionExpired when the session has expired', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    client.getMe.mockRejectedValueOnce(new AuthClientError('unauthorized', 401))
+    const onSessionExpired = jest.fn()
+    const { result } = renderContext(client, { revalidateInterval: 0, onSessionExpired })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current?.status).toBe('authenticated')
+    await act(async () => {
+      await result.current?.refresh()
+    })
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    expect(result.current?.status).toBe('unauthenticated')
   })
 
   // forgotPassword defaults the tenantId when the caller omits it,
@@ -555,7 +684,218 @@ describe('AuthProvider — revalidation loop', () => {
       await Promise.resolve()
     })
     expect(result?.current?.status).toBe('unauthenticated')
-    expect(warnSpy).toHaveBeenCalled()
+    // Pin the diagnostic prefix and the forwarded error so the warn
+    // call stays debuggable: a mutant that blanks the message string
+    // would still "have been called", so the bare toHaveBeenCalled()
+    // above cannot catch it — the exact-args assertion does.
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[nest-auth] onSessionExpired callback threw:',
+      expect.any(Error)
+    )
     warnSpy.mockRestore()
+  })
+
+  // A non-401 AuthClientError during revalidation (e.g. a 500) is NOT a
+  // session expiry: it must route through SET_ERROR, leaving
+  // `lastValidation` intact and NOT firing onSessionExpired. This pins
+  // the `error.status === 401` half of isSessionExpiredError — if that
+  // comparison were short-circuited to always-true, a 500 would be
+  // misclassified as an expiry, firing the callback and clearing the
+  // timestamp via CLEAR_SESSION.
+  it('does not fire onSessionExpired for a non-401 AuthClientError during revalidation', async () => {
+    jest.setSystemTime(new Date('2026-04-18T10:00:00.000Z'))
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    client.getMe.mockRejectedValueOnce(new AuthClientError('server error', 500))
+    const onSessionExpired = jest.fn()
+    let result: { current: AuthContextValue | null } | undefined
+    await act(async () => {
+      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+    })
+    const firstValidation = result?.current?.lastValidation?.getTime()
+    expect(firstValidation).toBeDefined()
+    jest.setSystemTime(new Date('2026-04-18T10:00:05.000Z'))
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(result?.current?.status).toBe('unauthenticated')
+    expect(result?.current?.lastValidation?.getTime()).toBe(firstValidation)
+  })
+
+  // A 401 during a background tick while the session was NEVER
+  // authenticated must NOT fire onSessionExpired — there is nothing to
+  // "expire". This pins both the `wasAuthenticated` read (mutating it
+  // to a constant `true` would fire the callback) and the `&&` join in
+  // `!isInitial && wasAuthenticated` (an `||` would fire it on every
+  // non-initial tick regardless of prior auth state).
+  it('does not fire onSessionExpired when a tick 401s while never authenticated', async () => {
+    const client = createMockClient()
+    client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
+    const onSessionExpired = jest.fn()
+    let result: { current: AuthContextValue | null } | undefined
+    await act(async () => {
+      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+    })
+    expect(result?.current?.status).toBe('unauthenticated')
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(client.getMe).toHaveBeenCalledTimes(2)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  // After an expiry fires once, the synced status mirror must move to
+  // 'unauthenticated' so a SECOND consecutive 401 tick does NOT re-fire
+  // onSessionExpired (the session is already known-gone). This pins the
+  // CLEAR_SESSION/SET_ERROR arm of syncedDispatch that writes
+  // statusRef = 'unauthenticated': if that write were dropped, the
+  // mirror would stay 'authenticated' and the callback would fire again
+  // on every subsequent tick.
+  it('fires onSessionExpired only once across repeated 401 ticks', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
+    const onSessionExpired = jest.fn()
+    let result: { current: AuthContextValue | null } | undefined
+    await act(async () => {
+      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+    })
+    expect(result?.current?.status).toBe('authenticated')
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(client.getMe).toHaveBeenCalledTimes(3)
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+  })
+
+  // The synced status mirror must also reflect SET_LOADING: while a
+  // login is in flight (status 'loading'), a concurrent revalidation
+  // tick that 401s must treat the session as NOT authenticated and so
+  // must NOT fire onSessionExpired. This pins the SET_LOADING arm of
+  // syncedDispatch (statusRef = 'loading'): if dropped, the mirror would
+  // retain the pre-login 'authenticated' value and the tick would
+  // wrongly fire the expiry callback.
+  it('does not fire onSessionExpired for a tick 401 while a login is in flight', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
+    let resolveLogin!: (value: LoginResult) => void
+    client.login.mockReturnValue(
+      new Promise<LoginResult>((resolve) => {
+        resolveLogin = resolve
+      })
+    )
+    const onSessionExpired = jest.fn()
+    let result: { current: AuthContextValue | null } | undefined
+    await act(async () => {
+      result = renderContext(client, { revalidateInterval: 1000, onSessionExpired }).result
+    })
+    expect(result?.current?.status).toBe('authenticated')
+    let loginPromise: Promise<unknown> | undefined
+    act(() => {
+      loginPromise = result?.current?.login('a@b.test', 'pw')
+    })
+    expect(result?.current?.status).toBe('loading')
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveLogin(MOCK_AUTH_RESULT)
+      await loginPromise
+    })
+  })
+
+  // The revalidation interval effect depends on `revalidateInterval`:
+  // toggling the prop from disabled (0) to a live cadence must rebuild
+  // the loop. This pins that dependency — if the effect's dep array were
+  // emptied, the effect would run once at mount (disabled) and never
+  // re-subscribe, so the interval would stay dead after the prop change.
+  it('starts the interval when revalidateInterval changes from 0 to a positive value', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValue(MOCK_USER)
+    let harness: { rerender: (next: HarnessProps) => void } | undefined
+    await act(async () => {
+      harness = renderProvider({ client, revalidateInterval: 0 })
+    })
+    expect(client.getMe).toHaveBeenCalledTimes(1)
+    jest.advanceTimersByTime(5000)
+    expect(client.getMe).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      harness?.rerender({ client, revalidateInterval: 1000 })
+    })
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(client.getMe).toHaveBeenCalledTimes(2)
+  })
+
+  // The provider keeps the latest onSessionExpired in a ref and refreshes
+  // it via an effect keyed on the prop. When the parent re-renders with a
+  // NEW callback, an expiry must invoke the new one and never the stale
+  // one. This pins both the ref-sync effect body and its dependency
+  // array: dropping either would leave the first callback wired up.
+  it('invokes the latest onSessionExpired after the prop changes', async () => {
+    const client = createMockClient()
+    client.getMe.mockResolvedValueOnce(MOCK_USER)
+    client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
+    const firstCallback = jest.fn()
+    const secondCallback = jest.fn()
+    let harness: { rerender: (next: HarnessProps) => void } | undefined
+    await act(async () => {
+      harness = renderProvider({
+        client,
+        revalidateInterval: 1000,
+        onSessionExpired: firstCallback
+      })
+    })
+    expect(capturedContext?.status).toBe('authenticated')
+    await act(async () => {
+      harness?.rerender({ client, revalidateInterval: 1000, onSessionExpired: secondCallback })
+    })
+    await act(async () => {
+      jest.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+    expect(secondCallback).toHaveBeenCalledTimes(1)
+    expect(firstCallback).not.toHaveBeenCalled()
+  })
+
+  // The provider keeps the latest client in a ref and refreshes it via an
+  // effect keyed on the `client` prop. When the parent swaps in a NEW
+  // client, subsequent revalidations must call the new client's getMe,
+  // not the original's. This pins both the client-sync effect body and
+  // its dependency array: dropping either would keep calling the old
+  // client after the swap.
+  it('uses the latest client after the client prop changes', async () => {
+    const firstClient = createMockClient()
+    firstClient.getMe.mockResolvedValue(MOCK_USER)
+    const secondClient = createMockClient()
+    secondClient.getMe.mockResolvedValue(MOCK_USER)
+    let harness: { rerender: (next: HarnessProps) => void } | undefined
+    await act(async () => {
+      harness = renderProvider({ client: firstClient, revalidateInterval: 0 })
+    })
+    expect(firstClient.getMe).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      harness?.rerender({ client: secondClient, revalidateInterval: 0 })
+    })
+    await act(async () => {
+      await capturedContext?.refresh()
+    })
+    expect(secondClient.getMe).toHaveBeenCalledTimes(1)
+    expect(firstClient.getMe).toHaveBeenCalledTimes(1)
   })
 })

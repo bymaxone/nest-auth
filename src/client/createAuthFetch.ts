@@ -162,6 +162,7 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
  */
 function resolveRequestUrl(input: RequestInfo | URL, baseUrl: string | undefined): string {
   if (typeof input === 'string') {
+    // Stryker disable next-line ConditionalExpression: when baseUrl is undefined the expression returns `input` unchanged regardless of the guard's boolean, so `true` is indistinguishable here
     return baseUrl !== undefined && !/^https?:\/\//i.test(input) ? `${baseUrl}${input}` : input
   }
   if (input instanceof URL) {
@@ -203,6 +204,7 @@ function mergeHeaders(
     }
     return merged
   }
+  // Stryker disable next-line ConditionalExpression: `typeof Headers !== 'undefined'` is a cross-runtime safety check; Headers is always defined in supported runtimes (Node 18+, Edge, browsers), so `true` is equivalent
   if (typeof Headers !== 'undefined' && perRequest instanceof Headers) {
     perRequest.forEach((value, name) => {
       if (isUnsafeName(name)) return
@@ -250,6 +252,7 @@ function attachTimeout(
     if (userSignal.aborted) {
       controller.abort()
     } else {
+      // Stryker disable next-line ObjectLiteral,BooleanLiteral: an AbortSignal dispatches 'abort' at most once, so `{ once: true }`, `{}`, and `{ once: false }` all produce identical behavior
       userSignal.addEventListener('abort', () => controller.abort(), { once: true })
     }
   }
@@ -349,6 +352,7 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     // (scheme, origin, validation) remain `fetch`'s responsibility —
     // the skip-list check above operates on pathname only.
     const targetForFetch: RequestInfo | URL =
+      // Stryker disable next-line ConditionalExpression: when baseUrl is undefined the ternary returns `input` regardless, so the guard's boolean is unobservable
       baseUrl !== undefined && typeof input === 'string' ? url : input
 
     const firstAttempt = attachTimeout(initBase, timeoutMs)
@@ -375,7 +379,9 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       // a broken redirect without breaking the fetch contract.
       try {
         onSessionExpired?.()
+        // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it (fire-and-forget); emptying the body leaves the same swallow, observable only via a console spy
       } catch (err: unknown) {
+        // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
         console.warn('[nest-auth] onSessionExpired callback threw:', err)
       }
       return response

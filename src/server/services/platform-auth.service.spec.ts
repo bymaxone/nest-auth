@@ -181,11 +181,16 @@ describe('PlatformAuthService', () => {
 
     // Verifies the complete happy path: valid credentials with no MFA → auth result + updateLastLogin side effect.
     it('should return PlatformAuthResult and call updateLastLogin on success', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       const result = await service.login(dto, ip, userAgent)
       expect(result).toBe(PLATFORM_AUTH_RESULT)
       // Fire-and-forget: drain the microtask queue so the updateLastLogin call completes.
       await Promise.resolve()
       expect(mockPlatformUserRepo.updateLastLogin).toHaveBeenCalledWith(PLATFORM_ADMIN.id)
+      // Pin the success log template so emptying it is caught.
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('login: success')
+      logSpy.mockRestore()
     })
 
     // Verifies that the brute-force identifier is computed as hmacSha256('platform:' + email, secret)
@@ -226,6 +231,20 @@ describe('PlatformAuthService', () => {
       expect(caught!.getStatus()).toBe(429)
     })
 
+    // Scenario: login on a locked account; expected: a warn log identifying the lock event is
+    // emitted. Why: pins the "account locked" log template so emptying it is caught — the lock
+    // path is otherwise observable only via the thrown ACCOUNT_LOCKED code.
+    it('should log a warning identifying the account-locked event', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toThrow(AuthException)
+
+      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('login: account locked')
+      warnSpy.mockRestore()
+    })
+
     // Verifies that retryAfterSeconds from getRemainingLockoutSeconds is included in the error.
     it('should include retryAfterSeconds from getRemainingLockoutSeconds in ACCOUNT_LOCKED', async () => {
       mockBruteForce.isLockedOut.mockResolvedValue(true)
@@ -246,6 +265,7 @@ describe('PlatformAuthService', () => {
     // Verifies INVALID_CREDENTIALS when the email is not found and recordFailure is called.
     it('should record failure and throw INVALID_CREDENTIALS when email is not found', async () => {
       mockPlatformUserRepo.findByEmail.mockResolvedValue(null)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       let caught: AuthException | undefined
       try {
@@ -257,11 +277,16 @@ describe('PlatformAuthService', () => {
       const response = caught!.getResponse() as { error: { code: string } }
       expect(response.error.code).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+      // Pin the email-not-found warn log so emptying its template is caught.
+      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('login: invalid credentials')
+      warnSpy.mockRestore()
     })
 
     // Verifies INVALID_CREDENTIALS when the password does not match and recordFailure is called.
     it('should record failure and throw INVALID_CREDENTIALS when password is wrong', async () => {
       mockPasswordService.compare.mockResolvedValue(false)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       let caught: AuthException | undefined
       try {
@@ -273,6 +298,10 @@ describe('PlatformAuthService', () => {
       const response = caught!.getResponse() as { error: { code: string } }
       expect(response.error.code).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+      // Pin the wrong-password warn log (a distinct call site from the email-not-found path).
+      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('login: invalid credentials')
+      warnSpy.mockRestore()
     })
 
     // Verifies the MFA path: when admin.mfaEnabled is true, issueMfaTempToken is called
@@ -281,6 +310,7 @@ describe('PlatformAuthService', () => {
       mockPlatformUserRepo.findByEmail.mockResolvedValue(PLATFORM_ADMIN_MFA)
       mockTokenManager.issueMfaTempToken.mockResolvedValue('mfa.temp.token')
 
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       const result = await service.login(dto, ip, userAgent)
       expect(result).toEqual({ mfaRequired: true, mfaTempToken: 'mfa.temp.token' })
       expect(mockTokenManager.issueMfaTempToken).toHaveBeenCalledWith(
@@ -289,6 +319,10 @@ describe('PlatformAuthService', () => {
       )
       // Tokens should NOT be issued on the MFA path.
       expect(mockTokenManager.issuePlatformTokens).not.toHaveBeenCalled()
+      // Pin the MFA-challenge log template so emptying it is caught.
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('login: MFA challenge issued')
+      logSpy.mockRestore()
     })
 
     // Verifies that when updateLastLogin rejects, the error is swallowed and logged
@@ -344,6 +378,17 @@ describe('PlatformAuthService', () => {
     it('should delete prt:{sha256(rawRefreshToken)} from Redis', async () => {
       await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
       expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
+    })
+
+    // Scenario: logout of an admin; expected: a log identifying the logout event (with the
+    // adminId) is emitted. Why: pins the "logout: adminId=" template so emptying it is caught —
+    // logout otherwise has only Redis side effects, no return value.
+    it('should log the logout event with the admin id', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('logout: adminId=')
+      logSpy.mockRestore()
     })
 
     // Verifies that the grace-pointer key (prp:{hash}) is also deleted during logout

@@ -31,6 +31,37 @@ import { base64UrlEncode, signHs256Token } from './_testHelpers'
 const SECRET = 'test-secret-material-at-least-32-bytes'
 const ONE_HOUR = 3600
 
+/**
+ * Sign a token whose HEADER advertises an arbitrary `alg` but whose
+ * signature is a genuine HMAC-SHA-256 over `<header>.<payload>` using
+ * `secret`. This produces a cryptographically-valid HS256 signature
+ * carried under a non-`HS256` header — the precise shape needed to
+ * prove that {@link verifyJwtToken}'s algorithm pin rejects the token
+ * BEFORE (not because of) the signature check.
+ */
+async function signWithHeaderAlg(
+  alg: string,
+  payload: Readonly<Record<string, unknown>>,
+  secret: string
+): Promise<string> {
+  const headerSegment = base64UrlEncode(JSON.stringify({ alg, typ: 'JWT' }))
+  const payloadSegment = base64UrlEncode(JSON.stringify(payload))
+  const signingInput = `${headerSegment}.${payloadSegment}`
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  )
+  const signature = await globalThis.crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(signingInput)
+  )
+  return `${signingInput}.${base64UrlEncode(signature)}`
+}
+
 describe('decodeJwtToken', () => {
   // Happy path: a valid future-dated HS256 token decodes to isValid
   // with all claims accessible.
@@ -50,6 +81,24 @@ describe('decodeJwtToken', () => {
     expect(decoded.sub).toBe('user-1')
     expect(decoded.role).toBe('admin')
     expect(decoded.tenantId).toBe('tenant-a')
+  })
+
+  // Boundary: a token whose `exp` equals the current second is NOT
+  // valid. `isValid` is computed as `exp > now` (strictly future), so a
+  // token expiring exactly now must be `isValid: false`. `Date.now` is
+  // frozen for an exact comparison. Pins the `>` boundary; `>=` would
+  // mark the just-expired token valid.
+  it('computes isValid false when exp equals the current second', () => {
+    const nowSeconds = 1_700_000_000
+    const realNow = Date.now
+    Date.now = () => nowSeconds * 1000
+    try {
+      const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+      const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: nowSeconds }))
+      expect(decodeJwtToken(`${header}.${payload}.sig`).isValid).toBe(false)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   // Expired token: claims are still accessible but isValid flips to
@@ -88,6 +137,110 @@ describe('decodeJwtToken', () => {
     const token = `${header}.${payload}.fakesig`
     const decoded = decodeJwtToken(token)
     expect(decoded.isValid).toBe(false)
+  })
+
+  // A token with EXACTLY TWO segments must be rejected: the structural
+  // check is `parts.length !== 3`. Even though both the header and the
+  // payload here are well-formed and the payload has a future `exp`,
+  // decoding must NOT proceed. Pins the `!== 3` segment-count guard;
+  // dropping it (→ `if (false)`) would let a 2-segment token decode to
+  // `isValid: true`.
+  it('rejects a structurally valid 2-segment token (no signature segment)', () => {
+    const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const decoded = decodeJwtToken(`${header}.${payload}`)
+    expect(decoded.isValid).toBe(false)
+    expect(decoded.sub).toBeUndefined()
+  })
+
+  // An EMPTY header segment with an otherwise-valid payload must be
+  // rejected. The header-empty operand of
+  // `headerSegment.length === 0 || payloadSegment.length === 0` is what
+  // catches it — `decodeJwtToken` (unlike the verify path) has no
+  // downstream `header === undefined` guard, so removing this operand
+  // would let the valid payload decode to `isValid: true` with the
+  // claims populated.
+  it('rejects a token with an empty header segment but a valid payload', () => {
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const decoded = decodeJwtToken(`.${payload}.sig`)
+    expect(decoded.isValid).toBe(false)
+    expect(decoded.sub).toBeUndefined()
+  })
+
+  // A JSON `null` header (valid payload) must leave `decoded.header`
+  // undefined — `safeJsonParse` rejects `null` via its `parsed === null`
+  // operand. A mutated guard would surface `null` as the header.
+  it('leaves header undefined when the header JSON is null', () => {
+    const header = base64UrlEncode(JSON.stringify(null))
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
+  })
+
+  // A JSON number header (valid payload) must leave `decoded.header`
+  // undefined — `safeJsonParse` rejects it via the
+  // `typeof parsed !== 'object'` operand. A mutated guard would surface
+  // the number as the header.
+  it('leaves header undefined when the header JSON is a number', () => {
+    const header = base64UrlEncode(JSON.stringify(42))
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
+  })
+
+  // A JSON array header (valid payload) must leave `decoded.header`
+  // undefined — `safeJsonParse` rejects it via the `Array.isArray`
+  // operand (because `typeof [] === 'object'`). A mutated guard would
+  // surface the array as the header. Also pins the `return undefined`
+  // block inside the guard.
+  it('leaves header undefined when the header JSON is an array', () => {
+    const header = base64UrlEncode(JSON.stringify(['HS256']))
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
+  })
+
+  // The `iat` claim is read under the exact key `'iat'`. A token
+  // carrying `iat` must expose it on the decoded token. Pins the
+  // `pickClaim(payload, 'iat')` claim-name literal — blanking it (→ '')
+  // would always yield `iat: undefined`.
+  it('exposes the iat claim from the payload', () => {
+    const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', iat: 1700000000, exp: 9999999999 }))
+    expect(decodeJwtToken(`${header}.${payload}.sig`).iat).toBe(1700000000)
+  })
+
+  // The payload is decoded with a FATAL UTF-8 decoder: bytes that are
+  // invalid UTF-8 must abort the decode and produce an empty payload,
+  // even when a LENIENT decoder would substitute U+FFFD and yield a
+  // parseable JSON object. The fixture is `{"a":"<0x80>"}` — valid JSON
+  // shape with one stray continuation byte. Pins `{ fatal: true }`
+  // (both the boolean and the options-object): a lenient decode would
+  // populate `payload` with `{ a: '�' }`.
+  it('produces an empty payload when invalid UTF-8 would otherwise parse as JSON', () => {
+    const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+    // Bytes spelling `{"a":"` + 0x80 (a lone UTF-8 continuation byte) + `"}`.
+    // A lenient decoder yields `{"a":"�"}` (parseable); a fatal one throws.
+    const prefix = [...new TextEncoder().encode('{"a":"')]
+    const suffix = [...new TextEncoder().encode('"}')]
+    const bytes = Uint8Array.from([...prefix, 0x80, ...suffix])
+    const payload = base64UrlEncode(bytes.buffer)
+    const decoded = decodeJwtToken(`${header}.${payload}.sig`)
+    expect(Object.keys(decoded.payload)).toHaveLength(0)
+  })
+
+  // A base64url segment containing a `/` (a standard-base64 character
+  // OUTSIDE the base64url alphabet) must be rejected by the alphabet
+  // regex before `atob`, which would otherwise decode it to a valid
+  // JSON object. The fixture's payload segment decodes — only if the
+  // guard is bypassed — to `{"exp":9999999999,...}` (a future, "valid"
+  // token). Pins the `^[A-Za-z0-9_-]*$` guard and both anchors: any of
+  // them being dropped lets the `/` through and flips `isValid` to true.
+  it('rejects a payload segment containing a non-base64url "/" character', () => {
+    const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+    // Standard-base64 of {"exp":9999999999,"sub":"`?}Q0+"} — contains a '/'.
+    const payloadWithSlash = 'eyJleHAiOjk5OTk5OTk5OTksInN1YiI6ImA/fVEwKyJ9'
+    expect(payloadWithSlash).toContain('/')
+    const decoded = decodeJwtToken(`${header}.${payloadWithSlash}.sig`)
+    expect(decoded.isValid).toBe(false)
+    expect(Object.keys(decoded.payload)).toHaveLength(0)
   })
 })
 
@@ -135,6 +288,20 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
       SECRET
     )
     const decoded = await verifyJwtToken(token, '')
+    expect(decoded.isValid).toBe(false)
+  })
+
+  // A 4-segment token must be rejected by the `parts.length !== 3`
+  // structural guard in verify mode — even when its first three
+  // segments form a perfectly valid, correctly-signed HS256 token with
+  // a trailing `.extra`. Dropping the guard would let the verifier
+  // ignore the extra segment and accept the token.
+  it('rejects a correctly-signed token with a trailing 4th segment', async () => {
+    const valid = await signHs256Token(
+      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      SECRET
+    )
+    const decoded = await verifyJwtToken(`${valid}.extra`, SECRET)
     expect(decoded.isValid).toBe(false)
   })
 })
@@ -197,6 +364,30 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
     const decoded = await verifyJwtToken(token, SECRET)
     expect(decoded.isValid).toBe(false)
   })
+
+  // The algorithm pin must reject a non-`HS256` header EVEN WHEN the
+  // signature is a genuine, verifiable HMAC-SHA-256 over the segments.
+  // Here the header says `alg: HS384` but the token is HMAC-SHA-256
+  // signed with `SECRET`, so the signature itself WOULD verify. Only
+  // the `header.alg !== 'HS256'` pin stops it. Sibling tests use fake
+  // signatures, which the signature check would also reject — so they
+  // cannot distinguish the pin from the signature step. Pins both the
+  // `header === undefined ||` and the `header.alg !== 'HS256'` operands.
+  it('rejects a non-HS256 alg even with a valid HMAC-SHA-256 signature', async () => {
+    const token = await signWithHeaderAlg(
+      'HS384',
+      { sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      SECRET
+    )
+    // Sanity: the same payload/secret under an HS256 header verifies,
+    // proving the signature material itself is valid.
+    const honest = await signHs256Token(
+      { sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      SECRET
+    )
+    expect((await verifyJwtToken(honest, SECRET)).isValid).toBe(true)
+    expect((await verifyJwtToken(token, SECRET)).isValid).toBe(false)
+  })
 })
 
 describe('isTokenExpired', () => {
@@ -223,6 +414,27 @@ describe('isTokenExpired', () => {
       SECRET
     )
     expect(isTokenExpired(decodeJwtToken(token))).toBe(false)
+  })
+
+  // Boundary: `exp` EXACTLY equal to the current second. The contract
+  // is `exp <= now` → expired (a token expiring this very second is no
+  // longer usable). `Date.now` is frozen so the comparison is exact.
+  // Pins the `<=` boundary; `<` would treat the just-expired token as
+  // still valid.
+  it('returns true when exp equals the current second (inclusive boundary)', () => {
+    const nowSeconds = 1_700_000_000
+    const realNow = Date.now
+    Date.now = () => nowSeconds * 1000
+    try {
+      // Build the decoded token under the same frozen clock so its
+      // fields are stable, then assert the expiry boundary.
+      const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+      const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: nowSeconds }))
+      const decoded = decodeJwtToken(`${header}.${payload}.sig`)
+      expect(isTokenExpired(decoded)).toBe(true)
+    } finally {
+      Date.now = realNow
+    }
   })
 })
 

@@ -74,6 +74,23 @@ describe('buildAuthRefreshSkipSuffixes', () => {
     }
   })
 
+  // Strips MULTIPLE leading and trailing slashes — not just one. A prefix
+  // like `'//auth//'` must collapse to `'auth'` (suffix `/auth/login`). If the
+  // normalization regex only removed a single leading or trailing slash, a
+  // residual slash would leak into the prefix and emit `//auth/login` or
+  // `/auth//login`, neither of which matches a real URL. Edge-case: doubled slashes.
+  it('strips multiple leading and trailing slashes (//auth// → auth)', () => {
+    const doubled = buildAuthRefreshSkipSuffixes('//auth//')
+
+    expect(doubled).toContain('/auth/login')
+    expect(doubled).toContain('/auth/platform/refresh')
+    expect(doubled).toEqual(buildAuthRefreshSkipSuffixes('auth'))
+    for (const s of doubled) {
+      expect(s.includes('//auth')).toBe(false)
+      expect(s.includes('auth//')).toBe(false)
+    }
+  })
+
   // Proxy endpoints are never prefixed by the NestJS `routePrefix` —
   // they are browser-facing Next.js routes. Assert the suffix list
   // always carries the exact proxy paths regardless of the prefix.

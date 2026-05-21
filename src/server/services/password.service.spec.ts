@@ -94,6 +94,59 @@ describe('PasswordService', () => {
       // 'scrypt::derivedHex' — the salt part is an empty string which is falsy.
       expect(await service.compare('password', 'scrypt::' + 'a'.repeat(128))).toBe(false)
     })
+
+    // Scenario: a hash with FOUR colon-separated parts whose first three are a genuine valid
+    // hash for the password; expected: compare returns false because parts.length !== 3.
+    // Why: with valid salt/derived appended by an extra ':segment', the only thing rejecting it
+    // is the length===3 guard — so dropping that guard (if(false)), turning '||' into '&&', or
+    // replacing the length clause with false would let it match and return true.
+    it('should return false for an otherwise-valid hash that has an extra :segment (length !== 3)', async () => {
+      const valid = await service.hash('correct-password')
+      expect(await service.compare('correct-password', valid + ':extra')).toBe(false)
+    })
+
+    // Scenario: a hash whose salt/derived are valid for the password but whose prefix is NOT
+    // 'scrypt'; expected: compare returns false. Why: only the parts[0] === 'scrypt' clause
+    // rejects it — replacing that clause with false would accept a non-scrypt algorithm tag and
+    // return true, silently honouring an unsupported (potentially weaker) hash format.
+    it('should return false for a 3-part hash whose payload is valid but prefix is not scrypt', async () => {
+      const valid = await service.hash('correct-password')
+      const wrongPrefix = valid.replace(/^scrypt:/, 'sha256:')
+      // Sanity: still three parts, valid salt + derived, only the algorithm tag differs.
+      expect(wrongPrefix.split(':')).toHaveLength(3)
+      expect(await service.compare('correct-password', wrongPrefix)).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // maxmem (scrypt memory ceiling)
+  // ---------------------------------------------------------------------------
+
+  describe('maxmem', () => {
+    // Scenario: hashing with a high cost factor whose true scrypt memory requirement
+    // (128 * N * r) EXCEEDS the 64 MiB floor; expected: hash() resolves. Why: the correct
+    // ceiling is max(N*r*128*2, 64MiB) = 2x the requirement. Mutations that shrink the first
+    // argument (Math.min, *2 -> /2, r*128 -> r/128, N*r -> N/r) collapse the ceiling to the
+    // 64 MiB floor, which is below the requirement, so scrypt would reject the params and the
+    // promise would fail — killing every arithmetic/Math.max mutant on that line.
+    it('should resolve when N*r*128 exceeds the 64MiB floor (ceiling must be 2x the requirement)', async () => {
+      const highCostOptions = {
+        password: {
+          // 128 * 2^17 * 8 = 128 MiB requirement (> 64 MiB floor); 2x = 256 MiB ceiling.
+          costFactor: 131_072,
+          blockSize: 8,
+          parallelization: 1
+        }
+      }
+      const module = await Test.createTestingModule({
+        providers: [PasswordService, { provide: BYMAX_AUTH_OPTIONS, useValue: highCostOptions }]
+      }).compile()
+      const highCostService = module.get(PasswordService)
+
+      await expect(highCostService.hash('memory-bound-password')).resolves.toMatch(
+        /^scrypt:[0-9a-f]{32}:[0-9a-f]{128}$/
+      )
+    }, 30_000)
   })
 
   // ---------------------------------------------------------------------------

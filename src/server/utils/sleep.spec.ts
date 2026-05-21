@@ -45,4 +45,31 @@ describe('sleep', () => {
     // Advance timers to prevent test leakage
     jest.advanceTimersByTime(1)
   })
+
+  // Pins that the lower-bound clamp is Math.max(0, ms), not Math.min(0, ms). For a
+  // positive delay the clamp must preserve the value (200), so setTimeout receives
+  // exactly 200. A min(0, ms) mutant would schedule at 0 instead — assert the raw
+  // scheduled delay rather than relying on advanceTimersByTime overshooting it.
+  it('should schedule setTimeout with the exact positive delay (pins Math.max lower clamp)', () => {
+    const setTimeoutSpy = jest.spyOn(globalThis, 'setTimeout')
+
+    void sleep(200)
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 200)
+    jest.advanceTimersByTime(200)
+    setTimeoutSpy.mockRestore()
+  })
+
+  // Confirms the negative-input branch still resolves immediately by scheduling at 0
+  // (Math.max(0, -100) === 0). Complements the positive-delay assertion above so both
+  // operands of the lower-bound clamp are observed.
+  it('should schedule setTimeout with 0 for a negative delay', () => {
+    const setTimeoutSpy = jest.spyOn(globalThis, 'setTimeout')
+
+    void sleep(-100)
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 0)
+    jest.advanceTimersByTime(0)
+    setTimeoutSpy.mockRestore()
+  })
 })

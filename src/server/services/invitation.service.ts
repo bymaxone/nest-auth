@@ -47,6 +47,7 @@ interface StoredInvitation {
  * (e.g. a tampered `role`) from a compromised or misconfigured Redis instance.
  */
 function isStoredInvitation(value: unknown): value is StoredInvitation {
+  // Stryker disable next-line ConditionalExpression: non-object JSON primitives have no string fields, so the downstream field guards reject them identically when the type clause is dropped
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   return (
@@ -227,6 +228,7 @@ export class InvitationService {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
+      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsed` stays undefined, caught by the next `typeof !== 'object'` guard → same thrown code; the catch body is a no-op
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }

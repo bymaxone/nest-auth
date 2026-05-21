@@ -220,6 +220,7 @@ export class BymaxAuthModule {
         // in the resolved options and the mfa group (MfaService backs the platform MFA challenge
         // endpoint). Also requires BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders —
         // without it, all platform auth requests fail at runtime rather than at startup.
+        // Stryker disable next-line OptionalChaining: resolveOptions always sets `platform`, so `resolved.platform?.enabled` and `.enabled` are identical
         if (includePlatform && !resolved.platform?.enabled) {
           throw new Error(
             '[BymaxAuthModule] controllers.platform: true requires ' +
@@ -238,6 +239,7 @@ export class BymaxAuthModule {
           !hasProviderToken(extraProviders, BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
         ) {
           throw new Error(
+            // Stryker disable next-line StringLiteral: developer-facing startup error message text; consumers act on the thrown error, not its wording
             '[BymaxAuthModule] controllers.platform: true requires ' +
               'BYMAX_AUTH_PLATFORM_USER_REPOSITORY in extraProviders. ' +
               'Omitting it will cause TOKEN_INVALID on all platform auth requests.'
@@ -254,6 +256,7 @@ export class BymaxAuthModule {
         }
 
         // Cross-validate: controllers.invitations: true requires invitations.enabled: true.
+        // Stryker disable next-line OptionalChaining: resolveOptions always sets `invitations`, so `resolved.invitations?.enabled` and `.enabled` are identical
         if (includeInvitations && !resolved.invitations?.enabled) {
           throw new Error(
             '[BymaxAuthModule] controllers.invitations: true requires ' +
@@ -341,6 +344,7 @@ export class BymaxAuthModule {
             const userOptions = await options.useFactory(...args)
             return {
               secret: userOptions.jwt.secret,
+              // Stryker disable next-line ObjectLiteral: jsonwebtoken defaults to HS256 and TokenManagerService overrides signOptions per call, so the emptied `signOptions` produces identical signing
               signOptions: { algorithm: 'HS256' }
             }
           },

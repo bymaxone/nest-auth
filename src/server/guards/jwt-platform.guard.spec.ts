@@ -19,6 +19,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -70,9 +71,14 @@ function makeContext(token: string | undefined): {
 } {
   const request: Record<string, unknown> = {}
   mockTokenDelivery.extractPlatformAccessToken.mockReturnValue(token)
+  // getHandler/getClass return distinct, defined, stable sentinels so that
+  // toHaveBeenCalledWith(KEY, [handler, class]) cannot be satisfied by an empty
+  // array — Jest's argument matcher treats [undefined, undefined] as equal to [].
+  const handlerRef = jest.fn()
+  const classRef = jest.fn()
   return {
-    getHandler: jest.fn(),
-    getClass: jest.fn(),
+    getHandler: jest.fn(() => handlerRef),
+    getClass: jest.fn(() => classRef),
     switchToHttp: () => ({ getRequest: () => request })
   }
 }
@@ -117,6 +123,22 @@ describe('JwtPlatformGuard', () => {
       await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
       expect(mockJwtService.verify).not.toHaveBeenCalled()
       expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Metadata lookup targets.
+     *
+     * The @Public() flag must be read from BOTH the handler and the class
+     * (NestJS override order). Pins the targets array: collapsing it to []
+     * would make @Public() undetectable on platform routes.
+     */
+    it('should read IS_PUBLIC_KEY metadata from the handler and class', async () => {
+      const spy = jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true)
+      const ctx = makeContext(undefined)
+
+      await guard.canActivate(ctx as never)
+
+      expect(spy).toHaveBeenCalledWith(IS_PUBLIC_KEY, [ctx.getHandler(), ctx.getClass()])
     })
   })
 

@@ -184,6 +184,32 @@ describe('BruteForceService', () => {
       await expect(service.isLockedOut(longId)).rejects.toThrow(AuthException)
     })
 
+    // Scenario: an identifier with forbidden characters is rejected; expected: the developer
+    // diagnostic log includes BOTH the "Invalid identifier" lead and the "Pass a hashed value"
+    // remediation hint. Why: pins the two concatenated string literals so emptying either one
+    // (which would otherwise leave the public FORBIDDEN error unchanged) is caught.
+    it('should log both the invalid-identifier reason and the remediation hint', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error')
+
+      await expect(service.isLockedOut('user:id')).rejects.toThrow(AuthException)
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('Invalid identifier passed to BruteForceService')
+      expect(logged).toContain('Pass a hashed value (e.g. hmacSha256(email, secret))')
+    })
+
+    // Scenario: an over-length identifier is rejected; expected: the diagnostic log states the
+    // exact maximum byte length. Why: pins the length-exceeded message template so emptying it
+    // is caught (the public FORBIDDEN response is identical regardless of this text).
+    it('should log the configured maximum byte length when the identifier is too long', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error')
+
+      await expect(service.isLockedOut('a'.repeat(513))).rejects.toThrow(AuthException)
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('Identifier exceeds the maximum allowed length of 512 bytes.')
+    })
+
     // Verifies that an identifier of exactly 512 bytes is accepted (boundary case).
     it('should accept a 512-byte identifier without throwing', async () => {
       mockRedis.get.mockResolvedValue(null)

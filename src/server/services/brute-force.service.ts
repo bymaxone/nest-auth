@@ -107,6 +107,7 @@ export class BruteForceService {
   async getRemainingLockoutSeconds(identifier: string): Promise<number> {
     this.validateIdentifier(identifier)
     const ttl = await this.redis.ttl(`${LOCKOUT_PREFIX}${identifier}`)
+    // Stryker disable next-line EqualityOperator: the ternary returns 0 at the boundary under both `> 0` and `>= 0`
     return ttl > 0 ? ttl : 0
   }
 

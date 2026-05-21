@@ -205,6 +205,24 @@ describe('PlatformAuthController', () => {
       expect(mockTokenDelivery.deliverPlatformAuthResponse).not.toHaveBeenCalled()
     })
 
+    // Pins the `=== true` discriminant: a PlatformAuthResult that carries the
+    // `mfaRequired` KEY set to `false` must NOT be treated as an MFA challenge —
+    // it must be delivered as a bearer auth response. A mutant dropping `=== true`
+    // (leaving only the `'mfaRequired' in result` presence check) would wrongly
+    // short-circuit to the MFA branch and skip delivery. Edge-case: present-but-false.
+    it('should deliver auth response when result has mfaRequired:false (not an MFA challenge)', async () => {
+      const resultWithFalseFlag = { ...PLATFORM_AUTH_RESULT, mfaRequired: false }
+      mockPlatformAuthService.login.mockResolvedValue(resultWithFalseFlag)
+      const req = makeReq()
+
+      const result = await controller.login(LOGIN_DTO, req)
+
+      expect(mockTokenDelivery.deliverPlatformAuthResponse).toHaveBeenCalledWith(
+        resultWithFalseFlag
+      )
+      expect(result).toBe(PLATFORM_BEARER_RESPONSE)
+    })
+
     // Service throws → controller propagates the error without catching it.
     it('should propagate errors thrown by platformAuthService.login', async () => {
       const error = new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)

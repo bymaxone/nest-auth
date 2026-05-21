@@ -13,7 +13,7 @@ import { AUTH_ERROR_MESSAGES } from './auth-error-codes'
  * {
  *   "error": {
  *     "code": "auth.invalid_credentials",
- *     "message": "Email ou senha inválidos",
+ *     "message": "Invalid email or password",
  *     "details": null
  *   }
  * }

@@ -272,6 +272,7 @@ export function resolveSafeDestination(
   origin: string,
   loginPath: string
 ): string {
+  // Stryker disable next-line ConditionalExpression: the only zero-length input is '', which the next line (`!raw.startsWith('/')`) also maps to loginPath, so the `raw.length === 0` disjunct is unreachable-distinct
   if (raw === null || raw.length === 0) return loginPath
   if (!raw.startsWith('/')) return loginPath
   if (raw.startsWith('//')) return loginPath

@@ -41,6 +41,29 @@ describe('toBase32', () => {
     const secret = generateTotpSecret()
     expect(secret.base32).toMatch(/^[A-Z2-7]+$/)
   })
+
+  /**
+   * RFC 4648 §10 canonical Base32 test vectors (without `=` padding).
+   *
+   * These pin the exact byte-to-symbol mapping so that any drift in the bit
+   * accumulator math is caught. Specifically: the 5-byte 'fooba' vector forces
+   * the encoding loop's `bits >= 5` check to fire at the exact `bits === 5`
+   * boundary (regression for an `>=` → `>` mutation), and the non-zero
+   * single-byte 'f' vector exercises the trailing-bits left-shift `5 - bits`
+   * (regression for a `5 - bits` → `5 + bits` mutation, which a zero byte
+   * cannot reveal because `0 << n === 0`).
+   */
+  it.each([
+    ['', ''],
+    ['f', 'MY'],
+    ['fo', 'MZXQ'],
+    ['foo', 'MZXW6'],
+    ['foob', 'MZXW6YQ'],
+    ['fooba', 'MZXW6YTB'],
+    ['foobar', 'MZXW6YTBOI']
+  ])('should encode %p to %p (RFC 4648 §10 vector)', (input, expected) => {
+    expect(toBase32(Buffer.from(input, 'ascii'))).toBe(expected)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -146,6 +169,25 @@ describe('buildTotpUri', () => {
     expect(uri).toContain('period=30')
   })
 
+  /**
+   * Query-string parameter separator.
+   *
+   * The five query parameters must be joined with `&` to form a valid
+   * `otpauth://` URI. Regression for a `.join('&')` → `.join('')` mutation
+   * that would concatenate parameters into a single unparseable token; the
+   * generic `toContain('algorithm=SHA1')` assertions cannot catch it because
+   * those substrings survive concatenation.
+   */
+  it('should separate query parameters with &', () => {
+    const uri = buildTotpUri(SECRET, EMAIL, ISSUER)
+    const query = uri.split('?')[1] ?? ''
+    expect(query.split('&')).toHaveLength(5)
+    expect(uri).toContain('&issuer=')
+    expect(uri).toContain('&algorithm=SHA1')
+    expect(uri).toContain('&digits=6')
+    expect(uri).toContain('&period=30')
+  })
+
   // Verifies that the label is encoded as "issuer:email" in the URI path.
   it('should include a label composed of issuer and email', () => {
     const uri = buildTotpUri(SECRET, EMAIL, ISSUER)
@@ -244,6 +286,19 @@ describe('generateHotp — RFC 4226 test vectors', () => {
     }
   })
 
+  /**
+   * Leading-zero padding (RFC 4226 §5.3).
+   *
+   * Counter 30 with the RFC key truncates to 26920, which must be left-padded
+   * to the full 6 digits as '026920'. Regression for a `padStart(6, '0')` →
+   * `padStart(6, '')` mutation that would emit a 5-digit code — the RFC
+   * Appendix D vectors (counters 0-9) cannot catch it because none of them
+   * have a leading zero.
+   */
+  it('should left-pad a code shorter than 6 digits with zeros', () => {
+    expect(generateHotp(rfcKeyBase32, 30)).toBe('026920')
+  })
+
   // Verifies that generateHotp throws when the decoded key is too short (< 20 bytes).
   it('should throw when the decoded secret is less than 20 bytes', () => {
     const shortKey = toBase32(Buffer.alloc(10)) // 10 bytes — below minimum
@@ -258,6 +313,31 @@ describe('generateHotp — RFC 4226 test vectors', () => {
   // Verifies that generateHotp throws for floating-point counter values.
   it('should throw for non-integer counter values', () => {
     expect(() => generateHotp(rfcKeyBase32, 1.5)).toThrow(/Counter must be a non-negative/)
+  })
+
+  /**
+   * Upper-boundary acceptance: Number.MAX_SAFE_INTEGER is valid.
+   *
+   * The guard rejects counters strictly greater than MAX_SAFE_INTEGER, so the
+   * boundary value itself must be accepted and produce a code. Regression for
+   * a `counter > MAX` → `counter >= MAX` mutation, which would wrongly reject
+   * the boundary.
+   */
+  it('should accept a counter exactly equal to Number.MAX_SAFE_INTEGER', () => {
+    expect(generateHotp(rfcKeyBase32, Number.MAX_SAFE_INTEGER)).toMatch(/^\d{6}$/)
+  })
+
+  /**
+   * Upper-boundary rejection: above MAX_SAFE_INTEGER throws.
+   *
+   * Counters beyond MAX_SAFE_INTEGER lose integer precision and must be
+   * rejected. Regression for a `counter > MAX` → `false` mutation, which would
+   * disable the upper bound entirely and silently accept unsafe counters.
+   */
+  it('should throw for a counter above Number.MAX_SAFE_INTEGER', () => {
+    expect(() => generateHotp(rfcKeyBase32, Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      /Counter must be a non-negative/
+    )
   })
 })
 

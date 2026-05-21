@@ -232,6 +232,71 @@ describe('resolveOptions — success', () => {
 })
 
 // ---------------------------------------------------------------------------
+// secureCookies default — NODE_ENV-driven
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — secureCookies default', () => {
+  // Helper: run resolveOptions with NODE_ENV temporarily forced to a value, then
+  // restore the original so other suites are not contaminated.
+  function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
+    const original = process.env['NODE_ENV']
+    if (value === undefined) {
+      delete process.env['NODE_ENV']
+    } else {
+      process.env['NODE_ENV'] = value
+    }
+    try {
+      return fn()
+    } finally {
+      if (original === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = original
+      }
+    }
+  }
+
+  // Scenario: NODE_ENV is 'production' and the consumer did not set secureCookies.
+  // Expected: secureCookies resolves to true. Why: the default is computed as
+  // `NODE_ENV === 'production'`; this pins the production branch and kills the
+  // `?? false`, env-key, and env-value string mutants which would force false.
+  it('should default secureCookies to true when NODE_ENV is production', () => {
+    const resolved = withNodeEnv('production', () => resolveOptions(MINIMAL_OPTIONS))
+    expect(resolved.secureCookies).toBe(true)
+  })
+
+  // Scenario: NODE_ENV is a non-production value ('development') with no consumer override.
+  // Expected: secureCookies resolves to false. Why: pins the non-production branch and
+  // kills the `?? true` mutant (which would force true) and the `===`→`!==` equality mutant
+  // (which would flip the result to true for non-production).
+  it('should default secureCookies to false when NODE_ENV is not production', () => {
+    const resolved = withNodeEnv('development', () => resolveOptions(MINIMAL_OPTIONS))
+    expect(resolved.secureCookies).toBe(false)
+  })
+
+  // Scenario: consumer explicitly sets secureCookies: false while NODE_ENV is production.
+  // Expected: the explicit false wins over the production default. Why: confirms the
+  // `userOptions.secureCookies ??` short-circuit — distinguishes the user-value branch from
+  // the NODE_ENV fallback branch.
+  it('should let an explicit secureCookies: false override the production default', () => {
+    const resolved = withNodeEnv('production', () =>
+      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false })
+    )
+    expect(resolved.secureCookies).toBe(false)
+  })
+
+  // Scenario: consumer explicitly sets secureCookies: true while NODE_ENV is development.
+  // Expected: the explicit true wins over the non-production default of false. Why: pins the
+  // other side of the `??` user-value branch so neither fallback constant can satisfy both cases.
+  it('should let an explicit secureCookies: true override the non-production default', () => {
+    const resolved = withNodeEnv('development', () =>
+      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: true })
+    )
+    expect(resolved.secureCookies).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — jwt missing entirely
 // ---------------------------------------------------------------------------
 
@@ -241,6 +306,14 @@ describe('resolveOptions — jwt missing', () => {
     // Cast needed because TypeScript does not allow omitting a required field.
     const options = { roles: { hierarchy: { ADMIN: [] } } } as never
     expect(() => resolveOptions(options)).toThrow(/jwt configuration is required/)
+  })
+
+  // Scenario: jwt group omitted entirely. Expected: the actionable remediation hint
+  // ('Provide at least jwt.secret.') appears in the message. Why: pins the second concatenated
+  // string literal so the StringLiteral mutant emptying it is killed.
+  it('should include the "Provide at least jwt.secret" remediation in the missing-jwt error', () => {
+    const options = { roles: { hierarchy: { ADMIN: [] } } } as never
+    expect(() => resolveOptions(options)).toThrow(/Provide at least jwt\.secret\./)
   })
 })
 
@@ -259,6 +332,17 @@ describe('resolveOptions — jwt.secret validation', () => {
     expect(() => resolveOptions(options)).toThrow(/\[BymaxAuthModule\] jwt\.secret is required/)
   })
 
+  // Scenario: empty jwt.secret. Expected: the message includes the `node -e ... randomBytes(32)`
+  // generation hint. Why: pins the second concatenated literal of the empty-secret error so the
+  // StringLiteral mutant emptying that remediation hint is killed.
+  it('should include the randomBytes generation hint when jwt.secret is empty', () => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: '' }
+    } as unknown as BymaxAuthModuleOptions
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
+  })
+
   // Verifies that a secret shorter than 32 characters is rejected at startup.
   it('should throw when secret is shorter than 32 characters', () => {
     const options: BymaxAuthModuleOptions = {
@@ -266,6 +350,42 @@ describe('resolveOptions — jwt.secret validation', () => {
       jwt: { secret: 'short-secret' }
     }
     expect(() => resolveOptions(options)).toThrow(/at least 32 characters/)
+  })
+
+  // Scenario: secret shorter than 32 chars. Expected: the message includes the `node -e`
+  // randomBytes generation hint. Why: pins the second concatenated literal so the StringLiteral
+  // mutant emptying the remediation hint on the length error is killed.
+  it('should include the randomBytes generation hint when secret is too short', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: 'short-secret' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
+  })
+
+  // Scenario: secret whose Shannon entropy is exactly 3.5 bits/char (16 distinct chars once each
+  // plus two chars eight times each over 32 chars). Expected: accepted (no throw). Why: the gate
+  // is `entropy < 3.5`, so 3.5 must pass; this kills the EqualityOperator mutant `<`→`<=`, which
+  // would reject this boundary value. (edge-case: exact boundary)
+  it('should accept a secret with entropy exactly 3.5 bits/char (boundary)', () => {
+    // 16 unique chars + 'Y'*8 + 'Z'*8 → length 32, Shannon entropy === 3.5 exactly.
+    const boundarySecret = 'ABCDEFGHIJKLMNOP' + 'Y'.repeat(8) + 'Z'.repeat(8)
+    expect(boundarySecret.length).toBe(32)
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret: boundarySecret } })
+    ).not.toThrow()
+  })
+
+  // Scenario: low-entropy secret (all same character). Expected: the message includes both the
+  // 'minimum: 3.5 bits/char' explanation and the randomBytes hint. Why: pins the two concatenated
+  // literals (lines reporting the threshold and the generation hint) so emptying either is killed.
+  it('should include the 3.5 bits/char threshold and randomBytes hint in the entropy error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: 'a'.repeat(40) }
+    }
+    expect(() => resolveOptions(options)).toThrow(/minimum: 3\.5 bits\/char/)
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
   })
 
   // Verifies that a secret with all identical characters is rejected due to insufficient entropy.
@@ -311,6 +431,19 @@ describe('resolveOptions — jwt.algorithm validation', () => {
     }
     expect(() => resolveOptions(options)).toThrow(/must be 'HS256'/)
   })
+
+  // Scenario: a non-HS256 algorithm is supplied. Expected: the message explains the rationale
+  // ('Asymmetric algorithms are intentionally unsupported ...'). Why: pins the second concatenated
+  // literal so the StringLiteral mutant emptying that explanation is killed.
+  it('should explain the algorithm-confusion rationale in the algorithm error', () => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, algorithm: 'RS256' as unknown as 'HS256' }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /Asymmetric algorithms are intentionally unsupported/
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -327,6 +460,51 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
     expect(() => resolveOptions(options)).toThrow(/encryptionKey is required/)
   })
 
+  // Scenario: mfa group without encryptionKey. Expected: the randomBytes generation hint is in the
+  // message. Why: pins the second concatenated literal of the missing-encryptionKey error so the
+  // StringLiteral mutant emptying the hint is killed.
+  it('should include the randomBytes hint when encryptionKey is missing', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: '', issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
+  })
+
+  // Scenario: a standard-base64 key containing '+' and '/' that decodes to exactly 32 bytes.
+  // Expected: accepted (no throw). Why: the value matches BASE64_STANDARD_RE but NOT the base64url
+  // regex, exercising the `[A-Za-z0-9+/]+` class and `+` quantifier exclusively. Kills the Regex
+  // mutants that drop the `+` quantifier or negate the class — both reject a valid standard key.
+  it('should accept a standard-base64 encryptionKey containing + and / (32 bytes)', () => {
+    // Buffer of 0xfb bytes → standard base64 begins with '+/...' and ends with single '=' padding.
+    const stdKey = Buffer.alloc(32, 0xfb).toString('base64')
+    expect(stdKey).toMatch(/[+/]/)
+    expect(stdKey).not.toMatch(/[_-]/)
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: stdKey, issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Scenario: a standard-base64 string with two '=' padding chars (contains '/') decoding to 31
+  // bytes. Expected: rejected with the 'exactly 32 bytes' byte-length error specifically. Why: under
+  // the original BASE64_STANDARD_RE this passes the format check (isStandard=true) and is caught only
+  // by the byte-length check; the Regex mutant `={0,2}`→`=` would reject it at the format check
+  // (isStandard=false, isUrlSafe=false) and throw the 'must be valid base64' error instead. Asserting
+  // the byte-length message and NOT the format message kills that mutant.
+  it('should reject a 31-byte standard-base64 key with the byte-length error (not the format error)', () => {
+    const key = Buffer.alloc(31, 0xff).toString('base64')
+    expect(key).toMatch(/={2}$/)
+    expect(key).toMatch(/\//)
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: key, issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/decode from base64 to exactly 32 bytes/)
+    expect(() => resolveOptions(options)).not.toThrow(/must be valid base64/)
+  })
+
   // Verifies that an encryptionKey with a non-base64 character (e.g. '!') fails the format check (line 261).
   it('should throw when encryptionKey contains characters outside the base64 alphabet', () => {
     // '!' is not a valid base64 character — this must fail the BASE64_RE format check.
@@ -336,6 +514,18 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
       mfa: { encryptionKey: key, issuer: 'App' }
     }
     expect(() => resolveOptions(options)).toThrow(/must be valid base64/)
+  })
+
+  // Scenario: encryptionKey with an out-of-alphabet character. Expected: the format error includes
+  // the randomBytes generation hint. Why: pins the third concatenated literal of the format error so
+  // the StringLiteral mutant emptying the hint is killed.
+  it('should include the randomBytes hint in the base64 format error', () => {
+    const key = 'AAAA'.repeat(7) + 'AAAA' + '!!!!'
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: key, issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
   })
 
   // Verifies that a non-base64 encryptionKey is rejected before key derivation.
@@ -361,6 +551,20 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
     expect(() => resolveOptions(options)).toThrow(/exactly 32 bytes/)
   })
 
+  // Scenario: a 16-byte (under-length) key. Expected: the byte-length error reports the AES-256-GCM
+  // context with the actual decoded byte count and includes the randomBytes generation hint. Why:
+  // pins the two concatenated literals on the byte-length error (the 'for AES-256-GCM (decoded: N
+  // bytes)' fragment and the hint) so the StringLiteral mutants emptying either are killed.
+  it('should report AES-256-GCM context and randomBytes hint in the byte-length error', () => {
+    const key = Buffer.alloc(16).toString('base64')
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: key, issuer: 'App' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/for AES-256-GCM \(decoded: 16 bytes\)/)
+    expect(() => resolveOptions(options)).toThrow(/randomBytes\(32\)\.toString\('base64'\)/)
+  })
+
   // Verifies that an encryptionKey that decodes to more than 32 bytes is rejected.
   it('should throw when encryptionKey decodes to more than 32 bytes', () => {
     const key = Buffer.alloc(48).toString('base64') // 48 bytes, not 32
@@ -379,6 +583,18 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
       mfa: { encryptionKey: key, issuer: '' }
     }
     expect(() => resolveOptions(options)).toThrow(/mfa.issuer is required/)
+  })
+
+  // Scenario: mfa group without issuer. Expected: the message explains the issuer is shown in
+  // authenticator apps. Why: pins the second concatenated literal of the missing-issuer error so the
+  // StringLiteral mutant emptying that explanation is killed.
+  it('should explain that the issuer is displayed in authenticator apps', () => {
+    const key = Buffer.alloc(32).toString('base64')
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: key, issuer: '' }
+    }
+    expect(() => resolveOptions(options)).toThrow(/displayed in authenticator apps/)
   })
 
   // Verifies that an encryptionKey produced via Node's `base64url` alphabet
@@ -420,6 +636,18 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveOptions — roles.hierarchy validation', () => {
+  // Scenario: roles object present but the hierarchy key omitted. Expected: throws the
+  // 'roles.hierarchy is required' error including the example remediation with the `hierarchy:`
+  // wrapper. Why: pins both concatenated literals of the missing-hierarchy branch so the
+  // StringLiteral mutant emptying the remediation hint is killed.
+  it('should throw with remediation when roles.hierarchy is missing', () => {
+    const options = { ...MINIMAL_OPTIONS, roles: {} } as never
+    expect(() => resolveOptions(options)).toThrow(/roles\.hierarchy is required/)
+    expect(() => resolveOptions(options)).toThrow(
+      /Define at least one role \(e\.g\. \{ hierarchy: \{ MEMBER: \[\] \} \}\)\./
+    )
+  })
+
   // Verifies that an empty hierarchy object is rejected to enforce at least one role.
   it('should throw when roles.hierarchy is an empty object', () => {
     const options: BymaxAuthModuleOptions = {
@@ -429,6 +657,19 @@ describe('resolveOptions — roles.hierarchy validation', () => {
     expect(() => resolveOptions(options)).toThrow(/hierarchy must not be an empty object/)
   })
 
+  // Scenario: empty hierarchy object. Expected: the message includes the example remediation
+  // ('Define at least one role (e.g. { MEMBER: [] }).'). Why: pins the second concatenated literal
+  // of the empty-object error so the StringLiteral mutant emptying it is killed.
+  it('should include the example role remediation in the empty-hierarchy error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      roles: { hierarchy: {} }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /Define at least one role \(e\.g\. \{ MEMBER: \[\] \}\)\./
+    )
+  })
+
   // Verifies that a role referencing an undeclared child is rejected (referential integrity).
   it('should throw when a role references an undeclared child role', () => {
     const options: BymaxAuthModuleOptions = {
@@ -436,6 +677,20 @@ describe('resolveOptions — roles.hierarchy validation', () => {
       roles: { hierarchy: { ADMIN: ['GHOST_ROLE'] } }
     }
     expect(() => resolveOptions(options)).toThrow(/unknown role 'GHOST_ROLE'/)
+  })
+
+  // Scenario: a role references a child not declared as a key. Expected: the message includes the
+  // referential-integrity explanation ('All roles referenced as children must be declared as
+  // keys...'). Why: pins the second concatenated literal so the StringLiteral mutant emptying it is
+  // killed.
+  it('should explain the referential-integrity requirement in the unknown-child error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      roles: { hierarchy: { ADMIN: ['GHOST_ROLE'] } }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /All roles referenced as children must be declared as keys in the hierarchy\./
+    )
   })
 
   // Verifies that a well-formed multi-level hierarchy does not throw.
@@ -462,6 +717,19 @@ describe('resolveOptions — platform validation', () => {
     }
     expect(() => resolveOptions(options)).toThrow(/platformHierarchy is required/)
   })
+
+  // Scenario: platform.enabled true without platformHierarchy. Expected: the message includes the
+  // example platform hierarchy remediation. Why: pins the second concatenated literal of the
+  // missing-platformHierarchy error so the StringLiteral mutant emptying it is killed.
+  it('should include the example platform hierarchy remediation', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      platform: { enabled: true }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /Define the platform role hierarchy \(e\.g\. \{ SUPER_ADMIN: \['SUPPORT'\], SUPPORT: \[\] \}\)\./
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -476,6 +744,21 @@ describe('resolveOptions — passwordReset.otpLength validation', () => {
       passwordReset: { otpLength: 9 }
     }
     expect(() => resolveOptions(options)).toThrow(/between 4 and 8/)
+  })
+
+  // Scenario: otpLength of 9 (too long). Expected: the message explains both the lower-bound
+  // ('too easily guessable') and upper-bound ('degrade user experience') rationale and reports the
+  // current value. Why: pins the two concatenated literals (lines describing the current value and
+  // the upper-bound rationale) so the StringLiteral mutants emptying either are killed.
+  it('should explain the otpLength rationale and report the current value', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      passwordReset: { otpLength: 9 }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /\(current: 9\)\. Values below 4 are too easily guessable/
+    )
+    expect(() => resolveOptions(options)).toThrow(/degrade user experience\./)
   })
 
   // Verifies that an OTP length less than 4 is rejected as too easily guessable.
@@ -516,6 +799,23 @@ describe('resolveOptions — password.costFactor validation', () => {
     expect(() => resolveOptions(options)).toThrow(/at least 16384/)
   })
 
+  // Scenario: costFactor below the 16384 floor. Expected: the message reports the current value with
+  // the brute-force rationale and recommends the production minimum of 32768. Why: pins the two
+  // concatenated literals (the current-value/brute-force fragment and the recommended-minimum
+  // sentence) so the StringLiteral mutants emptying either are killed.
+  it('should report the current value, brute-force rationale, and recommended minimum', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      password: { costFactor: 8_192 }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /\(current: 8192\)\. Lower values produce hashes vulnerable to brute-force attacks\./
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /The recommended minimum for production is 32768 \(2\^15\)\./
+    )
+  })
+
   // Verifies that a costFactor that is not a power of 2 is rejected (scrypt requirement).
   it('should throw when costFactor is not a power of 2', () => {
     const options: BymaxAuthModuleOptions = {
@@ -554,6 +854,19 @@ describe('resolveOptions — oauth provider validation', () => {
       }
     }
     expect(() => resolveOptions(options)).toThrow(/oauth\.google\.clientId is required/)
+  })
+
+  // Scenario: an OAuth provider missing a required field. Expected: the message ends with the
+  // 'OAuth provider is configured.' clause naming the provider. Why: pins the second concatenated
+  // literal of the required-field error so the StringLiteral mutant emptying it is killed.
+  it('should name the configured provider in the required-field error', () => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      oauth: {
+        google: { clientId: '', clientSecret: 'secret', callbackUrl: 'https://app.com/cb' }
+      }
+    }
+    expect(() => resolveOptions(options)).toThrow(/the 'google' OAuth provider is configured\./)
   })
 
   // Verifies that configuring an OAuth provider without a clientSecret throws.
@@ -626,6 +939,111 @@ describe('resolveOptions — oauth provider validation', () => {
       }
     }
   })
+
+  // Helper: run fn with NODE_ENV forced, then restore. Mirrors the inline pattern above.
+  function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
+    const original = process.env['NODE_ENV']
+    if (value === undefined) {
+      delete process.env['NODE_ENV']
+    } else {
+      process.env['NODE_ENV'] = value
+    }
+    try {
+      return fn()
+    } finally {
+      if (original === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = original
+      }
+    }
+  }
+
+  // Scenario: HTTP callbackUrl in production. Expected: the error reports the offending URL and the
+  // interception rationale. Why: pins the second concatenated literal of the HTTPS error (line with
+  // the got: '<url>' fragment) so the StringLiteral mutant emptying it is killed.
+  it('should report the offending URL and interception rationale in the HTTPS error', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://app.com/callback'
+            }
+          }
+        })
+      ).toThrow(
+        /\(got: 'http:\/\/app\.com\/callback'\)\. Use an HTTPS URL to prevent authorization code interception\./
+      )
+    })
+  })
+
+  // Scenario: HTTPS callbackUrl in production. Expected: accepted (no throw). Why: in production an
+  // HTTPS URL must pass — the `!callbackUrl.startsWith('https://')` term is false. Kills the
+  // ConditionalExpression mutant that replaces `typeof... && !startsWith(...)` with `true` (which
+  // would throw on a valid HTTPS URL) and the MethodExpression mutant `startsWith`→`endsWith` (a URL
+  // that starts but does not end with 'https://' would then be wrongly rejected).
+  it('should accept an HTTPS callbackUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.com/callback'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  // Scenario: a callbackUrl that ENDS with 'https://' but starts with 'http://', in production.
+  // Expected: rejected (it is not an HTTPS URL). Why: distinguishes startsWith from endsWith — the
+  // MethodExpression mutant `startsWith`→`endsWith` would treat this as HTTPS (endsWith true →
+  // negation false) and NOT throw, so asserting it throws kills that mutant.
+  it('should reject a callbackUrl that only ends with https:// in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://app.com/redirect?to=https://'
+            }
+          }
+        })
+      ).toThrow(/callbackUrl must use HTTPS in production/)
+    })
+  })
+
+  // Scenario: HTTP callbackUrl in a NON-production environment. Expected: accepted (no throw). Why:
+  // the production gate `process.env['NODE_ENV'] === 'production'` is false outside production. Kills
+  // the ConditionalExpression mutant replacing that gate with `true` (would throw everywhere) and the
+  // LogicalOperator mutant `&&`→`||` (which would throw on any HTTP URL regardless of environment).
+  it('should accept an HTTP callbackUrl outside production', () => {
+    withNodeEnv('development', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://localhost:3000/callback'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -653,6 +1071,24 @@ describe('resolveOptions — jwt.refreshGraceWindowSeconds validation', () => {
     expect(() => resolveOptions(options)).toThrow(/refreshGraceWindowSeconds/)
   })
 
+  // Scenario: grace window equal to the refresh lifetime. Expected: the message reports the computed
+  // lifetime via the `* 86400 (<N> s)` fragment and explains the grace-pointer rationale across both
+  // following clauses. Why: pins the three concatenated literals of the grace-window error so the
+  // StringLiteral mutants emptying any of them are killed.
+  it('should report the computed lifetime and grace-pointer rationale in the error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, refreshExpiresInDays: 1, refreshGraceWindowSeconds: 86_400 }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /jwt\.refreshExpiresInDays \* 86400 \(86400 s\)\./
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /A grace window equal to or longer than the token lifetime would allow grace pointers/
+    )
+    expect(() => resolveOptions(options)).toThrow(/to outlive the refresh session they protect\./)
+  })
+
   // Verifies that a grace window strictly less than the refresh token lifetime is accepted.
   it('should not throw when refreshGraceWindowSeconds is within the refresh token lifetime', () => {
     const options: BymaxAuthModuleOptions = {
@@ -672,6 +1108,25 @@ describe('resolveOptions — refreshCookiePath validation', () => {
   it('should throw when routePrefix differs from auth and refreshCookiePath not set', () => {
     expect(() => resolveOptions({ ...MINIMAL_OPTIONS, routePrefix: 'api/auth' })).toThrow(
       /refreshCookiePath/
+    )
+  })
+
+  // Scenario: custom routePrefix without refreshCookiePath. Expected: the message names the actual
+  // prefix, explains the '/auth' default mismatch, the every-request consequence, and the precise
+  // remediation `Set cookies.refreshCookiePath: '/<prefix>'`. Why: pins all four concatenated
+  // literals (with the interpolated prefix) so the StringLiteral mutants emptying any of them are
+  // killed — the prefix interpolation also pins it is `${prefix}`, not a constant.
+  it('should produce the full refreshCookiePath remediation including the prefix', () => {
+    const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, routePrefix: 'api/auth' })
+    expect(run).toThrow(/routePrefix is 'api\/auth' but cookies\.refreshCookiePath is not set\./)
+    expect(run).toThrow(
+      /The refresh cookie path defaults to '\/auth', which will not match your routes/
+    )
+    expect(run).toThrow(
+      /the refresh cookie will be sent on every request instead of only to the refresh endpoint\./
+    )
+    expect(run).toThrow(
+      /Set cookies\.refreshCookiePath: '\/api\/auth' to restrict the refresh cookie correctly\./
     )
   })
 
@@ -724,5 +1179,60 @@ describe('resolveOptions — jwt.refreshExpiresInDays validation', () => {
       jwt: { secret: VALID_SECRET, refreshExpiresInDays: -1 }
     }
     expect(() => resolveOptions(options)).toThrow(/refreshExpiresInDays/)
+  })
+
+  // Scenario: refreshExpiresInDays is 0 AND refreshGraceWindowSeconds is negative (-10), so the
+  // grace-window check (graceSeconds >= lifetime → -10 >= 0 → false) cannot fire — only the
+  // line-477 guard can throw. Expected: throws the 'must be a positive finite number' error
+  // specifically. Why: the existing 0/negative tests assert only `/refreshExpiresInDays/`, which
+  // ALSO appears in the grace-window error message, so the guard was not isolated. Pinning the
+  // unique 'positive finite number' phrase here kills the BlockStatement-empty mutant, the
+  // `if (false)` ConditionalExpression mutant, the `|| false` mutant, and the EqualityOperator
+  // `<=`→`<` mutant — under each, 0 would no longer be rejected and resolveOptions would return.
+  // (edge-case: boundary 0 with a non-firing grace check)
+  it('should reject refreshExpiresInDays 0 with the positive-finite error in isolation', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, refreshExpiresInDays: 0, refreshGraceWindowSeconds: -10 }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /jwt\.refreshExpiresInDays must be a positive finite number\./
+    )
+  })
+
+  // Scenario: refreshExpiresInDays is Infinity (grace window left at default). Expected: throws the
+  // positive-finite error. Why: only the `!Number.isFinite(...)` term is true (Infinity <= 0 is
+  // false), so this kills the LogicalOperator mutant `||`→`&&` — which would require BOTH terms true
+  // and therefore NOT throw on Infinity — and the `if (false)` ConditionalExpression mutant. With
+  // Infinity the computed lifetime is Infinity, so the grace check cannot mask the guard.
+  it('should reject a non-finite refreshExpiresInDays (Infinity) with the positive-finite error', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: {
+        secret: VALID_SECRET,
+        refreshExpiresInDays: Number.POSITIVE_INFINITY,
+        refreshGraceWindowSeconds: 30
+      }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /jwt\.refreshExpiresInDays must be a positive finite number\./
+    )
+  })
+
+  // Scenario: refreshExpiresInDays is 0 with a non-firing grace check (negative grace). Expected: the
+  // message includes the 'Zero, negative, NaN, and Infinity are all rejected' explanation and the
+  // 'invalid Redis TTL' consequence. Why: pins the two concatenated literals of the positive-finite
+  // error so the StringLiteral mutants emptying either are killed.
+  it('should explain why zero/negative/NaN/Infinity are rejected (Redis TTL consequence)', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, refreshExpiresInDays: 0, refreshGraceWindowSeconds: -10 }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      /Zero, negative, NaN, and Infinity are all rejected/
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime\./
+    )
   })
 })

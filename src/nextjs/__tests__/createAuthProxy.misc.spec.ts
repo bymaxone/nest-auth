@@ -186,6 +186,27 @@ describe('createAuthProxy — classifier branches', () => {
     expect(response.status).not.toBe(401)
   })
 
+  // /api/auth/* passthrough must short-circuit BEFORE the public/
+  // silent-refresh logic runs. With a surviving `has_session` cookie
+  // and no access token, the public handler would issue a
+  // silent-refresh redirect — so if the `kind === 'api'` short-circuit
+  // is removed (or its body emptied), this request would gain a
+  // `location` header. The api branch guarantees it does NOT, even with
+  // the session cookie present.
+  it('short-circuits /api/auth/* without redirecting even when a has_session cookie is set', async () => {
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh',
+      cookies: { has_session: '1' }
+    })
+
+    const response = await proxy(request as never)
+    // No silent-refresh redirect was issued — the api short-circuit ran.
+    expect(response.headers.get('location')).toBeNull()
+    expect(response.status).not.toBe(307)
+    expect(response.status).not.toBe(401)
+  })
+
   // Unmatched route: treated as public (defer to app routing).
   // We use a config whose publicRoutes list contains NO entries that
   // prefix-match `/some-random-page` so the classifier returns the

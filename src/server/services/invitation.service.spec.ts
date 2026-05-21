@@ -285,6 +285,37 @@ describe('InvitationService', () => {
       expect(inviteData.expiresAt.getTime()).toBeGreaterThan(Date.now())
     })
 
+    // Scenario: a successful invite; expected: expiresAt is roughly `now + tokenTtlSeconds*1000`.
+    // Why: the prior test only checks expiresAt > now, which a `ttl * 1000 -> ttl / 1000` mutant
+    // (~86 ms ahead) also satisfies. Pinning the delta to ~ttl*1000 (within tolerance) kills it.
+    it('should set expiresAt to approximately now + tokenTtlSeconds (multiplication, not division)', async () => {
+      const before = Date.now()
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      const after = Date.now()
+
+      const [, inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+        string,
+        { expiresAt: Date }
+      ]
+      const expectedMs = mockOptions.invitations.tokenTtlSeconds * 1_000
+      const delta = inviteData.expiresAt.getTime() - before
+      // Lower bound = expected minus the call duration; upper bound = expected plus small slack.
+      expect(delta).toBeGreaterThanOrEqual(expectedMs - (after - before) - 1_000)
+      expect(delta).toBeLessThanOrEqual(expectedMs + 1_000)
+    })
+
+    // Scenario: a successful invite; expected: an info log identifying the created invitation is
+    // emitted. Why: pins the "invite: invitation created" template so emptying it is caught — the
+    // invite() method returns void, so the log is the only observable success signal here.
+    it('should log the invitation-created event on success', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('invite: invitation created')
+      logSpy.mockRestore()
+    })
+
     // Verifies the tenantName ?? tenantId fallback: when tenantName is omitted, the tenantId is used in the email.
     it('should fall back to tenantId as display name when tenantName is not provided', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
@@ -465,6 +496,121 @@ describe('InvitationService', () => {
       await expect(
         service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
       ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: stored payload where `role` is an ARRAY (not a string) but every other field is
+    // valid and the array stringifies to a real hierarchy key (['admin'] -> 'admin'); expected:
+    // rejected and no user created. Why: the isStoredInvitation `typeof role === 'string'` clause
+    // is the only guard — bypassing it (clause -> true) would let the array slip past the later
+    // Object.hasOwn(hierarchy, role) check (which coerces ['admin'] to 'admin') and create a user.
+    it('should reject and not create a user when stored role is an array (role-type guard)', async () => {
+      const tampered = { ...VALID_STORED_INVITATION, role: ['admin'] }
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(tampered))
+      const dto = { token: VALID_TOKEN, name: 'Jane', password: 'Secure123!' }
+
+      let caught: unknown
+      try {
+        await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      const resp = (caught as AuthException).getResponse() as { error?: { code?: string } }
+      expect(resp.error?.code).toBe(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // Scenario: stored payload where `tenantId` is a number (not a string), all else valid;
+    // expected: rejected and no user created. Why: only the isStoredInvitation
+    // `typeof tenantId === 'string'` clause rejects it — bypassing it (clause -> true) would
+    // create the user with a numeric tenantId (tenantId is never re-checked downstream).
+    it('should reject and not create a user when stored tenantId is not a string (tenantId-type guard)', async () => {
+      const tampered = { ...VALID_STORED_INVITATION, tenantId: 123 }
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(tampered))
+      const dto = { token: VALID_TOKEN, name: 'Jane', password: 'Secure123!' }
+
+      await expect(
+        service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+      ).rejects.toThrow(AuthException)
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // Scenario: stored payload where `inviterUserId` is a number, all else valid; expected:
+    // rejected and no user created. Why: only the `typeof inviterUserId === 'string'` clause
+    // rejects it — bypassing it (clause -> true) would create the user (inviterUserId is unused
+    // downstream so nothing else would fail).
+    it('should reject and not create a user when stored inviterUserId is not a string (inviterUserId-type guard)', async () => {
+      const tampered = { ...VALID_STORED_INVITATION, inviterUserId: 42 }
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(tampered))
+      const dto = { token: VALID_TOKEN, name: 'Jane', password: 'Secure123!' }
+
+      await expect(
+        service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+      ).rejects.toThrow(AuthException)
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // Scenario: stored payload where `createdAt` is a number, all else valid; expected: rejected
+    // and no user created. Why: only the `typeof createdAt === 'string'` clause rejects it —
+    // bypassing it (clause -> true) would create the user (createdAt is unused downstream).
+    it('should reject and not create a user when stored createdAt is not a string (createdAt-type guard)', async () => {
+      const tampered = { ...VALID_STORED_INVITATION, createdAt: 1_700_000_000 }
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(tampered))
+      const dto = { token: VALID_TOKEN, name: 'Jane', password: 'Secure123!' }
+
+      await expect(
+        service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+      ).rejects.toThrow(AuthException)
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // Scenario: sessions are DISABLED (the default options); expected: createSession is never
+    // called after a successful acceptance. Why: kills the `if (sessions.enabled)` -> `if (true)`
+    // mutant, which would create a tracked session even when the feature is off.
+    it('should NOT call sessionService.createSession when sessions.enabled is false', async () => {
+      const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
+      await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+    })
+
+    // Scenario: hooks injected as null (no hooks object at all); expected: acceptInvitation still
+    // resolves. Why: the `this.hooks?.afterInvitationAccepted` optional chain protects against a
+    // null hooks container — removing the `?.` would dereference null and throw a TypeError.
+    it('should resolve when the hooks container is null (optional-chaining guard)', async () => {
+      const nullHooksModule = await Test.createTestingModule({
+        providers: [
+          InvitationService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: null },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+
+      const svcNullHooks = nullHooksModule.get(InvitationService)
+      const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
+
+      await expect(
+        svcNullHooks.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+      ).resolves.toBe(AUTH_RESULT)
+    })
+
+    // Scenario: a successful acceptance; expected: an info log identifying the acceptance event
+    // is emitted. Why: pins the "acceptInvitation: invitation accepted" template so emptying it
+    // is caught — the success path is otherwise observable only via the returned AuthResult.
+    it('should log the invitation-accepted event on success', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      const dto = { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' }
+      await service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
+
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
+      expect(logged).toContain('acceptInvitation: invitation accepted')
+      logSpy.mockRestore()
     })
 
     // Verifies that a duplicate email in the same tenant is rejected before creating the user.

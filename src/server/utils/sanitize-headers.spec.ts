@@ -185,6 +185,24 @@ describe('sanitizeHeaders', () => {
       const result = sanitizeHeaders({ accept: ['application/json', 'text/plain'] })
       expect(result).toHaveProperty('accept', ['application/json', 'text/plain'])
     })
+
+    // Pins the leading `^` anchor of SENSITIVE_HEADER_PATTERN. A header whose
+    // sensitive suffix appears mid-string but does NOT begin with `x-` must be
+    // kept — otherwise dropping `^` would let any `*-token` substring match and
+    // over-strip legitimate headers. Edge-case: anchor regression.
+    it('should pass through "foo-x-bar-token" (does not start with x-, pins ^ anchor)', () => {
+      const result = sanitizeHeaders({ 'foo-x-bar-token': 'value' })
+      expect(result).toHaveProperty('foo-x-bar-token', 'value')
+    })
+
+    // Pins the trailing `$` anchor of SENSITIVE_HEADER_PATTERN. A header that
+    // contains a sensitive token mid-string but ends with a non-sensitive suffix
+    // (`-v2`) must be kept — dropping `$` would match the `-token` prefix and
+    // wrongly strip it. Edge-case: anchor regression.
+    it('should pass through "x-auth-token-v2" (sensitive word not at end, pins $ anchor)', () => {
+      const result = sanitizeHeaders({ 'x-auth-token-v2': 'value' })
+      expect(result).toHaveProperty('x-auth-token-v2', 'value')
+    })
   })
 
   // ---------------------------------------------------------------------------

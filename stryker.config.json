@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "pnpm",
+  "plugins": ["@stryker-mutator/jest-runner", "@stryker-mutator/typescript-checker"],
+  "testRunner": "jest",
+  "coverageAnalysis": "perTest",
+  "jest": {
+    "projectType": "custom",
+    "configFile": "jest.stryker.config.ts",
+    "enableFindRelatedTests": true
+  },
+  "checkers": ["typescript"],
+  "tsconfigFile": "tsconfig.json",
+  "typescriptChecker": {
+    "prioritizePerformanceOverAccuracy": true
+  },
+  "disableTypeChecks": "src/**/*.{ts,tsx}",
+  "ignoreStatic": false,
+  "mutate": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "!src/**/*.spec.ts",
+    "!src/**/*.spec.tsx",
+    "!src/**/*.test.ts",
+    "!src/**/__tests__/**",
+    "!src/**/index.ts",
+    "!src/**/*.d.ts"
+  ],
+  "thresholds": {
+    "high": 99,
+    "low": 95,
+    "break": 95
+  },
+  "concurrency": 4,
+  "timeoutMS": 30000,
+  "incremental": false,
+  "incrementalFile": "reports/stryker-incremental.json",
+  "reporters": ["progress", "clear-text", "html"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation.html"
+  },
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true
+}

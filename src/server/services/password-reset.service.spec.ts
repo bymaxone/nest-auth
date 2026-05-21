@@ -23,6 +23,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -288,6 +289,26 @@ describe('PasswordResetService', () => {
       expect(mockSleep).toHaveBeenCalledTimes(1)
     })
 
+    // Scenario: 100 ms elapse between the start timestamp and the finally block; expected: sleep
+    // is called with exactly the REMAINING budget (300 - 100 = 200). Why: pins the
+    // `Math.max(0, 300 - (now - start))` formula — Math.min collapses it to 0, the `300 + elapsed`
+    // mutant yields 400, and the `now + start` mutant yields a huge negative -> 0. Only the
+    // original produces 200.
+    it('sleeps for the remaining budget (max(0, 300 - elapsed)) in the finally block', async () => {
+      // Arrange — first Date.now() is `start`, every later call is 100 ms after.
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      const nowSpy = jest.spyOn(Date, 'now')
+      nowSpy.mockReturnValue(1_000_100)
+      nowSpy.mockReturnValueOnce(1_000_000)
+
+      // Act
+      await service.initiateReset(dto)
+
+      // Assert
+      expect(mockSleep).toHaveBeenCalledWith(200)
+      nowSpy.mockRestore()
+    })
+
     // Verifies that logs error when unexpected error occurs during initiation.
     it('logs error when unexpected error occurs during initiation', async () => {
       // Arrange
@@ -356,6 +377,25 @@ describe('PasswordResetService', () => {
         expect(mockEmailProvider.sendPasswordResetOtp).toHaveBeenCalledTimes(1)
       })
 
+      // Scenario: OTP send path; expected: otpService.store receives the purpose 'password_reset'
+      // and the HMAC identifier derived from `${tenantId}:${email}`. Why: pins the
+      // PASSWORD_RESET_PURPOSE constant (emptying it -> '') and the otpIdentifier message
+      // (`${tenantId}:${email}` -> '' would change the HMAC), both of which determine the Redis
+      // OTP keyspace.
+      it('stores the OTP under purpose=password_reset with the tenant:email HMAC identifier', async () => {
+        // Arrange
+        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+
+        // Act
+        await otpMethodService.initiateReset(dto)
+        await flushMicrotasks()
+
+        // Assert
+        const [purpose, identifier] = mockOtpService.store.mock.calls[0] as [string, string]
+        expect(purpose).toBe('password_reset')
+        expect(identifier).toBe(hmacSha256(`${dto.tenantId}:${dto.email}`, HMAC_KEY))
+      })
+
       // Verifies that does NOT send OTP email to blocked user.
       it('does NOT send OTP email to blocked user', async () => {
         // Arrange
@@ -405,6 +445,31 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+    })
+
+    // Scenario: proofCount > 1 (token + otp) while the token would otherwise resolve to a VALID
+    // context; expected: still rejected by the mutual-exclusivity guard BEFORE any reset happens.
+    // Why: prior proofCount tests left getdel=null, so the request would fail downstream anyway —
+    // masking the guard. With a valid context, neutering the guard (proofCount filter ->
+    // () => undefined / false, or `if (proofCount > 1)` -> if(false)/{}) would let the reset
+    // succeed. Asserting it rejects AND that the password is never updated kills all four mutants.
+    it('rejects (and never updates the password) when proofCount > 1 even with a valid stored token', async () => {
+      // Arrange — token resolves to a context matching the dto, so only the proofCount guard can reject.
+      mockRedis.getdel.mockResolvedValue(validContext)
+      const dto = { ...baseDto, token: 'mytoken', otp: '123456' }
+
+      // Act
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+
+      // Assert
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+      expect(mockPasswordService.hash).not.toHaveBeenCalled()
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when proofCount > 1 (token + verifiedToken).
@@ -572,6 +637,138 @@ describe('PasswordResetService', () => {
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', '$hashed$')
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
     })
+
+    // Scenario: token flow; expected: getdel is called with a `pw_reset:<sha256>` key, never an
+    // empty string. Why: pins the Redis key template — emptying it (`getdel('')`) would read the
+    // wrong key, breaking single-use token consumption.
+    it('reads the token from a pw_reset:{sha256} Redis key', async () => {
+      // Arrange
+      mockRedis.getdel.mockResolvedValue(validContext)
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      // Act
+      await service.resetPassword(dto)
+
+      // Assert
+      const [key] = mockRedis.getdel.mock.calls[0] as [string]
+      expect(key).toMatch(/^pw_reset:[0-9a-f]{64}$/)
+    })
+
+    // ---- parseResetContext clause isolation (defence against Redis tampering) ----
+    // Each test feeds a stored context where exactly ONE validation clause should reject it, with
+    // every other field valid (and email/tenantId matching the dto so the later equality check
+    // cannot be the cause). This kills the ConditionalExpression `clause -> false` and the
+    // LogicalOperator `|| -> &&` mutants on the parseResetContext guard chain. For non-string
+    // email/tenantId the bypassed mutant reaches sha256(<number>) which throws a TypeError, so we
+    // assert the thrown error is specifically an AuthException (a TypeError would not be).
+
+    // Scenario: stored JSON is the literal null; expected: AuthException. Why: kills the
+    // `parsed === null -> false` mutant — bypassing it reaches `'userId' in null`, a TypeError.
+    it('throws AuthException when stored context is JSON null', async () => {
+      mockRedis.getdel.mockResolvedValue('null')
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+    })
+
+    // Scenario: stored JSON is a number primitive; expected: AuthException. Why: kills the
+    // `typeof parsed !== 'object' -> false` mutant — bypassing it reaches `'userId' in 42`, a TypeError.
+    it('throws AuthException when stored context is a JSON number primitive', async () => {
+      mockRedis.getdel.mockResolvedValue('42')
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+    })
+
+    // Scenario: the `userId` KEY is absent (email/tenantId present and valid); expected: rejected
+    // and password never updated. Why: kills the false-prefix mutant that drops the leading
+    // clauses through `userId in parsed` — bypassing them would return a context with no userId
+    // and call applyPasswordReset(undefined).
+    it('throws AuthException when the userId key is missing from the stored context', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ email: baseDto.email, tenantId: baseDto.tenantId })
+      )
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    // Scenario: `userId` is a number, all else valid and matching; expected: rejected, no update.
+    // Why: kills the `typeof userId !== 'string' -> false` clause and the false-prefix mutant that
+    // keeps only `|| email-type || tenantId-type` — both would return the context and reset with a
+    // numeric userId.
+    it('throws AuthException when stored userId is not a string', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ userId: 123, email: baseDto.email, tenantId: baseDto.tenantId })
+      )
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    // Scenario: `email` is a number, userId/tenantId valid; expected: AuthException specifically.
+    // Why: kills the `typeof email !== 'string' -> false` clause and the matching `|| -> &&`
+    // mutant — bypassing reaches sha256(<number>) (TypeError), which is NOT an AuthException.
+    it('throws AuthException (not a TypeError) when stored email is not a string', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ userId: 'u1', email: 123, tenantId: baseDto.tenantId })
+      )
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+    })
+
+    // Scenario: `tenantId` is a number, userId/email valid and email matches; expected:
+    // AuthException specifically. Why: kills the `typeof tenantId !== 'string' -> false` clause
+    // and the last `|| -> &&` mutant — bypassing reaches sha256(<number>) (TypeError).
+    it('throws AuthException (not a TypeError) when stored tenantId is not a string', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ userId: 'u1', email: baseDto.email, tenantId: 999 })
+      )
+      const dto = { ...baseDto, token: 'mytoken' }
+
+      let caught: unknown
+      try {
+        await service.resetPassword(dto)
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+    })
   })
 
   // =========================================================================
@@ -640,6 +837,9 @@ describe('PasswordResetService', () => {
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2')
+      // Pin the verifiedToken Redis key template — emptying it (`getdel('')`) reads the wrong key.
+      const [key] = mockRedis.getdel.mock.calls[0] as [string]
+      expect(key).toMatch(/^pw_vtok:[0-9a-f]{64}$/)
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when verifiedToken is consumed (getdel returns null).
@@ -712,6 +912,13 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockOtpService.verify).toHaveBeenCalledTimes(1)
+      // Pin the OTP purpose and the tenant:email HMAC identifier passed to verify, so emptying
+      // PASSWORD_RESET_PURPOSE ('' ) or the otpIdentifier message ('') is caught.
+      expect(mockOtpService.verify).toHaveBeenCalledWith(
+        'password_reset',
+        hmacSha256(`${baseDto.tenantId}:${baseDto.email}`, HMAC_KEY),
+        '654321'
+      )
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3')
     })
@@ -937,6 +1144,45 @@ describe('PasswordResetService', () => {
       expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
     })
 
+    // Scenario: cooldown is active (setnx=false) AND the user exists and is eligible; expected:
+    // the method returns early WITHOUT generating/sending an OTP. Why: prior cooldown tests left
+    // findByEmail=null, so even if `if (!wasSet)` were neutered the null user would prevent a
+    // send — masking the guard. With an active user, dropping the early return (`if(false)` or
+    // `{}`) would proceed into the try block and send an OTP. Asserting no generate fires kills both.
+    it('returns early without generating an OTP when cooldown is active even if the user exists', async () => {
+      // Arrange
+      mockRedis.setnx.mockResolvedValue(false)
+      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+
+      // Act
+      await otpMethodService.resendOtp(dto)
+      await flushMicrotasks()
+
+      // Assert
+      expect(mockUserRepo.findByEmail).not.toHaveBeenCalled()
+      expect(mockOtpService.generate).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a resend attempt; expected: the cooldown is registered under a
+    // `resend:password_reset:<hmac>` NX key with a 60-second TTL. Why: pins the cooldown key
+    // template — emptying it (`''`) or emptying PASSWORD_RESET_PURPOSE / the otpIdentifier message
+    // would collide all users onto one cooldown key, breaking per-account flood protection.
+    it('registers the cooldown under resend:password_reset:{identifier} with a 60s TTL', async () => {
+      // Arrange
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      // Act
+      await otpMethodService.resendOtp(dto)
+
+      // Assert
+      const [key, ttl] = mockRedis.setnx.mock.calls[0] as [string, number]
+      const expectedIdentifier = hmacSha256(`${dto.tenantId}:${dto.email}`, HMAC_KEY)
+      expect(key).toBe(`resend:password_reset:${expectedIdentifier}`)
+      expect(ttl).toBe(60)
+    })
+
     // Verifies that sends OTP when cooldown not active and user found and not blocked.
     it('sends OTP when cooldown not active and user found and not blocked', async () => {
       // Arrange
@@ -976,6 +1222,43 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockSleep).toHaveBeenCalledTimes(1)
+    })
+
+    // Scenario: cooldown active, 100 ms elapsed; expected: the cooldown-branch sleep uses the
+    // remaining budget max(0, 300 - 100) = 200. Why: pins that branch's formula — Math.min -> 0,
+    // `300 + elapsed` -> 400, `now + start` -> huge negative -> 0. Only the original yields 200.
+    it('sleeps for the remaining budget on the cooldown-active branch', async () => {
+      // Arrange — first Date.now() is `start`, later calls are 100 ms after.
+      mockRedis.setnx.mockResolvedValue(false)
+      const nowSpy = jest.spyOn(Date, 'now')
+      nowSpy.mockReturnValue(2_000_100)
+      nowSpy.mockReturnValueOnce(2_000_000)
+
+      // Act
+      await otpMethodService.resendOtp(dto)
+
+      // Assert
+      expect(mockSleep).toHaveBeenCalledWith(200)
+      nowSpy.mockRestore()
+    })
+
+    // Scenario: cooldown NOT active, user not found, 100 ms elapsed; expected: the finally-block
+    // sleep uses max(0, 300 - 100) = 200. Why: pins the main-path timing formula (same mutants as
+    // the cooldown branch, different call site).
+    it('sleeps for the remaining budget in the finally block (cooldown not active)', async () => {
+      // Arrange
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      const nowSpy = jest.spyOn(Date, 'now')
+      nowSpy.mockReturnValue(3_000_100)
+      nowSpy.mockReturnValueOnce(3_000_000)
+
+      // Act
+      await otpMethodService.resendOtp(dto)
+
+      // Assert
+      expect(mockSleep).toHaveBeenCalledWith(200)
+      nowSpy.mockRestore()
     })
 
     // Verifies that logs error on unexpected error inside resendOtp.

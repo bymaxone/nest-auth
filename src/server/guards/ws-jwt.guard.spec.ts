@@ -273,6 +273,9 @@ describe('WsJwtGuard', () => {
 
       // Act + Assert
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+      // Pin the revocation key shape: the guard must look up `rv:${jti}`, not an
+      // empty or differently-prefixed key, or revoked tokens would slip through.
+      expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_PAYLOAD.jti}`)
     })
   })
 

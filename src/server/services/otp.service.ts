@@ -141,6 +141,7 @@ export class OtpService {
     // RangeError from crypto.timingSafeEqual when buffer sizes differ.
     // Length mismatch does NOT leak the correct code length beyond the OTP digit
     // count that is already known from the flow (e.g. 6 digits).
+    // Stryker disable next-line ConditionalExpression: the length-mismatch disjunct is redundant: timingSafeCompare already returns false on a length mismatch, so the OR result is unchanged
     if (code.length !== record.code.length || !timingSafeCompare(code, record.code)) {
       await this.incrementAttempts(purpose, identifier, record)
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))

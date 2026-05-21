@@ -100,6 +100,7 @@ export class AuthService {
       if (!hookResult.allowed) {
         throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
       }
+      // Stryker disable next-line ConditionalExpression: spreading a falsy `modifiedData` (`{ ...undefined }`) is a no-op, so guarding with `if (true)` produces the same merged result
       if (hookResult.modifiedData) {
         // Merge hook overrides immutably — avoids mutating the validated DTO and
         // bypassing class-validator constraints already applied by the pipe.

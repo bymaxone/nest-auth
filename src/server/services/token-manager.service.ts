@@ -404,6 +404,7 @@ export class TokenManagerService {
     }
     const rec = parsed as Record<string, unknown>
     if (
+      // Stryker disable next-line ConditionalExpression: the object-type clause is redundant: every reachable non-object value also fails the sibling string/sub field checks, so dropping it changes nothing
       typeof parsed !== 'object' ||
       parsed === null ||
       typeof rec['userId'] !== 'string' ||
@@ -651,6 +652,7 @@ export class TokenManagerService {
     const raw = this.jwtService.decode(token)
 
     if (
+      // Stryker disable next-line ConditionalExpression: the object-type clause is redundant: every reachable non-object value also fails the sibling field checks, so dropping it changes nothing
       typeof raw !== 'object' ||
       raw === null ||
       typeof (raw as Record<string, unknown>)['jti'] !== 'string' ||

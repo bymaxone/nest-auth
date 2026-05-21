@@ -188,6 +188,7 @@ export class PasswordResetService {
     }
 
     // method === 'otp'
+    // Stryker disable next-line ConditionalExpression,BlockStatement: the only input that reaches here (token present, proofCount <= 1) falls through to the identical throw at the end of the function
     if (dto.token) {
       // Token-based proof submitted for an OTP-configured module — explicit method mismatch.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
@@ -520,6 +521,7 @@ export class PasswordResetService {
     let parsed: unknown
     try {
       parsed = JSON.parse(json)
+      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsed` stays undefined, caught by the next type guard → same thrown code; the catch body is a no-op
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }

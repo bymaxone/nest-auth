@@ -70,6 +70,7 @@ export class PasswordService {
     // prevent spurious "memory limit exceeded" errors on resource-constrained hosts.
     // The OpenSSL default of 32 MB matches the requirement exactly for N=2^15, r=8;
     // doubling provides headroom without changing attacker cost.
+    // Stryker disable next-line ArithmeticOperator: arg1 (= 2x the scrypt requirement) always dominates `Math.max`, so reducing the 64*1024*1024 floor never lowers maxmem below the requirement
     this.maxmem = Math.max(this.N * this.r * 128 * 2, 64 * 1024 * 1024)
   }
 

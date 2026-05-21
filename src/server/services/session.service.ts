@@ -323,6 +323,7 @@ export class SessionService {
 
         try {
           raw = await this.redis.get(`sd:${hash}`)
+          // Stryker disable next-line BlockStatement: on a get-throw `raw` stays null, so the subsequent `raw === null` branch performs the identical push+return; the catch body is a no-op
         } catch {
           staleKeys.push(member)
           return
@@ -339,6 +340,7 @@ export class SessionService {
           const parsed: unknown = JSON.parse(raw)
           const p = parsed as Record<string, unknown>
           if (
+            // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
             parsed === null ||
             typeof parsed !== 'object' ||
             typeof p['device'] !== 'string' ||
@@ -362,6 +364,7 @@ export class SessionService {
           ip: detail.ip,
           // '' fallback: timingSafeCompare returns false on length mismatch,
           // so no hash (always 64 chars) will ever match the empty string.
+          // Stryker disable next-line StringLiteral: a 64-char session hash never length-matches the fallback sentinel, so timingSafeCompare returns false identically for '' or any other non-matching fallback
           isCurrent: timingSafeCompare(hash, currentSessionHash ?? ''),
           createdAt: detail.createdAt,
           lastActivityAt: detail.lastActivityAt
@@ -507,6 +510,7 @@ export class SessionService {
       if (raw !== null) {
         const parsed: unknown = JSON.parse(raw)
         if (
+          // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard; `'createdAt' in null` would throw and the surrounding try/catch falls back to now(), the same result as the original false branch
           parsed !== null &&
           typeof parsed === 'object' &&
           'createdAt' in parsed &&
@@ -609,6 +613,7 @@ export class SessionService {
           if (raw !== null) {
             const parsed: unknown = JSON.parse(raw)
             if (
+              // Stryker disable next-line ConditionalExpression: defensive `parsed !== null` guard masked by the surrounding try/catch fallback, yielding the same result
               parsed !== null &&
               typeof parsed === 'object' &&
               'createdAt' in parsed &&

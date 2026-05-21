@@ -63,6 +63,7 @@ interface StoredOAuthState {
 
 /** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
 function isStoredOAuthState(value: unknown): value is StoredOAuthState {
+  // Stryker disable next-line ConditionalExpression: non-object JSON values also fail the `typeof parsed['tenantId'] !== 'string'` check below, so dropping the type guard yields the same false
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   if (typeof v['tenantId'] !== 'string') return false
@@ -213,6 +214,7 @@ export class OAuthService {
     let parsedState: unknown
     try {
       parsedState = JSON.parse(rawState)
+      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsedState` stays undefined, which isStoredOAuthState rejects, throwing the same OAUTH_FAILED — the catch body is a no-op either way
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }

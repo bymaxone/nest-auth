@@ -142,6 +142,22 @@ describe('TokenDeliveryService', () => {
       expect(accessCookieCall?.[2]?.['httpOnly']).toBe(true)
     })
 
+    // The refresh-token cookie MUST be HttpOnly — it is the long-lived secret and
+    // must never be readable by client JS (XSS exfiltration defense). Pins the
+    // refresh cookie's httpOnly flag independently of the access cookie's.
+    it('refresh-token cookie should be HttpOnly', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const refreshCookieCall = (res.cookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'refresh_token'
+      ) as [string, string, Record<string, unknown>] | undefined
+      expect(refreshCookieCall?.[2]?.['httpOnly']).toBe(true)
+    })
+
     // Verifies that the session signal cookie is NOT HttpOnly so client JS can read it.
     it('has_session signal cookie should NOT be HttpOnly', async () => {
       const service = await buildService('cookie')
@@ -181,6 +197,109 @@ describe('TokenDeliveryService', () => {
 
       // Cookies should still be set (without a domain attribute).
       expect(res.cookie).toHaveBeenCalled()
+    })
+
+    // Scenario: valid hostname → exactly one domain resolved → setAuthCookies runs once (3 cookies).
+    // Expected: res.cookie called exactly 3 times. Why: kills `domains.length === 0` → `if (true)`,
+    // which would also fire the no-domain fallback and double the cookie count to 6.
+    it('sets each cookie exactly once when a valid domain is resolved', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq({ hostname: 'example.com' })
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      expect(res.cookie).toHaveBeenCalledTimes(3)
+    })
+
+    // Scenario: valid hostname → cookies must carry domain='example.com'.
+    // Expected: every cookie call includes domain attribute. Why: kills the array-emptying mutant
+    // `domain ? [] : []` and the spread-emptying `domain ? {} : {}` which both drop the domain.
+    it('includes the resolved domain attribute on every cookie when hostname is valid', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq({ hostname: 'example.com' })
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const calls = (res.cookie as jest.Mock).mock.calls as [
+        string,
+        string,
+        Record<string, unknown>
+      ][]
+      expect(calls).toHaveLength(3)
+      for (const call of calls) {
+        expect(call[2]['domain']).toBe('example.com')
+      }
+    })
+
+    // Scenario: invalid (empty) hostname → no domain resolved → fallback emits cookies with NO domain.
+    // Expected: no cookie call carries a domain attribute. Why: kills `[] : ["Stryker was here"]`
+    // which would inject a bogus domain string into the fallback path.
+    it('omits the domain attribute on cookies when hostname is invalid', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq({ hostname: '' })
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const calls = (res.cookie as jest.Mock).mock.calls as [
+        string,
+        string,
+        Record<string, unknown>
+      ][]
+      expect(calls.length).toBeGreaterThan(0)
+      for (const call of calls) {
+        expect(call[2]['domain']).toBeUndefined()
+      }
+    })
+
+    // Scenario: refresh cookie maxAge must equal refreshExpiresInDays * 86400 * 1000 ms (7 days).
+    // Expected: maxAge === 604_800_000. Why: kills the two arithmetic mutants on line 323
+    // (`* 1_000` → `/ 1_000` and `* 86_400` → `/ 86_400`) which both change the numeric value.
+    it('sets the refresh cookie maxAge to days*86400*1000 milliseconds', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const refreshCall = (res.cookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'refresh_token'
+      ) as [string, string, Record<string, unknown>] | undefined
+      expect(refreshCall?.[2]?.['maxAge']).toBe(7 * 86_400 * 1_000)
+    })
+
+    // Scenario: the has_session signal cookie must store the literal string value '1'.
+    // Expected: second arg of the has_session cookie call is '1'. Why: kills the StringLiteral
+    // mutant on line 344 that replaces '1' with the empty string.
+    it('sets the has_session signal cookie value to the string "1"', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const signalCall = (res.cookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'has_session'
+      ) as [string, string, Record<string, unknown>] | undefined
+      expect(signalCall?.[1]).toBe('1')
+    })
+
+    // Scenario: the access_token cookie must be HttpOnly so client JS cannot read it.
+    // Expected: httpOnly === true. Why: kills the BooleanLiteral mutant on line 334 (`true` → `false`).
+    // (Pins value directly even when a domain is resolved, complementing the existing test.)
+    it('marks the access_token cookie HttpOnly with a resolved domain', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq({ hostname: 'example.com' })
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const accessCall = (res.cookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'access_token'
+      ) as [string, string, Record<string, unknown>] | undefined
+      expect(accessCall?.[2]?.['httpOnly']).toBe(true)
     })
   })
 
@@ -309,6 +428,58 @@ describe('TokenDeliveryService', () => {
 
       expect(service.extractAccessToken(req as Request)).toBeUndefined()
     })
+
+    // Scenario: cookie mode, NO access cookie, but a Bearer header IS present.
+    // Expected: undefined (cookie mode never reads the header). Why: kills the cookie-branch mutants
+    // on line 168 (`if (false)`) and 168:28 (empty block) — both fall through to the `both` path
+    // and would wrongly return the header token.
+    it('returns undefined in cookie mode even when a Bearer header is present (no cookie)', async () => {
+      const service = await buildService('cookie')
+      const req = makeReq({ headers: { authorization: 'Bearer header-token' } })
+
+      expect(service.extractAccessToken(req as Request)).toBeUndefined()
+    })
+
+    // Scenario: bearer mode, an access_token COOKIE is present but NO Authorization header.
+    // Expected: undefined (bearer mode never reads the cookie). Why: kills the bearer-branch mutants
+    // on line 172 (`if (false)`) and 172:28 (empty block) — both fall through to the `both` path
+    // and would wrongly return the cookie value.
+    it('returns undefined in bearer mode even when an access cookie is present (no header)', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ cookies: { access_token: 'cookie-token' } })
+
+      expect(service.extractAccessToken(req as Request)).toBeUndefined()
+    })
+
+    // Scenario: a Bearer header padded with surrounding whitespace.
+    // Expected: the token is still extracted. Why: kills the `auth.trim()` removal (line 370:19) —
+    // without trim the leading/trailing spaces yield 4 parts and the guard returns undefined.
+    it('extracts the token from a Bearer header padded with surrounding whitespace', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ headers: { authorization: '   Bearer padded-token   ' } })
+
+      expect(service.extractAccessToken(req as Request)).toBe('padded-token')
+    })
+
+    // Scenario: a Bearer header with TWO spaces between scheme and token.
+    // Expected: the token is still extracted. Why: kills the regex mutant `/\s+/` → `/\s/`
+    // (line 370:37) which splits the double space into an empty middle part (3 parts → undefined).
+    it('extracts the token from a Bearer header with multiple spaces between scheme and token', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ headers: { authorization: 'Bearer  double-space-token' } })
+
+      expect(service.extractAccessToken(req as Request)).toBe('double-space-token')
+    })
+
+    // Scenario: an Authorization header with THREE space-separated parts ("Bearer token extra").
+    // Expected: undefined (exactly two parts required). Why: kills the `parts.length !== 2` → `false`
+    // mutant (line 371:9) which would accept any part count and return parts[1].
+    it('returns undefined when the Authorization header has more than two parts', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ headers: { authorization: 'Bearer token extra' } })
+
+      expect(service.extractAccessToken(req as Request)).toBeUndefined()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -358,6 +529,28 @@ describe('TokenDeliveryService', () => {
       const req = makeReq({ body: { refreshToken: 'body-only-token' } })
 
       expect(service.extractRefreshToken(req as Request)).toBe('body-only-token')
+    })
+
+    // Scenario: cookie mode, NO refresh cookie, but req.body.refreshToken IS present.
+    // Expected: undefined (cookie mode never reads the body). Why: kills the cookie-branch mutants
+    // on line 224 (`if (false)`) and 224:28 (empty block) — both fall through to the `both` path
+    // and would wrongly return the body token.
+    it('returns undefined in cookie mode even when body.refreshToken is present (no cookie)', async () => {
+      const service = await buildService('cookie')
+      const req = makeReq({ body: { refreshToken: 'body-token' } })
+
+      expect(service.extractRefreshToken(req as Request)).toBeUndefined()
+    })
+
+    // Scenario: bearer mode, a refresh_token COOKIE is present but body has no refreshToken.
+    // Expected: undefined (bearer mode never reads the cookie). Why: kills the bearer-branch mutants
+    // on line 228 (`if (false)`) and 228:28 (empty block) — both fall through to the `both` path
+    // and would wrongly return the cookie value.
+    it('returns undefined in bearer mode even when a refresh cookie is present (no body)', async () => {
+      const service = await buildService('bearer')
+      const req = makeReq({ cookies: { refresh_token: 'cookie-refresh' } })
+
+      expect(service.extractRefreshToken(req as Request)).toBeUndefined()
     })
   })
 
@@ -417,6 +610,58 @@ describe('TokenDeliveryService', () => {
 
       expect(res.clearCookie).toHaveBeenCalled()
     })
+
+    // Scenario: valid hostname → clearOn should use the resolved domains, not [undefined].
+    // Expected: each clearCookie call carries domain='example.com'. Why: kills the ternary mutant
+    // `false ? domains : [undefined]` on line 252:45 which would clear cookies with no domain.
+    it('clears each cookie with the resolved domain when hostname is valid', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq({ hostname: 'example.com' })
+
+      service.clearAuthSession(res as Response, req as Request)
+
+      const calls = (res.clearCookie as jest.Mock).mock.calls as [string, Record<string, unknown>][]
+      expect(calls).toHaveLength(3)
+      for (const call of calls) {
+        expect(call[1]['domain']).toBe('example.com')
+      }
+    })
+
+    // Scenario: the refresh cookie is cleared with the scoped refreshCookiePath in its options.
+    // Expected: clearCookie('refresh_token', { path: '/auth/refresh', ... }). Why: kills the
+    // ObjectLiteral mutant on line 257:62 that replaces the refresh clear options with `{}`,
+    // dropping the path so the cookie would not be cleared on its actual path.
+    it('clears the refresh cookie using the configured refreshCookiePath', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.clearAuthSession(res as Response, req as Request)
+
+      const refreshClear = (res.clearCookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'refresh_token'
+      ) as [string, Record<string, unknown>] | undefined
+      expect(refreshClear?.[1]?.['path']).toBe('/auth/refresh')
+    })
+
+    // Scenario: the has_session signal cookie is cleared with httpOnly:false and sameSite:'strict'.
+    // Expected: options contain httpOnly === false and sameSite === 'strict'. Why: kills the
+    // ObjectLiteral mutant on line 261:63 (options → `{}`) and the BooleanLiteral mutant on line
+    // 263:19 (`httpOnly: false` → `true`) — both would alter how the signal cookie is cleared.
+    it('clears the has_session signal cookie with httpOnly false and strict sameSite', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.clearAuthSession(res as Response, req as Request)
+
+      const signalClear = (res.clearCookie as jest.Mock).mock.calls.find(
+        (call: [string, ...unknown[]]) => call[0] === 'has_session'
+      ) as [string, Record<string, unknown>] | undefined
+      expect(signalClear?.[1]?.['httpOnly']).toBe(false)
+      expect(signalClear?.[1]?.['sameSite']).toBe('strict')
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -444,6 +689,17 @@ describe('TokenDeliveryService', () => {
     it('should return undefined when hostname is empty', async () => {
       const service = await buildService('cookie')
       const req = makeReq({ hostname: '' })
+
+      expect(service.extractDomain(req as Request)).toBeUndefined()
+    })
+
+    // Scenario: hostname with an invalid character at the START but a valid tail (' example.com').
+    // Expected: undefined (must be rejected). Why: kills the `^`-anchor removal on line 9:21
+    // (`/^[a-z0-9.-]+$/i` → `/[a-z0-9.-]+$/i`); without the start anchor the regex matches the
+    // valid tail and would wrongly accept this injection-prone hostname.
+    it('should return undefined when hostname has an invalid leading character', async () => {
+      const service = await buildService('cookie')
+      const req = makeReq({ hostname: ' example.com' })
 
       expect(service.extractDomain(req as Request)).toBeUndefined()
     })

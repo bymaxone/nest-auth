@@ -246,6 +246,28 @@ describe('createAuthFetch — header merging', () => {
     expect(headers['X-Safe']).toBe('ok')
   })
 
+  // The `__proto__` clause of the unsafe-name guard specifically
+  // blocks prototype pollution. The array branch assigns values with
+  // no type check, so a malicious `['__proto__', <object>]` tuple
+  // would re-parent the merged headers object if `__proto__` were not
+  // rejected. Pins the `__proto__` literal/clause: a guard that no
+  // longer recognises `__proto__` lets the assignment run and mutates
+  // the merged object's prototype. EDGE: object-valued header.
+  it('does not let an object-valued __proto__ tuple pollute the merged headers prototype', async () => {
+    const authFetch = createAuthFetch()
+    await authFetch('/api/users', {
+      headers: [
+        ['__proto__', { injected: 'polluted' } as unknown as string],
+        ['X-Safe', 'ok']
+      ]
+    })
+
+    const headers = getHeaders(spy.mock.calls[0]?.[1])
+    expect(Object.getPrototypeOf(headers)).toBe(Object.prototype)
+    expect((headers as Record<string, unknown>)['injected']).toBeUndefined()
+    expect(headers['X-Safe']).toBe('ok')
+  })
+
   // Covers the prototype-pollution guard inside the `Headers`
   // instance branch of mergeHeaders. The platform `Headers` class
   // lowercases the names; this also exercises the `return` early
@@ -314,6 +336,40 @@ describe('createAuthFetch — refresh on 401', () => {
 
     expect(res.status).toBe(401)
     expect(spy).toHaveBeenCalledTimes(1) // no refresh attempt
+  })
+
+  // The skip-list matches on the END of the pathname (`endsWith`),
+  // not the start — so a layered deployment that mounts the auth
+  // controllers under a longer prefix (`/api/v1/auth/login`) is still
+  // recognised as auth-issuing and must NOT trigger a refresh. Pins
+  // the suffix-match direction so a `startsWith` mutation (which would
+  // fail to match the trailing `/auth/login` and wrongly refresh) is
+  // caught. EDGE: prefix where the suffix is not also a prefix.
+  it('does NOT refresh on a 401 from a layered path whose suffix is skip-listed', async () => {
+    spy.mockResolvedValueOnce(makeResponse(401))
+
+    const authFetch = createAuthFetch()
+    const res = await authFetch('/api/v1/auth/login')
+
+    expect(res.status).toBe(401)
+    expect(spy).toHaveBeenCalledTimes(1) // no refresh attempt
+  })
+
+  // The refresh POST must carry `Content-Type: application/json` so
+  // the upstream NestJS pipeline parses the (empty) body and the
+  // server-side validators run. Pins both the header name/value and
+  // its presence so emptying the headers object or blanking the value
+  // is caught.
+  it('sends Content-Type: application/json on the refresh request', async () => {
+    spy.mockResolvedValueOnce(makeResponse(401)) // original
+    spy.mockResolvedValueOnce(makeResponse(200)) // refresh
+    spy.mockResolvedValueOnce(makeResponse(200)) // retry
+
+    const authFetch = createAuthFetch()
+    await authFetch('/api/users')
+
+    const refreshHeaders = getHeaders(spy.mock.calls[1]?.[1])
+    expect(refreshHeaders['Content-Type']).toBe('application/json')
   })
 
   // A11: when the refresh fails the wrapper still returns the
@@ -490,6 +546,46 @@ describe('createAuthFetch — URL composition', () => {
 
     expect(spy.mock.calls[0]?.[0]).toBe('https://other.example.com/v2')
   })
+
+  // The absolute-URL detector matches BOTH `http://` and `https://`
+  // (the `s?` quantifier). A plain `http://` absolute URL must pass
+  // through untouched — pins the optional `s` so a regex that drops
+  // it (`/^https:\/\//`) and wrongly prepends baseUrl is caught.
+  it('passes an absolute http:// (non-TLS) URL through without prepending baseUrl', async () => {
+    const authFetch = createAuthFetch({ baseUrl: 'https://api.example.com' })
+    await authFetch('http://other.example.com/v2')
+
+    expect(spy.mock.calls[0]?.[0]).toBe('http://other.example.com/v2')
+  })
+
+  // The absolute-URL detector is ANCHORED at the start (`^`) — only a
+  // URL that BEGINS with a scheme is "absolute". A relative path that
+  // merely embeds `http://` inside a query string must still get the
+  // baseUrl prepended; pins the `^` anchor so an unanchored regex
+  // (which would treat the embedded scheme as absolute and skip the
+  // prepend) is caught.
+  it('prepends baseUrl to a relative URL that embeds http:// in a query parameter', async () => {
+    const authFetch = createAuthFetch({ baseUrl: 'https://api.example.com' })
+    await authFetch('/redirect?next=http://evil.example.com')
+
+    expect(spy.mock.calls[0]?.[0]).toBe(
+      'https://api.example.com/redirect?next=http://evil.example.com'
+    )
+  })
+
+  // The fetch target keeps a non-string input (here a `URL`) as the
+  // ORIGINAL object only when it is NOT a relative string — the guard
+  // is `baseUrl !== undefined && typeof input === 'string'`. With a
+  // baseUrl set AND a URL instance, the wrapper must still forward the
+  // URL object (not a stringified copy). Pins the `&&`/`typeof` arm so
+  // mutations to `||` or `&& true` (which would stringify the input)
+  // are caught.
+  it('forwards a URL instance unchanged even when a baseUrl is configured', async () => {
+    const authFetch = createAuthFetch({ baseUrl: 'https://api.example.com' })
+    await authFetch(new URL('https://api.example.com/api/users'))
+
+    expect(spy.mock.calls[0]?.[0]).toBeInstanceOf(URL)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -647,5 +743,48 @@ describe('createAuthFetch — timeout and abort', () => {
 
     const authFetch = createAuthFetch({ timeout: 5000 })
     await expect(authFetch('/api/slow', { signal: controller.signal })).rejects.toThrow('Aborted')
+  })
+
+  // After a request resolves, the timeout timer must be cleared so it
+  // never fires against a settled request (and so the process can exit
+  // cleanly). With fake timers, a successful fetch must leave ZERO
+  // pending timers — pins the `clearTimeout(timer)` cleanup and the
+  // `finally { firstAttempt.cleanup() }` call: dropping either leaks
+  // the timer and the count stays at 1.
+  it('clears the timeout timer after a successful request', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValue(makeResponse(200))
+
+    jest.useFakeTimers()
+    try {
+      const authFetch = createAuthFetch({ timeout: 30_000 })
+      await authFetch('/api/users')
+
+      expect(jest.getTimerCount()).toBe(0)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  // The retry leg has its own timeout that must also be cleared once
+  // the retry resolves. After a full 401 → refresh → retry flow, no
+  // timers may remain pending — pins the `finally { retryAttempt.cleanup() }`
+  // call on the retry path (the refresh fetch itself attaches no
+  // timeout, so only the original + retry create timers).
+  it('clears the retry timeout timer after a refresh-and-retry flow', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401)) // original
+    spy.mockResolvedValueOnce(makeResponse(200)) // refresh
+    spy.mockResolvedValueOnce(makeResponse(200)) // retry
+
+    jest.useFakeTimers()
+    try {
+      const authFetch = createAuthFetch({ timeout: 30_000 })
+      await authFetch('/api/users')
+
+      expect(jest.getTimerCount()).toBe(0)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

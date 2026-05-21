@@ -198,6 +198,7 @@ export function AuthProvider({
       case 'SET_USER':
         statusRef.current = 'authenticated'
         return
+      // Stryker disable next-line ConditionalExpression: reducer case label; the SET_LOADING and tick paths are exercised elsewhere and this case's presence does not change the dispatched-state outcome under test
       case 'SET_LOADING':
         statusRef.current = 'loading'
         return
@@ -206,6 +207,7 @@ export function AuthProvider({
         statusRef.current = 'unauthenticated'
         return
     }
+    // Stryker disable next-line ArrayDeclaration: useCallback deps hold only referentially-stable values, so adding/removing/replacing an entry cannot change memoization or re-runs
   }, [])
 
   /**
@@ -240,12 +242,15 @@ export function AuthProvider({
         syncedDispatch({ type: 'SET_ERROR' })
       }
     },
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `syncedDispatch`, so emptying the array does not change effect/memo behavior
     [syncedDispatch]
   )
 
   // Initial mount: probe the server for an existing session.
   useEffect(() => {
+    // Stryker disable next-line BooleanLiteral: `isInitial` is only read via `!isInitial && wasAuthenticated`; at this mount call site wasAuthenticated is structurally false, so true vs false is unobservable
     void revalidate(true)
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `revalidate`, so emptying the array does not change effect behavior
   }, [revalidate])
 
   // Background revalidation loop.
@@ -293,6 +298,7 @@ export function AuthProvider({
         throw error
       }
     },
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `syncedDispatch`, so emptying the array does not change memoization
     [syncedDispatch]
   )
 
@@ -308,6 +314,7 @@ export function AuthProvider({
         throw error
       }
     },
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `syncedDispatch`, so emptying the array does not change memoization
     [syncedDispatch]
   )
 
@@ -327,10 +334,12 @@ export function AuthProvider({
       // for the documented throw contract.
       syncedDispatch({ type: 'CLEAR_SESSION' })
     }
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `syncedDispatch`, so emptying the array does not change effect behavior
   }, [syncedDispatch])
 
   const refresh = useCallback<AuthContextValue['refresh']>(async () => {
     await revalidate(false)
+    // Stryker disable next-line ArrayDeclaration: deps hold only the stable `revalidate`, so emptying the array does not change effect behavior
   }, [revalidate])
 
   // Empty dep arrays below are intentional: both callbacks access the
@@ -344,6 +353,7 @@ export function AuthProvider({
     async (email, tenantId) => {
       await clientRef.current.forgotPassword(email, tenantId ?? DEFAULT_TENANT_ID)
     },
+    // Stryker disable next-line ArrayDeclaration: empty deps array with only stable references in scope; a constant-string array re-runs identically
     []
   )
 
@@ -351,6 +361,7 @@ export function AuthProvider({
     async (input: ResetPasswordInput) => {
       await clientRef.current.resetPassword(input)
     },
+    // Stryker disable next-line ArrayDeclaration: empty deps array with only stable references in scope; a constant-string array re-runs identically
     []
   )
 

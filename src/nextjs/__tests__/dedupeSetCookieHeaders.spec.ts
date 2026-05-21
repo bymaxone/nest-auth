@@ -67,6 +67,10 @@ describe('parseSetCookieHeader', () => {
   it('rejects inputs containing CR or LF', () => {
     expect(parseSetCookieHeader('sid=abc\r\nX-Inject: 1').name).toBe('')
     expect(parseSetCookieHeader('sid=abc\nbogus').name).toBe('')
+    // CR-only (bare \r, no \n) must also be rejected — pins the CR half of the
+    // smuggling guard independently of LF. The \r\n and \n cases above both
+    // leave LF detection sufficient, so neither catches a dropped CR check.
+    expect(parseSetCookieHeader('sid=abc\rX-Inject: 1').name).toBe('')
   })
 
   // Oversized inputs are dropped to prevent pathological parsing.
@@ -116,6 +120,90 @@ describe('parseSetCookieHeader', () => {
   it('leaves sameSite undefined when SameSite= has no value', () => {
     const parsed = parseSetCookieHeader('sid=abc; SameSite=')
     expect(parsed.sameSite).toBeUndefined()
+  })
+
+  // A cookie with NO security attributes must report httpOnly/secure
+  // as `false`, not `true`. Pins the `let httpOnly = false` /
+  // `let secure = false` initialisers (a flipped default would silently
+  // mark every cookie as HttpOnly+Secure).
+  it('reports httpOnly and secure as false when neither attribute is present', () => {
+    const parsed = parseSetCookieHeader('sid=abc; Path=/')
+    expect(parsed.httpOnly).toBe(false)
+    expect(parsed.secure).toBe(false)
+  })
+
+  // The cookie VALUE is everything after the first `=`. When the
+  // segment has NO `=` the value must be the empty string — pins the
+  // `firstEquals >= 0 ? … : ''` value branch (both the conditional and
+  // the `''` literal). A mutated branch would echo the whole token or a
+  // sentinel string into `value`.
+  it('returns an empty value when the name/value segment has no =', () => {
+    expect(parseSetCookieHeader('justatoken; Path=/').value).toBe('')
+  })
+
+  // A leading `=` means an empty name and a value taken from index 1.
+  // `firstEquals === 0` must still slice the value (`>= 0`, not `> 0`).
+  it('extracts the value when the cookie starts with = (empty name)', () => {
+    const parsed = parseSetCookieHeader('=value; Path=/')
+    expect(parsed.name).toBe('')
+    expect(parsed.value).toBe('value')
+  })
+
+  // The cookie NAME is trimmed even when internal trailing whitespace
+  // precedes the `=` (`sid =abc` → `sid`). Pins the `.trim()` on the
+  // name slice; without it the name would carry a trailing space and
+  // break the dedup key.
+  it('trims trailing whitespace from the cookie name before the =', () => {
+    expect(parseSetCookieHeader('sid =abc').name).toBe('sid')
+  })
+
+  // `attributeSegments` is `segments.slice(1)` — it must EXCLUDE the
+  // name/value segment. Pins the `.slice(1)`; including index 0 would
+  // leak `sid=abc` into rawAttributes and treat it as an attribute.
+  it('excludes the name/value segment from rawAttributes', () => {
+    const parsed = parseSetCookieHeader('sid=abc; Path=/; HttpOnly')
+    expect(parsed.rawAttributes).toEqual(['Path=/', 'HttpOnly'])
+  })
+
+  // A bare `Path` flag (no `=`) yields an empty Path value — pins the
+  // flag-attribute `['', …]` value in `splitAttribute`. A sentinel
+  // there would surface as a bogus Path string.
+  it('treats a valueless Path attribute as an empty-string path', () => {
+    expect(parseSetCookieHeader('sid=abc; Path').path).toBe('')
+  })
+
+  // The attribute NAME is trimmed before the case-insensitive match
+  // (`Path =/` → `path`). Without the trim the lookup key keeps the
+  // trailing space, no case matches, and Path is dropped.
+  it('trims the attribute name before matching (space before =)', () => {
+    expect(parseSetCookieHeader('sid=abc; Path =/').path).toBe('/')
+  })
+
+  // The attribute VALUE is trimmed (`Path= /` → `/`). Without the trim
+  // the Path would carry a leading space.
+  it('trims the attribute value (space after =)', () => {
+    expect(parseSetCookieHeader('sid=abc; Path= /').path).toBe('/')
+  })
+
+  // A raw header EXACTLY at the 8192-byte limit must still parse — the
+  // guard is `length > MAX`, not `>=`. Pins the boundary so the limit
+  // is inclusive of 8192.
+  it('parses a header whose length is exactly the 8192-byte limit', () => {
+    const raw = `sid=${'a'.repeat(8188)}` // 4 ("sid=") + 8188 = 8192
+    expect(raw.length).toBe(8192)
+    expect(parseSetCookieHeader(raw).name).toBe('sid')
+  })
+
+  // The empty/rejected record (CRLF input here) must report the exact
+  // default field values. Pins `value: ''`, `httpOnly: false`,
+  // `secure: false`, and `rawAttributes: []` in `emptyParsedCookie`.
+  it('returns a fully-empty record for a CRLF-rejected input', () => {
+    const parsed = parseSetCookieHeader('sid=abc\r\nX-Inject: 1')
+    expect(parsed.name).toBe('')
+    expect(parsed.value).toBe('')
+    expect(parsed.httpOnly).toBe(false)
+    expect(parsed.secure).toBe(false)
+    expect(parsed.rawAttributes).toEqual([])
   })
 })
 
@@ -276,6 +364,18 @@ describe('dedupeSetCookieHeaders', () => {
   it('returns an empty array for an empty input', () => {
     expect(dedupeSetCookieHeaders([])).toEqual([])
   })
+
+  // A domain-LESS cookie (no Domain attribute → `domain === undefined`)
+  // and a cookie with an explicit empty `Domain=` (→ `domain === ''`)
+  // collapse to the SAME dedup key `name|`, because `domain ?? ''`
+  // maps both `undefined` and `''` to `''`. They therefore dedupe to a
+  // single winner. Pins the `?? ''` fallback literal in `buildDedupKey`
+  // — a sentinel fallback would split the key and keep both cookies.
+  it('collapses a domain-less cookie and an explicit empty Domain= to one key', () => {
+    const result = dedupeSetCookieHeaders(['sid=1; Path=/', 'sid=2; Domain=; Path=/'])
+    expect(result).toHaveLength(1)
+    expect(result[0]).toContain('sid=2')
+  })
 })
 
 describe('getSetCookieHeaders', () => {
@@ -347,5 +447,121 @@ describe('getSetCookieHeaders', () => {
     const huge = 'a=' + 'x'.repeat(8192 * 64 + 1)
     const headers = { get: () => huge }
     expect(getSetCookieHeaders(headers)).toEqual([])
+  })
+
+  // A combined value EXACTLY at the `8192 * 64` hard cap must still be
+  // processed — the guard is `length > cap`, not `>=`. Pins the
+  // boundary so the cap is inclusive.
+  it('still splits a combined value exactly at the hard cap', () => {
+    const exact = 'a=' + 'x'.repeat(8192 * 64 - 2) // 2 + (cap - 2) = cap
+    expect(exact.length).toBe(8192 * 64)
+    const headers = { get: () => exact }
+    expect(getSetCookieHeaders(headers)).toHaveLength(1)
+  })
+
+  // The split segment is trimmed (`slice(cursor, index).trim()`). With
+  // OWS before the comma the first cookie must come out trimmed
+  // (`a=1 ,` → `a=1`). Pins the `.trim()` on the comma-split push.
+  it('trims surrounding whitespace from each split cookie', () => {
+    const headers = { get: () => 'a=1 , b=2; Path=/' }
+    const result = getSetCookieHeaders(headers)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toBe('a=1')
+    expect(result[1]).toBe('b=2; Path=/')
+  })
+
+  // A whitespace-only header is NOT empty (length > 0, so it passes the
+  // early `combined.length === 0` guard) but splits to a single blank
+  // entry that the final `.filter(entry => entry.length > 0)` removes.
+  // Pins the trailing filter (and its `length > 0` predicate); without
+  // it the result would contain an empty string.
+  it('drops a whitespace-only header to an empty array via the length filter', () => {
+    const headers = { get: () => '   ' }
+    expect(getSetCookieHeaders(headers)).toEqual([])
+  })
+
+  // A multi-character cookie name AFTER a comma must trigger a split.
+  // The forward token scan (`index + tokenLength`) has to walk the
+  // whole name to reach the `=`; a backward scan (`index - tokenLength`)
+  // would re-read prior characters, mis-measure the token, and miss the
+  // split. Pins the `+` in the lookahead's bounds expression.
+  it('splits at a comma preceding a multi-character cookie name', () => {
+    const headers = { get: () => 'a=1, bb=2; Path=/' }
+    expect(getSetCookieHeaders(headers)).toHaveLength(2)
+  })
+
+  // A comma followed immediately by `=` (no token name) must NOT split:
+  // `tokenLength === 0` short-circuits to `false` before the `=`
+  // lookahead. Pins the `if (tokenLength === 0) return false` guard;
+  // without it the `=` would be read as the cookie-start delimiter and
+  // force a spurious split.
+  it('does not split when a comma is immediately followed by =', () => {
+    const headers = { get: () => 'sid=abc,=x' }
+    expect(getSetCookieHeaders(headers)).toEqual(['sid=abc,=x'])
+  })
+})
+
+describe('getSetCookieHeaders — isCookieNameChar range boundaries', () => {
+  // Each case puts the boundary character at the START of the SECOND
+  // cookie (immediately after `, `) so the legacy splitter's lookahead
+  // enters `isCookieNameChar` with exactly that code point. Token
+  // characters force a split (length 2); non-token characters suppress
+  // it (length 1). These pin every range comparison in
+  // `isCookieNameChar`.
+
+  /** Build a header whose second cookie name starts with `firstChar`. */
+  function headerWithSecondName(firstChar: string): { get: () => string } {
+    return { get: () => `sid=1; Path=/, ${firstChar}x=2; Path=/` }
+  }
+
+  // '0' (0x30) is the lower bound of the digit range — it must be a
+  // token char. Kills `code >= 0x30` → `code > 0x30`.
+  it('splits when the second cookie name starts with "0" (digit lower bound)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('0'))).toHaveLength(2)
+  })
+
+  // '9' (0x39) is the upper bound of the digit range. Kills
+  // `code <= 0x39` → `code < 0x39`.
+  it('splits when the second cookie name starts with "9" (digit upper bound)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('9'))).toHaveLength(2)
+  })
+
+  // '/' (0x2f) sits just BELOW the digit range and is NOT a token
+  // char, so no split. Kills the `code >= 0x30 && code <= 0x39` →
+  // `true && code <= 0x39` conditional (which would wrongly accept it).
+  it('does not split when the second cookie name starts with "/" (below digit range)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('/'))).toHaveLength(1)
+  })
+
+  // 'A' (0x41) is the lower bound of the uppercase range. Kills
+  // `code >= 0x41` → `code > 0x41`.
+  it('splits when the second cookie name starts with "A" (uppercase lower bound)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('A'))).toHaveLength(2)
+  })
+
+  // 'Z' (0x5a) is the upper bound of the uppercase range. Kills
+  // `code <= 0x5a` → `code < 0x5a`.
+  it('splits when the second cookie name starts with "Z" (uppercase upper bound)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('Z'))).toHaveLength(2)
+  })
+
+  // '[' (0x5b) sits just ABOVE the uppercase range and is NOT a token
+  // char, so no split. Kills the `code >= 0x41 && code <= 0x5a` →
+  // `code >= 0x41 && true` conditional.
+  it('does not split when the second cookie name starts with "[" (above uppercase range)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('['))).toHaveLength(1)
+  })
+
+  // 'z' (0x7a) is the upper bound of the lowercase range. Kills
+  // `code <= 0x7a` → `code < 0x7a`.
+  it('splits when the second cookie name starts with "z" (lowercase upper bound)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('z'))).toHaveLength(2)
+  })
+
+  // '{' (0x7b) sits just ABOVE the lowercase range and is NOT a token
+  // char, so no split. Kills the `code >= 0x61 && code <= 0x7a` →
+  // `code >= 0x61 && true` conditional.
+  it('does not split when the second cookie name starts with "{" (above lowercase range)', () => {
+    expect(getSetCookieHeaders(headerWithSecondName('{'))).toHaveLength(1)
   })
 })

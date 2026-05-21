@@ -212,6 +212,10 @@ Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
 | `node:crypto` | Spy on specific functions, never mock entire module |
 | `fetch` | `jest.fn()` replacing `global.fetch` |
 
+### Mutation Testing (Stryker)
+
+Line coverage proves code *executes*; mutation testing proves the tests would *fail* if the code regressed — the stronger gate for a security library. Run `pnpm mutation` (Node 24) before tagging a release. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>`). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation testing is a manual/release gate — not wired into per-PR CI or `prepublishOnly`.
+
 ---
 
 ## 7. Build and Publish

@@ -15,13 +15,23 @@ import {
   buildRefreshUrl
 } from '../helpers/buildRefreshUrl'
 
+describe('DEFAULT_REFRESH_PATH', () => {
+  // The constant must equal the exact upstream pathname `/auth/refresh`
+  // (derived from `AUTH_DASHBOARD_ROUTES.refresh`). Pin the literal so a
+  // mutant that blanks the template (→ `''`) is caught — every other
+  // assertion compares against the constant itself, which would still
+  // pass under that mutation.
+  it('is exactly "/auth/refresh"', () => {
+    expect(DEFAULT_REFRESH_PATH).toBe('/auth/refresh')
+  })
+})
+
 describe('buildRefreshUrl', () => {
   // Default path: when `refreshPath` is omitted the DEFAULT_REFRESH_PATH
-  // (`/auth/refresh`) is appended to the api base.
+  // (`/auth/refresh`) is appended to the api base. Pin the fully-resolved
+  // literal URL so a blanked DEFAULT_REFRESH_PATH (→ '') is caught.
   it('uses DEFAULT_REFRESH_PATH when refreshPath is omitted', () => {
-    expect(buildRefreshUrl('https://api.example.com')).toBe(
-      `https://api.example.com${DEFAULT_REFRESH_PATH}`
-    )
+    expect(buildRefreshUrl('https://api.example.com')).toBe('https://api.example.com/auth/refresh')
   })
 
   // Explicit refreshPath overrides the default — used by consumers

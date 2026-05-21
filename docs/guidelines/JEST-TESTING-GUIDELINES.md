@@ -279,6 +279,34 @@ The project uses `ts-jest` 29 with the following considerations:
 | `pnpm test:watch`    | Run tests in watch mode (development)  |
 | `npx jest path/to/file.spec.ts` | Run a single test file      |
 | `npx jest --testNamePattern="should hash"` | Run tests matching a pattern |
+| `pnpm mutation`      | Stryker mutation testing (Node 24, ~10 min) |
+| `pnpm mutation:incremental` | Faster Stryker re-run (uses the incremental cache) |
+
+---
+
+### 2.5 Mutation testing
+
+100% line coverage means every line *executes* under test — it does **not** mean a
+test would *fail* if the line regressed. Stryker mutation testing closes that gap by
+introducing small changes (flip `<`/`<=`, drop a `!`, blank a string) and checking the
+suite catches them. For a security library this is the real quality gate.
+
+When adding tests to a hot path (`crypto/`, `guards/`, `services/`), run
+`pnpm mutation:incremental` locally and aim to **kill** the relevant mutants — pin exact
+boundaries, error codes, Redis key shapes, and call arguments (`toHaveBeenCalledWith`)
+rather than just asserting "no throw".
+
+Two gotchas this codebase has hit:
+
+- `toHaveBeenCalledWith(KEY, [a, b])` **ignores trailing `undefined` array items**, so
+  `[undefined, undefined]` silently matches `[]`. Make mock return values defined when
+  pinning array arguments.
+- Mutants on module-level `const` initializers (regexes, lookup tables) need
+  `ignoreStatic: false` in the Stryker config to be killable.
+
+A surviving mutant is either a real test gap (add a test) or an equivalent mutant
+(document with `// Stryker disable next-line <Mutator>: <reason>`). Never lower the
+threshold to make the gate pass. Full workflow: [docs/mutation_testing_plan.md](../mutation_testing_plan.md).
 
 ---
 

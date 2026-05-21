@@ -2,7 +2,7 @@
 
 > **Type:** npm public library (NOT an application)
 > **Package:** `@bymax-one/nest-auth` — full-stack auth for NestJS 11, React 19, Next.js 16
-> **Runtime:** Node.js 24+ | All crypto via `node:crypto` — zero external dependencies
+> **Runtime:** Node.js 24+ | All crypto via `node:crypto` — zero direct dependencies (functionality via peer deps)
 
 ---
 
@@ -15,7 +15,7 @@
 
 **2. English Only**
 - All code, comments, JSDoc, variable names, and docs in English. JSDoc on every public export.
-- **Exception:** `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` contains end-user-facing strings in Portuguese. This is intentional product design — do not translate them to English. Future i18n support will allow consumers to override these values via `BymaxAuthModule.forRoot({ messages: { ... } })`.
+- `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` are the end-user-facing default messages, written in **English** (like the rest of the project). Consumers can localize or override them via `BymaxAuthModule.forRoot({ messages: { ... } })` (planned i18n support) — do not hardcode a non-English locale as the default.
 
 **3. TypeScript — Zero `any`**
 - Never `any` in production code. Use `unknown`, generics, or explicit types.
@@ -64,6 +64,21 @@ Graph: `shared` → `client` → `react` → `nextjs` (each depends on previous 
 ```bash
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
 ```
+
+### Mutation testing (before tagging a release)
+
+Line coverage is 100%, but mutation testing is the real gate against weak tests.
+Run under Node 24:
+
+```bash
+pnpm mutation             # full run (~10 min); writes reports/mutation/mutation.html
+pnpm mutation:incremental # faster re-run using reports/stryker-incremental.json
+```
+
+Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`.
+Full setup, config rationale, and the iteration workflow live in
+[docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Do **not** add
+mutation testing to `prepublishOnly` or the per-PR CI — it is a manual/release gate.
 
 ---
 

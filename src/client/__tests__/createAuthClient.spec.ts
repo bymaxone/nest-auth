@@ -295,7 +295,9 @@ describe('createAuthClient — mfaChallenge', () => {
 
   // B9: defensive branch — if the server responded to a challenge
   // with another challenge, the client throws `AuthClientError(502)`
-  // so the caller does not end up with an invalid AuthResult.
+  // so the caller does not end up with an invalid AuthResult. The
+  // message is pinned so blanking the contract-mismatch string is
+  // caught — consumers surface it for diagnostics.
   it('throws AuthClientError(502) when the server returns another challenge', async () => {
     const { authFetch } = makeAuthFetchMock(() =>
       jsonResponse(200, { mfaRequired: true, mfaTempToken: 'temp-token-2' })
@@ -304,7 +306,8 @@ describe('createAuthClient — mfaChallenge', () => {
 
     await expect(client.mfaChallenge('temp-token', '123456')).rejects.toMatchObject({
       name: 'AuthClientError',
-      status: 502
+      status: 502,
+      message: expect.stringContaining('another challenge')
     })
   })
 })
@@ -489,6 +492,29 @@ describe('createAuthClient — configuration', () => {
     expect(calls[0]?.url).toBe('https://api.example.com/api/v1/auth/login')
   })
 
+  // The routePrefix normalizer strips ALL leading and ALL trailing
+  // slashes (`/^\/+|\/+$/g`) and replaces them with the empty string,
+  // so the join routine controls the separators. A prefix wrapped in
+  // multiple slashes on both sides must collapse to a single clean
+  // segment. Pins both the `+` quantifiers (one-or-more slashes, not
+  // exactly one) and the empty-string replacement: a regex that strips
+  // only a single slash would leave `//auth//login`, and a non-empty
+  // replacement would inject junk into the URL.
+  it('strips multiple leading and trailing slashes from routePrefix', async () => {
+    const { authFetch, calls } = makeAuthFetchMock(() =>
+      jsonResponse(200, { user: {}, accessToken: '' })
+    )
+    const client = createAuthClient({
+      baseUrl: 'https://api.example.com',
+      routePrefix: '///auth///',
+      authFetch
+    })
+
+    await client.login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+
+    expect(calls[0]?.url).toBe('https://api.example.com/auth/login')
+  })
+
   // B18: trailing slashes on baseUrl are normalized so URLs do not
   // contain `//` segments — important because some HTTP servers
   // 301-redirect those, breaking the cookie attachment.
@@ -581,7 +607,8 @@ describe('createAuthClient — response parsing edge cases', () => {
 
     await expect(client.refresh()).rejects.toMatchObject({
       name: 'AuthClientError',
-      status: 200
+      status: 200,
+      message: expect.stringContaining('is not valid JSON')
     })
   })
 
@@ -670,6 +697,93 @@ describe('createAuthClient — response parsing edge cases', () => {
       body: undefined
     })
   })
+
+  // `isAuthErrorBody` requires `message` to be a STRING. An object
+  // that has the right keys but a non-string `message` is NOT the
+  // canonical envelope, so no parsed body must be attached and the
+  // message falls back to the generic status text. Pins the `message`
+  // typeof clause: a guard that always treats `message` as valid (or
+  // collapses the conjunction) would wrongly surface this object as
+  // the error body.
+  it('rejects an error body whose message field is not a string', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      jsonResponse(400, { message: 123, error: 'Bad Request', statusCode: 400 })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(400)
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 400/)
+    }
+  })
+
+  // `isAuthErrorBody` requires `error` to be a STRING. Pins the
+  // `error` typeof clause independently of the other two so a mutant
+  // that drops or loosens just this conjunct is caught.
+  it('rejects an error body whose error field is not a string', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      jsonResponse(400, { message: 'bad', error: 42, statusCode: 400 })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.body).toBeUndefined()
+    }
+  })
+
+  // `isAuthErrorBody` requires `statusCode` to be a NUMBER. Pins the
+  // `statusCode` typeof clause independently so a mutant that drops or
+  // loosens just this conjunct is caught.
+  it('rejects an error body whose statusCode field is not a number', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      jsonResponse(400, { message: 'bad', error: 'Bad Request', statusCode: '400' })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.body).toBeUndefined()
+    }
+  })
+
+  // A generic object that carries NONE of the canonical fields must
+  // not be mistaken for an error envelope. Pins the conjunction as a
+  // whole: a guard collapsed to `true` would attach this arbitrary
+  // object as the parsed error body.
+  it('rejects an arbitrary object that lacks the canonical error fields', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      jsonResponse(400, { foo: 'bar', nested: { a: 1 } })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.body).toBeUndefined()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -739,5 +853,92 @@ describe('createAuthClient — built-in authFetch fallback', () => {
     const headers = init.headers as Record<string, string>
     expect(headers['X-Test']).toBe('true')
     expect(headers['Content-Type']).toBe('application/json')
+  })
+
+  // The `refreshEndpoint` knob must actually reach the built-in
+  // wrapper, not just be carried in the config object. We observe its
+  // EFFECT: a 401 on a non-skip-listed endpoint (`/auth/me`) triggers
+  // a refresh, and that refresh POST must hit the custom endpoint.
+  // Pins the conditional spread for `refreshEndpoint`: a mutation that
+  // drops it (false branch / empty object) falls back to the default
+  // `/api/auth/client-refresh` and this assertion fails.
+  it('forwards a custom refreshEndpoint into the built-in wrapper refresh call', async () => {
+    const fetchSpy = jest
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 401 })) // original /auth/me
+      .mockResolvedValueOnce(new Response('', { status: 200 })) // refresh
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'u1' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      ) // retry
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    const client = createAuthClient({
+      baseUrl: 'https://api.example.com',
+      refreshEndpoint: '/custom/refresh'
+    })
+
+    await client.getMe()
+
+    expect(fetchSpy.mock.calls[1]?.[0]).toBe('/custom/refresh')
+    expect((fetchSpy.mock.calls[1]?.[1] as RequestInit).method).toBe('POST')
+  })
+
+  // The `onSessionExpired` knob must actually reach the built-in
+  // wrapper. We observe its EFFECT: when a refresh fails, the wrapper
+  // invokes the callback. Pins the conditional spread for
+  // `onSessionExpired`: a mutation that drops it (false branch / empty
+  // object) means the wrapper never receives the callback and it is
+  // never called.
+  it('forwards onSessionExpired into the built-in wrapper and invokes it on failed refresh', async () => {
+    const fetchSpy = jest
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 401 })) // original /auth/me
+      .mockResolvedValueOnce(new Response('', { status: 401 })) // refresh fails
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    const onSessionExpired = jest.fn()
+    const client = createAuthClient({
+      baseUrl: 'https://api.example.com',
+      onSessionExpired
+    })
+
+    await client.getMe().catch(() => undefined)
+
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+  })
+
+  // The `timeout` knob must actually reach the built-in wrapper. We
+  // observe its EFFECT: with a small custom timeout and a fetch that
+  // hangs until aborted, advancing fake timers past the configured
+  // timeout aborts the request. Pins the conditional spread for
+  // `timeout`: a mutation that drops it falls back to the 30s default,
+  // so advancing 60ms would NOT abort and the request would hang.
+  it('forwards a custom timeout into the built-in wrapper', async () => {
+    const fetchSpy = jest.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    })
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    jest.useFakeTimers()
+    try {
+      const client = createAuthClient({ baseUrl: 'https://api.example.com', timeout: 50 })
+      const promise = client.getMe()
+      // Attach the rejection handler before advancing timers so the
+      // abort rejection is observed and not flagged as unhandled.
+      const assertion = expect(promise).rejects.toThrow('Aborted')
+
+      jest.advanceTimersByTime(60)
+
+      await assertion
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

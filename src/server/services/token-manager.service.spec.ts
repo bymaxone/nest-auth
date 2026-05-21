@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
@@ -15,6 +15,14 @@ import { TokenManagerService } from './token-manager.service'
 
 const FIXED_JWT = 'signed.jwt.token'
 const FIXED_UUID = '00000000-0000-0000-0000-000000000001'
+
+/** Local sha256 helper mirroring the production crypto util — node:crypto.createHash is the real impl. */
+function sha256(input: string): string {
+  return createHash('sha256').update(input, 'utf8').digest('hex')
+}
+
+/** SHA-256 of the mocked randomUUID — the hash used for every newly issued refresh token. */
+const NEW_HASH = sha256(FIXED_UUID)
 
 const mockJwtService = {
   sign: jest.fn().mockReturnValue(FIXED_JWT),
@@ -169,6 +177,32 @@ describe('TokenManagerService', () => {
       expect(session['ip']).toBe('127.0.0.1')
       expect(session['device']).toBe('Chrome')
     })
+
+    // Scenario: issueTokens registers the new refresh token in the per-user SET and sets its TTL.
+    // Expected: sadd('sess:user-1', 'rt:<newHash>') and expire('sess:user-1', 7*86400). Why: kills
+    // the StringLiteral mutants on lines 190 (key → '', member → '') and 191 (expire key → '') by
+    // pinning the exact `sess:` key shape, the `rt:` member value, and the TTL.
+    it('adds the rt: member to sess:{userId} and expires the SET with the refresh TTL', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
+
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+    })
+
+    // Scenario: a normal login (no MFA-complete override) must NOT mark the access token mfaVerified.
+    // Expected: sign payload has mfaVerified:false. Why: kills the BooleanLiteral mutant on line 172
+    // (`overrides?.mfaVerified ?? false` → `?? true`), a security regression that would skip the
+    // MFA challenge after a plain password login.
+    it('issues a dashboard access token with mfaVerified:false when no override is given', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]).toMatchObject({ mfaVerified: false })
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -201,6 +235,43 @@ describe('TokenManagerService', () => {
         expect.any(String),
         7 * 86_400
       )
+    })
+
+    // Scenario: platform issuance registers the prt: member in sess:{adminId} and sets the TTL.
+    // Expected: sadd('sess:admin-1', 'prt:<newHash>') and expire('sess:admin-1', 7*86400). Why:
+    // kills the StringLiteral mutants on lines 234 (key → '', member → '') and 235 (expire key → '').
+    it('adds the prt: member to sess:{adminId} and expires the SET with the refresh TTL', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
+    })
+
+    // Scenario: a platform admin has no tenant — the stored session tenantId must be an empty string.
+    // Expected: stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on line
+    // 229 that passes "Stryker was here!" as the tenantId to buildSession.
+    it('stores an empty tenantId in the platform session record', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
+      const session = JSON.parse(storedJson) as Record<string, unknown>
+      expect(session['tenantId']).toBe('')
+    })
+
+    // Scenario: a plain platform login (no override) must NOT mark the access token mfaVerified.
+    // Expected: sign payload has mfaVerified:false. Why: kills the BooleanLiteral mutant on line 223
+    // (`overrides?.mfaVerified ?? false` → `?? true`).
+    it('issues a platform access token with mfaVerified:false when no override is given', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]).toMatchObject({ mfaVerified: false })
     })
   })
 
@@ -361,6 +432,160 @@ describe('TokenManagerService', () => {
         })
       }
     })
+
+    // Scenario: the rotation Lua is invoked with the exact old `rt:` key and an empty ARGV array.
+    // Expected: eval called with the ROTATE_LUA script (containing GET + DEL) and [`rt:<oldHash>`].
+    // Why: kills the StringLiteral mutants on line 42 (script → '') and line 277 (oldSessionKey → '').
+    it('evaluates ROTATE_LUA with the rt:{oldHash} key on rotation', async () => {
+      const oldHash = sha256('old-refresh-token')
+      mockRedis.eval.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const evalCall = mockRedis.eval.mock.calls[0] as [string, string[], string[]]
+      expect(evalCall[0]).toContain("redis.call('GET'")
+      expect(evalCall[0]).toContain("redis.call('DEL'")
+      expect(evalCall[1]).toEqual([`rt:${oldHash}`])
+    })
+
+    // Scenario: primary rotation rewrites the per-user SET — remove old rt:, add new rt: and the
+    // grace pointer, then expire the SET with the refresh TTL (days*86400).
+    // Expected: exact srem/sadd/expire calls on 'sess:user-1'. Why: kills the StringLiteral mutants
+    // on lines 343-346 (each `sess:${old.userId}` key → '' and each member value → '') and the
+    // arithmetic mutant on line 274 (`* 86_400` → `/ 86_400`) via the pinned TTL.
+    it('updates the sess:{userId} SET with exact keys and TTL on primary rotation', async () => {
+      const oldHash = sha256('old-refresh-token')
+      mockRedis.eval.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('sess:user-1', `rt:${oldHash}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rp:${oldHash}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+    })
+
+    // Scenario: grace-window rotation registers the new rt: under the per-user SET and expires it.
+    // Expected: sadd('sess:user-1', 'rt:<newHash>') and expire('sess:user-1', 7*86400). Why: kills
+    // the StringLiteral mutants on lines 383 (key/member) and 384 (expire key), plus the line 274
+    // TTL arithmetic mutant on the grace path.
+    it('updates the sess:{userId} SET with exact key and TTL on grace-window rotation', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+    })
+
+    // Scenario: a rotated access token must carry status:'' and mfaVerified:false (state is not
+    // persisted in the Redis session, forcing re-auth of MFA after rotation).
+    // Expected: sign payload has status === '' and mfaVerified === false. Why: kills the StringLiteral
+    // mutant on line 456 (status → "Stryker was here!") and the BooleanLiteral on line 458 (false → true).
+    it('issues the rotated access token with an empty status and mfaVerified:false', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]['status']).toBe('')
+      expect(signCall[0]['mfaVerified']).toBe(false)
+    })
+
+    // Scenario: a stored session WITHOUT an mfaEnabled field must default mfaEnabled to false.
+    // Expected: rotated access token payload has mfaEnabled:false. Why: kills the BooleanLiteral
+    // mutant on line 417 (`... ? rec['mfaEnabled'] : false` → `: true`) which would silently grant
+    // mfaEnabled to legacy sessions on rotation.
+    it('defaults mfaEnabled to false when the stored session omits it', async () => {
+      // OLD_SESSION intentionally has no mfaEnabled field.
+      mockRedis.eval.mockResolvedValue(OLD_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]['mfaEnabled']).toBe(false)
+    })
+
+    // Scenario: malformed JSON in the session record must be logged AND rejected as REFRESH_TOKEN_INVALID.
+    // Expected: logger.warn called with the exact parse-failure message; throws REFRESH_TOKEN_INVALID.
+    // Why: kills the BlockStatement mutant on line 401 (`catch {}` — would skip the warn+throw) and the
+    // StringLiteral mutant on line 402 (warn message → '').
+    it('warns and throws REFRESH_TOKEN_INVALID on malformed session JSON', async () => {
+      const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
+      mockRedis.eval.mockResolvedValue('not-valid-json{{{')
+
+      let thrown: unknown
+      try {
+        await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      } catch (e) {
+        thrown = e
+      }
+
+      expect(thrown).toBeInstanceOf(AuthException)
+      expect((thrown as AuthException).getResponse()).toMatchObject({
+        error: expect.objectContaining({ code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID })
+      })
+      expect(warnSpy).toHaveBeenCalledWith('parseSession: malformed session JSON in Redis')
+      warnSpy.mockRestore()
+    })
+
+    // Scenario: a session JSON missing only userId (role present) must be rejected as AuthException.
+    // Expected: rejects with AuthException. Why: kills the `typeof rec['userId'] !== 'string'` → false
+    // mutant on line 409 (and the OR-chain collapses) — without the userId guard a role-only object
+    // would be accepted and rotation would succeed.
+    it('throws AuthException when the session JSON has role but no userId', async () => {
+      mockRedis.eval.mockResolvedValue(JSON.stringify({ role: 'member' }))
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: a session JSON missing only role (userId present) must be rejected as AuthException.
+    // Expected: rejects with AuthException. Why: kills the `typeof rec['role'] !== 'string'` → false
+    // mutant on line 410 — without the role guard a userId-only object would be accepted.
+    it('throws AuthException when the session JSON has userId but no role', async () => {
+      mockRedis.eval.mockResolvedValue(JSON.stringify({ userId: 'user-1' }))
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: a session record that parses to JSON null must be rejected as AuthException — not a
+    // TypeError. Expected: rejects with AuthException specifically. Why: kills the `parsed === null`
+    // → false mutant on line 408; without the null guard the code dereferences null['userId'] and
+    // throws a TypeError (not an AuthException), changing observable behavior.
+    it('throws AuthException (not TypeError) when the session JSON is null', async () => {
+      mockRedis.eval.mockResolvedValue('null')
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: when neither the primary session nor the grace pointer exists, a warning is logged
+    // before throwing. Expected: logger.warn called with the exact "no valid session" message.
+    // Why: kills the StringLiteral mutant on line 306 (warn message → '').
+    it('warns with the no-valid-session message before throwing REFRESH_TOKEN_INVALID', async () => {
+      const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(service.reissueTokens('gone-token', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+      )
+      warnSpy.mockRestore()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -391,6 +616,15 @@ describe('TokenManagerService', () => {
       mockJwtService.decode.mockReturnValue(null)
 
       expect(() => service.decodeToken('malformed-token')).toThrow(AuthException)
+    })
+
+    // Scenario: a decoded payload with jti present but sub missing must be rejected.
+    // Expected: throws AuthException. Why: kills the `typeof raw['sub'] !== 'string'` → false mutant
+    // on line 657 — without the sub guard a jti-only payload would be wrongly accepted.
+    it('should throw TOKEN_INVALID when sub is missing', () => {
+      mockJwtService.decode.mockReturnValue({ jti: 'some-uuid' }) // no sub
+
+      expect(() => service.decodeToken('some.jwt.token')).toThrow(AuthException)
     })
   })
 
@@ -437,6 +671,23 @@ describe('TokenManagerService', () => {
       await service.issueMfaTempToken('user-1', 'dashboard')
 
       expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^lf:/))
+    })
+
+    // Scenario: the brute-force identifier must be HMAC of the namespaced 'challenge:{userId}' value,
+    // matching the identifier MfaService uses in `challenge`.
+    // Expected: del('lf:<hmac(challenge:user-1)>'). Why: kills the StringLiteral mutant on line 707
+    // (`challenge:${userId}` → '') which would HMAC the empty string, breaking key alignment so the
+    // reset would target the wrong Redis key.
+    it('resets the brute-force counter using the exact challenge:{userId} HMAC identifier', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.issueMfaTempToken('user-1', 'dashboard')
+
+      const expectedIdentifier = createHmac('sha256', HMAC_KEY)
+        .update('challenge:user-1', 'utf8')
+        .digest('hex')
+      expect(mockRedis.del).toHaveBeenCalledWith(`lf:${expectedIdentifier}`)
     })
   })
 
@@ -510,6 +761,45 @@ describe('TokenManagerService', () => {
         exp: 9999999999
       })
       mockRedis.getdel.mockResolvedValue('different-user') // userId mismatch
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: the JWT must be verified with the configured algorithm allowlist.
+    // Expected: jwtService.verify called with { algorithms: ['HS256'] }. Why: kills the ObjectLiteral
+    // mutant on line 730 (options → {}) and the ArrayDeclaration mutant on line 731 (algorithms → [])
+    // which would disable algorithm pinning and allow algorithm-confusion attacks.
+    it('verifies the MFA temp token with the configured algorithm allowlist', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        iat: 0,
+        exp: 9999999999
+      })
+      mockRedis.getdel.mockResolvedValue('user-1')
+
+      await service.verifyMfaTempToken(FIXED_JWT)
+
+      expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, { algorithms: ['HS256'] })
+    })
+
+    // Scenario: Redis returns null (token consumed/expired) AND the JWT sub is also null.
+    // Expected: throws AuthException (the storedUserId === null guard fires first). Why: kills the
+    // ConditionalExpression `if (false)` and the empty-block mutants on line 737 — without the null
+    // guard, `null !== null` is false so the sub-mismatch check is skipped and the method would
+    // wrongly return `{ userId: null }` instead of throwing.
+    it('throws when storedUserId is null even if it equals a null sub claim', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: null,
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        iat: 0,
+        exp: 9999999999
+      } as unknown as { jti: string; sub: string; type: string; context: string })
+      mockRedis.getdel.mockResolvedValue(null)
 
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
     })
@@ -618,6 +908,115 @@ describe('TokenManagerService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID })
         })
       }
+    })
+
+    // Scenario: platform rotation evaluates ROTATE_LUA with the exact old prt: key.
+    // Expected: eval called with the script and [`prt:<oldHash>`]. Why: kills the StringLiteral
+    // mutant on line 495 (oldSessionKey → '').
+    it('evaluates ROTATE_LUA with the prt:{oldHash} key on platform rotation', async () => {
+      const oldHash = sha256('old-platform-refresh')
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const evalCall = mockRedis.eval.mock.calls[0] as [string, string[], string[]]
+      expect(evalCall[1]).toEqual([`prt:${oldHash}`])
+    })
+
+    // Scenario: platform primary rotation rewrites the per-user SET — remove old prt:, add new prt:
+    // and the prp: grace pointer, then expire the SET with the refresh TTL (days*86400).
+    // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
+    // on lines 557-560 (each `sess:${old.userId}` key → '' and each member value → '') and the
+    // arithmetic mutant on line 492 (`* 86_400` → `/ 86_400`) via the pinned TTL.
+    it('updates the sess:{adminId} SET with exact keys and TTL on platform primary rotation', async () => {
+      const oldHash = sha256('old-platform-refresh')
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prt:${oldHash}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
+    })
+
+    // Scenario: the new platform session record must store an empty tenantId on primary rotation.
+    // Expected: a stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on
+    // line 553 that passes "Stryker was here!" as the tenantId to buildSession.
+    it('stores an empty tenantId in the rotated platform session on primary rotation', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
+      const session = JSON.parse(storedJson) as Record<string, unknown>
+      expect(session['tenantId']).toBe('')
+    })
+
+    // Scenario: platform grace-window rotation removes the consumed prp: pointer, adds the new prt:,
+    // and expires the SET with the refresh TTL.
+    // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
+    // on lines 598 (srem key/member), 599 (sadd key/member), and 600 (expire key) and the line 492
+    // TTL arithmetic mutant on the grace path.
+    it('updates the sess:{adminId} SET with exact keys and TTL on platform grace-window rotation', async () => {
+      const oldHash = sha256('old-platform-refresh')
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
+    })
+
+    // Scenario: the new platform session record must store an empty tenantId on grace-window rotation.
+    // Expected: the stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on
+    // line 587 that passes "Stryker was here!" as the tenantId to buildSession.
+    it('stores an empty tenantId in the rotated platform session on grace-window rotation', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
+      const session = JSON.parse(storedJson) as Record<string, unknown>
+      expect(session['tenantId']).toBe('')
+    })
+
+    // Scenario: a rotated platform access token must always carry mfaVerified:false.
+    // Expected: sign payload has mfaVerified === false. Why: kills the BooleanLiteral mutant on line
+    // 622 (`mfaVerified: false` → `true`).
+    it('issues the rotated platform access token with mfaVerified:false', async () => {
+      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const signCall = mockJwtService.sign.mock.calls[0] as [Record<string, unknown>]
+      expect(signCall[0]['mfaVerified']).toBe(false)
+    })
+
+    // Scenario: when neither the primary nor grace pointer exists, a warning is logged before throwing.
+    // Expected: logger.warn called with the exact platform "no valid session" message. Why: kills the
+    // StringLiteral mutant on line 528 (warn message → '').
+    it('warns with the no-valid-session message before throwing on platform rotation', async () => {
+      const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(
+        service.reissuePlatformTokens('gone-platform-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'reissuePlatformTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+      )
+      warnSpy.mockRestore()
     })
   })
 })

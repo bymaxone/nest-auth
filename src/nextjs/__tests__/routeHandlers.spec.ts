@@ -139,6 +139,24 @@ describe('resolveSafeDestination', () => {
       ;(globalThis as unknown as { URL: typeof URL }).URL = realURL
     }
   })
+
+  // A bare relative reference WITHOUT a leading slash resolves to the
+  // same origin, so only the `startsWith('/')` guard rejects it. Drops
+  // back to loginPath. Kills the `if (false)` and `startsWith("")`
+  // mutants on that guard (an absolute URL would still be caught by the
+  // origin check, so it cannot distinguish them).
+  it('rejects a same-origin relative reference that lacks a leading slash', () => {
+    expect(resolveSafeDestination('relative/path', origin, loginPath)).toBe(loginPath)
+  })
+
+  // A protocol-relative reference whose host equals the request host
+  // resolves back to the SAME origin, so only the `startsWith('//')`
+  // guard rejects it. This isolates that guard from the origin check
+  // and kills both its `if (false)` removal and the `endsWith('//')`
+  // method swap.
+  it('rejects a protocol-relative reference even when its host matches the origin', () => {
+    expect(resolveSafeDestination('//app.example.com/dashboard', origin, loginPath)).toBe(loginPath)
+  })
 })
 
 describe('createSilentRefreshHandler', () => {
@@ -285,6 +303,201 @@ describe('createSilentRefreshHandler', () => {
       })
     ).toThrow(/apiBase/)
   })
+
+  // Upstream call shape: the handler MUST POST to the refresh URL with
+  // the inbound cookie forwarded, an `application/json` accept header,
+  // and `redirect: 'manual'` so an upstream 3xx is never auto-followed.
+  // Pins each field so emptying the fetch init/headers object or
+  // blanking the method/accept literals is caught.
+  it('POSTs to the upstream refresh URL forwarding cookie, accept, and redirect:manual', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 200, setCookies: ['access_token=new; Path=/'] })
+    )
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh?redirect=/dashboard',
+      headers: { cookie: 'access_token=stale; has_session=1' }
+    })
+
+    await handler(request as never)
+    const [calledUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(calledUrl).toBe('https://api.example.com/auth/refresh')
+    expect(init.method).toBe('POST')
+    expect(init.redirect).toBe('manual')
+    const headers = init.headers as Record<string, string>
+    expect(headers.cookie).toBe('access_token=stale; has_session=1')
+    expect(headers.accept).toBe('application/json')
+  })
+
+  // When the inbound request carries no cookie header the forwarded
+  // `cookie` value MUST be the empty string (the `?? ''` fallback), not
+  // a placeholder — kills the StringLiteral mutant on the nullish
+  // coalescing default.
+  it('forwards an empty cookie string when the request has no cookie header', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 200, setCookies: ['access_token=new; Path=/'] })
+    )
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh?redirect=/dashboard'
+    })
+
+    await handler(request as never)
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers.cookie).toBe('')
+  })
+
+  // An opaque-redirect response that is otherwise a 2xx WITH cookies
+  // must still fail. The dedicated `type === 'opaqueredirect'` guard is
+  // load-bearing: removing it would let `.ok` accept the redirect as a
+  // success. We assert `reason=expired` (failure path) rather than a
+  // success redirect to `/dashboard`.
+  it('treats an opaque-redirect 2xx-with-cookies as failure (not success)', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({
+        status: 200,
+        opaqueRedirect: true,
+        setCookies: ['access_token=new; Path=/']
+      })
+    )
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh?redirect=/dashboard'
+    })
+
+    const response = await handler(request as never)
+    const location = new URL(response.headers.get('location') ?? '')
+    expect(location.pathname).toBe('/auth/login')
+    expect(location.searchParams.get('reason')).toBe('expired')
+    // Refreshed cookies must NOT be propagated on the failure path.
+    const cookies = getSetCookies(response)
+    expect(cookies.some((c) => c.startsWith('access_token=new'))).toBe(false)
+  })
+
+  // A non-ok response (401) that DOES carry Set-Cookie must still fail.
+  // This isolates the `!upstream.ok` guard: with cookies present,
+  // dropping the guard would let the success path propagate them.
+  it('treats a non-ok response as failure even when it carries Set-Cookie', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 401, setCookies: ['access_token=evil; Path=/'] })
+    )
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh?redirect=/dashboard'
+    })
+
+    const response = await handler(request as never)
+    const location = new URL(response.headers.get('location') ?? '')
+    expect(location.searchParams.get('reason')).toBe('expired')
+    const cookies = getSetCookies(response)
+    // All three cleared (Max-Age=0); the upstream cookie is not forwarded.
+    expect(cookies.filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
+    expect(cookies.some((c) => c.startsWith('access_token=evil'))).toBe(false)
+  })
+
+  // Success response carries `Cache-Control: no-store, no-cache` to stop
+  // a CDN replaying a stale redirect with someone else's cookies.
+  it('sets Cache-Control: no-store, no-cache on the success redirect', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 200, setCookies: ['access_token=new; Path=/'] })
+    )
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh?redirect=/dashboard'
+    })
+
+    const response = await handler(request as never)
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+  })
+
+  // The logout/failure redirect also carries the exact Cache-Control
+  // value and clears the access + hasSession cookies on path `/`. Pins
+  // both the header value and the `'/'` path argument of the clears.
+  it('sets Cache-Control and clears access/hasSession on path / on the failure redirect', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 401 }))
+
+    const handler = createSilentRefreshHandler({ ...BASE_CONFIG, loginPath: '/auth/login' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/silent-refresh'
+    })
+
+    const response = await handler(request as never)
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+    const cookies = getSetCookies(response)
+    const access = cookies.find((c) => c.startsWith('access_token='))
+    const hasSession = cookies.find((c) => c.startsWith('has_session='))
+    expect(access).toContain('Path=/;')
+    expect(hasSession).toContain('Path=/;')
+    // The refresh cookie clears on its dedicated /api/auth scope.
+    const refresh = cookies.find((c) => c.startsWith('refresh_token='))
+    expect(refresh).toContain('Path=/api/auth;')
+  })
+
+  // Factory-time validation messages are namespaced by the factory name
+  // AND name the offending field, so a developer can locate the bad
+  // config key. Pins both the `createSilentRefreshHandler` context and
+  // the per-field label string in each thrown message.
+  it('names the factory and field in the apiBase validation error', () => {
+    expect(() =>
+      createSilentRefreshHandler({ ...BASE_CONFIG, apiBase: 'ftp://x', loginPath: '/auth/login' })
+    ).toThrow(/createSilentRefreshHandler: apiBase/)
+  })
+
+  it('names the factory and refreshPath label when refreshPath is unsafe', () => {
+    expect(() =>
+      createSilentRefreshHandler({
+        ...BASE_CONFIG,
+        loginPath: '/auth/login',
+        refreshPath: 'no-leading-slash'
+      })
+    ).toThrow(/createSilentRefreshHandler: refreshPath/)
+  })
+
+  it('names the factory and cookieNames.access label when the access cookie name is invalid', () => {
+    expect(() =>
+      createSilentRefreshHandler({
+        apiBase: 'https://api.example.com',
+        loginPath: '/auth/login',
+        cookieNames: { access: 'bad name', refresh: 'refresh_token', hasSession: 'has_session' }
+      })
+    ).toThrow(/createSilentRefreshHandler:.*cookieNames\.access/)
+  })
+
+  it('names the factory and cookieNames.refresh label when the refresh cookie name is invalid', () => {
+    expect(() =>
+      createSilentRefreshHandler({
+        apiBase: 'https://api.example.com',
+        loginPath: '/auth/login',
+        cookieNames: { access: 'access_token', refresh: 'bad name', hasSession: 'has_session' }
+      })
+    ).toThrow(/createSilentRefreshHandler:.*cookieNames\.refresh/)
+  })
+
+  it('names the factory and cookieNames.hasSession label when the hasSession cookie name is invalid', () => {
+    expect(() =>
+      createSilentRefreshHandler({
+        apiBase: 'https://api.example.com',
+        loginPath: '/auth/login',
+        cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'bad name' }
+      })
+    ).toThrow(/createSilentRefreshHandler:.*cookieNames\.hasSession/)
+  })
+
+  it('names the factory and refreshCookiePath label when the refresh cookie path is unsafe', () => {
+    expect(() =>
+      createSilentRefreshHandler({
+        ...BASE_CONFIG,
+        loginPath: '/auth/login',
+        refreshCookiePath: 'no-leading-slash'
+      })
+    ).toThrow(/createSilentRefreshHandler:.*refreshCookiePath/)
+  })
 })
 
 describe('createClientRefreshHandler', () => {
@@ -358,6 +571,119 @@ describe('createClientRefreshHandler', () => {
     const response = await handler(request as never)
     expect(response.status).toBe(405)
     expect(response.headers.get('allow')).toBe('POST')
+  })
+
+  // Upstream call shape: POST to the refresh URL, forward the inbound
+  // cookie, send `accept: application/json`, and `redirect: 'manual'`.
+  // Pins every field so emptying the init/headers object or blanking
+  // the method/accept literals is caught.
+  it('POSTs to the upstream refresh URL forwarding cookie, accept, and redirect:manual', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 200, setCookies: ['access_token=new; Path=/'] })
+    )
+
+    const handler = createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/client-refresh',
+      method: 'POST',
+      headers: { cookie: 'access_token=stale' }
+    })
+
+    await handler(request as never)
+    const [calledUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(calledUrl).toBe('https://api.example.com/auth/refresh')
+    expect(init.method).toBe('POST')
+    expect(init.redirect).toBe('manual')
+    const headers = init.headers as Record<string, string>
+    expect(headers.cookie).toBe('access_token=stale')
+    expect(headers.accept).toBe('application/json')
+  })
+
+  // No inbound cookie → forwarded `cookie` MUST be the empty string
+  // (the `?? ''` fallback), not a placeholder.
+  it('forwards an empty cookie string when the request has no cookie header', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 200, setCookies: ['access_token=new; Path=/'] })
+    )
+
+    const handler = createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/client-refresh',
+      method: 'POST'
+    })
+
+    await handler(request as never)
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers.cookie).toBe('')
+  })
+
+  // A non-ok response that carries Set-Cookie must still yield 401 — the
+  // `!upstream.ok` arm of the failure guard must short-circuit before
+  // the cookie payload is propagated. Kills the `||`→`&&`, guard
+  // removal, and empty-block mutants on that condition.
+  it('returns 401 on a non-ok response even when it carries Set-Cookie', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({ status: 401, setCookies: ['access_token=evil; Path=/'] })
+    )
+
+    const handler = createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/client-refresh',
+      method: 'POST'
+    })
+
+    const response = await handler(request as never)
+    expect(response.status).toBe(401)
+    expect(getSetCookies(response).some((c) => c.startsWith('access_token=evil'))).toBe(false)
+  })
+
+  // An opaque-redirect response with ok:true and cookies must STILL be
+  // 401. This isolates the `type === 'opaqueredirect'` arm of the
+  // failure guard (an upstream 3xx must never be treated as a refresh
+  // success even if `.ok` is true). Kills the `false || !ok` partial and
+  // the `||`→`&&` mutant.
+  it('returns 401 on an opaque-redirect response even with ok:true and Set-Cookie', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      stubUpstreamResponse({
+        status: 200,
+        opaqueRedirect: true,
+        setCookies: ['access_token=new; Path=/']
+      })
+    )
+
+    const handler = createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/client-refresh',
+      method: 'POST'
+    })
+
+    const response = await handler(request as never)
+    expect(response.status).toBe(401)
+    expect(getSetCookies(response).some((c) => c.startsWith('access_token=new'))).toBe(false)
+  })
+
+  // The 405 response carries Allow: POST AND Cache-Control:
+  // no-store, no-cache. Pins the Cache-Control value on the method-guard
+  // branch (a cached 405 would break legitimate POSTs after a CDN flush).
+  it('sets Cache-Control: no-store, no-cache on the 405 response', async () => {
+    const handler = createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/client-refresh',
+      method: 'GET'
+    })
+
+    const response = await handler(request as never)
+    expect(response.status).toBe(405)
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+  })
+
+  // Factory-time validation error is namespaced by the factory name so
+  // a developer can locate the misconfigured handler.
+  it('names the factory in the apiBase validation error', () => {
+    expect(() => createClientRefreshHandler({ apiBase: 'ftp://x' })).toThrow(
+      /createClientRefreshHandler: apiBase/
+    )
   })
 
   // Exported canonical route constant — consumers rely on this to
@@ -479,6 +805,176 @@ describe('createLogoutHandler', () => {
     const sentHeaders = fetchInit?.headers as Record<string, string>
     expect(sentHeaders).not.toHaveProperty('authorization')
     expect(sentHeaders.cookie).toBe('access_token=ck')
+  })
+
+  // Upstream URL composition: apiBase + default logout path. Pins the
+  // exact outbound URL so blanking the template literal, swapping the
+  // `?? DEFAULT_LOGOUT_PATH` for `&&`, or emptying DEFAULT_LOGOUT_PATH
+  // is caught (each would change or break the upstream target).
+  it('POSTs to apiBase + /auth/logout by default', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST'
+    })
+
+    await handler(request as never)
+    const [calledUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(calledUrl).toBe('https://api.example.com/auth/logout')
+    expect(init.method).toBe('POST')
+    const headers = init.headers as Record<string, string>
+    expect(headers.accept).toBe('application/json')
+  })
+
+  // A custom logoutPath override is honoured verbatim — confirms the
+  // `?? DEFAULT_LOGOUT_PATH` nullish coalescing keeps the provided
+  // value (the `&&` mutant would discard it for the default).
+  it('POSTs to a custom logoutPath when provided', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({
+      ...BASE_CONFIG,
+      mode: 'status',
+      logoutPath: '/auth/sign-out'
+    })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST'
+    })
+
+    await handler(request as never)
+    const calledUrl = fetchSpy.mock.calls[0]?.[0] as string
+    expect(calledUrl).toBe('https://api.example.com/auth/sign-out')
+  })
+
+  // No inbound cookie → forwarded `cookie` MUST be the empty string
+  // (the `?? ''` fallback), not a placeholder.
+  it('forwards an empty cookie string when the request has no cookie header', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST'
+    })
+
+    await handler(request as never)
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers.cookie).toBe('')
+  })
+
+  // The 405 response advertises Allow: POST AND carries
+  // Cache-Control: no-store, no-cache. Pins both header values on the
+  // method-guard branch.
+  it('sets Allow: POST and Cache-Control on the 405 response', async () => {
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'GET'
+    })
+
+    const response = await handler(request as never)
+    expect(response.status).toBe(405)
+    expect(response.headers.get('allow')).toBe('POST')
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+  })
+
+  // Redirect-mode response carries the exact Cache-Control value and a
+  // 307 redirect to loginPath. Pins the header value and clears
+  // access/hasSession on path `/`.
+  it('sets Cache-Control and clears access/hasSession on path / in redirect mode', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({
+      ...BASE_CONFIG,
+      mode: 'redirect',
+      loginPath: '/auth/login'
+    })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST'
+    })
+
+    const response = await handler(request as never)
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+    const cookies = getSetCookies(response)
+    expect(cookies.find((c) => c.startsWith('access_token='))).toContain('Path=/;')
+    expect(cookies.find((c) => c.startsWith('has_session='))).toContain('Path=/;')
+    expect(cookies.find((c) => c.startsWith('refresh_token='))).toContain('Path=/api/auth;')
+  })
+
+  // Status-mode response also carries the exact Cache-Control value.
+  // Pins the header on the 200 branch so emptying the Response init or
+  // blanking the value is caught.
+  it('sets Cache-Control: no-store, no-cache on the status-mode 200', async () => {
+    fetchSpy.mockResolvedValueOnce(stubUpstreamResponse({ status: 200 }))
+
+    const handler = createLogoutHandler({ ...BASE_CONFIG, mode: 'status' })
+    const request = makeMockRequest({
+      url: 'https://app.example.com/api/auth/logout',
+      method: 'POST'
+    })
+
+    const response = await handler(request as never)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+    const cookies = getSetCookies(response)
+    expect(cookies.find((c) => c.startsWith('access_token='))).toContain('Path=/;')
+    expect(cookies.find((c) => c.startsWith('has_session='))).toContain('Path=/;')
+  })
+
+  // Factory-time validation messages name both the factory and the
+  // offending field. Each test triggers exactly one validation failure
+  // so the per-call context/label string is the load-bearing token.
+  it('names the factory in the apiBase validation error', () => {
+    expect(() =>
+      createLogoutHandler({ ...BASE_CONFIG, apiBase: 'ftp://x', mode: 'status' })
+    ).toThrow(/createLogoutHandler: apiBase/)
+  })
+
+  it('names the factory and logoutPath label when logoutPath is unsafe', () => {
+    expect(() =>
+      createLogoutHandler({ ...BASE_CONFIG, mode: 'status', logoutPath: 'no-leading-slash' })
+    ).toThrow(/createLogoutHandler:.*logoutPath/)
+  })
+
+  it('names the factory and cookieNames.access label when the access cookie name is invalid', () => {
+    expect(() =>
+      createLogoutHandler({
+        apiBase: 'https://api.example.com',
+        mode: 'status',
+        cookieNames: { access: 'bad name', refresh: 'refresh_token', hasSession: 'has_session' }
+      })
+    ).toThrow(/createLogoutHandler:.*cookieNames\.access/)
+  })
+
+  it('names the factory and cookieNames.refresh label when the refresh cookie name is invalid', () => {
+    expect(() =>
+      createLogoutHandler({
+        apiBase: 'https://api.example.com',
+        mode: 'status',
+        cookieNames: { access: 'access_token', refresh: 'bad name', hasSession: 'has_session' }
+      })
+    ).toThrow(/createLogoutHandler:.*cookieNames\.refresh/)
+  })
+
+  it('names the factory and cookieNames.hasSession label when the hasSession cookie name is invalid', () => {
+    expect(() =>
+      createLogoutHandler({
+        apiBase: 'https://api.example.com',
+        mode: 'status',
+        cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'bad name' }
+      })
+    ).toThrow(/createLogoutHandler:.*cookieNames\.hasSession/)
+  })
+
+  it('names the factory and refreshCookiePath label when the refresh cookie path is unsafe', () => {
+    expect(() =>
+      createLogoutHandler({ ...BASE_CONFIG, mode: 'status', refreshCookiePath: 'no-leading-slash' })
+    ).toThrow(/createLogoutHandler:.*refreshCookiePath/)
   })
 
   // Canonical route constant.

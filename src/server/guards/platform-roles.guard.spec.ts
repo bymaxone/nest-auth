@@ -63,9 +63,14 @@ function makeContext(
         ? { type: userType, role: undefined }
         : undefined
 
+  // getHandler/getClass return distinct, defined, stable sentinels so that
+  // toHaveBeenCalledWith(KEY, [handler, class]) cannot be satisfied by an empty
+  // array — Jest's argument matcher treats [undefined, undefined] as equal to [].
+  const handlerRef = jest.fn()
+  const classRef = jest.fn()
   return {
-    getHandler: jest.fn(),
-    getClass: jest.fn(),
+    getHandler: jest.fn(() => handlerRef),
+    getClass: jest.fn(() => classRef),
     switchToHttp: () => ({
       getRequest: () => ({ user })
     })
@@ -234,7 +239,9 @@ describe('PlatformRolesGuard', () => {
 
       guard.canActivate(ctx as never)
 
-      expect(spy).toHaveBeenCalledWith(PLATFORM_ROLES_KEY, expect.any(Array))
+      // Pin the targets array (handler + class), not just expect.any(Array):
+      // an empty [] would silently disable all @PlatformRoles() metadata.
+      expect(spy).toHaveBeenCalledWith(PLATFORM_ROLES_KEY, [ctx.getHandler(), ctx.getClass()])
     })
   })
 

@@ -179,6 +179,27 @@ describe('AuthController', () => {
       expect(result).toBe(mfaResult)
       expect(mockTokenDelivery.deliverAuthResponse).not.toHaveBeenCalled()
     })
+
+    // Pins the `=== true` discriminant: a result that carries the `mfaRequired`
+    // KEY but set to `false` must NOT be treated as an MFA challenge. The token
+    // response must be delivered. A mutant dropping `=== true` (leaving just the
+    // `'mfaRequired' in result` presence check) would short-circuit to the MFA
+    // path and skip token delivery. Edge-case: present-but-false discriminant.
+    it('should deliver auth response when result has mfaRequired:false (not an MFA challenge)', async () => {
+      const resultWithFalseFlag = { ...AUTH_RESULT, mfaRequired: false }
+      mockAuthService.login.mockResolvedValue(resultWithFalseFlag)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+
+      const result = await controller.login(dto as never, mockReq, mockRes)
+
+      expect(mockTokenDelivery.deliverAuthResponse).toHaveBeenCalledWith(
+        mockRes,
+        resultWithFalseFlag,
+        mockReq
+      )
+      expect(result).toEqual({ user: SAFE_USER })
+      expect(result).not.toBe(resultWithFalseFlag)
+    })
   })
 
   // ---------------------------------------------------------------------------

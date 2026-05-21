@@ -41,6 +41,7 @@ export function serializeClearCookie(name: string, path: string): string {
 export function isSafeSameOriginPath(candidate: string): boolean {
   return (
     typeof candidate === 'string' &&
+    // Stryker disable next-line EqualityOperator,ConditionalExpression: redundant non-empty check: `candidate.startsWith('/')` below already implies length > 0, so `> 0`/`>= 0`/`true` are indistinguishable
     candidate.length > 0 &&
     candidate.startsWith('/') &&
     !candidate.startsWith('//') &&

@@ -34,6 +34,7 @@ export function readRefreshAttemptCounter(request: NextRequest, maxAllowed: numb
   const raw = request.nextUrl.searchParams.get(REFRESH_ATTEMPT_PARAM)
   if (raw === null) return 0
   const parsed = Number.parseInt(raw, 10)
+  // Stryker disable next-line EqualityOperator: differs only at parsed === 0, where both `< 0` and `<= 0` return 0
   if (!Number.isFinite(parsed) || parsed < 0) return 0
   return Math.min(parsed, maxAllowed)
 }
@@ -82,6 +83,7 @@ export function buildRefreshDestination(
   // query string is non-empty, so the `: pathname` branch is
   // unreachable — it exists only to make the ternary total.
   /* istanbul ignore next -- `_r` is always set above, so the empty-query branch is unreachable */
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: `_r` is always set() before toString(), so query.length is always > 0; the boundary/`true` variants are indistinguishable
   return query.length > 0 ? `${pathname}?${query}` : pathname
 }
 

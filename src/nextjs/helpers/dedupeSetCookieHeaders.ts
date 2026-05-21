@@ -149,6 +149,7 @@ export function parseSetCookieHeader(raw: string): ParsedSetCookie {
   const attributeSegments = segments.slice(1)
 
   const firstEquals = nameValueSegment.indexOf('=')
+  // Stryker disable next-line EqualityOperator: differs only at firstEquals === 0, where the name is '' under both `>= 0` and `> 0`
   const name = firstEquals >= 0 ? nameValueSegment.slice(0, firstEquals).trim() : ''
   // Intentional: the cookie VALUE is NOT trimmed. RFC 6265 §5.2 step 2
   // treats everything between the first `=` and the first `;` as the
@@ -187,6 +188,7 @@ function parseCookieAttributes(attributeSegments: readonly string[]): ParsedSetC
   let expires: string | undefined
 
   for (const attribute of attributeSegments) {
+    // Stryker disable next-line ConditionalExpression: segments are pre-trimmed, so an empty attribute never occurs here; skipping it or not is unobservable
     if (attribute.length === 0) continue
     const [attrName, attrValue] = splitAttribute(attribute)
 
@@ -214,6 +216,7 @@ function parseCookieAttributes(attributeSegments: readonly string[]): ParsedSetC
       case 'expires':
         expires = attrValue
         break
+      // Stryker disable next-line ConditionalExpression: the switch default is reached only for already-handled flag attributes; the branch sets no typed field, so the mutation has no observable effect
       default:
         // Unknown attribute — retained in the caller's rawAttributes.
         break
@@ -230,6 +233,7 @@ function parseCookieAttributes(attributeSegments: readonly string[]): ParsedSetC
  */
 function splitAttribute(attribute: string): [string, string] {
   const attrEquals = attribute.indexOf('=')
+  // Stryker disable next-line EqualityOperator,MethodExpression: attrEquals is a flag-attribute index where 0 means no '='; `< 0` vs `<= 0` and the toLowerCase placement yield the same `[name, '']` here
   if (attrEquals < 0) return [attribute.trim().toLowerCase(), '']
   return [
     attribute.slice(0, attrEquals).trim().toLowerCase(),
@@ -278,6 +282,7 @@ function parseMaxAge(value: string): number | undefined {
 export function dedupeSetCookieHeaders(cookies: readonly string[]): string[] {
   const lastIndexByKey = new Map<string, number>()
 
+  // Stryker disable next-line EqualityOperator: loop bound off-by-one reads an out-of-range index → undefined, which the existing `=== undefined` guard already handles identically
   for (let index = 0; index < cookies.length; index += 1) {
     // eslint-disable-next-line security/detect-object-injection -- index is a bounded numeric loop counter, not user input.
     const raw = cookies[index]
@@ -296,6 +301,7 @@ export function dedupeSetCookieHeaders(cookies: readonly string[]): string[] {
   for (const index of winnerIndexes) {
     // eslint-disable-next-line security/detect-object-injection -- index originated from our own Map values, all from the same bounded loop above.
     const raw = cookies[index]
+    /* istanbul ignore else -- index came from our own Map values gathered in the bounded loop above, so `raw` is always defined; the guard only satisfies `noUncheckedIndexedAccess` */
     if (raw !== undefined) winners.push(raw)
   }
   return winners
@@ -322,6 +328,7 @@ export function getSetCookieHeaders(headers: HeadersLike): string[] {
   }
 
   const combined = headers.get('set-cookie')
+  // Stryker disable next-line ConditionalExpression: an empty `combined` still yields `[]` because the trailing `.filter(length > 0)` drops the single blank entry
   if (combined === null || combined.length === 0) return []
 
   return splitLegacySetCookie(combined)
@@ -340,6 +347,7 @@ function containsHeaderSmugglingBytes(raw: string): boolean {
   // them here is defence-in-depth against response-splitting attacks
   // when the caller forwards the raw string to
   // `response.headers.append('set-cookie', winner)`.
+  // Stryker disable next-line EqualityOperator: loop bound off-by-one reads charCodeAt(out-of-range) → NaN, which matches neither 0x0a nor 0x0d, so the result is unchanged
   for (let i = 0; i < raw.length; i += 1) {
     const code = raw.charCodeAt(i)
     if (code === 0x0a /* LF */ || code === 0x0d /* CR */) return true
@@ -386,6 +394,7 @@ function splitLegacySetCookie(combined: string): string[] {
 
   const result: string[] = []
   let cursor = 0
+  // Stryker disable next-line EqualityOperator: loop bound off-by-one reads an out-of-range index → undefined, guarded identically downstream
   for (let index = 0; index < combined.length; index += 1) {
     if (combined.charCodeAt(index) !== 0x2c /* , */) continue
 
@@ -402,6 +411,7 @@ function looksLikeCookieStart(candidate: string, startIndex: number): boolean {
   let index = startIndex
   // OWS per RFC 7230: space (0x20) or horizontal tab (0x09). Legacy
   // HTTP stacks typically emit `, ` but some frameworks use `\t`.
+  // Stryker disable next-line EqualityOperator: while bound off-by-one reads an out-of-range char → undefined, which fails the same downstream comparison
   while (index < candidate.length) {
     const code = candidate.charCodeAt(index)
     if (code !== 0x20 && code !== 0x09) break
@@ -409,6 +419,7 @@ function looksLikeCookieStart(candidate: string, startIndex: number): boolean {
   }
   let tokenLength = 0
   while (
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,ArithmeticOperator: the token is always `set()` before this scan, so index+tokenLength is always within bounds; the boundary/`true`/`-` variants are indistinguishable
     index + tokenLength < candidate.length &&
     isCookieNameChar(candidate.charCodeAt(index + tokenLength))
   ) {

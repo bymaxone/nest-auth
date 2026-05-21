@@ -41,6 +41,18 @@ describe('hasRole', () => {
     expect(hasRole('UNKNOWN_ROLE', 'MEMBER', hierarchy)).toBe(false)
   })
 
+  // Pins the `Object.hasOwn` guard specifically (not a plain truthiness check).
+  // A userRole that collides with an Object.prototype member ('toString') is NOT
+  // an own property, so the guard must short-circuit to false. If the guard were
+  // removed, the lookup would resolve to the inherited Function and calling
+  // `.includes` on it would throw — returning false (no throw) proves the guard
+  // runs. Edge-case: prototype-pollution-style key.
+  it('should return false (without throwing) for a prototype-chain key like "toString"', () => {
+    expect(() => hasRole('toString', 'MEMBER', hierarchy)).not.toThrow()
+    expect(hasRole('toString', 'MEMBER', hierarchy)).toBe(false)
+    expect(hasRole('hasOwnProperty', 'MEMBER', hierarchy)).toBe(false)
+  })
+
   // Verifies that when the requiredRole is not in the user's inherited list, access is denied.
   it('should return false when requiredRole is not in the inherited list', () => {
     expect(hasRole('VIEWER', 'SUPER_ADMIN', hierarchy)).toBe(false)

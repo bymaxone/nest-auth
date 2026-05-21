@@ -521,6 +521,7 @@ export class MfaService {
     const secretBase32 = this.decryptSecret(user.mfaSecret)
     const isTotpCode = /^\d{6}$/.test(code)
     const totpWindow = this.mfaOptions.totpWindow
+    // Stryker disable next-line BooleanLiteral: `codeValid` is unconditionally reassigned in both branches before it is ever read, so its initializer is irrelevant
     let codeValid = false
     let usedRecoveryIndex = -1
 

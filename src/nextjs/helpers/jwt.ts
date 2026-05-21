@@ -120,6 +120,7 @@ export function decodeJwtToken(token: string): DecodedToken {
   const headerSegment = parts[0] ?? ''
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
   const payloadSegment = parts[1] ?? ''
+  // Stryker disable next-line ConditionalExpression: empty-segment fast path; an empty payload also fails the `payload === undefined` check below, returning the same emptyDecoded()
   if (headerSegment.length === 0 || payloadSegment.length === 0) return emptyDecoded()
 
   const header = safeJsonParse<JwtHeader>(base64UrlDecodeToString(headerSegment))
@@ -166,6 +167,7 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
     return decodeJwtToken(token)
   }
   // Fail closed on an empty secret — see the JSDoc above for rationale.
+  // Stryker disable next-line ConditionalExpression,BlockStatement: empty-secret fail-closed guard is redundant: with it removed, importKey('') throws (Web Crypto rejects zero-length HMAC keys) and the catch returns the same invalid result
   if (secret.length === 0) {
     return emptyDecoded()
   }
@@ -181,6 +183,7 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
   const payloadSegment = parts[1] ?? ''
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
   const signatureSegment = parts[2] ?? ''
+  // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: empty-segment early return; each segment is independently re-validated downstream (header/payload undefined, signature verify rejects empty), so any single mutation here is masked
   if (headerSegment.length === 0 || payloadSegment.length === 0 || signatureSegment.length === 0) {
     return emptyDecoded()
   }
@@ -232,6 +235,7 @@ async function verifyHs256Signature(
       'raw',
       toArrayBuffer(secretBytes),
       { name: 'HMAC', hash: 'SHA-256' },
+      // Stryker disable next-line BooleanLiteral: the importKey `extractable` flag does not affect verify results
       false,
       ['verify']
     )
@@ -399,6 +403,7 @@ function asString(value: unknown): string | undefined {
 
 function base64UrlDecodeToString(segment: string): string | undefined {
   const bytes = base64UrlDecodeToBytes(segment)
+  // Stryker disable next-line ConditionalExpression: `decode(undefined)` returns '' which `safeJsonParse('')` maps to undefined anyway, so the `bytes === undefined` guard is redundant
   if (bytes === undefined) return undefined
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -415,12 +420,15 @@ function base64UrlDecodeToBytes(segment: string): Uint8Array | undefined {
   // turn it into a range operator.
   if (!/^[A-Za-z0-9_-]*$/.test(segment)) return undefined
   const padded = segment.replace(/-/g, '+').replace(/_/g, '/')
+  // Stryker disable next-line ArithmeticOperator: base64url padding math; atob ignores missing '=' padding in supported runtimes, so the recomputed padding length does not change the decoded output
   const padding = (4 - (padded.length % 4)) % 4
+  // Stryker disable next-line StringLiteral: padding string; atob ignores missing '=' padding, so repeating '' vs '=' yields the same decode
   const base64 = padded + '='.repeat(padding)
   try {
     // `atob` is available in the Edge Runtime and Node 18+.
     const binary = atob(base64)
     const out = new Uint8Array(binary.length)
+    // Stryker disable next-line EqualityOperator: loop bound off-by-one reads charCodeAt(out-of-range) → NaN, whose write is ignored, leaving the output unchanged
     for (let i = 0; i < binary.length; i += 1) {
       // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop index over a typed array we just allocated.
       out[i] = binary.charCodeAt(i)
@@ -443,9 +451,11 @@ function base64UrlDecodeToBytes(segment: string): Uint8Array | undefined {
  */
 function asciiBytes(input: string): Uint8Array {
   const out = new Uint8Array(input.length)
+  // Stryker disable next-line EqualityOperator: loop bound off-by-one reads an out-of-range char → undefined; no byte is produced, output unchanged
   for (let i = 0; i < input.length; i += 1) {
     const code = input.charCodeAt(i)
     /* istanbul ignore if -- only called with base64url strings whose chars are all <= 0x7f; the guard is a defensive assert against future misuse */
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: non-ASCII guard is unreachable: this is only called with base64url segments whose chars are all <= 0x7f
     if (code > 0x7f) {
       throw new TypeError(`asciiBytes: non-ASCII character at index ${i}`)
     }
