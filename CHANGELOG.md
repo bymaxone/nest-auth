@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-25
+
+### Fixed
+
+- **README license badge** — replaced the npm-registry-backed `shields.io/npm/l/...` badge with the GitHub-backed `shields.io/github/license/...` equivalent. The npm-based badge fails on first-publish for several hours while npm's full-document CDN propagates; the GitHub-based badge reads the `LICENSE` file directly from the repo and resolves immediately and consistently.
+
+### Internal / CI
+
+- **First end-to-end exercise of the OIDC trusted publishing pipeline** — tag `v1.0.1` exercises `release.yml`: tag-version verification → `prepublishOnly` (typecheck + lint + 100% coverage + build) → `npm-publish` environment approval gate → `pnpm publish --provenance` via OIDC trusted publisher → automatic GitHub Release. No production-code or public-API changes in this version.
+
 ## [1.0.0] - 2026-05-25
 
 ### Added
