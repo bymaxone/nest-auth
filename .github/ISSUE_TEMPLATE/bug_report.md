@@ -38,4 +38,4 @@ labels: bug
 
 - [ ] This bug affects authentication, authorization, or cryptographic operations.
 
-> If **Yes**, please **STOP** and email `security@bymax.one` instead of opening a public issue.
+> If **Yes**, please **STOP** and email `support@bymax.one` instead of opening a public issue.
