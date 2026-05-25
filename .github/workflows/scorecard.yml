@@ -1,0 +1,72 @@
+name: OSSF Scorecard
+
+# Runs the OpenSSF Scorecard checks (https://github.com/ossf/scorecard) against
+# the repository and publishes the result to:
+#   - The repository's Security tab (SARIF upload)
+#   - https://scorecard.dev/viewer/?uri=github.com/bymaxone/nest-auth (public)
+#
+# The schedule keeps the score fresh even when no code lands; the push trigger
+# catches regressions immediately (e.g. branch protection removed). For a
+# library that handles auth, supply-chain transparency is part of the product.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 04:00 UTC — runs early enough to catch the weekly Dependabot batch.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+# Concurrency keeps one run per ref; a new commit cancels the previous run.
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default to read-only. Specific permissions are widened at the job level.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      # Required to upload SARIF results to the Security tab.
+      security-events: write
+      # Required for `publish_results: true` — the action mints an OIDC token
+      # against scorecard.dev so its public viewer can verify the publisher.
+      id-token: write
+      # Read-only access to repo contents and workflow metadata.
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          # The scorecard analysis must run against the exact ref that was
+          # pushed; with `persist-credentials: false` no token is left behind
+          # in the runner after checkout.
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishing results is what makes the badge resolve and the public
+          # viewer at scorecard.dev show the score. Safe for public repos.
+          publish_results: true
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 30
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          category: ossf-scorecard
