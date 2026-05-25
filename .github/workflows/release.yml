@@ -109,9 +109,15 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
+        # Notes are passed via env var (NOT `${{ ... }}` interpolation) so that
+        # backticks, `$()`, and other shell metacharacters inside the CHANGELOG
+        # cannot be evaluated by bash — a script-injection vector that would
+        # otherwise let CHANGELOG content execute arbitrary commands on the
+        # runner with the same token scope as this job.
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.changelog.outputs.notes }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "${{ steps.changelog.outputs.notes }}"
+            --notes "$RELEASE_NOTES"
