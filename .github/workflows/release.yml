@@ -14,6 +14,12 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Default to read-only at the workflow level. The publish job widens to
+# `contents: write` (for the GitHub Release) and `id-token: write` (for
+# the OIDC trusted publisher exchange).
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Publish to npm and create GitHub Release

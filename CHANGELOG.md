@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-05-25
+
+### Security
+
+- **Forced patched versions of four transitive dependencies via `pnpm.overrides`** to close GitHub Security Advisories surfaced by OpenSSF Scorecard's `Vulnerabilities` check. None of these affect runtime behavior of the published package — they live exclusively in the build/test dependency graph — but pinning them tightens our supply-chain posture and removes the warnings from any consumer running `npm audit` against a clone of the repo:
+  - `brace-expansion@>=5.0.6` ([GHSA-jxxr-4gwj-5jf2](https://github.com/advisories/GHSA-jxxr-4gwj-5jf2) — DoS via large numeric range bypassing `max` protection)
+  - `postcss@>=8.5.10` ([GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) — XSS via unescaped `</style>` in CSS stringify output)
+  - `qs@>=6.15.2` ([GHSA-q8mj-m7cp-5q26](https://github.com/advisories/GHSA-q8mj-m7cp-5q26) — DoS via `TypeError` on null/undefined entries in comma-format arrays)
+  - `ws@>=8.20.1` ([GHSA-58qx-3vcg-4xpx](https://github.com/advisories/GHSA-58qx-3vcg-4xpx) — uninitialized memory disclosure)
+
+### Internal / CI
+
+- **OpenSSF Scorecard pipeline** — added `.github/workflows/scorecard.yml` running on push to `main`, weekly schedule (Mondays 06:00 UTC), and manual dispatch. Results upload SARIF to the GitHub Security tab and publish publicly to [scorecard.dev](https://scorecard.dev/viewer/?uri=github.com/bymaxone/nest-auth). The OpenSSF Scorecard badge is now visible in the README alongside CI, coverage, mutation, and license badges.
+- **Vulnerability disclosure policy** — added `SECURITY.md` covering supported versions, the GitHub Private Vulnerability Reporting flow, response timeline (acknowledgement < 72 h, coordinated fix for High/Critical < 90 days), and in/out-of-scope categories tuned for an authentication library. Issue templates now point to `support@bymax.one` for security questions.
+- **Contact address consolidation** — every `contact@` / `security@bymax.one` reference across `package.json` author, README security note, `SECURITY.md`, and `.github/ISSUE_TEMPLATE/{config.yml,bug_report.md}` unified to **`support@bymax.one`**. Eliminates ambiguity for vulnerability reporters and aligns with the single-inbox routing on `bymax.one`.
+- **Top-level workflow permissions** — `codeql.yml` and `release.yml` now declare `permissions: contents: read` at the workflow root, with the analyze/publish jobs widening only where necessary. Closes the OpenSSF Scorecard `Token-Permissions` gap (9/10 → 10/10) by ensuring every workflow has an explicit least-privilege default.
+
 ## [1.0.1] - 2026-05-25
 
 ### Fixed
