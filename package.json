@@ -62,7 +62,7 @@
     "mutation:dry-run": "stryker run --dryRunOnly",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "clean": "rm -rf dist coverage",
-    "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build",
     "release": "pnpm publish --provenance"
   },
   "peerDependencies": {
