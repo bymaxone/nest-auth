@@ -1,19 +1,24 @@
 name: CI
 
-# Manual-only trigger while repo secrets and npm/GitHub settings are still being
-# configured. To re-enable automatic CI, restore the `push` / `pull_request`
-# blocks below.
+# Runs on every push to `main` and on every PR targeting `main`. The
+# `workflow_dispatch` trigger is kept so the same job can be re-run manually
+# from the Actions tab when needed.
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 # Cancel in-progress runs for the same ref when a new commit is pushed.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+# Least privilege: CI only reads the repository. No write scopes are granted so a
+# compromised dependency in a workflow step cannot mutate the repo or its releases.
+permissions:
+  contents: read
 
 jobs:
   verify:

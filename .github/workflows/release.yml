@@ -1,13 +1,13 @@
 name: Release
 
-# Manual-only trigger while `NPM_TOKEN` is still being configured in
-# GitHub Secrets. To re-enable tag-driven releases, restore the `push.tags`
-# block below.
+# Tag-driven release. Pushing a `v*.*.*` tag kicks off the publish flow; the
+# `workflow_dispatch` trigger is kept so an interrupted release can be re-run
+# manually from the Actions tab when needed.
 on:
   workflow_dispatch:
-  # push:
-  #   tags:
-  #     - 'v*.*.*'
+  push:
+    tags:
+      - 'v*.*.*'
 
 # A release is a destructive, shared-state operation — only one at a time.
 concurrency:
@@ -20,7 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    # Required for `npm publish --provenance` and for `gh release create`.
+    # The `npm-publish` environment gates the run behind a manual approval
+    # (configured in repo Settings → Environments). Even an accidentally
+    # pushed tag cannot publish without a reviewer clicking "Approve".
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/@bymax-one/nest-auth
+
+    # Required for npm OIDC trusted publishing (`id-token: write`) and for
+    # `gh release create` (`contents: write`). No `NPM_TOKEN` secret needed —
+    # the publish exchanges the GitHub OIDC token for a short-lived npm
+    # credential via the Trusted Publisher cadastrado em npmjs.com.
     permissions:
       contents: write
       id-token: write
@@ -63,8 +73,10 @@ jobs:
         run: pnpm prepublishOnly
 
       - name: Publish to npm with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # OIDC trusted publishing — pnpm delegates to npm CLI, which exchanges
+        # the GitHub OIDC token (`id-token: write` above) for a short-lived
+        # publish credential. `--no-git-checks` is required because the CI
+        # runner checks out a detached HEAD at the tag SHA.
         run: pnpm publish --provenance --no-git-checks
 
       - name: Extract release notes from CHANGELOG
