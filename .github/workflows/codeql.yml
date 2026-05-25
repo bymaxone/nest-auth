@@ -16,6 +16,11 @@ concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to read-only at the workflow level. The analyze job widens to
+# `security-events: write` only where it needs to upload SARIF.
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: Analyze (javascript-typescript)

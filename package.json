@@ -1,6 +1,6 @@
 {
   "name": "@bymax-one/nest-auth",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Full-stack authentication and authorization package for NestJS, React and Next.js — JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
   "author": "Bymax One <support@bymax.one>",
   "license": "MIT",
@@ -193,5 +193,13 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion@<5.0.6": ">=5.0.6",
+      "postcss@<8.5.10": ">=8.5.10",
+      "qs@>=6.11.1 <=6.15.1": ">=6.15.2",
+      "ws@<8.20.1": ">=8.20.1"
+    }
   }
 }
