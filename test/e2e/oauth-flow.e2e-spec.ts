@@ -412,4 +412,117 @@ describe('oauth flow (E2E)', () => {
       expect(hookController.lastCall).not.toBeNull()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Scenario — oauth.successRedirectUrl (browser OAuth flow)
+  //
+  // Verifies the 1.0.4 redirect option. With successRedirectUrl set, the
+  // callback responds with a 302 to the configured URL (carrying cookies in
+  // the same response) instead of returning the JSON payload that API
+  // consumers expect. The auth cookies must still be set so the destination
+  // page is authenticated on the follow-up navigation.
+  // ---------------------------------------------------------------------------
+
+  describe('with successRedirectUrl configured', () => {
+    let app: INestApplication
+    let plugin: OAuthProviderPlugin
+    let hookController: HookController
+
+    beforeAll(async () => {
+      hookController = { current: null, lastCall: null }
+      const hooks = createControlledHooks(hookController)
+      plugin = createMockGooglePlugin()
+
+      const bootstrap = await bootstrapTestApp(
+        {
+          // Cookie mode is required by the resolveOptions validator when
+          // successRedirectUrl is set — bearer-only delivery would discard
+          // the access token in the 302 response body.
+          tokenDelivery: 'cookie',
+          oauth: {
+            successRedirectUrl: '/dashboard',
+            google: {
+              clientId: 'redir-test-client-id',
+              clientSecret: 'redir-test-client-secret',
+              callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+            }
+          }
+        },
+        {
+          controllers: {
+            auth: true,
+            mfa: true,
+            passwordReset: true,
+            sessions: true,
+            oauth: true
+          },
+          extraModuleProviders: [{ provide: BYMAX_AUTH_HOOKS, useValue: hooks }],
+          mutateBuilder: (builder) =>
+            builder.overrideProvider(OAUTH_PLUGINS).useValue([plugin]) as typeof builder
+        }
+      )
+      app = bootstrap.app
+    })
+
+    afterAll(async () => {
+      await app.close()
+    })
+
+    /**
+     * Verifies the browser path. The supertest agent does NOT follow redirects
+     * by default, so the assertion can pin both the status (302) and the
+     * `Location` header to the configured URL. The response body must be empty
+     * — Nest's passthrough mode returns no JSON when the handler returns
+     * `undefined`, which is exactly what the redirect branch does.
+     */
+    it('should respond 302 to successRedirectUrl after a successful callback', async () => {
+      hookController.current = { action: 'create' }
+
+      const initiate = await request(app.getHttpServer()).get('/oauth/google').query({
+        tenantId: 'tenant-1'
+      })
+      const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+      const res = await request(app.getHttpServer())
+        .get('/oauth/google/callback')
+        .query({ code: 'redir_code', state })
+
+      expect(res.status).toBe(302)
+      expect(res.headers['location']).toBe('/dashboard')
+      // No JSON payload accompanies the redirect — the browser will not see
+      // the access token in a body it discards anyway.
+      expect(res.body).toEqual({})
+    })
+
+    /**
+     * Verifies that auth cookies are still issued on the 302 response. The
+     * cookie-mode delivery sets `Set-Cookie` headers before the redirect runs,
+     * so a single response carries both the 302 AND the credentials the
+     * destination page needs.
+     */
+    it('should still set auth cookies on the 302 response', async () => {
+      hookController.current = { action: 'create' }
+
+      const initiate = await request(app.getHttpServer()).get('/oauth/google').query({
+        tenantId: 'tenant-1'
+      })
+      const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+      const res = await request(app.getHttpServer())
+        .get('/oauth/google/callback')
+        .query({ code: 'redir_cookie_code', state })
+
+      expect(res.status).toBe(302)
+      const setCookie = res.headers['set-cookie']
+      // The lib's TokenDeliveryService writes the access + refresh cookies on
+      // the same response that carries the redirect headers. Both cookies must
+      // be present so the destination page can authenticate on the next request.
+      expect(Array.isArray(setCookie) ? setCookie.join('\n') : (setCookie ?? '')).toMatch(
+        /access_token=/
+      )
+      expect(Array.isArray(setCookie) ? setCookie.join('\n') : (setCookie ?? '')).toMatch(
+        /refresh_token=/
+      )
+    })
+  })
 })

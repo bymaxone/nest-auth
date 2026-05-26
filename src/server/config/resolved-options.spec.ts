@@ -1044,6 +1044,165 @@ describe('resolveOptions — oauth provider validation', () => {
       ).not.toThrow()
     })
   })
+
+  // ─── oauth.successRedirectUrl validation ─────────────────────────────────
+
+  /**
+   * Verifies the non-empty-string shape check. A misconfigured
+   * `process.env.OAUTH_REDIRECT_URL` could surface as `''` in the options
+   * object — silently allowing that would land the browser on the empty
+   * string, which most servers interpret as `/`. Failing loud at boot is the
+   * less-surprising posture.
+   */
+  it('should throw when oauth.successRedirectUrl is the empty string', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          successRedirectUrl: '',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).toThrow(/successRedirectUrl must be a non-empty string/)
+  })
+
+  /**
+   * Verifies that an absolute HTTPS URL passes in production. Same security
+   * posture as `callbackUrl` — TLS must protect both legs of the OAuth round-trip.
+   */
+  it('should accept an HTTPS successRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: 'https://app.example.com/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies that a relative path passes in production. Same-origin redirects
+   * inherit the protocol of the callback URL, so `/dashboard` is safe.
+   */
+  it('should accept a same-origin (leading-slash) successRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: '/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies an HTTP successRedirectUrl is rejected in production. The redirect
+   * must not downgrade the user from HTTPS to plain HTTP — that would expose
+   * the freshly-set authentication cookies on the next request.
+   */
+  it('should throw when successRedirectUrl uses HTTP in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: 'http://app.example.com/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow(/successRedirectUrl must use HTTPS or be a same-origin path/)
+    })
+  })
+
+  /**
+   * Verifies an HTTP successRedirectUrl is accepted outside production. Local
+   * development typically uses `http://localhost:3000/dashboard`, which must
+   * remain valid — production gating is the only place HTTP is rejected.
+   */
+  it('should accept an HTTP successRedirectUrl outside production', () => {
+    withNodeEnv('development', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: 'http://localhost:3000/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://localhost:3000/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies the delivery-mode invariant. With `tokenDelivery: 'bearer'` the
+   * lib returns the access token in the JSON body — a 302 replaces that body
+   * with redirect headers, so the destination page would never see the token.
+   * The startup error makes the misconfiguration loud.
+   */
+  it('should throw when successRedirectUrl is set together with tokenDelivery: bearer', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          successRedirectUrl: '/dashboard',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).toThrow(/tokenDelivery is 'bearer'/)
+  })
+
+  /**
+   * Verifies that the validator does NOT trip on a fully omitted
+   * `successRedirectUrl`. This guards the back-compatibility path — every
+   * existing 1.0.x consumer relies on the JSON body response and must not
+   * see a regression after upgrading.
+   */
+  it('should not throw when successRedirectUrl is absent', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).not.toThrow()
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -153,6 +153,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validatePasswordResetOtpLength(userOptions.passwordReset)
   validatePasswordCostFactor(userOptions.password)
   validateOAuthProviders(userOptions.oauth)
+  validateOAuthSuccessRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateRefreshGraceWindow(userOptions.jwt)
 
@@ -421,7 +422,12 @@ const REQUIRED_OAUTH_FIELDS = ['clientId', 'clientSecret', 'callbackUrl'] as con
 function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
   if (!oauth) return
 
-  for (const [provider, rawConfig] of Object.entries(oauth)) {
+  for (const [providerOrField, rawConfig] of Object.entries(oauth)) {
+    // Skip top-level OAuth keys that are not provider blocks (e.g. `successRedirectUrl`).
+    // These are validated separately by `validateOAuthSuccessRedirectUrl`.
+    if (providerOrField === 'successRedirectUrl') continue
+
+    const provider = providerOrField
     // Treat the provider config as a string-keyed record only for field-level
     // access; the public type is preserved elsewhere in ResolvedOptions.
     const config = rawConfig as Record<string, unknown>
@@ -450,6 +456,48 @@ function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
           `(got: '${callbackUrl}'). Use an HTTPS URL to prevent authorization code interception.`
       )
     }
+  }
+}
+
+/**
+ * Validates `oauth.successRedirectUrl` shape + delivery mode compatibility.
+ *
+ * Three rules:
+ * 1. Must be a non-empty string when set (empty rejected so misconfigured
+ *    `process.env.OAUTH_REDIRECT_URL` doesn't silently fall through to "").
+ * 2. Must use `https://` or start with `/` (relative) in production. HTTP is
+ *    rejected so the post-callback redirect cannot strip away cookie `Secure`
+ *    guarantees by hopping to an unencrypted leg.
+ * 3. Requires `tokenDelivery` of `'cookie'` or `'both'` — `'bearer'` plus a
+ *    redirect would discard the access token (the JSON body is replaced by
+ *    a 302), leaving the browser logged-out on the destination page.
+ */
+function validateOAuthSuccessRedirectUrl(userOptions: BymaxAuthModuleOptions): void {
+  const url = userOptions.oauth?.successRedirectUrl
+  if (url === undefined) return
+
+  if (typeof url !== 'string' || url.length === 0) {
+    throw new Error(
+      `[BymaxAuthModule] oauth.successRedirectUrl must be a non-empty string when set.`
+    )
+  }
+
+  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isSafe = url.startsWith('/') || url.startsWith('https://')
+  if (isProduction && !isSafe) {
+    throw new Error(
+      `[BymaxAuthModule] oauth.successRedirectUrl must use HTTPS or be a same-origin path ` +
+        `(starts with '/') in production (got: '${url}').`
+    )
+  }
+
+  // `tokenDelivery` defaults to `'cookie'`. Only reject when explicitly bearer-only.
+  if (userOptions.tokenDelivery === 'bearer') {
+    throw new Error(
+      `[BymaxAuthModule] oauth.successRedirectUrl is set but tokenDelivery is 'bearer'. ` +
+        `A redirect discards the JSON response body, so the access token would never reach the ` +
+        `client. Use tokenDelivery: 'cookie' or 'both' when configuring a successRedirectUrl.`
+    )
   }
 }
 
