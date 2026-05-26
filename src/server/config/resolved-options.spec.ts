@@ -297,6 +297,125 @@ describe('resolveOptions — secureCookies default', () => {
 })
 
 // ---------------------------------------------------------------------------
+// cookies.sameSite default + validation
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — cookies.sameSite', () => {
+  /**
+   * Verifies that omitting `cookies.sameSite` resolves to `'lax'`. This is the
+   * v1.0.5 default and is the difference between OAuth redirects working
+   * out-of-the-box and breaking on the first cross-site navigation. A drift
+   * back to `'strict'` would silently regress every OAuth-enabled consumer.
+   */
+  it('should default cookies.sameSite to "lax" when not specified', () => {
+    const resolved = resolveOptions(MINIMAL_OPTIONS)
+    expect(resolved.cookies.sameSite).toBe('lax')
+  })
+
+  /**
+   * Verifies that a consumer-supplied `'strict'` wins over the default — the
+   * stricter posture is still available for apps that do not need OAuth.
+   */
+  it('should let an explicit cookies.sameSite: "strict" override the default', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      cookies: { sameSite: 'strict' }
+    })
+    expect(resolved.cookies.sameSite).toBe('strict')
+  })
+
+  /**
+   * Verifies that `cookies.sameSite: 'none'` is accepted when paired with
+   * `secureCookies: true` (the browser-spec requirement). Used by apps that
+   * embed authenticated content in iframes or other third-party contexts.
+   */
+  it('should accept cookies.sameSite: "none" with secureCookies: true', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: { sameSite: 'none' }
+      })
+    ).not.toThrow()
+  })
+
+  /**
+   * Verifies the startup gate: `'none'` without `Secure` is a misconfiguration
+   * browsers silently drop. The validator catches it before the app boots so
+   * the broken state is surfaced loud instead of as "auth doesn't work".
+   * Forces the non-production NODE_ENV branch where `secureCookies` defaults
+   * to `false`, so the consumer's missing override is what trips the check.
+   */
+  it('should throw when cookies.sameSite: "none" is set without secureCookies: true', () => {
+    const original = process.env['NODE_ENV']
+    process.env['NODE_ENV'] = 'development'
+    try {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          cookies: { sameSite: 'none' }
+        })
+      ).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+    } finally {
+      if (original === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = original
+      }
+    }
+  })
+
+  /**
+   * Verifies that `cookies.sameSite: 'none'` is accepted in production without
+   * an explicit `secureCookies: true` because the `NODE_ENV === 'production'`
+   * default makes `secureCookies` true automatically. Pins the interaction
+   * between the two defaults so a future refactor that decouples them is
+   * forced to retain the spec-compliant outcome.
+   */
+  it('should accept cookies.sameSite: "none" in production without explicit secureCookies', () => {
+    const original = process.env['NODE_ENV']
+    process.env['NODE_ENV'] = 'production'
+    try {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          cookies: { sameSite: 'none' }
+        })
+      ).not.toThrow()
+    } finally {
+      if (original === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = original
+      }
+    }
+  })
+
+  /**
+   * Verifies that `cookies.sameSite: 'lax'` and `'strict'` do not require
+   * `secureCookies: true`. Only `'none'` triggers the spec-driven gate.
+   */
+  it('should not require secureCookies for cookies.sameSite: "lax" or "strict"', () => {
+    const original = process.env['NODE_ENV']
+    process.env['NODE_ENV'] = 'development'
+    try {
+      expect(() =>
+        resolveOptions({ ...MINIMAL_OPTIONS, cookies: { sameSite: 'lax' } })
+      ).not.toThrow()
+      expect(() =>
+        resolveOptions({ ...MINIMAL_OPTIONS, cookies: { sameSite: 'strict' } })
+      ).not.toThrow()
+    } finally {
+      if (original === undefined) {
+        delete process.env['NODE_ENV']
+      } else {
+        process.env['NODE_ENV'] = original
+      }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — jwt missing entirely
 // ---------------------------------------------------------------------------
 

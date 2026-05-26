@@ -223,11 +223,14 @@ describe('auth flow (E2E)', () => {
 
       expect(accessCookie).toBeDefined()
       expect(refreshCookie).toBeDefined()
-      // HttpOnly + SameSite are always present on auth cookies regardless of environment.
+      // HttpOnly + SameSite are always present on auth cookies regardless of
+      // environment. The default `cookies.sameSite` is `'lax'` since v1.0.5 so
+      // the OAuth redirect chain (Google → callback → app) delivers the
+      // freshly-issued cookies on the first cross-site-initiated navigation.
       expect(accessCookie).toMatch(/HttpOnly/i)
-      expect(accessCookie).toMatch(/SameSite=Strict/i)
+      expect(accessCookie).toMatch(/SameSite=Lax/i)
       expect(refreshCookie).toMatch(/HttpOnly/i)
-      expect(refreshCookie).toMatch(/SameSite=Strict/i)
+      expect(refreshCookie).toMatch(/SameSite=Lax/i)
 
       // Body must contain the user but NOT the tokens (cookie mode).
       expect(res.body).toEqual(

@@ -45,7 +45,13 @@ export const DEFAULT_OPTIONS = {
     accessTokenName: 'access_token',
     refreshTokenName: 'refresh_token',
     sessionSignalName: 'has_session',
-    refreshCookiePath: '/auth'
+    refreshCookiePath: '/auth',
+    // 'lax' matches Chromium's default for cookies that omit SameSite. It
+    // delivers auth cookies on top-level cross-site GET navigations — the
+    // case that makes OAuth redirects (Google → callback → dashboard) work
+    // without dropping the freshly-issued session on the first hop. Consumers
+    // that want the stricter posture can override via `cookies.sameSite`.
+    sameSite: 'lax' as const
   },
 
   mfa: {
