@@ -122,3 +122,30 @@ export interface MfaChallengeResult {
   /** Short-lived MFA challenge token (5-minute TTL) to be exchanged after OTP verification. */
   mfaTempToken: string
 }
+
+/**
+ * Result returned by `OAuthService.handleCallback` when the OAuth-authenticated
+ * user has MFA enabled — they must complete the MFA challenge before a session
+ * is issued.
+ *
+ * Structurally identical to {@link MfaChallengeResult}, but exported as a
+ * distinct type so downstream consumers can write OAuth-specific type guards
+ * without coupling to the password-login challenge type.
+ *
+ * @remarks
+ * The OAuth controller plants the `mfaTempToken` in a short-lived HttpOnly
+ * `mfa_temp_token` cookie (path-scoped to the MFA challenge endpoint) so the
+ * follow-up POST to `/auth/mfa/challenge` can read it back without exposing
+ * the token to JavaScript. When `oauth.mfaRedirectUrl` is omitted, the same
+ * token is also surfaced in the JSON response body for SPA consumers that
+ * drive the redirect client-side.
+ */
+export interface OAuthMfaChallengeResult {
+  /** Literal `true` discriminant — enables type narrowing in union return types. */
+  mfaRequired: true
+  /**
+   * Short-lived MFA challenge token (5-minute TTL) to be exchanged at
+   * `/auth/mfa/challenge` after the user supplies their TOTP / recovery code.
+   */
+  mfaTempToken: string
+}

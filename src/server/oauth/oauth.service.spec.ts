@@ -111,7 +111,11 @@ const mockRedis = {
 }
 
 const mockTokenManager = {
-  issueTokens: jest.fn()
+  issueTokens: jest.fn(),
+  // Used by the OAuth + MFA branch. Tests that do not exercise that branch
+  // simply leave this mock unconfigured — the existing handleCallback paths
+  // for non-MFA users never call it.
+  issueMfaTempToken: jest.fn()
 }
 
 const mockSessionService = {
@@ -854,6 +858,90 @@ describe('OAuthService', () => {
       ).rejects.toMatchObject({
         getResponse: expect.any(Function)
       })
+    })
+
+    // ─── MFA branch (1.0.7) ────────────────────────────────────────────────
+
+    /**
+     * Verifies the OAuth + MFA branch: when the resolved user has
+     * `mfaEnabled: true`, the service must issue an MFA temp token via
+     * `TokenManagerService.issueMfaTempToken` and return the
+     * `{ mfaRequired: true, mfaTempToken }` discriminator INSTEAD of a session.
+     * Issuing a regular session would leave the user with `mfaVerified: false`,
+     * which `MfaRequiredGuard` rejects on every subsequent request.
+     */
+    it('should return OAuthMfaChallengeResult when the resolved user has MFA enabled', async () => {
+      const mfaEnabledUser = { ...AUTH_USER, mfaEnabled: true }
+      mockRedis.getdel.mockResolvedValue(STORED_STATE)
+      mockPlugin.exchangeCode.mockResolvedValue({ access_token: 'at', token_type: 'Bearer' })
+      mockPlugin.fetchProfile.mockResolvedValue(OAUTH_PROFILE)
+      mockUserRepo.findByOAuthId.mockResolvedValue(null)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'create' })
+      mockUserRepo.createWithOAuth.mockResolvedValue(mfaEnabledUser)
+      mockTokenManager.issueMfaTempToken.mockResolvedValue('mfa.temp.jwt')
+
+      const result = await callCallback()
+
+      // Assert the discriminant + payload.
+      expect(result).toEqual({ mfaRequired: true, mfaTempToken: 'mfa.temp.jwt' })
+      // Tokens must NOT have been issued — the MFA challenge gates the session.
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+      // No session is created either — that happens after the MFA challenge.
+      expect(mockSessionService.createSession).not.toHaveBeenCalled()
+      // The temp token issuer is called with the user id and 'dashboard' context.
+      expect(mockTokenManager.issueMfaTempToken).toHaveBeenCalledWith(
+        mfaEnabledUser.id,
+        'dashboard'
+      )
+    })
+
+    /**
+     * Verifies the MFA branch also fires on the 'link' action — a previously
+     * linked user with MFA enabled who comes through the OAuth flow again must
+     * be routed to the challenge rather than handed a session directly.
+     */
+    it('should return OAuthMfaChallengeResult for the link action when the linked user has MFA enabled', async () => {
+      const mfaEnabledUser = { ...AUTH_USER, mfaEnabled: true }
+      mockRedis.getdel.mockResolvedValue(STORED_STATE)
+      mockPlugin.exchangeCode.mockResolvedValue({ access_token: 'at', token_type: 'Bearer' })
+      mockPlugin.fetchProfile.mockResolvedValue(OAUTH_PROFILE)
+      mockUserRepo.findByOAuthId.mockResolvedValue(mfaEnabledUser)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(mfaEnabledUser)
+      mockTokenManager.issueMfaTempToken.mockResolvedValue('mfa.temp.jwt')
+
+      const result = await callCallback()
+
+      expect(result).toEqual({ mfaRequired: true, mfaTempToken: 'mfa.temp.jwt' })
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Pins the MFA log line so the audit trail keeps `provider`, `userId`,
+     * `tenantId`, and the resolved hook `action` even when the flow short-
+     * circuits to the challenge branch. A future refactor that drops one of
+     * those fields would surface here.
+     */
+    it('should log the MFA challenge line with provider, userId, tenantId, and action', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
+      const mfaEnabledUser = { ...AUTH_USER, mfaEnabled: true }
+      mockRedis.getdel.mockResolvedValue(STORED_STATE)
+      mockPlugin.exchangeCode.mockResolvedValue({ access_token: 'at', token_type: 'Bearer' })
+      mockPlugin.fetchProfile.mockResolvedValue(OAUTH_PROFILE)
+      mockUserRepo.findByOAuthId.mockResolvedValue(null)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'create' })
+      mockUserRepo.createWithOAuth.mockResolvedValue(mfaEnabledUser)
+      mockTokenManager.issueMfaTempToken.mockResolvedValue('mfa.temp.jwt')
+
+      await callCallback()
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `provider=google userId=${mfaEnabledUser.id} tenantId=tenant-1 action=create`
+        )
+      )
+      logSpy.mockRestore()
     })
   })
 })

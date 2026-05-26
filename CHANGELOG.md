@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-05-26
+
+### Added
+
+- **OAuth + MFA challenge flow** ([`src/server/oauth/oauth.service.ts`](src/server/oauth/oauth.service.ts), [`src/server/oauth/oauth.controller.ts`](src/server/oauth/oauth.controller.ts), [`src/server/controllers/mfa.controller.ts`](src/server/controllers/mfa.controller.ts)). When an MFA-enabled user authenticates via OAuth, the callback no longer issues a session directly — the resulting JWT would carry `mfaVerified: false`, which the global `MfaRequiredGuard` rejects on every subsequent request, leaving the user effectively locked out. `OAuthService.handleCallback` now branches on `authUser.mfaEnabled` and returns an `OAuthMfaChallengeResult` (`{ mfaRequired: true, mfaTempToken }`) instead. The MFA temp token is issued via the same `TokenManagerService.issueMfaTempToken` path the password-login flow uses, so no additional service dependency is introduced.
+
+  The controller plants the temp token in a short-lived HttpOnly `mfa_temp_token` cookie scoped to `Path=/${routePrefix}/mfa` (5-minute `Max-Age` exactly matching the underlying JWT TTL, `Secure`/`SameSite` derived from `secureCookies`/`cookies.sameSite`). With the new `oauth.mfaRedirectUrl?: string` option configured the callback follows up the cookie with a 302 to that URL; without it, the same temp token is also surfaced as `{ mfaRequired: true, mfaTempToken }` in the JSON body so SPA consumers can drive the redirect themselves. The cookie is HttpOnly so it cannot be read from JavaScript — the JSON fallback is the explicit handshake for clients that need the value.
+
+  The dashboard `MfaController.challenge` route gains a cookie fallback: when `dto.mfaTempToken` is missing, the controller reads `mfa_temp_token` from `req.cookies` and forwards it to `MfaService.challenge`. The body value continues to win when both are present, preserving the existing sessionStorage password-login contract. The cookie is cleared whenever it is present in the jar at challenge time — regardless of whether the cookie or the body drove the call. Rationale: `verifyMfaTempToken` GETDELs the Redis entry as its first step, so on ANY outcome (success, `MFA_INVALID_CODE`, `ACCOUNT_LOCKED`) the token in the cookie is already dead; leaving it would only invite a misleading `MFA_TEMP_TOKEN_INVALID` on a retry. A retry needs the user to re-drive the OAuth flow to mint a fresh token. `MfaChallengeDto.mfaTempToken` is now `@IsOptional()` to support the cookie-only request shape — passing the field continues to work unchanged. The platform `/platform/mfa/challenge` endpoint surfaces `MFA_TEMP_TOKEN_INVALID` directly when the field is omitted (platform admins do not participate in the OAuth + MFA flow).
+
+  A new `OAuthMfaChallengeResult` interface is exported from [`src/server/interfaces/auth-result.interface.ts`](src/server/interfaces/auth-result.interface.ts) and the public surface in [`src/server/index.ts`](src/server/index.ts). Structurally identical to `MfaChallengeResult` but kept as a distinct type so downstream consumers can write OAuth-specific type guards without coupling to the password-login challenge type.
+
+- **`oauth.mfaRedirectUrl?: string` configuration option** ([`src/server/interfaces/auth-module-options.interface.ts`](src/server/interfaces/auth-module-options.interface.ts), [`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts)). New optional URL the browser is redirected to after the OAuth callback determines that an MFA challenge is required. Validated at startup with the same shape rules as `successRedirectUrl` (non-empty string, HTTPS or same-origin path in production). Unlike `successRedirectUrl`, this option is compatible with every `tokenDelivery` mode because no session token travels through the redirect — only the dedicated `mfa_temp_token` cookie carries credential material on this leg.
+
+- **`oauth.errorRedirectUrl?: string` configuration option** ([`src/server/interfaces/auth-module-options.interface.ts`](src/server/interfaces/auth-module-options.interface.ts), [`src/server/oauth/oauth.controller.ts`](src/server/oauth/oauth.controller.ts), [`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts)). Symmetric polish for `successRedirectUrl`: when an `AuthException` propagates out of `OAuthService.handleCallback` (provider error, hook reject, invalid state, etc.) the controller redirects to the configured URL with `?error=<code>` appended (e.g. `?error=oauth_failed`). Existing query parameters on the URL are preserved via the WHATWG `URL` constructor. Non-`AuthException` errors are deliberately NOT swallowed — they propagate so monitoring tooling can surface programmer/infrastructure bugs. Same startup validation as the other two redirect URLs (non-empty, production HTTPS, same-origin path allowed).
+
+### Tests
+
+- **5 new unit tests** in [`src/server/oauth/oauth.service.spec.ts`](src/server/oauth/oauth.service.spec.ts) covering the MFA branch (create + link actions, log line shape, session NOT created on the MFA branch).
+- **8 new unit tests** in [`src/server/oauth/oauth.controller.spec.ts`](src/server/oauth/oauth.controller.spec.ts) covering: MFA cookie + JSON branch, MFA cookie + 302 (`mfaRedirectUrl`), cookie `Path` shaped by `routePrefix`, error redirect with code extraction, absolute-URL error redirect with existing query params, `AuthException` rethrow when no `errorRedirectUrl` is set, non-`AuthException` errors propagate, error-code fallback paths.
+- **8 new unit tests** in [`src/server/controllers/mfa.controller.spec.ts`](src/server/controllers/mfa.controller.spec.ts) covering: cookie-sourced challenge, body-over-cookie precedence, `clearCookie` on cookie-sourced success, no clear on body-sourced success, no clear on challenge failure, `MFA_TEMP_TOKEN_INVALID` when neither source carries a token, non-string cookie defence.
+- **1 new unit test** in [`src/server/controllers/platform-auth.controller.spec.ts`](src/server/controllers/platform-auth.controller.spec.ts) pinning that the platform endpoint rejects empty `mfaTempToken` directly.
+- **15 new unit tests** in [`src/server/config/resolved-options.spec.ts`](src/server/config/resolved-options.spec.ts) covering `mfaRedirectUrl` and `errorRedirectUrl` validation (empty rejection, production HTTPS, same-origin path, dev HTTP allowed, no-throw when absent, bearer compatibility for `mfaRedirectUrl`, and one combined-options scenario).
+- **5 new e2e tests** in [`test/e2e/oauth-flow.e2e-spec.ts`](test/e2e/oauth-flow.e2e-spec.ts) covering the full lifecycle: MFA-enabled OAuth user without `mfaRedirectUrl` (cookie + JSON), cookie-only challenge completion through `POST /mfa/challenge`, MFA-enabled OAuth user with `mfaRedirectUrl` (cookie + 302), OAuth error redirect with `errorRedirectUrl` set, OAuth error JSON when `errorRedirectUrl` is absent.
+- **Backward compatibility**: every existing test continues to pass without modification (1992 → 2027 unit tests, 102 → 107 e2e tests). 100% statement / branch / function / line coverage maintained across every source file (verified via `pnpm test:cov`).
+
+### Notes on backward compatibility
+
+Every new option is optional and defaults to `undefined`. Existing consumers that do not opt in see ZERO behaviour change:
+
+- `OAuthService.handleCallback` still returns `AuthResult` for non-MFA users; the union widening to `AuthResult | OAuthMfaChallengeResult` is additive.
+- `OAuthController.callback` still returns the JSON body (or the `successRedirectUrl` 302) for non-MFA users; the MFA and error redirect branches only activate when the new options are set.
+- `MfaChallengeDto.mfaTempToken` becoming `@IsOptional()` does not break callers that pass the field — the validator still rejects oversized / non-string values and the service-layer error path is unchanged when the field is absent (now surfaces `MFA_TEMP_TOKEN_INVALID` directly instead of forwarding `undefined`).
+
 ## [1.0.6] - 2026-05-26
 
 ### Added

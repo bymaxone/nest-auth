@@ -405,6 +405,23 @@ describe('PlatformAuthController', () => {
       )
       expect(mockTokenDelivery.deliverPlatformAuthResponse).not.toHaveBeenCalled()
     })
+
+    /**
+     * Verifies that a missing `mfaTempToken` (the dashboard cookie-based
+     * OAuth + MFA flow shape) is rejected at the platform endpoint. Platform
+     * admins never participate in the OAuth + MFA cookie flow because the
+     * lib does not ship a platform OAuth callback — the token must travel in
+     * the request body. The controller surfaces `MFA_TEMP_TOKEN_INVALID`
+     * directly instead of forwarding `undefined` to the service.
+     */
+    it('should reject with MFA_TEMP_TOKEN_INVALID when mfaTempToken is missing from the body', async () => {
+      const dto = { code: '654321' } as Parameters<typeof controller.mfaChallenge>[0]
+      const req = makeReq()
+
+      await expect(controller.mfaChallenge(dto, req)).rejects.toBeInstanceOf(AuthException)
+      // The guard runs BEFORE the service call.
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
   })
 
   // ---------------------------------------------------------------------------

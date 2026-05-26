@@ -6,6 +6,8 @@
 import { Test } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
@@ -105,6 +107,18 @@ const mockRes = {
   clearCookie: jest.fn()
 } as unknown as Response
 
+/**
+ * Minimal `ResolvedOptions` shape exercised by `MfaController.challenge`. Only
+ * `routePrefix`, `secureCookies`, and `cookies.sameSite` are consumed by the
+ * clear-cookie path; the rest of the shape is intentionally left as `unknown`
+ * via a cast so the test fixture does not need to mirror the full options tree.
+ */
+const MOCK_OPTIONS = {
+  routePrefix: 'auth',
+  secureCookies: false,
+  cookies: { sameSite: 'lax' as const }
+} as unknown as ResolvedOptions
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -121,7 +135,8 @@ describe('MfaController', () => {
       controllers: [MfaController],
       providers: [
         { provide: MfaService, useValue: mockMfaService },
-        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: MOCK_OPTIONS }
       ]
     })
       .overrideGuard(JwtAuthGuard)
@@ -291,6 +306,226 @@ describe('MfaController', () => {
       await controller.challenge(dto as never, reqWithoutMeta, mockRes)
 
       expect(mockMfaService.challenge).toHaveBeenCalledWith(dto.mfaTempToken, dto.code, '', '')
+    })
+
+    // ─── Cookie fallback branch (1.0.7) ────────────────────────────────────
+
+    /**
+     * Verifies the cookie-fallback path: when the request body lacks an
+     * `mfaTempToken` but the HttpOnly `mfa_temp_token` cookie carries one,
+     * the controller forwards that cookie value to the service. This is the
+     * browser-driven OAuth + MFA flow — the OAuth callback plants the cookie,
+     * the destination page POSTs only `{ code }`, and the cookie travels
+     * automatically along the Path scope.
+     */
+    it('should read mfaTempToken from the mfa_temp_token cookie when body lacks it', async () => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const bodyWithoutToken = { code: '654321' }
+
+      await controller.challenge(bodyWithoutToken as never, reqWithCookie, mockRes)
+
+      expect(mockMfaService.challenge).toHaveBeenCalledWith(
+        'cookie.temp.jwt',
+        '654321',
+        '1.2.3.4',
+        'UA'
+      )
+    })
+
+    /**
+     * Verifies the precedence rule: the body value wins over the cookie when
+     * both are present. This preserves back-compat with the password-login
+     * SPA flow that posts the token explicitly in the body.
+     */
+    it('should prefer the body mfaTempToken over the cookie when both are present', async () => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const bodyWithToken = { mfaTempToken: 'body.temp.jwt', code: '654321' }
+
+      await controller.challenge(bodyWithToken as never, reqWithCookie, mockRes)
+
+      expect(mockMfaService.challenge).toHaveBeenCalledWith(
+        'body.temp.jwt',
+        '654321',
+        '1.2.3.4',
+        'UA'
+      )
+    })
+
+    /**
+     * Verifies the clearCookie path: after a successful challenge that came
+     * via the cookie, the controller clears the cookie on the response so
+     * the temp token is not left around if the user closes the tab. Path
+     * matches the path used by the OAuth callback so the browser deletes
+     * the right cookie.
+     */
+    it('should clear the mfa_temp_token cookie after a successful cookie-sourced challenge', async () => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await controller.challenge({ code: '654321' } as never, reqWithCookie, res)
+
+      expect(res.clearCookie).toHaveBeenCalledWith('mfa_temp_token', {
+        path: '/auth/mfa',
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax'
+      })
+    })
+
+    /**
+     * Verifies that the cookie is NOT cleared when the body value drove the
+     * call. The cookie clean-up is skipped because there is nothing to
+     * clean — `readMfaTempCookie` returns `undefined` on an empty jar so
+     * the `if (cookieToken !== undefined)` guard in `finally` is false.
+     */
+    it('should not call clearCookie when the request carries no mfa_temp_token cookie at all', async () => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const reqWithoutCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: {}
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+      const dtoWithToken = { mfaTempToken: 'body.temp.jwt', code: '654321' }
+
+      await controller.challenge(dtoWithToken as never, reqWithoutCookie, res)
+
+      expect(res.clearCookie).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Verifies the NEW always-clear-when-cookie-present policy: when the
+     * body wins precedence but the OAuth cookie is also in the jar, the
+     * controller still clears the cookie. Rationale: `verifyMfaTempToken`
+     * GETDELs the Redis key as its first step, so on any outcome the
+     * cookie token is already dead — keeping it would only invite a
+     * misleading `MFA_TEMP_TOKEN_INVALID` on the next visit.
+     */
+    it('should clear the cookie when body provides the token AND cookie is also present', async () => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const reqWithBoth = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+      const dtoWithToken = { mfaTempToken: 'body.temp.jwt', code: '654321' }
+
+      await controller.challenge(dtoWithToken as never, reqWithBoth, res)
+
+      // Body wins for the service call, but the cookie is still cleaned up.
+      expect(mockMfaService.challenge).toHaveBeenCalledWith(
+        'body.temp.jwt',
+        '654321',
+        '1.2.3.4',
+        'UA'
+      )
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'mfa_temp_token',
+        expect.objectContaining({ path: '/auth/mfa', httpOnly: true })
+      )
+    })
+
+    /**
+     * Verifies the try/finally semantics: even when the challenge throws
+     * (e.g. MFA_INVALID_CODE), the cookie is still cleared because the
+     * underlying JWT has been consumed by `verifyMfaTempToken`. Keeping
+     * the stale cookie would only confuse a retry attempt — the user
+     * must re-drive the OAuth flow to mint a fresh token.
+     */
+    it('should clear the cookie even when the challenge throws (finally branch)', async () => {
+      mockMfaService.challenge.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+      )
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqWithCookie, res)
+      ).rejects.toThrow(AuthException)
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'mfa_temp_token',
+        expect.objectContaining({ path: '/auth/mfa', httpOnly: true })
+      )
+    })
+
+    /**
+     * Verifies the missing-token branch: with neither body field nor cookie
+     * present, the controller surfaces `MFA_TEMP_TOKEN_INVALID` rather than
+     * forwarding an empty/undefined value to the service.
+     */
+    it('should throw MFA_TEMP_TOKEN_INVALID when no body token and no cookie are present', async () => {
+      const reqEmpty = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: {}
+      } as unknown as Request
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqEmpty, mockRes)
+      ).rejects.toThrow(AuthException)
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
+
+    it('should throw MFA_TEMP_TOKEN_INVALID when req.cookies itself is undefined', async () => {
+      /*
+       * Scenario: an exotic Express setup (or a deeply mocked test
+       * harness) hands the controller a request without the
+       * `cookies` property at all. `readMfaTempCookie` must early-out
+       * via `cookies === undefined` rather than crashing on
+       * destructuring. Protects line 73 of mfa.controller.ts — the
+       * defence-in-depth guard for non-cookie-parser middleware.
+       */
+      const reqNoCookieJar = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' }
+        // cookies field intentionally omitted
+      } as unknown as Request
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqNoCookieJar, mockRes)
+      ).rejects.toThrow(AuthException)
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Defence-in-depth: a non-string value in the cookie jar (e.g. set by a
+     * misbehaving cookie parser) is treated as missing rather than coerced.
+     */
+    it('should ignore a non-string mfa_temp_token cookie value', async () => {
+      const reqWithBadCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 12345 }
+      } as unknown as Request
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqWithBadCookie, mockRes)
+      ).rejects.toThrow(AuthException)
     })
   })
 

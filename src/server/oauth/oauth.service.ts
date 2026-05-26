@@ -31,7 +31,7 @@ import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
-import type { AuthResult } from '../interfaces/auth-result.interface'
+import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import type {
   AuthUser,
@@ -185,7 +185,10 @@ export class OAuthService {
    * @param ip - Client IP for session audit (truncated to 64 chars).
    * @param userAgent - User-Agent string for session audit.
    * @param headers - Raw request headers passed to the `onOAuthLogin` hook context.
-   * @returns Full `AuthResult` with access token, refresh token, and safe user record.
+   * @returns Full `AuthResult` with access token, refresh token, and safe user record,
+   *   OR an `OAuthMfaChallengeResult` with `mfaRequired: true` and a short-lived MFA
+   *   temp token when the resolved user has MFA enabled. The caller routes the two
+   *   shapes to different responses (session cookies vs MFA-challenge cookie/redirect).
    * @throws `AuthException(OAUTH_FAILED)` when state is invalid, expired, or the hook rejects.
    */
   async handleCallback(
@@ -195,7 +198,7 @@ export class OAuthService {
     ip: string,
     userAgent: string,
     headers: Record<string, string | string[] | undefined>
-  ): Promise<AuthResult> {
+  ): Promise<AuthResult | OAuthMfaChallengeResult> {
     // Validate provider format and resolve the plugin before consuming the CSRF state.
     // Moving this check before getdel() prevents the state from being silently consumed
     // for an invalid provider — a user who encounters a misconfigured provider would
@@ -302,6 +305,24 @@ export class OAuthService {
       default: {
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
       }
+    }
+
+    // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
+    // proven control of the OAuth provider account — not the second factor. Issuing
+    // a session with `mfaVerified: false` would be rejected on every request by the
+    // global `MfaRequiredGuard`, leaving the user locked out. Instead, we issue a
+    // short-lived MFA temp token via TokenManagerService (the same path the
+    // password-login flow uses) and let the controller plant it in a cookie or
+    // surface it in the response body. The user completes `/auth/mfa/challenge`
+    // to obtain real session tokens. No `MfaService` dependency is required —
+    // `issueMfaTempToken` lives on `TokenManagerService`, which is always
+    // registered.
+    if (authUser.mfaEnabled) {
+      const mfaTempToken = await this.tokenManager.issueMfaTempToken(authUser.id, 'dashboard')
+      this.logger.log(
+        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${tenantId} action=${hookResult.action}`
+      )
+      return { mfaRequired: true, mfaTempToken }
     }
 
     // Strip credentials before token issuance — prevents passwordHash / mfaSecret

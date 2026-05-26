@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
 
 /**
  * Data Transfer Object for the MFA challenge endpoint.
@@ -9,19 +9,26 @@ import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
  */
 export class MfaChallengeDto {
   /**
-   * The short-lived MFA temporary JWT issued after a successful password login.
+   * The short-lived MFA temporary JWT issued after a successful password login
+   * or OAuth callback.
    *
    * This token is single-use and expires in 5 minutes. It encodes the user ID
    * and the authentication context (`'dashboard'` or `'platform'`).
+   *
+   * Optional at the DTO layer because the controller also accepts the token from
+   * the HttpOnly `mfa_temp_token` cookie planted by the OAuth callback. When
+   * neither source carries a token, the controller surfaces
+   * `MFA_TEMP_TOKEN_INVALID`.
    *
    * `@MaxLength(512)` prevents oversized payloads from reaching `jwtService.verify()`
    * on this public (unauthenticated) endpoint. A compact HS256 JWT is ~200 chars;
    * 512 is a safe upper bound.
    */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(512)
-  mfaTempToken!: string
+  mfaTempToken?: string
 
   /**
    * Either a 6-digit TOTP code or a 24-hex-char recovery code in
