@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-05-26
+
+### Added
+
+- **MFA recovery code regeneration endpoint** ([`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts), [`src/server/controllers/mfa.controller.ts`](src/server/controllers/mfa.controller.ts), [`src/server/dto/mfa-regenerate-recovery-codes.dto.ts`](src/server/dto/mfa-regenerate-recovery-codes.dto.ts)). New `POST /mfa/recovery-codes` route on the dashboard `MfaController` (and `POST /platform/mfa/recovery-codes` on the new `PlatformMfaController` — see Feature B below) lets an MFA-enabled user rotate their recovery code list without having to disable + re-enrol MFA. The endpoint requires a valid TOTP code (recovery codes are intentionally NOT accepted as the proof factor — a user who has lost their authenticator should disable and re-enrol so the TOTP secret rotates too). Returns the fresh plain-text codes once; only their scrypt hashes are persisted. Shares the `mfaDisable` throttle config and the `disable:` brute-force counter namespace, mirroring the security posture of the disable endpoint.
+
+  A companion lifecycle hook `IAuthHooks.afterMfaRecoveryCodesRegenerated(user, context)` ([`src/server/interfaces/auth-hooks.interface.ts`](src/server/interfaces/auth-hooks.interface.ts)) fires after a successful rotation (fire-and-forget — hook errors do not undo the DB write). Existing hook implementations are unaffected because the new method is optional, exactly like every other `IAuthHooks` lifecycle method.
+
+  **Backward compatibility**: the dashboard `MfaController` adds a new route only — no existing route changes shape, no existing DTO gains or loses fields, no existing hook callsite changes. Consumers that do not add the new hook continue to work unchanged.
+
+- **Platform admin MFA enrolment / disable / recovery-code surface** ([`src/server/controllers/platform-mfa.controller.ts`](src/server/controllers/platform-mfa.controller.ts), [`src/server/bymax-auth.module.ts`](src/server/bymax-auth.module.ts)). New `PlatformMfaController` mounted under `/platform/mfa/*` when `controllers.platform: true` is set, mirroring the dashboard `MfaController` routes (`setup`, `verify-enable`, `disable`, `recovery-codes`) but protected by `JwtPlatformGuard` instead of `JwtAuthGuard`. Closes the previous gap where platform admins could authenticate against a pre-existing MFA secret via `/platform/mfa/challenge` but had no in-lib endpoint to enrol, disable, or rotate that secret — host applications were forced to reimplement the entire flow.
+
+  `MfaService.setup()` and `MfaService.verifyAndEnable()` now accept the same `context: 'dashboard' | 'platform' = 'dashboard'` parameter the existing `disable()` already shipped. The internal routing reads from `userRepo` or `platformUserRepo` based on this flag, matching the existing `disable()` pattern. A misconfiguration guard fires fast: if `context === 'platform'` is passed but `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` was not provided in `extraProviders`, the call throws `MFA_NOT_ENABLED` instead of silently falling back to the dashboard repo (which would persist a platform admin's MFA secret on the wrong table).
+
+  **Backward compatibility**: the new `context` parameter has a default of `'dashboard'`, so existing callers continue to work without changes. The dashboard `MfaController.setup` and `MfaController.verifyEnable` routes pass no `context` argument (dashboard remains the default). The `PlatformMfaController` is registered conditionally — only when `controllers.platform: true` — alongside the existing `PlatformAuthController`, so consumers who do not opt into the platform surface see no change in registered routes.
+
+### Tests
+
+- **15 new unit tests** across `mfa.service.spec.ts` (8: platform context branches for `setup`, `verifyAndEnable`, and the full `regenerateRecoveryCodes` happy path + 6 negative paths) and `mfa-regenerate-recovery-codes.dto.spec.ts` (6: 6-digit acceptance, empty/short/long/non-digit/recovery-shape rejection).
+- **6 new unit tests** in `mfa.controller.spec.ts` for the new `POST /mfa/recovery-codes` route (delegation, platform-context routing, empty IP/UA fallback, MFA_NOT_ENABLED / MFA_INVALID_CODE / ACCOUNT_LOCKED propagation).
+- **14 new unit tests** in the new `platform-mfa.controller.spec.ts` exercising every route on the platform MFA controller.
+- **1 new unit assertion** in `bymax-auth.module.spec.ts` pinning that `PlatformMfaController` is registered alongside `PlatformAuthController` when `controllers.platform: true`.
+- **11 new e2e tests** in [`test/e2e/mfa-recovery-codes-flow.e2e-spec.ts`](test/e2e/mfa-recovery-codes-flow.e2e-spec.ts): full dashboard regenerate flow (old codes rejected via /mfa/challenge, new codes accepted), wrong-TOTP and MFA-not-enabled negative paths, and the platform enrol → mfa-required-login → challenge → rotate / disable lifecycle including dashboard-token rejection by `JwtPlatformGuard`.
+- Existing 1948 unit + 91 e2e tests continue to pass unchanged. 100% statement / branch / function / line coverage maintained across every source file (verified via `pnpm test:cov:all`).
+
 ## [1.0.5] - 2026-05-25
 
 ### Changed

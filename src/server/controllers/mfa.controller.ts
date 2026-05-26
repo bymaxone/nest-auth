@@ -19,6 +19,7 @@ import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
+import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
@@ -186,5 +187,39 @@ export class MfaController {
     const userAgent = String(req.headers['user-agent'] ?? '')
     const context = user.type === 'platform' ? 'platform' : 'dashboard'
     await this.mfaService.disable(user.sub, dto.code, ip, userAgent, context)
+  }
+
+  /**
+   * Regenerates the user's MFA recovery codes after verifying a current TOTP code.
+   *
+   * Requires a valid TOTP code (recovery codes are not accepted by design — see
+   * {@link MfaRegenerateRecoveryCodesDto} for the rationale). The freshly
+   * generated plain-text codes are returned in the response body and are shown
+   * once. Only their scrypt hashes are persisted.
+   *
+   * Shares the disable throttle config because the security posture is identical
+   * (authenticated, TOTP-gated, MFA-affecting state change).
+   *
+   * @param user - JWT payload of the authenticated user.
+   * @param dto - Contains the 6-digit TOTP code confirming the action.
+   * @param req - Incoming request (provides IP and User-Agent for hooks).
+   * @throws `MFA_NOT_ENABLED` if MFA is not currently active on the account.
+   * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
+   * @throws `MFA_INVALID_CODE` if the submitted TOTP code is incorrect.
+   * @returns The fresh plain-text recovery codes, one-time display.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @HttpCode(HttpStatus.OK)
+  @Post('recovery-codes')
+  async regenerateRecoveryCodes(
+    @CurrentUser() user: DashboardJwtPayload | PlatformJwtPayload,
+    @Body() dto: MfaRegenerateRecoveryCodesDto,
+    @Req() req: Request
+  ): Promise<{ recoveryCodes: string[] }> {
+    const ip = req.ip ?? ''
+    const userAgent = String(req.headers['user-agent'] ?? '')
+    const context = user.type === 'platform' ? 'platform' : 'dashboard'
+    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, context)
   }
 }

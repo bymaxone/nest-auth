@@ -308,7 +308,7 @@ export class MfaService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Initiates the MFA setup flow for a dashboard user.
+   * Initiates the MFA setup flow for a dashboard user or platform administrator.
    *
    * Generates a TOTP secret and 8 recovery codes, stores them temporarily in
    * Redis (10 minutes), and returns the data needed to display the QR code and
@@ -319,12 +319,28 @@ export class MfaService {
    * requests cannot generate different secrets.
    *
    * @param userId - Internal ID of the user enabling MFA.
+   * @param context - Which repository to use: `'dashboard'` (default) or `'platform'`.
    * @returns Setup result containing the secret, QR URI, and plain recovery codes.
    * @throws `MFA_ALREADY_ENABLED` if MFA is already active on the account.
+   * @throws `MFA_NOT_ENABLED` if `context === 'platform'` and the platform user
+   *   repository was not configured at module registration. The error code is
+   *   reused (rather than introducing a new one) because the consumer-facing
+   *   meaning is the same: "platform MFA cannot operate".
    */
-  async setup(userId: string): Promise<MfaSetupResult> {
-    const user = await this.userRepo.findById(userId)
-    if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  async setup(
+    userId: string,
+    context: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<MfaSetupResult> {
+    if (context === 'platform' && !this.platformUserRepo) {
+      // Misconfiguration: caller asked for a platform setup but the host
+      // application did not register BYMAX_AUTH_PLATFORM_USER_REPOSITORY.
+      // Failing fast here surfaces the bug at the first request rather than
+      // letting the flow silently fall back to the dashboard repo (which
+      // would persist the platform admin's MFA secret on a tenant user row).
+      throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+    }
+
+    const user = await this.fetchUserForContext(context, userId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
@@ -382,7 +398,7 @@ export class MfaService {
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
-    this.logger.log(`setup: MFA setup initiated userId=${userId}`)
+    this.logger.log(`setup: MFA setup initiated userId=${userId} context=${context}`)
     return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
   }
 
@@ -403,18 +419,26 @@ export class MfaService {
    * @param code - 6-digit TOTP code from the authenticator app.
    * @param ip - Client IP address (forwarded to hooks).
    * @param userAgent - User-Agent header (forwarded to hooks).
+   * @param context - Which repository to use: `'dashboard'` (default) or `'platform'`.
    * @throws `MFA_SETUP_REQUIRED` if no pending setup data is found in Redis.
    * @throws `MFA_INVALID_CODE` if the submitted TOTP code is invalid.
+   * @throws `MFA_NOT_ENABLED` if `context === 'platform'` and the platform user
+   *   repository was not configured at module registration.
    */
   async verifyAndEnable(
     userId: string,
     code: string,
     ip: string,
-    userAgent: string
+    userAgent: string,
+    context: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<void> {
+    if (context === 'platform' && !this.platformUserRepo) {
+      // See setup() — same misconfiguration guard, same rationale.
+      throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+    }
+
     // Fetch once at entry — used for mfaEnabled guard, email notification, and hook.
-    const user = await this.userRepo.findById(userId)
-    if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    const user = await this.fetchUserForContext(context, userId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
@@ -444,23 +468,32 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
-    await this.userRepo.updateMfa(userId, {
-      mfaEnabled: true,
+    const enableData = {
+      mfaEnabled: true as const,
       mfaSecret: data.encryptedSecret,
       mfaRecoveryCodes: data.hashedCodes
-    })
+    }
+    if (context === 'platform' && this.platformUserRepo) {
+      await this.platformUserRepo.updateMfa(userId, enableData as UpdatePlatformMfaData)
+    } else {
+      await this.userRepo.updateMfa(userId, enableData)
+    }
 
     // Atomically invalidate all existing refresh sessions so the user must re-login
     // with the MFA challenge. Access tokens up to 15 min remain valid — accepted tradeoff.
     await this.redis.invalidateUserSessions(userId)
 
-    this.logger.log(`verifyAndEnable: MFA enabled userId=${userId}`)
+    this.logger.log(`verifyAndEnable: MFA enabled userId=${userId} context=${context}`)
     await this.emailProvider.sendMfaEnabledNotification(user.email)
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
+      const safeUser =
+        context === 'platform'
+          ? this.platformUserAsSafeUser(user as AuthPlatformUser)
+          : this.toSafeUser(user as AuthUser)
       void Promise.resolve(
-        this.hooks.afterMfaEnabled(this.toSafeUser(user), {
+        this.hooks.afterMfaEnabled(safeUser, {
           userId,
           ip,
           userAgent,
@@ -702,6 +735,163 @@ export class MfaService {
         })
       ).catch(() => undefined)
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // regenerateRecoveryCodes — rotate the recovery code set for an MFA-enabled user
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Regenerates the user's MFA recovery codes after verifying a current TOTP code.
+   *
+   * Mirrors {@link disable} in its security posture: only TOTP codes are accepted
+   * (recovery codes cannot rotate themselves by design), the brute-force counter
+   * is checked, and the regeneration is fired against the correct repository for
+   * the supplied `context`. The TOTP secret on the user record is unchanged — only
+   * the recovery code list is replaced.
+   *
+   * Returns the plain-text codes once. They are NOT persisted in plain form; only
+   * scrypt hashes go into the database. The caller is responsible for showing the
+   * codes to the user exactly once and warning them to save them safely.
+   *
+   * @remarks
+   * **Sessions are intentionally NOT invalidated after this call.** Unlike
+   * {@link verifyAndEnable} (which flips `mfaEnabled` from `false` to `true`) and
+   * {@link disable} (which flips it back to `false`), this method does not change
+   * the verification credential — the TOTP secret stays the same and existing
+   * `mfaVerified: true` access tokens remain valid. Invalidating sessions here
+   * would force a redundant re-auth on every recovery-code rotation, which is a
+   * routine hygiene action a user might perform several times over the lifetime
+   * of an account.
+   *
+   * @param userId - Internal ID of the user rotating recovery codes.
+   * @param totpCode - 6-digit TOTP code from the authenticator app.
+   * @param ip - Client IP address (forwarded to hooks).
+   * @param userAgent - User-Agent header (forwarded to hooks).
+   * @param context - Which repository to use: `'dashboard'` (default) or `'platform'`.
+   * @throws `TOKEN_INVALID` if the user is not found or `mfaSecret` is missing
+   *   when `mfaEnabled` is `true` (database inconsistency).
+   * @throws `MFA_NOT_ENABLED` if MFA is not currently active, or if
+   *   `context === 'platform'` and the platform user repository was not
+   *   configured at module registration.
+   * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
+   * @throws `MFA_INVALID_CODE` if the submitted TOTP code is incorrect.
+   * @returns The freshly generated plain-text recovery codes, one-time display.
+   */
+  async regenerateRecoveryCodes(
+    userId: string,
+    totpCode: string,
+    ip: string,
+    userAgent: string,
+    context: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<{ recoveryCodes: string[] }> {
+    if (context === 'platform' && !this.platformUserRepo) {
+      // See setup()/verifyAndEnable() — same misconfiguration guard.
+      throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+    }
+
+    // Ordering rationale (mirrors disable(), differs from challenge()):
+    //
+    //   1. fetchUserForContext (DB read)
+    //   2. mfaEnabled guard
+    //   3. brute-force isLockedOut check
+    //
+    // challenge() runs brute-force FIRST because it is a PUBLIC endpoint —
+    // an attacker who knows a userId can otherwise force a DB read per
+    // request. regenerateRecoveryCodes and disable are AUTHENTICATED
+    // endpoints behind a JWT guard; the bearer token already binds the
+    // caller to a specific userId, so the brute-force counter exists for
+    // throttling repeated TOTP guesses by the legitimate user (or someone
+    // who stole their access token), not for blocking enumeration. A DB
+    // read on every request from an already-authenticated session is
+    // acceptable for that threat model. Future contributors: do NOT
+    // "fix" this to match challenge() — the ordering is deliberate.
+    const user = await this.fetchUserForContext(context, userId)
+    if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+
+    // Reuse the 'disable:' counter namespace — both flows are TOTP-gated MFA
+    // changes from an authenticated user, so they share the same lockout pool.
+    // The 'disable:' prefix already isolates this from the public 'challenge:'
+    // counter exhaustion vector.
+    const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.hmacKey)
+    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(
+        `regenerateRecoveryCodes: account locked userId=${userId} context=${context}`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+    }
+
+    if (!user.mfaSecret) {
+      // mfaEnabled is true but mfaSecret is absent — database inconsistency.
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
+    const secretBase32 = this.decryptSecret(user.mfaSecret)
+    const totpWindow = this.mfaOptions.totpWindow
+
+    const codeValid = await this.verifyTotpWithAntiReplay(
+      userId,
+      secretBase32,
+      totpCode,
+      totpWindow
+    )
+    if (!codeValid) {
+      await this.bruteForce.recordFailure(bfIdentifier)
+      this.logger.warn(
+        `regenerateRecoveryCodes: invalid MFA code userId=${userId} context=${context}`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+    }
+
+    await this.bruteForce.resetFailures(bfIdentifier)
+
+    // Generate a fresh code set using the existing helper — same entropy, same
+    // formatting, same scrypt hashing as the initial setup() path.
+    const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
+    const { plainCodes, hashedCodes } = await this.hashRecoveryCodes(recoveryCount)
+
+    // Preserve the existing TOTP secret — only the recovery code list changes.
+    //
+    // Sessions are intentionally NOT invalidated after this write. The TOTP
+    // secret on the user row is unchanged, so existing `mfaVerified: true`
+    // access tokens continue to be valid against the same factor. Compare
+    // verifyAndEnable() and disable(), which DO invalidate sessions because
+    // they flip the `mfaEnabled` claim — the verification posture changes
+    // and stale tokens would carry the wrong claim. Recovery-code rotation
+    // is a hygiene action that does not change the auth posture, so forcing
+    // a global re-login here would be punitive without security benefit.
+    const updateData = {
+      mfaEnabled: true as const,
+      mfaSecret: user.mfaSecret,
+      mfaRecoveryCodes: hashedCodes
+    }
+    if (context === 'platform' && this.platformUserRepo) {
+      await this.platformUserRepo.updateMfa(userId, updateData as UpdatePlatformMfaData)
+    } else {
+      await this.userRepo.updateMfa(userId, updateData)
+    }
+
+    this.logger.log(
+      `regenerateRecoveryCodes: recovery codes regenerated userId=${userId} context=${context}`
+    )
+
+    // Fire-and-forget hook — errors must not undo a completed regeneration.
+    if (this.hooks.afterMfaRecoveryCodesRegenerated) {
+      const safeUser =
+        context === 'platform'
+          ? this.platformUserAsSafeUser(user as AuthPlatformUser)
+          : this.toSafeUser(user as AuthUser)
+      void Promise.resolve(
+        this.hooks.afterMfaRecoveryCodesRegenerated(safeUser, {
+          userId,
+          ip,
+          userAgent,
+          sanitizedHeaders: {}
+        })
+      ).catch(() => undefined)
+    }
+
+    return { recoveryCodes: plainCodes }
   }
 
   // ---------------------------------------------------------------------------

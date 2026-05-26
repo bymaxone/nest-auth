@@ -15,6 +15,7 @@ import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
 import { PlatformAuthController } from './controllers/platform-auth.controller'
+import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
@@ -288,7 +289,7 @@ export class BymaxAuthModule {
       ...(includeMfa ? [MfaController] : []),
       ...(includePasswordReset ? [PasswordResetController] : []),
       ...(includeSessions ? [SessionController] : []),
-      ...(includePlatform ? [PlatformAuthController] : []),
+      ...(includePlatform ? [PlatformAuthController, PlatformMfaController] : []),
       ...(includeOAuth ? [OAuthController] : []),
       ...(includeInvitations ? [InvitationController] : [])
     ]

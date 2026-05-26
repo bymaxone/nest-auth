@@ -85,7 +85,8 @@ const mockMfaService = {
   setup: jest.fn(),
   verifyAndEnable: jest.fn(),
   challenge: jest.fn(),
-  disable: jest.fn()
+  disable: jest.fn(),
+  regenerateRecoveryCodes: jest.fn()
 }
 
 const mockTokenDelivery = {
@@ -390,6 +391,112 @@ describe('MfaController', () => {
         'TestBrowser',
         'platform'
       )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // regenerateRecoveryCodes
+  // ---------------------------------------------------------------------------
+
+  describe('regenerateRecoveryCodes', () => {
+    const dto = { code: '654321' }
+    const REGENERATE_RESULT = { recoveryCodes: ['AAAA-1111-BBBB-2222-CCCC-3333'] }
+
+    // Verifies that regenerateRecoveryCodes delegates to mfaService with the
+    // dashboard context derived from the JWT type claim and returns the
+    // service's response unchanged.
+    it('should call mfaService.regenerateRecoveryCodes with userId, code, ip, userAgent, and context', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockResolvedValue(REGENERATE_RESULT)
+
+      const result = await controller.regenerateRecoveryCodes(
+        JWT_PAYLOAD as never,
+        dto as never,
+        mockReq
+      )
+
+      expect(mockMfaService.regenerateRecoveryCodes).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        dto.code,
+        '1.2.3.4',
+        'TestBrowser',
+        'dashboard'
+      )
+      expect(result).toBe(REGENERATE_RESULT)
+    })
+
+    // Verifies that a PlatformJwtPayload user routes the call with context='platform'.
+    it('should pass context=platform when user.type is platform', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockResolvedValue(REGENERATE_RESULT)
+      const platformUser = {
+        sub: 'admin-1',
+        type: 'platform' as const,
+        role: 'super-admin',
+        jti: 'jti',
+        mfaEnabled: true,
+        mfaVerified: false,
+        iat: 0,
+        exp: 9_999_999_999
+      }
+
+      await controller.regenerateRecoveryCodes(platformUser as never, dto as never, mockReq)
+
+      expect(mockMfaService.regenerateRecoveryCodes).toHaveBeenCalledWith(
+        'admin-1',
+        dto.code,
+        '1.2.3.4',
+        'TestBrowser',
+        'platform'
+      )
+    })
+
+    // Verifies that ip and userAgent fall back to empty strings when absent
+    // from the incoming request — mirrors the disable() fallback pattern.
+    it('should use empty strings when ip and user-agent are absent', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockResolvedValue(REGENERATE_RESULT)
+      const reqWithoutMeta = { ip: undefined, headers: {}, cookies: {} } as unknown as Request
+
+      await controller.regenerateRecoveryCodes(JWT_PAYLOAD as never, dto as never, reqWithoutMeta)
+
+      expect(mockMfaService.regenerateRecoveryCodes).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        dto.code,
+        '',
+        '',
+        'dashboard'
+      )
+    })
+
+    // Verifies that MFA_NOT_ENABLED propagates when MFA is not active.
+    it('should propagate MFA_NOT_ENABLED when MFA is not active', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
+      )
+
+      await expect(
+        controller.regenerateRecoveryCodes(JWT_PAYLOAD as never, dto as never, mockReq)
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Verifies that MFA_INVALID_CODE propagates when the TOTP code is wrong.
+    it('should propagate MFA_INVALID_CODE for an incorrect code', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+      )
+
+      await expect(
+        controller.regenerateRecoveryCodes(JWT_PAYLOAD as never, dto as never, mockReq)
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Verifies that ACCOUNT_LOCKED propagates when the brute-force threshold is reached.
+    it('should propagate ACCOUNT_LOCKED when the user is locked out', async () => {
+      mockMfaService.regenerateRecoveryCodes.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+      )
+
+      await expect(
+        controller.regenerateRecoveryCodes(JWT_PAYLOAD as never, dto as never, mockReq)
+      ).rejects.toThrow(AuthException)
     })
   })
 })
