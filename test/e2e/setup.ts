@@ -227,6 +227,14 @@ export function createMockUserRepository(): MockUserRepository {
 export interface MockPlatformUserRepository extends IPlatformUserRepository {
   /** Direct access to the in-memory platform user map for assertions. */
   readonly users: Map<string, AuthPlatformUser>
+  /**
+   * Seeds a platform user into the in-memory store and updates the internal
+   * email→id index so `findByEmail` resolves the row. Used by e2e specs that
+   * need a pre-existing platform admin without going through a public create
+   * endpoint (the lib does not ship one — platform admins are provisioned by
+   * the host application out-of-band).
+   */
+  seed(user: AuthPlatformUser): void
 }
 
 /**
@@ -238,6 +246,11 @@ export function createMockPlatformUserRepository(): MockPlatformUserRepository {
 
   const repo: MockPlatformUserRepository = {
     users,
+
+    seed(user: AuthPlatformUser): void {
+      users.set(user.id, user)
+      emailIndex.set(user.email.toLowerCase(), user.id)
+    },
 
     async findById(id: string): Promise<AuthPlatformUser | null> {
       return users.get(id) ?? null

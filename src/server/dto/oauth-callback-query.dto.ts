@@ -1,12 +1,21 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator'
 
 /**
  * Query parameters for the OAuth callback endpoint (`GET /oauth/:provider/callback`).
  *
- * Both `code` and `state` are received from the OAuth provider redirect and must
- * be present and within reasonable length bounds before being forwarded to the
- * service layer. Length limits prevent oversized payloads from reaching the token
- * exchange HTTP call and the SHA-256 Redis key lookup.
+ * `code` and `state` are the two required values used by the service layer.
+ * Length limits prevent oversized payloads from reaching the token exchange
+ * HTTP call and the SHA-256 Redis key lookup.
+ *
+ * The remaining fields (`iss`, `scope`, `authuser`, `prompt`, `hd`) are
+ * standard OIDC / Google Account-chooser parameters that providers append to
+ * the redirect. They are accepted but never read by the service — declared
+ * here so the controller-level `ValidationPipe(forbidNonWhitelisted: true)`
+ * does not 400 the callback when a provider sends them. See:
+ *
+ *   - OAuth 2.0 Issuer Identification (RFC 9207) for `iss`
+ *   - https://accounts.google.com docs for `authuser`, `prompt`, `hd`
+ *   - https://datatracker.ietf.org/doc/html/rfc6749#section-3.3 for `scope`
  */
 export class OAuthCallbackQueryDto {
   /**
@@ -32,4 +41,56 @@ export class OAuthCallbackQueryDto {
   @IsNotEmpty()
   @MaxLength(128)
   state!: string
+
+  /**
+   * OIDC issuer identifier (RFC 9207). Echoed back by providers that advertise
+   * their issuer in the discovery document — Google currently sends
+   * `https://accounts.google.com`. Accepted but unused; the service derives
+   * the provider from the URL path, not from this field.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  iss?: string
+
+  /**
+   * Space-delimited list of scopes actually granted by the user, per RFC 6749
+   * §3.3. The lib does not enforce minimum scopes here — the profile fetch
+   * surfaces missing data via the `IUserRepository` mapping instead.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  scope?: string
+
+  /**
+   * Google Account-chooser index (`0`, `1`, …). Identifies which of the
+   * signed-in Google accounts in the user's browser authorised the request.
+   * Accepted as a generic string to stay agnostic of Google-specific shape.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  authuser?: string
+
+  /**
+   * Prompt that was shown to the user (`none`, `consent`, `select_account`,
+   * or any combination thereof). Sent back by Google so SPAs can react to a
+   * forced re-consent. Validation here is shape-only — semantics are the
+   * provider's concern.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  prompt?: string
+
+  /**
+   * Hosted-domain hint sent by Google Workspace — the email's domain when the
+   * authorising account belongs to a managed organisation (e.g. `example.com`).
+   * Useful for consumer apps that gate features by tenant; unused by the lib.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  hd?: string
 }

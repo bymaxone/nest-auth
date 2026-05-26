@@ -360,5 +360,56 @@ describe('oauth flow (E2E)', () => {
       // The hook must not have been called — state validation gates everything else.
       expect(hookController.lastCall).toBeNull()
     })
+
+    // Verifies that Google's standard OIDC + Account-chooser query parameters
+    // (iss, scope, authuser, prompt, hd) do not cause the controller-level
+    // ValidationPipe(forbidNonWhitelisted: true) to reject the callback.
+    // Real-world callback URLs from accounts.google.com include these params;
+    // the DTO accepts them as @IsOptional and the service ignores them.
+    it('should accept the callback when Google adds iss / scope / authuser / prompt / hd', async () => {
+      // Arrange — fresh state plus a hook that returns a brand-new user. The
+      // hook is the only path that depends on tenantId, so we use the same
+      // tenant the previous scenarios used.
+      const initiate = await request(app.getHttpServer()).get('/oauth/google').query({
+        tenantId: 'tenant-1'
+      })
+      const freshState = extractStateFromLocation(
+        initiate.headers['location'] as string | undefined
+      )
+      hookController.current = { action: 'create' }
+      hookController.lastCall = null
+
+      // Act — append every Google-specific query parameter the lib must
+      // tolerate, exactly as accounts.google.com sends them on a successful
+      // consent. The route used to 400 with "property iss should not exist".
+      const res = await request(app.getHttpServer()).get('/oauth/google/callback').query({
+        code: 'fake_code_with_extras',
+        state: freshState,
+        iss: 'https://accounts.google.com',
+        scope: 'openid email profile',
+        authuser: '0',
+        prompt: 'consent',
+        hd: 'example.com'
+      })
+
+      // Assert — the request must complete the same way it does without the
+      // extra params: a 200 with bearer tokens and the user object. The
+      // extras must NOT leak into the response (the lib only reads code/state).
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          accessToken: expect.any(String),
+          refreshToken: expect.any(String),
+          user: expect.objectContaining({
+            email: MOCK_EMAIL,
+            oauthProvider: 'google'
+          })
+        })
+      )
+
+      // Hook ran, confirming the extra params reached the controller without
+      // triggering forbidNonWhitelisted on the way in.
+      expect(hookController.lastCall).not.toBeNull()
+    })
   })
 })
