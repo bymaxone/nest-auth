@@ -404,6 +404,33 @@ export interface BymaxAuthModuleOptions {
    */
   oauth?: {
     /**
+     * URL the browser is redirected to after a successful OAuth callback.
+     *
+     * When set, the OAuth callback endpoint issues a `302` to this URL after
+     * delivering tokens (cookies are still set via the same response). When
+     * omitted, the callback returns a JSON body — appropriate for API/SPA
+     * consumers that XHR/fetch the callback URL, but it leaves browser users
+     * staring at a JSON page. Set this for any consumer where the OAuth flow
+     * is initiated by a full-page browser navigation.
+     *
+     * Requires `tokenDelivery: 'cookie'` or `'both'` — bearer-only delivery is
+     * incompatible with a redirect because the access token would be discarded
+     * in the redirect response body. The module throws at startup if the
+     * combination is misconfigured.
+     *
+     * In production (`NODE_ENV === 'production'`), the URL must use HTTPS or
+     * be a relative path (starts with `/`) — same posture as `callbackUrl`.
+     *
+     * @example
+     * ```typescript
+     * successRedirectUrl: 'https://app.example.com/dashboard'
+     * // or, for same-origin deployments:
+     * successRedirectUrl: '/dashboard'
+     * ```
+     */
+    successRedirectUrl?: string
+
+    /**
      * Google OAuth 2.0 configuration.
      * All three fields are required to enable Google login.
      */

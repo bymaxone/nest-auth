@@ -22,6 +22,8 @@ import type { Request, Response } from 'express'
 
 import { OAuthController } from './oauth.controller'
 import { OAuthService } from './oauth.service'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 
 // ---------------------------------------------------------------------------
@@ -43,21 +45,41 @@ const mockTokenDelivery = {
 // OAuthController
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds a minimal `ResolvedOptions` shape sufficient for the controller. Only
+ * the `oauth` block is read by the controller (`successRedirectUrl`), so the
+ * remaining fields are left as `any` via the unknown cast — typing them in full
+ * here would add boilerplate without exercising new code paths.
+ */
+function buildOptions(oauth?: ResolvedOptions['oauth']): ResolvedOptions {
+  return { oauth } as unknown as ResolvedOptions
+}
+
 describe('OAuthController', () => {
   let controller: OAuthController
 
-  beforeEach(async () => {
-    jest.resetAllMocks()
-
+  /**
+   * Compiles the controller with the supplied OAuth options block. Tests
+   * exercising the redirect path call this with `{ successRedirectUrl: ... }`;
+   * the default `buildOptions()` produces an empty options object so the
+   * controller falls through to returning the JSON body (legacy contract).
+   */
+  async function bootstrap(oauth?: ResolvedOptions['oauth']): Promise<void> {
     const module = await Test.createTestingModule({
       controllers: [OAuthController],
       providers: [
         { provide: OAuthService, useValue: mockOAuthService },
-        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: buildOptions(oauth) }
       ]
     }).compile()
 
     controller = module.get(OAuthController)
+  }
+
+  beforeEach(async () => {
+    jest.resetAllMocks()
+    await bootstrap()
   })
 
   // ---------------------------------------------------------------------------
@@ -247,6 +269,87 @@ describe('OAuthController', () => {
         authResult,
         mockReq
       )
+    })
+
+    // ─── successRedirectUrl branch ────────────────────────────────────────────
+
+    /**
+     * Verifies that with no `oauth.successRedirectUrl` configured, the controller
+     * preserves the legacy contract: it returns the body produced by
+     * `deliverAuthResponse` and never touches `res.redirect`. This is the
+     * default path for API/SPA consumers that XHR-fetch the callback URL.
+     */
+    it('should NOT redirect when oauth.successRedirectUrl is not configured', async () => {
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue(MOCK_BEARER_RESPONSE)
+
+      const result = await controller.callback('google', query as never, mockReq, mockRes)
+
+      expect((mockRes.redirect as jest.Mock).mock.calls).toHaveLength(0)
+      expect(result).toBe(MOCK_BEARER_RESPONSE)
+    })
+
+    /**
+     * Verifies the browser-OAuth UX path: when `oauth.successRedirectUrl` is
+     * configured, the controller still delegates token delivery to
+     * `TokenDeliveryService` (cookies must be set on the SAME response that
+     * carries the 302), then issues `res.redirect(url)` and returns `undefined`
+     * so Nest does not serialise a JSON body over the redirect headers.
+     */
+    it('should redirect to oauth.successRedirectUrl after delivering tokens', async () => {
+      await bootstrap({ successRedirectUrl: '/dashboard' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({ accessToken: 'tok' })
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({ accessToken: 'tok' })
+
+      const result = await controller.callback('google', query as never, mockReq, mockRes)
+
+      // Cookies are still set — token delivery runs BEFORE the redirect so the
+      // Set-Cookie headers and the 302 share the same HTTP response.
+      expect(mockTokenDelivery.deliverAuthResponse).toHaveBeenCalledTimes(1)
+      expect(mockRes.redirect).toHaveBeenCalledTimes(1)
+      expect(mockRes.redirect).toHaveBeenCalledWith('/dashboard')
+      // Returning undefined signals to Nest's passthrough mode that no body
+      // should accompany the redirect.
+      expect(result).toBeUndefined()
+    })
+
+    /**
+     * Verifies that an absolute HTTPS URL is forwarded verbatim — the
+     * controller does not perform any URL canonicalisation. Validation of
+     * scheme + production HTTPS happens at boot time in `resolveOptions`,
+     * not on every callback request.
+     */
+    it('should redirect to an absolute https successRedirectUrl when configured', async () => {
+      await bootstrap({ successRedirectUrl: 'https://app.example.com/welcome' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('https://app.example.com/welcome')
     })
   })
 })

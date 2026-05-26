@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-05-25
+
+### Added
+
+- **`oauth.successRedirectUrl?: string` configuration option** ([`src/server/interfaces/auth-module-options.interface.ts`](src/server/interfaces/auth-module-options.interface.ts), [`src/server/oauth/oauth.controller.ts`](src/server/oauth/oauth.controller.ts)). When set, `GET /auth/oauth/:provider/callback` issues a `302` redirect to the configured URL after delivering tokens, instead of returning the JSON body that API/SPA consumers expect. Cookies are still set on the same response — the destination page lands fully authenticated. This closes a UX gap that left browser users on the JSON payload after a successful OAuth round-trip (every consumer was forced to reimplement the OAuth controller just to get a redirect). The option is opt-in and the legacy JSON-body contract is preserved when it is omitted. Aligns the lib with `passport.successRedirect`, `next-auth.callbackUrl`, and `auth0.returnTo`.
+
+  Validated at startup by [`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts) with three rules:
+  1. Must be a non-empty string when set.
+  2. Must use `https://` or be a same-origin path (`/...`) in production — HTTP rejected so the post-callback leg cannot strip cookie `Secure` guarantees.
+  3. Requires `tokenDelivery: 'cookie'` or `'both'` — `bearer` is rejected because the 302 would discard the JSON body that carries the access token.
+
+  Covered by 3 new unit tests in [`src/server/oauth/oauth.controller.spec.ts`](src/server/oauth/oauth.controller.spec.ts), 7 new validator tests in [`src/server/config/resolved-options.spec.ts`](src/server/config/resolved-options.spec.ts), and 2 new e2e scenarios in [`test/e2e/oauth-flow.e2e-spec.ts`](test/e2e/oauth-flow.e2e-spec.ts) (cookie-attached 302 to the configured URL + Set-Cookie headers on the redirect response).
+
 ## [1.0.3] - 2026-05-25
 
 ### Fixed

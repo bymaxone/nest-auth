@@ -19,6 +19,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
   Param,
   Query,
   Req,
@@ -30,6 +31,8 @@ import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
 import { OAuthService } from './oauth.service'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
@@ -58,7 +61,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 export class OAuthController {
   constructor(
     private readonly oauthService: OAuthService,
-    private readonly tokenDelivery: TokenDeliveryService
+    private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -102,11 +106,18 @@ export class OAuthController {
    * or oversized values are rejected before reaching the service layer or the
    * token-exchange HTTP call.
    *
+   * If `oauth.successRedirectUrl` is configured, the response is a `302` redirect
+   * to that URL with cookies already set in the same response. This is the
+   * standard browser OAuth flow — without it the browser lands on the JSON
+   * payload returned to API consumers. The redirect is issued by calling
+   * `res.redirect()` and returning `undefined`, which Nest passes through
+   * unchanged (passthrough mode is active).
+   *
    * @param provider - Provider name from the URL path (e.g. `'google'`).
    * @param query - Validated query parameters (contains `code` and `state`).
    * @param req - Incoming request (IP, User-Agent, and cookie context for token delivery).
-   * @param res - Express response in passthrough mode (used for cookie delivery).
-   * @returns Auth response shaped by the configured `tokenDelivery` mode.
+   * @param res - Express response in passthrough mode (used for cookie delivery and the optional redirect).
+   * @returns The auth response shaped by `tokenDelivery`, or `undefined` when a `successRedirectUrl` redirect was issued.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.oauthCallback)
   @HttpCode(HttpStatus.OK)
@@ -116,7 +127,7 @@ export class OAuthController {
     @Query() query: OAuthCallbackQueryDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
-  ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse> {
+  ): Promise<CookieAuthResponse | BearerAuthResponse | BothAuthResponse | undefined> {
     // Truncate to match the limits applied in all other auth controllers:
     // 64 chars for IP (longest IPv6 address is 39 chars; 64 gives ample headroom).
     // 512 chars for User-Agent (stored in the Redis session record; prevents key bloat).
@@ -131,6 +142,17 @@ export class OAuthController {
       userAgent,
       req.headers as Record<string, string | string[] | undefined>
     )
-    return this.tokenDelivery.deliverAuthResponse(res, result, req)
+    const body = this.tokenDelivery.deliverAuthResponse(res, result, req)
+
+    // When successRedirectUrl is configured, follow up the cookie-setting
+    // response with a 302 to that URL. Returning undefined keeps Nest from
+    // serialising a body — the redirect headers carry the full response.
+    const redirectUrl = this.options.oauth?.successRedirectUrl
+    if (redirectUrl !== undefined) {
+      res.redirect(redirectUrl)
+      return undefined
+    }
+
+    return body
   }
 }
