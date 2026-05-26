@@ -24,6 +24,7 @@ import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
 import { PlatformAuthController } from './controllers/platform-auth.controller'
+import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
@@ -772,9 +773,13 @@ describe('BymaxAuthModule', () => {
 
       expect(module).toBeDefined()
       // PlatformAuthController must be registered. The ArrayDeclaration mutant emptying
-      // `includePlatform ? [PlatformAuthController] : []` would leave it unregistered, so this get
-      // would throw — asserting it resolves kills that mutant.
+      // `includePlatform ? [PlatformAuthController, PlatformMfaController] : []` would leave it
+      // unregistered, so this get would throw — asserting it resolves kills that mutant.
       expect(module.get(PlatformAuthController)).toBeDefined()
+      // PlatformMfaController must also be registered alongside PlatformAuthController when
+      // controllers.platform: true is set. Pins that the platform admin MFA enrolment surface is
+      // exposed by the same gate rather than living behind a separate option.
+      expect(module.get(PlatformMfaController)).toBeDefined()
     })
 
     // Verifies that controllers.oauth: true without the oauth config group throws at startup —

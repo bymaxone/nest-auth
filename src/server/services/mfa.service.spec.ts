@@ -133,6 +133,7 @@ const mockEmailProvider = {
 const mockHooks = {
   afterMfaEnabled: jest.fn(),
   afterMfaDisabled: jest.fn(),
+  afterMfaRecoveryCodesRegenerated: jest.fn(),
   afterLogin: jest.fn()
 }
 
@@ -265,7 +266,9 @@ describe('MfaService', () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
       await service.setup('user-1')
       expect(mockRedis.set).not.toHaveBeenCalled()
-      expect(logSpy).toHaveBeenCalledWith('setup: MFA setup initiated userId=user-1')
+      expect(logSpy).toHaveBeenCalledWith(
+        'setup: MFA setup initiated userId=user-1 context=dashboard'
+      )
       logSpy.mockRestore()
     })
 
@@ -566,7 +569,9 @@ describe('MfaService', () => {
       // The afterMfaEnabled hook must be invoked (kills the BlockStatement emptying at line 461)
       // and the success log must carry the userId (kills line 457).
       expect(mockHooks.afterMfaEnabled).toHaveBeenCalledTimes(1)
-      expect(logSpy).toHaveBeenCalledWith('verifyAndEnable: MFA enabled userId=user-1')
+      expect(logSpy).toHaveBeenCalledWith(
+        'verifyAndEnable: MFA enabled userId=user-1 context=dashboard'
+      )
       logSpy.mockRestore()
     })
 
@@ -1525,6 +1530,519 @@ describe('MfaService', () => {
       await expect(
         noHookService.disable('user-1', validCode, '1.2.3.4', 'Browser')
       ).resolves.toBeUndefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // setup — platform context
+  // ---------------------------------------------------------------------------
+
+  describe('setup — platform context', () => {
+    // Verifies that setup with context='platform' resolves the user via
+    // platformUserRepo and never touches the dashboard userRepo. Without this,
+    // a platform admin's MFA enrolment would silently target a tenant user row.
+    it('should resolve user via platformUserRepo when context is platform', async () => {
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: false,
+        mfaRecoveryCodes: []
+      })
+
+      const result = await service.setup('admin-1', 'platform')
+
+      expect(mockPlatformUserRepo.findById).toHaveBeenCalledWith('admin-1')
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      expect(result.secret).toMatch(/^[A-Z2-7]+$/)
+      expect(result.recoveryCodes).toHaveLength(2)
+    })
+
+    // Verifies that setup throws MFA_NOT_ENABLED when context='platform' but the
+    // platform repository was not configured at module registration — surfacing
+    // the misconfiguration at the first request instead of silently falling back
+    // to the dashboard repo (which would persist on the wrong table).
+    it('should throw MFA_NOT_ENABLED when platform context is used without platformUserRepo', async () => {
+      const { Test: NestTest } = await import('@nestjs/testing')
+      const moduleWithoutRepo = await NestTest.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          // BYMAX_AUTH_PLATFORM_USER_REPOSITORY intentionally omitted
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
+
+      expect.assertions(1)
+      try {
+        await serviceWithoutRepo.setup('admin-1', 'platform')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
+        })
+      }
+    })
+
+    // Verifies that setup logs the resolved context so platform vs dashboard
+    // operations can be distinguished in observability streams.
+    it('should log the context on a successful platform setup', async () => {
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: false,
+        mfaRecoveryCodes: []
+      })
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await service.setup('admin-1', 'platform')
+
+      expect(logSpy).toHaveBeenCalledWith(
+        'setup: MFA setup initiated userId=admin-1 context=platform'
+      )
+      logSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // verifyAndEnable — platform context
+  // ---------------------------------------------------------------------------
+
+  describe('verifyAndEnable — platform context', () => {
+    beforeEach(() => {
+      jest.useFakeTimers()
+      jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    // Verifies that verifyAndEnable persists MFA state via platformUserRepo when
+    // context='platform' — never via userRepo. Catches the most dangerous bug
+    // class for this feature (silent cross-repo write).
+    it('should persist MFA state via platformUserRepo and fire the platform projection hook', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: false,
+        mfaRecoveryCodes: []
+      })
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(setupData))
+
+      await service.verifyAndEnable('admin-1', validCode, '1.2.3.4', 'Browser', 'platform')
+
+      expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
+        'admin-1',
+        expect.objectContaining({ mfaEnabled: true })
+      )
+      // The dashboard repo must NOT have received the write — pins the
+      // `if (context === 'platform' && this.platformUserRepo)` branch and kills
+      // mutants that would route both contexts to the same repo.
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      // The afterMfaEnabled hook must be invoked with the platform projection
+      // (tenantId='' sentinel) — kills mutants that would force the dashboard
+      // projection (which would carry a real tenantId).
+      expect(mockHooks.afterMfaEnabled).toHaveBeenCalledTimes(1)
+      const hookUser = mockHooks.afterMfaEnabled.mock.calls[0]?.[0] as { tenantId: string }
+      expect(hookUser.tenantId).toBe('')
+    })
+
+    // Verifies that verifyAndEnable throws MFA_NOT_ENABLED when the platform
+    // repository is not configured. Without this, a platform-context enable
+    // request would silently fall back to the dashboard repo at line 478.
+    it('should throw MFA_NOT_ENABLED when platform context is used without platformUserRepo', async () => {
+      const { Test: NestTest } = await import('@nestjs/testing')
+      const moduleWithoutRepo = await NestTest.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
+
+      await expect(
+        serviceWithoutRepo.verifyAndEnable('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ).rejects.toThrow(AuthException)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // regenerateRecoveryCodes
+  // ---------------------------------------------------------------------------
+
+  describe('regenerateRecoveryCodes', () => {
+    beforeEach(() => {
+      jest.useFakeTimers()
+      jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    // Verifies that regenerate throws TOKEN_INVALID when the user is not found —
+    // mirrors the disable() guard so an unknown user never reaches scrypt.
+    it('should throw TOKEN_INVALID when user is not found', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(
+        service.regenerateRecoveryCodes('unknown', '123456', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Verifies that regenerate throws MFA_NOT_ENABLED when MFA is not active —
+    // the action is meaningless without an existing TOTP secret to rotate against.
+    it('should throw MFA_NOT_ENABLED when MFA is not active', async () => {
+      expect.assertions(1)
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
+
+      try {
+        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
+        })
+      }
+    })
+
+    // Verifies that regenerate throws TOKEN_INVALID when mfaEnabled is true but
+    // mfaSecret is null — database inconsistency must surface, not crash.
+    it('should throw TOKEN_INVALID when mfaEnabled is true but mfaSecret is null', async () => {
+      expect.assertions(1)
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_ENABLED, mfaSecret: null })
+
+      try {
+        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
+        })
+      }
+    })
+
+    // Verifies that regenerate throws ACCOUNT_LOCKED when the brute-force
+    // threshold has been reached. Reuses the disable counter namespace so a
+    // pre-auth attacker cannot exhaust it via the public challenge endpoint.
+    it('should throw ACCOUNT_LOCKED when user is locked out', async () => {
+      expect.assertions(2)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockBruteForce.isLockedOut.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      try {
+        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
+        })
+      }
+      expect(warnSpy).toHaveBeenCalledWith(
+        'regenerateRecoveryCodes: account locked userId=user-1 context=dashboard'
+      )
+      warnSpy.mockRestore()
+    })
+
+    // Verifies that regenerate throws MFA_INVALID_CODE for a wrong TOTP and
+    // records a brute-force failure (same counter as disable — kills mutants
+    // that would target the challenge counter instead).
+    it('should throw MFA_INVALID_CODE and record brute-force failure for a wrong code', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(
+        service.regenerateRecoveryCodes('user-1', '000000', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
+        hmacSha256('disable:user-1', HMAC_KEY)
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        'regenerateRecoveryCodes: invalid MFA code userId=user-1 context=dashboard'
+      )
+      warnSpy.mockRestore()
+    })
+
+    // Verifies the happy path: a valid TOTP returns fresh plain-text codes,
+    // persists new hashes via userRepo, resets the brute-force counter, and
+    // preserves the existing TOTP secret (only recovery codes change).
+    it('should return fresh recovery codes and persist new hashes on a valid TOTP', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+      const encryptedSecret = encrypt(base32, VALID_ENCRYPTION_KEY)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encryptedSecret,
+        mfaRecoveryCodes: ['$scrypt$old1', '$scrypt$old2']
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      const result = await service.regenerateRecoveryCodes(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser'
+      )
+
+      // recoveryCodeCount=2 in mockOptions
+      expect(result.recoveryCodes).toHaveLength(2)
+      for (const code of result.recoveryCodes) {
+        expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){5}$/)
+      }
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+        mfaEnabled: true,
+        mfaSecret: encryptedSecret, // unchanged — only recovery codes rotate
+        mfaRecoveryCodes: expect.any(Array)
+      })
+      // The stored hashes must NOT be the same as the old ones — pins that
+      // the new codes are actually fresh.
+      const persisted = mockUserRepo.updateMfa.mock.calls[0]?.[1] as {
+        mfaRecoveryCodes: string[]
+      }
+      expect(persisted.mfaRecoveryCodes).not.toEqual(['$scrypt$old1', '$scrypt$old2'])
+      expect(mockBruteForce.resetFailures).toHaveBeenCalled()
+      expect(logSpy).toHaveBeenCalledWith(
+        'regenerateRecoveryCodes: recovery codes regenerated userId=user-1 context=dashboard'
+      )
+      // The afterMfaRecoveryCodesRegenerated hook must be invoked with the
+      // dashboard projection (real tenantId).
+      expect(mockHooks.afterMfaRecoveryCodesRegenerated).toHaveBeenCalledTimes(1)
+      const hookUser = mockHooks.afterMfaRecoveryCodesRegenerated.mock.calls[0]?.[0] as {
+        tenantId: string
+      }
+      expect(hookUser.tenantId).toBe('tenant-1')
+      logSpy.mockRestore()
+    })
+
+    // Verifies that the platform context routes the write through
+    // platformUserRepo and fires the hook with the platform projection. This is
+    // the strongest test against silent cross-repo writes.
+    it('should persist via platformUserRepo and fire the platform hook projection for platform context', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: true,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: ['$scrypt$old1']
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      const result = await service.regenerateRecoveryCodes(
+        'admin-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'platform'
+      )
+
+      expect(result.recoveryCodes).toHaveLength(2)
+      expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
+        'admin-1',
+        expect.objectContaining({ mfaEnabled: true })
+      )
+      // The dashboard repo must NOT receive the write.
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      // The hook must receive the platform projection (tenantId='' sentinel).
+      expect(mockHooks.afterMfaRecoveryCodesRegenerated).toHaveBeenCalledTimes(1)
+      const hookUser = mockHooks.afterMfaRecoveryCodesRegenerated.mock.calls[0]?.[0] as {
+        tenantId: string
+        emailVerified: boolean
+      }
+      expect(hookUser.tenantId).toBe('')
+      expect(hookUser.emailVerified).toBe(true)
+    })
+
+    // Verifies that regenerate throws MFA_NOT_ENABLED when the platform user
+    // repository was not configured — caller misconfiguration must fail closed,
+    // never silently fall back to the dashboard repo (data corruption risk).
+    it('should throw MFA_NOT_ENABLED when platform context is used without platformUserRepo', async () => {
+      const { Test: NestTest } = await import('@nestjs/testing')
+      const moduleWithoutRepo = await NestTest.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
+
+      await expect(
+        serviceWithoutRepo.regenerateRecoveryCodes(
+          'admin-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'platform'
+        )
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Verifies that errors thrown by the hook are silently suppressed — a
+    // failing audit-log integration must not propagate after a successful
+    // rotation. Mirrors the disable() suppression contract.
+    it('should complete successfully even when afterMfaRecoveryCodesRegenerated hook rejects', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockHooks.afterMfaRecoveryCodesRegenerated.mockImplementation(() =>
+        Promise.reject(new Error('hook failure'))
+      )
+
+      await expect(
+        service.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+      ).resolves.toEqual(expect.objectContaining({ recoveryCodes: expect.any(Array) }))
+      // Drain microtasks so the .catch callback executes (for coverage).
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Verifies that regenerate completes without the hook registered — covers
+    // the false branch of `if (this.hooks.afterMfaRecoveryCodesRegenerated)`.
+    it('should complete regenerate when no afterMfaRecoveryCodesRegenerated hook is registered', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const module = await Test.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          // Hooks object without afterMfaRecoveryCodesRegenerated — the `if` guard must short-circuit.
+          { provide: BYMAX_AUTH_HOOKS, useValue: {} }
+        ]
+      }).compile()
+      const noHookService = module.get(MfaService)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      await expect(
+        noHookService.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+      ).resolves.toEqual(expect.objectContaining({ recoveryCodes: expect.any(Array) }))
+    })
+
+    // Verifies that the default DEFAULT_RECOVERY_CODE_COUNT (8) is used when
+    // recoveryCodeCount is absent from the mfa options — exercises the
+    // `?? DEFAULT_RECOVERY_CODE_COUNT` branch at the regenerate path.
+    it('should use DEFAULT_RECOVERY_CODE_COUNT when recoveryCodeCount is not configured', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const { Test: NestTest } = await import('@nestjs/testing')
+      const optionsWithoutCount = {
+        jwt: { secret: JWT_SECRET },
+        hmacKey: HMAC_KEY,
+        mfa: {
+          encryptionKey: VALID_ENCRYPTION_KEY,
+          issuer: 'TestApp',
+          totpWindow: 1
+          // recoveryCodeCount intentionally absent
+        },
+        sessions: { enabled: false, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+      }
+      const module = await NestTest.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWithoutCount },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const svc = module.get(MfaService)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      const result = await svc.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+
+      expect(result.recoveryCodes).toHaveLength(8)
     })
   })
 })

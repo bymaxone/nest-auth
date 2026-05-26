@@ -214,6 +214,20 @@ export interface IAuthHooks {
   afterMfaDisabled?(user: SafeAuthUser, context: HookContext): Promise<void> | void
 
   /**
+   * Called after MFA recovery codes have been successfully regenerated.
+   *
+   * Use this hook to send a security alert reminding the user to store the new
+   * codes safely, append an audit-log entry, or propagate the rotation to
+   * downstream systems. The plain-text codes themselves are NOT passed to the
+   * hook — they are only delivered to the requesting client.
+   *
+   * @param user - The user whose recovery codes were regenerated
+   *   (credential fields omitted).
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  afterMfaRecoveryCodesRegenerated?(user: SafeAuthUser, context: HookContext): Promise<void> | void
+
+  /**
    * Called when a successful login originates from a new device or location.
    *
    * Use this hook to trigger new-session security alerts (via
