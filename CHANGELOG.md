@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-05-26
+
+### Fixed
+
+- **OAuth + MFA cookie path now configurable for apps with `setGlobalPrefix`** ([`src/server/interfaces/auth-module-options.interface.ts`](src/server/interfaces/auth-module-options.interface.ts), [`src/server/config/default-options.ts`](src/server/config/default-options.ts), [`src/server/oauth/oauth.controller.ts`](src/server/oauth/oauth.controller.ts), [`src/server/controllers/mfa.controller.ts`](src/server/controllers/mfa.controller.ts)). Prior to v1.0.9, the OAuth callback planted the `mfa_temp_token` cookie with `Path` hard-derived from `routePrefix` (`/${routePrefix}/mfa`). When the consuming Nest app calls `app.setGlobalPrefix('api')`, the lib's routes mount at `/api/auth/mfa/challenge` — but the cookie path stayed at `/auth/mfa`, which the browser refuses to send on requests under `/api/auth/mfa/...` per RFC 6265 prefix-match. The OAuth-driven MFA flow was silently broken end-to-end: cookie set, cookie dropped, every subsequent challenge attempt surfaced as `MFA_TEMP_TOKEN_INVALID` ("MFA session expired") because the controller received no token at all. The lib could not detect this — the global prefix is configured on the Nest app instance after the auth module is constructed, so it is not observable at option resolution time.
+
+  A new `cookies.mfaTempCookiePath?: string` option lets the consumer set the exact `Path` attribute used when the OAuth callback plants the temp cookie and when the MFA challenge controller clears it. Defaults to `'/auth/mfa'` — correct when the lib's routes are mounted at the application root. Apps that call `app.setGlobalPrefix('api')` MUST set this to `'/api/auth/mfa'`. The default keeps existing consumers without a global prefix on the path that worked for them in v1.0.7+; only consumers with a Nest global prefix need to opt in.
+
+  Both call sites (`OAuthController.setMfaTempCookie` and `MfaController.clearMfaTempCookie`) now read from `options.cookies.mfaTempCookiePath` instead of computing `/${routePrefix}/mfa` inline. This also means the set + clear paths can never diverge — the browser uses the path attribute to scope cookie deletion, so a mismatch between set and clear would leave dead cookies in the jar.
+
+  **Backward compatibility**: every existing consumer that did NOT use OAuth + MFA continues to work unchanged. Consumers that DID use OAuth + MFA AND did NOT use `setGlobalPrefix` see no change (default `'/auth/mfa'` matches what they had). Consumers that DID use both and ARE using a global prefix had a silently-broken flow before v1.0.9 — setting `cookies.mfaTempCookiePath` fixes it.
+
+### Tests
+
+- **Updated existing `mfa.controller.spec.ts` and `oauth.controller.spec.ts` fixtures** to surface `cookies.mfaTempCookiePath` on the mocked `ResolvedOptions`. The dedicated path-attribute test that previously pinned the value via `routePrefix: 'api/auth'` is reframed to pin it via `cookies.mfaTempCookiePath: '/api/auth/mfa'`.
+- **104 test suites · 2143 tests · 100% statement / branch / function / line coverage** maintained (verified via `pnpm test:cov:all`).
+
 ## [1.0.8] - 2026-05-26
 
 ### Fixed

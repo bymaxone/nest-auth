@@ -273,10 +273,11 @@ export class OAuthController {
    *   server-side challenge route, not by any client code.
    * - `Secure`: derived from `secureCookies` (true in production by default).
    * - `SameSite`: derived from `cookies.sameSite` (defaults to `'lax'`).
-   * - `Path`: scoped to the MFA challenge endpoint so the cookie is never sent
-   *   on unrelated requests. Built by concatenating `routePrefix` and `/mfa`
-   *   so consumers with a custom prefix (e.g. `api/auth`) still get the right
-   *   scope.
+   * - `Path`: `cookies.mfaTempCookiePath` (default `/auth/mfa`). Consumers
+   *   that call `app.setGlobalPrefix(...)` MUST override this — the lib
+   *   cannot observe the global prefix at module construction time, and
+   *   a mismatched path makes the browser silently drop the cookie per
+   *   RFC 6265 prefix-match.
    * - `Max-Age`: 300 seconds — exactly matches the underlying MFA temp JWT
    *   TTL (`MFA_TEMP_TOKEN_TTL_SECONDS` in `token-manager.service.ts`).
    *   Keeping the two TTLs identical avoids the failure mode where the
@@ -288,7 +289,7 @@ export class OAuthController {
       httpOnly: true,
       secure: this.options.secureCookies,
       sameSite: this.options.cookies.sameSite,
-      path: `/${this.options.routePrefix}/mfa`,
+      path: this.options.cookies.mfaTempCookiePath,
       maxAge: MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1_000
     })
   }

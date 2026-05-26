@@ -1,6 +1,6 @@
 {
   "name": "@bymax-one/nest-auth",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Full-stack authentication and authorization package for NestJS, React and Next.js — JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
   "author": "Bymax One <support@bymax.one>",
   "license": "MIT",
@@ -61,9 +61,7 @@
     "mutation:incremental": "stryker run --incremental",
     "mutation:dry-run": "stryker run --dryRunOnly",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
-    "duplication:check": "jscpd",
-    "size": "size-limit",
-    "size:why": "size-limit --why",
+    "size": "node scripts/check-size.mjs",
     "clean": "rm -rf dist coverage",
     "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build",
     "release": "pnpm publish --provenance"

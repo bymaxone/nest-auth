@@ -147,7 +147,7 @@ export class MfaController {
    */
   private clearMfaTempCookie(res: Response): void {
     res.clearCookie(MFA_TEMP_COOKIE_NAME, {
-      path: `/${this.options.routePrefix}/mfa`,
+      path: this.options.cookies.mfaTempCookiePath,
       httpOnly: true,
       secure: this.options.secureCookies,
       sameSite: this.options.cookies.sameSite

@@ -48,16 +48,17 @@ const mockTokenDelivery = {
 /**
  * Builds a minimal `ResolvedOptions` shape sufficient for the controller. The
  * controller reads `oauth.{successRedirectUrl,mfaRedirectUrl,errorRedirectUrl}`,
- * `routePrefix`, `secureCookies`, and `cookies.sameSite` — the rest of the
- * shape is intentionally left as `unknown` via the cast so the fixture does
- * not need to mirror the full options tree.
+ * `routePrefix`, `secureCookies`, `cookies.sameSite`, and
+ * `cookies.mfaTempCookiePath` — the rest of the shape is intentionally left
+ * as `unknown` via the cast so the fixture does not need to mirror the full
+ * options tree.
  */
 function buildOptions(oauth?: ResolvedOptions['oauth']): ResolvedOptions {
   return {
     oauth,
     routePrefix: 'auth',
     secureCookies: false,
-    cookies: { sameSite: 'lax' }
+    cookies: { sameSite: 'lax', mfaTempCookiePath: '/auth/mfa' }
   } as unknown as ResolvedOptions
 }
 
@@ -431,11 +432,12 @@ describe('OAuthController', () => {
     })
 
     /**
-     * Pins the path attribute under a custom `routePrefix`: the cookie must
-     * be scoped to `/${routePrefix}/mfa` so the consumer's choice of prefix
-     * does not break the MFA challenge cookie attachment.
+     * Pins the path attribute under a custom `cookies.mfaTempCookiePath`:
+     * the cookie must be scoped exactly to the value the consumer set so
+     * apps using `app.setGlobalPrefix(...)` can prefix-match the real
+     * challenge URL (e.g. `/api/auth/mfa/challenge`).
      */
-    it('should scope the mfa_temp_token cookie path to the configured routePrefix', async () => {
+    it('should scope the mfa_temp_token cookie path to cookies.mfaTempCookiePath', async () => {
       const module = await Test.createTestingModule({
         controllers: [OAuthController],
         providers: [
@@ -445,9 +447,9 @@ describe('OAuthController', () => {
             provide: BYMAX_AUTH_OPTIONS,
             useValue: {
               oauth: {},
-              routePrefix: 'api/auth',
+              routePrefix: 'auth',
               secureCookies: true,
-              cookies: { sameSite: 'strict' }
+              cookies: { sameSite: 'strict', mfaTempCookiePath: '/api/auth/mfa' }
             } as unknown as ResolvedOptions
           }
         ]

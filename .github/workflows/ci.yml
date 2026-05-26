@@ -77,22 +77,6 @@ jobs:
           path: coverage/
           retention-days: 14
 
-      # Advisory duplication scan. Never fails the build — the JSON report is
-      # uploaded as an artifact so reviewers can inspect regressions without
-      # gating PRs on a soft metric.
-      - name: Duplication scan (jscpd)
-        continue-on-error: true
-        run: pnpm duplication:check
-
-      - name: Upload duplication report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: jscpd-report-node-${{ matrix.node-version }}
-          path: reports/jscpd/
-          retention-days: 14
-          if-no-files-found: ignore
-
       - name: Build all subpaths
         run: pnpm build
 
@@ -110,3 +94,8 @@ jobs:
             done
           done
           echo "All 5 subpaths produced ESM + CJS + .d.ts + .d.cts"
+
+      - name: Bundle size budget
+        # Zero-dependency brotli-size gate over the built .mjs subpaths.
+        # See scripts/check-size.mjs for budgets and rationale.
+        run: pnpm size

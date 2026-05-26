@@ -109,14 +109,15 @@ const mockRes = {
 
 /**
  * Minimal `ResolvedOptions` shape exercised by `MfaController.challenge`. Only
- * `routePrefix`, `secureCookies`, and `cookies.sameSite` are consumed by the
- * clear-cookie path; the rest of the shape is intentionally left as `unknown`
- * via a cast so the test fixture does not need to mirror the full options tree.
+ * `routePrefix`, `secureCookies`, `cookies.sameSite`, and
+ * `cookies.mfaTempCookiePath` are consumed by the clear-cookie path; the rest
+ * of the shape is intentionally left as `unknown` via a cast so the test
+ * fixture does not need to mirror the full options tree.
  */
 const MOCK_OPTIONS = {
   routePrefix: 'auth',
   secureCookies: false,
-  cookies: { sameSite: 'lax' as const }
+  cookies: { sameSite: 'lax' as const, mfaTempCookiePath: '/auth/mfa' }
 } as unknown as ResolvedOptions
 
 // ---------------------------------------------------------------------------
