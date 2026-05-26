@@ -960,6 +960,285 @@ describe('AuthService', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // issueTokensForUserId (workspace switch / password-less token issuance)
+  // ---------------------------------------------------------------------------
+
+  describe('issueTokensForUserId', () => {
+    /*
+     * Scenario: target user exists, is ACTIVE, emailVerified, MFA off.
+     * Expected: returns AuthResult from TokenManagerService.issueTokens.
+     * Protects: the happy path of the v1.0.10 password-less token path used
+     * by consumer apps to implement silent workspace switch.
+     */
+    it('should issue tokens for an active verified user without MFA', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockSessionService.createSession.mockResolvedValue(undefined)
+
+      const result = await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+
+      expect(result).toBe(AUTH_RESULT)
+      expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'user-1' }),
+        '1.2.3.4',
+        'Browser'
+      )
+    })
+
+    /*
+     * Scenario: target userId does not exist.
+     * Expected: throws AuthException(TOKEN_INVALID) — same code as getMe to
+     * avoid leaking whether the userId is a valid handle or a typo.
+     * Protects: user-not-found branch.
+     */
+    it('should throw TOKEN_INVALID when target user does not exist', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.issueTokensForUserId('ghost', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    /*
+     * Scenario: target user is SUSPENDED. The same `assertUserNotBlocked`
+     * guard the password-login path uses must fire — otherwise the
+     * password-less path becomes a back-door around account holds.
+     * Protects: status branch with surfaced ACCOUNT_SUSPENDED.
+     */
+    it('should throw ACCOUNT_SUSPENDED when target user is suspended', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, status: 'suspended' })
+
+      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      try {
+        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED })
+        })
+      }
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    /*
+     * Scenario: target user has not verified their email AND verification
+     * is required globally. The password-login path enforces this gate so
+     * the password-less path must mirror it.
+     * Protects: EMAIL_NOT_VERIFIED branch.
+     */
+    it('should throw EMAIL_NOT_VERIFIED when verification is required and user is unverified', async () => {
+      // Build a separate service instance with emailVerification.required=true.
+      // The default mockOptions has it disabled, so a freshly-issued switch
+      // for an unverified user would succeed under defaults — but ANY app
+      // that turns verification on must see the gate fire.
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      const svc = module.get(AuthService)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, emailVerified: false })
+
+      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      try {
+        await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED })
+        })
+      }
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    /*
+     * Scenario: target user has MFA enabled.
+     * Expected: throws AuthException(MFA_REQUIRED). The consumer is expected
+     * to route through the MFA challenge flow for that user — issuing a
+     * full session with `mfaVerified: false` would let the dashboard's
+     * MfaRequiredGuard lock the user out on every subsequent request.
+     * Protects: MFA branch.
+     */
+    it('should throw MFA_REQUIRED when target user has MFA enabled', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: true })
+
+      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      try {
+        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_REQUIRED })
+        })
+      }
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    /*
+     * Scenario: sessions are enabled in the resolved options.
+     * Expected: a refresh session is tracked via SessionService so the
+     * concurrent-session limit applies to switched sessions identically.
+     * Protects: the sessions.enabled branch.
+     */
+    it('should create a tracked session when sessions are enabled', async () => {
+      // Default mockOptions has sessions.enabled=false; override so the
+      // session-tracking branch fires under test.
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              sessions: { enabled: true, defaultMaxSessions: 5, evictionStrategy: 'fifo' }
+            }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      const svc = module.get(AuthService)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockSessionService.createSession.mockResolvedValue(undefined)
+
+      await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+
+      expect(mockSessionService.createSession).toHaveBeenCalledWith(
+        'user-1',
+        AUTH_RESULT.rawRefreshToken,
+        '1.2.3.4',
+        'Browser'
+      )
+    })
+
+    /*
+     * Scenario: the configured `afterLogin` hook is invoked on success.
+     * Expected: hook fires (fire-and-forget) with the safe user + a minimal
+     * HookContext. Mirrors `login()` so consumers cannot tell whether a
+     * session was created via password or via switch when wiring audit logs.
+     * Protects: hook side-effect branch.
+     */
+    it('should fire afterLogin hook with the switched safe user', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+
+      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      // Hooks are fire-and-forget — flush microtasks before asserting.
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockHooks.afterLogin).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'user-1' }),
+        expect.objectContaining({ userId: 'user-1', ip: '1.2.3.4', userAgent: 'Browser' })
+      )
+    })
+
+    /*
+     * Scenario: `updateLastLogin` rejects (e.g. DB hiccup during switch).
+     * Expected: error is caught and logged via the service Logger; the
+     * switch caller does NOT see the rejection because the side-effect
+     * is fire-and-forget. Mirrors the same guard `login()` ships.
+     * Protects: the `.catch()` arm on the updateLastLogin promise.
+     */
+    it('should log and swallow updateLastLogin errors (fire-and-forget)', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockUserRepo.updateLastLogin.mockRejectedValue(new Error('db error'))
+
+      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      // Allow the fire-and-forget promise to settle.
+      await new Promise((r) => setImmediate(r))
+
+      expect(loggerSpy).toHaveBeenCalledWith('updateLastLogin failed', expect.any(Error))
+      loggerSpy.mockRestore()
+    })
+
+    /*
+     * Scenario: the `afterLogin` hook rejects.
+     * Expected: error is caught + logged; the switch caller does NOT see
+     * the rejection. Mirrors the same guard `login()` ships so consumers
+     * cannot tell from caller-side whether the session was issued via
+     * password or via switch when their hooks fail.
+     * Protects: the `.catch()` arm on the afterLogin promise.
+     */
+    it('should log and swallow afterLogin hook errors (fire-and-forget)', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockHooks.afterLogin.mockRejectedValue(new Error('hook error'))
+
+      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      // Allow the fire-and-forget promise to settle.
+      await new Promise((r) => setImmediate(r))
+
+      expect(loggerSpy).toHaveBeenCalledWith('afterLogin hook threw', expect.any(Error))
+      loggerSpy.mockRestore()
+    })
+
+    /*
+     * Scenario: the consumer passed no IAuthHooks implementation (or one
+     * without `afterLogin`). The switch path must NOT call any hook and
+     * must NOT throw an "afterLogin is not a function" reference error.
+     * Protects: the false branch of `if (this.hooks?.afterLogin)` at line
+     * 461 of auth.service.ts — exercises both `hooks === null` and the
+     * `?.` optional-chain on `afterLogin`.
+     */
+    it('should skip the afterLogin hook when hooks are unconfigured', async () => {
+      // Build a service with hooks === null to hit the false branch.
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: null },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      const svc = module.get(AuthService)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+
+      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).resolves.toBe(
+        AUTH_RESULT
+      )
+      // Hook mock from the outer scope must not have been called by this
+      // freshly-built service (which uses `null` hooks).
+      expect(mockHooks.afterLogin).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // verifyEmail
   // ---------------------------------------------------------------------------
 

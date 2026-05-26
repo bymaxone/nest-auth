@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-05-26
+
+### Added
+
+- **`AuthService.issueTokensForUserId(userId, ip, userAgent)`** ([`src/server/services/auth.service.ts`](src/server/services/auth.service.ts)). Password-less token issuance for consumer apps that implement "silent workspace switch", "impersonate user", or any flow where ownership has already been proven through a different mechanism (typically: an authenticated JWT for a sibling user row sharing the same email). The method mirrors every status guard the password-login path applies — `ACCOUNT_SUSPENDED`, `ACCOUNT_BANNED`, `ACCOUNT_INACTIVE`, `PENDING_APPROVAL`, `EMAIL_NOT_VERIFIED` (when verification is required) — and additionally throws `MFA_REQUIRED` when the target user has MFA enabled, so the consumer is forced to route through `MfaService.challenge` rather than silently issuing a session with `mfaVerified: false` that the dashboard's `MfaRequiredGuard` would reject on every request.
+
+  Side effects match `login()`: concurrent-session limit via `SessionService.createSession` when sessions are enabled, fire-and-forget `userRepo.updateLastLogin`, fire-and-forget `IAuthHooks.afterLogin`. **Authorisation is the caller's responsibility** — the method does NOT verify the calling identity has any relationship to `userId`. A consumer using this for workspace switch must enforce the ownership rule (typically: same-email between the calling session and the target user) before invoking.
+
+  Use case for the example app: the workspace switcher needs to issue a session for the target tenant's `User` row (distinct row, same email) without forcing the user to re-type their password. The controller validates the email match against the current JWT, calls `issueTokensForUserId(targetUserId, ip, ua)`, then delivers the result via `TokenDeliveryService.deliverAuthResponse` (also newly exported — see below).
+
+- **`TokenDeliveryService` now public** ([`src/server/index.ts`](src/server/index.ts)). Previously internal to the lib's own controllers. Exporting it gives consumer apps the only correct way to write the lib's auth cookies on a custom controller's response — replicating the cookie attribute set (`httpOnly`, `secure`, `sameSite`, paths, `maxAge`) inline would silently drift when the lib changes one of those values. Pair this with `AuthService.issueTokensForUserId` (above) or any future password-less path. Exports cover both the service class and the four response-shape types it returns: `BearerAuthResponse`, `BothAuthResponse`, `CookieAuthResponse`, `PlatformBearerAuthResponse`.
+
+### Tests
+
+- **8 new unit tests** in [`src/server/services/auth.service.spec.ts`](src/server/services/auth.service.spec.ts) covering `issueTokensForUserId`: happy path (active, verified, MFA off), `TOKEN_INVALID` on missing user, `ACCOUNT_SUSPENDED` propagation, `EMAIL_NOT_VERIFIED` when verification is required, `MFA_REQUIRED` for MFA-enabled targets, `SessionService.createSession` invocation when sessions are enabled, `afterLogin` hook fire-and-forget, `updateLastLogin` error swallow, `afterLogin` error swallow, and the no-hooks-configured branch.
+- **104 test suites · 2153 tests · 100% statement / branch / function / line coverage** maintained (verified via `pnpm test:cov:all`).
+
+### Notes on backward compatibility
+
+Every addition is additive: no existing signature, return shape, or behaviour changes. Consumers that do not call `issueTokensForUserId` or `TokenDeliveryService` see zero change.
+
 ## [1.0.9] - 2026-05-26
 
 ### Fixed
