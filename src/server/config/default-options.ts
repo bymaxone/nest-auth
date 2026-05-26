@@ -46,6 +46,12 @@ export const DEFAULT_OPTIONS = {
     refreshTokenName: 'refresh_token',
     sessionSignalName: 'has_session',
     refreshCookiePath: '/auth',
+    // Default scopes the OAuth-MFA temp cookie to the lib's own `/auth/mfa`
+    // tree. Consumers using `app.setGlobalPrefix(...)` MUST override this
+    // explicitly (e.g. `'/api/auth/mfa'`) — the lib cannot observe the
+    // global prefix at module construction time, and a mismatched path
+    // makes the browser silently drop the cookie per RFC 6265 prefix-match.
+    mfaTempCookiePath: '/auth/mfa',
     // 'lax' matches Chromium's default for cookies that omit SameSite. It
     // delivers auth cookies on top-level cross-site GET navigations — the
     // case that makes OAuth redirects (Google → callback → dashboard) work

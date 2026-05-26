@@ -35,6 +35,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Blocks PRs that introduce dependencies with known vulnerabilities or
+      # license violations. PR-only — on push to main there is no base ref to
+      # diff against. Free on public repos.
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -84,3 +94,8 @@ jobs:
             done
           done
           echo "All 5 subpaths produced ESM + CJS + .d.ts + .d.cts"
+
+      - name: Bundle size budget
+        # Zero-dependency brotli-size gate over the built .mjs subpaths.
+        # See scripts/check-size.mjs for budgets and rationale.
+        run: pnpm size
