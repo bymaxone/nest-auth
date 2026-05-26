@@ -713,28 +713,48 @@ export class TokenManagerService {
   }
 
   /**
-   * Verifies a MFA temp token and atomically consumes it (single-use).
+   * Verifies a MFA temp token WITHOUT consuming it.
    *
-   * Validates the JWT signature and expiry, then atomically gets and deletes the
-   * Redis entry keyed by `mfa:{sha256(jti)}`. The atomic GETDEL prevents a
-   * time-of-check/time-of-use race where two concurrent requests with the same
-   * token could both pass the existence check before either deletes the key.
+   * Validates the JWT signature and expiry, then performs a Redis `GET`
+   * to confirm the entry still exists. The Redis key is NOT removed by
+   * this call — the caller must invoke {@link consumeMfaTempToken} with
+   * the returned `jti` after successfully validating the TOTP code.
+   *
+   * **Why verify and consume are split** (v1.0.8+): the previous version
+   * used an atomic `GETDEL` here as a TOCTOU defence, but it had a fatal
+   * UX side effect: a single mistyped TOTP digit consumed the token, so
+   * the user's retry attempt always failed with `MFA_TEMP_TOKEN_INVALID`.
+   * Splitting verify from consume lets the MFA service retry within the
+   * token's TTL (5 minutes) while keeping the rest of the security model
+   * intact:
+   *   - The JWT is signed and short-lived, so it cannot be forged.
+   *   - The brute-force counter (`bruteForce.recordFailure` keyed on
+   *     `challenge:${userId}`) caps how many wrong codes can be tried
+   *     under one token before the account is locked.
+   *   - The Redis entry's TTL caps the total replay window.
+   * The single TOCTOU race that GETDEL prevented (two concurrent
+   * successful submissions both completing) collapses into "two valid
+   * sessions for the same legitimate user" — a benign duplicate, not a
+   * privilege escalation.
    *
    * @param token - The MFA temp JWT issued by {@link issueMfaTempToken}.
-   * @returns The `userId` and `context` extracted from the token.
-   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` if the token is
-   *   missing from Redis (already consumed, expired, or revoked).
+   * @returns The `userId`, `context`, and `jti` from the token. Pass the
+   *   `jti` to {@link consumeMfaTempToken} after TOTP validation succeeds.
+   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` if the
+   *   Redis entry is missing (already consumed, expired, or never issued).
    * @throws If the JWT signature or expiry is invalid (propagated from JwtService).
    */
   async verifyMfaTempToken(
     token: string
-  ): Promise<{ userId: string; context: 'dashboard' | 'platform' }> {
+  ): Promise<{ userId: string; context: 'dashboard' | 'platform'; jti: string }> {
     const payload = this.jwtService.verify<MfaTempPayload>(token, {
       algorithms: [this.options.jwt.algorithm]
     })
 
-    // Atomic GET+DEL prevents TOCTOU: two concurrent requests cannot both consume the token.
-    const storedUserId = await this.redis.getdel(`mfa:${sha256(payload.jti)}`)
+    // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
+    // retry under the same token. consumeMfaTempToken deletes it once
+    // the caller has confirmed the code is valid.
+    const storedUserId = await this.redis.get(`mfa:${sha256(payload.jti)}`)
 
     if (storedUserId === null) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
@@ -747,6 +767,22 @@ export class TokenManagerService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
-    return { userId: payload.sub, context: payload.context }
+    return { userId: payload.sub, context: payload.context, jti: payload.jti }
+  }
+
+  /**
+   * Atomically consumes a previously-verified MFA temp token.
+   *
+   * Removes the Redis entry keyed by `mfa:{sha256(jti)}` so the token
+   * cannot be reused. Idempotent: a second call (e.g. from a concurrent
+   * request that lost a race) is a no-op. Must be called only AFTER
+   * the TOTP / recovery code has been validated, otherwise wrong-code
+   * retries inside the JWT TTL would surface as `MFA_TEMP_TOKEN_INVALID`
+   * instead of `MFA_INVALID_CODE`.
+   *
+   * @param jti - The `jti` claim returned by {@link verifyMfaTempToken}.
+   */
+  async consumeMfaTempToken(jti: string): Promise<void> {
+    await this.redis.del(`mfa:${sha256(jti)}`)
   }
 }

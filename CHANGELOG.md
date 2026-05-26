@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-05-26
+
+### Fixed
+
+- **MFA challenge retry — wrong TOTP no longer invalidates the temp token** ([`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts), [`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts), [`src/server/controllers/mfa.controller.ts`](src/server/controllers/mfa.controller.ts)). Prior to v1.0.8, `TokenManagerService.verifyMfaTempToken` used an atomic Redis `GETDEL` as its FIRST step — so a single mistyped TOTP digit consumed the JWT, and the user's retry attempt always failed with `MFA_TEMP_TOKEN_INVALID` ("MFA session expired. Please sign in again.") regardless of whether the next code was correct. Affected both flows: the password-login path (sessionStorage temp token) and the OAuth-driven path (HttpOnly cookie temp token added in v1.0.7). The only recovery was to re-drive the whole login or OAuth flow on every typo.
+
+  `verifyMfaTempToken` now uses a non-destructive `GET` and returns the token's `jti` claim alongside `userId` / `context`. A new sibling method `consumeMfaTempToken(jti)` performs an idempotent `DEL` and is invoked by `MfaService.challenge` only AFTER the TOTP / recovery code has been validated. Wrong codes throw `MFA_INVALID_CODE` with the JWT still alive in Redis — the user can retry inside the existing 5-minute TTL. The brute-force counter (`bruteForce.recordFailure` keyed on `challenge:${userId}`) caps how many wrong attempts can be tried under one token before the account is locked, so the security model is unchanged at the boundary.
+
+  The TOCTOU race the original `GETDEL` was designed to prevent (two concurrent successful submissions both completing) collapses into a benign duplicate: two valid sessions for the same legitimate user, not a privilege escalation. Defence-in-depth: the JWT itself is signed and short-lived (5 min), so a stolen token cannot be replayed beyond its TTL, and the brute-force lockout caps the attacker's TOTP-guessing window the same way it caps a legitimate user's typo budget.
+
+  The OAuth-MFA controller's cookie-clearing policy now matches the retry-friendly service contract:
+  - On success → clear the (now-consumed) `mfa_temp_token` cookie.
+  - On `MFA_TEMP_TOKEN_INVALID` → clear the cookie (token is dead, retry impossible — surface that physically in the jar).
+  - On `MFA_INVALID_CODE`, `ACCOUNT_LOCKED`, transient errors → KEEP the cookie so the user can retry without re-driving OAuth.
+
+  **Backward compatibility**: `verifyMfaTempToken`'s public return shape gained a third field (`jti`); callers that destructured only `userId` and `context` continue to compile and run unchanged. The new `consumeMfaTempToken` method is additive. Existing throttle limits, brute-force thresholds, error codes, and cookie attributes are untouched. The `MFA_TEMP_TOKEN_INVALID` shape and HTTP status are identical for every legitimately-expired/forged token.
+
+### Tests
+
+- **3 new unit tests** in [`src/server/services/token-manager.service.spec.ts`](src/server/services/token-manager.service.spec.ts) covering `consumeMfaTempToken`: deletes the `mfa:{sha256(jti)}` entry, hashes the `jti` (never persists it raw), idempotent on repeat calls.
+- **Updated existing `verifyMfaTempToken` tests** to assert the new GET-not-GETDEL contract and the new `jti` in the return shape.
+- **4 new unit tests** in [`src/server/controllers/mfa.controller.spec.ts`](src/server/controllers/mfa.controller.spec.ts) covering the cookie-clearing matrix: keep on `MFA_INVALID_CODE`, keep on `ACCOUNT_LOCKED`, clear on `MFA_TEMP_TOKEN_INVALID`, keep on a non-`AuthException` transient error.
+- **Updated existing integration smoke tests** (`mfa-integration.spec.ts`, `mfa.service.spec.ts`) to mock the split `verifyMfaTempToken` + `consumeMfaTempToken` flow.
+- **104 test suites · 2142 tests · 100% statement / branch / function / line coverage** maintained (verified via `pnpm test:cov:all`).
+
 ## [1.0.7] - 2026-05-26
 
 ### Added
