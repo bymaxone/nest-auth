@@ -375,6 +375,106 @@ export class AuthService {
   }
 
   // ---------------------------------------------------------------------------
+  // Password-less token issuance (workspace switch, impersonation)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Issues a full dashboard session for an existing user **without** verifying
+   * a password. Used by consumer applications that implement
+   * "switch workspace" or "impersonate user" flows where ownership has
+   * already been proven via a different mechanism (typically: an
+   * authenticated JWT for a sibling user row sharing the same email).
+   *
+   * **Authorisation is the caller's responsibility.** This method assumes the
+   * controller invoking it has already enforced whatever ownership rule
+   * applies — e.g. "the current session's email matches the target user's
+   * email" for the workspace-switch use case. Calling it without an
+   * application-level guard makes every userId log-in-able directly.
+   *
+   * Status validation matches the password-login path so a SUSPENDED /
+   * BANNED / INACTIVE user cannot be revived via the switch:
+   *
+   *   - `ACCOUNT_INACTIVE` / `ACCOUNT_SUSPENDED` / `ACCOUNT_BANNED` /
+   *     `PENDING_APPROVAL` — surfaced verbatim per status.
+   *   - `EMAIL_NOT_VERIFIED` when `emailVerification.required` is true.
+   *   - `MFA_REQUIRED` (no challenge issued) when the target user has MFA
+   *     enabled. The consumer is expected to detect `mfaEnabled` BEFORE
+   *     calling this method and route through `MfaService.challenge`
+   *     instead — issuing tokens with `mfaVerified: false` would let the
+   *     dashboard's `MfaRequiredGuard` lock the user out on every request.
+   *
+   * Side effects mirror `login()`:
+   *   - Concurrent-session limit enforced via `sessionService.createSession`
+   *     when `sessions.enabled`.
+   *   - `userRepo.updateLastLogin` runs non-blocking.
+   *   - `IAuthHooks.afterLogin` fires non-blocking.
+   *   - `newSession` notification flow runs through the same hook.
+   *
+   * @param userId - The target user. Must exist; no fallback or auto-create.
+   * @param ip - Client IP for session tracking + audit.
+   * @param userAgent - Client User-Agent for session description.
+   * @returns `AuthResult` with `accessToken`, `rawRefreshToken`, and the
+   *   target user's `SafeAuthUser` projection.
+   * @throws `TOKEN_INVALID` if `userId` does not match any row.
+   * @throws `ACCOUNT_INACTIVE` | `ACCOUNT_SUSPENDED` | `ACCOUNT_BANNED` |
+   *   `PENDING_APPROVAL` per user status.
+   * @throws `EMAIL_NOT_VERIFIED` when verification is required globally.
+   * @throws `MFA_REQUIRED` when the target user has MFA enabled — the
+   *   consumer must route through the MFA challenge flow for that user.
+   */
+  async issueTokensForUserId(userId: string, ip: string, userAgent: string): Promise<AuthResult> {
+    const user = await this.userRepo.findById(userId)
+    if (!user) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
+    // Same status guards as login — keeps the password-less path from
+    // bypassing account-level holds.
+    this.assertUserNotBlocked(user)
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+
+    // MFA-enabled users must complete a TOTP challenge before a full session
+    // is issued. Throwing here forces the consumer to handle the branch
+    // explicitly (typically by issuing a `mfaTempToken` and redirecting to
+    // the MFA challenge page) rather than silently shipping a token with
+    // `mfaVerified: false` that would 401 every subsequent request.
+    if (user.mfaEnabled) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+
+    const safeUser = toSafeUser(user)
+    const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
+
+    if (this.options.sessions.enabled) {
+      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+    }
+
+    this.logger.log(
+      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${safeUser.tenantId}`
+    )
+
+    void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
+      this.logger.error('updateLastLogin failed', err)
+    })
+    if (this.hooks?.afterLogin) {
+      void Promise.resolve(
+        this.hooks.afterLogin(safeUser, {
+          userId: safeUser.id,
+          ip,
+          userAgent,
+          sanitizedHeaders: {}
+        })
+      ).catch((err: unknown) => {
+        this.logger.error('afterLogin hook threw', err)
+      })
+    }
+
+    return result
+  }
+
+  // ---------------------------------------------------------------------------
   // Email verification
   // ---------------------------------------------------------------------------
 

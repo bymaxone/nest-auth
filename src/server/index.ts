@@ -176,6 +176,19 @@ export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).
 export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
+// `TokenDeliveryService` (v1.0.10+) is the only correct way to set the lib's
+// auth cookies on a custom controller's response — replicating the cookie
+// attributes inline would silently drift when the lib changes. Use it from
+// consumer code that issues tokens via `AuthService.issueTokensForUserId`
+// (or another password-less path) and needs to deliver them to the browser
+// with the canonical attribute set.
+export { TokenDeliveryService } from './services/token-delivery.service'
+export type {
+  BearerAuthResponse,
+  BothAuthResponse,
+  CookieAuthResponse,
+  PlatformBearerAuthResponse
+} from './services/token-delivery.service'
 // NOTE: OAuthService is only registered in the NestJS container when
 // controllers.oauth: true. Importing it here for use in a host-app module without
 // that flag set will cause an injection error.
