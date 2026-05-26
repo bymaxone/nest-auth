@@ -1,10 +1,9 @@
 name: Size Limit
 
-# Compares the brotlied bundle size of every published subpath against the
-# PR's base branch and posts a single rolling comment with the delta. The
-# job fails if any subpath exceeds the budget declared in .size-limit.json,
-# so size regressions block merge — but only on PRs (no point running this
-# on push to main where there's no base to diff against).
+# Enforces the brotlied bundle-size budget declared in .size-limit.json for
+# every published subpath. The job fails when any subpath exceeds its limit,
+# so size regressions block merge. PR-only — pushing to main has no base ref
+# to diff against, and the CI workflow already builds main on every push.
 on:
   pull_request:
     branches: [main]
@@ -14,14 +13,18 @@ concurrency:
   group: size-limit-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege: read the repo, write a comment on the PR. No other scopes.
+# Least privilege: read-only. No comment is posted to the PR — size-limit's
+# own output in the job log is sufficient to identify which subpath blew
+# its budget. (Removed `andresz1/size-limit-action` because it shells out to
+# `npx size-limit` even when configured with `package_manager: pnpm`, which
+# bypasses pnpm's isolated node_modules layout and can't see the installed
+# `@size-limit/preset-small-lib`, producing "Unexpected end of JSON input".)
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   size:
-    name: Bundle size delta vs base
+    name: Bundle size budget
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -41,13 +44,11 @@ jobs:
           node-version: 24.x
           cache: pnpm
 
-      # The action checks out and builds the base branch + the PR branch
-      # internally, runs size-limit on both, and posts a single PR comment
-      # with the diff. `package_manager: pnpm` is required because the
-      # default is npm and the lockfile here is pnpm-lock.yaml.
-      - name: Size Limit
-        uses: andresz1/size-limit-action@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          package_manager: pnpm
-          build_script: build
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all subpaths
+        run: pnpm build
+
+      - name: Check bundle sizes against budget
+        run: pnpm size
