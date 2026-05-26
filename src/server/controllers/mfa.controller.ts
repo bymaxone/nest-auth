@@ -75,6 +75,29 @@ function readMfaTempCookie(req: Request): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+/**
+ * True when the thrown error indicates the MFA temp token is no longer
+ * usable (`MFA_TEMP_TOKEN_INVALID`) — i.e., a retry under the same
+ * cookie can never succeed.
+ *
+ * Used by the challenge controller to decide whether to clear the
+ * `mfa_temp_token` cookie on failure. `MFA_INVALID_CODE`, `ACCOUNT_LOCKED`,
+ * and other failures leave the cookie in place so the user can retry
+ * (or wait out the lockout) under the same JWT — see the v1.0.8 split
+ * of verify/consume in `TokenManagerService` for the rationale.
+ *
+ * The `instanceof AuthException` check guarantees the response shape:
+ * `AuthException`'s constructor invariantly calls `super(...)` with
+ * `{ error: { code, message, details } }` (see `auth-exception.ts`),
+ * so the cast on `getResponse()` is safe — the only un-narrowable case
+ * (`getResponse()` returning a string) is unreachable for this class.
+ */
+function isTokenInvalidException(err: unknown): boolean {
+  if (!(err instanceof AuthException)) return false
+  const body = err.getResponse() as { error: { code: string } }
+  return body.error.code === AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID
+}
+
 // ---------------------------------------------------------------------------
 // MfaController
 // ---------------------------------------------------------------------------
@@ -98,6 +121,38 @@ export class MfaController {
     private readonly tokenDelivery: TokenDeliveryService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
+
+  /**
+   * Clears the `mfa_temp_token` HttpOnly cookie planted by the OAuth
+   * callback. Centralised so the success and clear-on-dead-token branches
+   * of {@link challenge} share one source of truth for the cookie's
+   * attributes (path, httpOnly, secure, sameSite) — diverging them would
+   * silently break the cookie removal in some browsers.
+   *
+   * Clearing policy (v1.0.8+) enforced by {@link challenge}:
+   *
+   *   - SUCCESS → clear (JWT consumed by {@link MfaService.challenge}).
+   *   - `MFA_TEMP_TOKEN_INVALID` → clear (token forged / expired / unknown —
+   *     retry under the same cookie can never succeed).
+   *   - `MFA_INVALID_CODE`, `ACCOUNT_LOCKED`, transient errors → KEEP
+   *     (token is still alive in Redis because `TokenManagerService` splits
+   *     verify and consume; the user can retry inside the 5-minute TTL).
+   *
+   * The brute-force counter on {@link MfaService.challenge} still caps
+   * how many wrong codes can be tried under one token before the account
+   * is locked, so the keep-on-failure policy does not weaken the threat
+   * model.
+   *
+   * @param res - Express response in passthrough mode.
+   */
+  private clearMfaTempCookie(res: Response): void {
+    res.clearCookie(MFA_TEMP_COOKIE_NAME, {
+      path: `/${this.options.routePrefix}/mfa`,
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: this.options.cookies.sameSite
+    })
+  }
 
   /**
    * Initiates the MFA setup flow for the authenticated user.
@@ -193,31 +248,18 @@ export class MfaController {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
-    // Use try/finally so the cookie is cleared on EVERY outcome:
-    //   - The underlying JWT is single-use: `verifyMfaTempToken` GETDELs
-    //     the Redis entry as its first step (see mfa.service.ts), so on
-    //     ANY outcome (success, MFA_INVALID_CODE, ACCOUNT_LOCKED) the
-    //     token in the cookie is already dead. Leaving it in the jar
-    //     would only invite a misleading `MFA_TEMP_TOKEN_INVALID` on a
-    //     retry that looks to the user like a still-valid session.
-    //   - A retry needs the user to re-drive the OAuth flow to mint a
-    //     fresh token; clearing the stale cookie on failure makes that
-    //     intent physically visible in the browser jar.
-    //   - The 5-minute Max-Age would handle cleanup eventually, but
-    //     immediate clearing keeps the jar tidy and surfaces failures
-    //     clearly across the lib's hot path.
+    // Cookie clearing policy lives on `clearMfaTempCookie` JSDoc.
     let result: AuthResult | PlatformAuthResult
     try {
       result = await this.mfaService.challenge(mfaTempToken, dto.code, ip, userAgent)
-    } finally {
-      if (cookieToken !== undefined) {
-        res.clearCookie(MFA_TEMP_COOKIE_NAME, {
-          path: `/${this.options.routePrefix}/mfa`,
-          httpOnly: true,
-          secure: this.options.secureCookies,
-          sameSite: this.options.cookies.sameSite
-        })
+    } catch (err) {
+      if (cookieToken !== undefined && isTokenInvalidException(err)) {
+        this.clearMfaTempCookie(res)
       }
+      throw err
+    }
+    if (cookieToken !== undefined) {
+      this.clearMfaTempCookie(res)
     }
 
     // Discriminate by result shape: PlatformAuthResult carries `admin`, AuthResult carries `user`.

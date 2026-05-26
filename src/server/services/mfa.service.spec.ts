@@ -110,6 +110,7 @@ const mockRedis = {
 
 const mockTokenManager = {
   verifyMfaTempToken: jest.fn(),
+  consumeMfaTempToken: jest.fn(),
   issueTokens: jest.fn(),
   issuePlatformTokens: jest.fn()
 }
@@ -696,7 +697,8 @@ describe('MfaService', () => {
       jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'user-1',
-        context: 'dashboard'
+        context: 'dashboard',
+        jti: 'jti-test-1'
       })
       mockTokenManager.issueTokens.mockResolvedValue(MOCK_AUTH_RESULT)
     })
@@ -718,7 +720,8 @@ describe('MfaService', () => {
     it('should throw TOKEN_INVALID when platform admin is not found', async () => {
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'admin-1',
-        context: 'platform'
+        context: 'platform',
+        jti: 'jti-test-platform-1'
       })
       mockPlatformUserRepo.findById.mockResolvedValue(null)
 
@@ -1080,7 +1083,8 @@ describe('MfaService', () => {
 
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'admin-1',
-        context: 'platform'
+        context: 'platform',
+        jti: 'jti-test-platform-1'
       })
       mockPlatformUserRepo.findById.mockResolvedValue({
         ...SAFE_ADMIN,
@@ -1113,7 +1117,8 @@ describe('MfaService', () => {
 
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'admin-1',
-        context: 'platform'
+        context: 'platform',
+        jti: 'jti-test-platform-1'
       })
       mockPlatformUserRepo.findById.mockResolvedValue({
         ...SAFE_ADMIN,
@@ -1163,7 +1168,8 @@ describe('MfaService', () => {
       const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'admin-1',
-        context: 'platform'
+        context: 'platform',
+        jti: 'jti-test-platform-1'
       })
 
       await expect(
@@ -1186,7 +1192,8 @@ describe('MfaService', () => {
 
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: 'admin-1',
-        context: 'platform'
+        context: 'platform',
+        jti: 'jti-test-platform-1'
       })
       mockPlatformUserRepo.findById.mockResolvedValue({
         ...SAFE_ADMIN,
@@ -1250,7 +1257,8 @@ describe('MfaService', () => {
 
       mockTokenManager.verifyMfaTempToken.mockResolvedValue({
         userId: SAFE_USER.id,
-        context: 'dashboard'
+        context: 'dashboard',
+        jti: 'jti-test-safe-user-1'
       })
       mockTokenManager.issueTokens.mockResolvedValue(MOCK_AUTH_RESULT)
       mockUserRepo.findById.mockResolvedValue({

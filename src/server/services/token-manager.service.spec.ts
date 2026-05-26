@@ -696,8 +696,11 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('verifyMfaTempToken', () => {
-    // Verifies that verifyMfaTempToken returns userId and context when the token is valid and present in Redis.
-    it('should return userId and context when token is valid and in Redis', async () => {
+    // Verifies that verifyMfaTempToken returns userId, context, and jti when
+    // the token is valid and the Redis entry still exists. The Redis entry
+    // is NOT removed by verify (split from consume in v1.0.8+) so the caller
+    // can retry on wrong TOTP under the same JWT.
+    it('should return userId, context, and jti when token is valid and in Redis', async () => {
       mockJwtService.verify.mockReturnValue({
         jti: FIXED_UUID,
         sub: 'user-1',
@@ -706,15 +709,17 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       })
-      mockRedis.getdel.mockResolvedValue('user-1') // atomic GET+DEL returns stored userId
+      mockRedis.get.mockResolvedValue('user-1') // entry exists; not deleted by verify
 
       const result = await service.verifyMfaTempToken(FIXED_JWT)
 
-      expect(result).toEqual({ userId: 'user-1', context: 'dashboard' })
+      expect(result).toEqual({ userId: 'user-1', context: 'dashboard', jti: FIXED_UUID })
     })
 
-    // Verifies that verifyMfaTempToken uses atomic getdel to consume the token and prevent replay.
-    it('should atomically consume the token (getdel) after verification', async () => {
+    // Verifies that verifyMfaTempToken uses GET (not GETDEL) so wrong-TOTP
+    // attempts can retry under the same JWT. The matching consume step lives
+    // in `consumeMfaTempToken` and is invoked only after the code is valid.
+    it('uses GET (not GETDEL) so the token survives wrong-code retries', async () => {
       mockJwtService.verify.mockReturnValue({
         jti: FIXED_UUID,
         sub: 'user-1',
@@ -723,13 +728,14 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       })
-      mockRedis.getdel.mockResolvedValue('user-1')
+      mockRedis.get.mockResolvedValue('user-1')
 
       await service.verifyMfaTempToken(FIXED_JWT)
 
-      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^mfa:/))
-      // Ensure separate get/del are not used (would allow TOCTOU)
-      expect(mockRedis.get).not.toHaveBeenCalled()
+      expect(mockRedis.get).toHaveBeenCalledWith(expect.stringMatching(/^mfa:/))
+      // The verify step must NOT delete the Redis entry — that is the job
+      // of `consumeMfaTempToken` invoked only when the TOTP is valid.
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
     })
 
@@ -743,7 +749,7 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       })
-      mockRedis.getdel.mockResolvedValue(null) // not found / already consumed
+      mockRedis.get.mockResolvedValue(null) // not found / already consumed
 
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
     })
@@ -760,7 +766,7 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       })
-      mockRedis.getdel.mockResolvedValue('different-user') // userId mismatch
+      mockRedis.get.mockResolvedValue('different-user') // userId mismatch
 
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
     })
@@ -778,7 +784,7 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       })
-      mockRedis.getdel.mockResolvedValue('user-1')
+      mockRedis.get.mockResolvedValue('user-1')
 
       await service.verifyMfaTempToken(FIXED_JWT)
 
@@ -799,9 +805,53 @@ describe('TokenManagerService', () => {
         iat: 0,
         exp: 9999999999
       } as unknown as { jti: string; sub: string; type: string; context: string })
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
 
       await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // consumeMfaTempToken
+  // ---------------------------------------------------------------------------
+
+  describe('consumeMfaTempToken', () => {
+    // Verifies that consumeMfaTempToken removes the Redis entry keyed by
+    // mfa:{sha256(jti)} so the JWT cannot be reused after a successful
+    // MFA challenge. Must be a `DEL` (not `GETDEL`) because the value
+    // is already known by the caller and a GETDEL would be wasteful.
+    it('deletes the mfa:{sha256(jti)} Redis entry', async () => {
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.consumeMfaTempToken(FIXED_UUID)
+
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^mfa:/))
+      expect(mockRedis.del).toHaveBeenCalledTimes(1)
+    })
+
+    // Verifies that consumeMfaTempToken hashes the jti before keying so
+    // the raw jti is never persisted to Redis. Mirrors the `issueMfaTempToken`
+    // and `verifyMfaTempToken` key derivation.
+    it('hashes the jti via sha256 before keying the Redis entry', async () => {
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.consumeMfaTempToken(FIXED_UUID)
+
+      const calls = mockRedis.del.mock.calls
+      const calledKey = (calls[0] as [string])[0]
+      // The deleted key starts with `mfa:` and the suffix is a hex SHA-256
+      // (64 lowercase hex chars). Confirms the jti is not present in the raw.
+      expect(calledKey).toMatch(/^mfa:[0-9a-f]{64}$/)
+      expect(calledKey).not.toContain(FIXED_UUID)
+    })
+
+    // Verifies idempotency: a second call (e.g. from a concurrent successful
+    // submission that lost a race) is a benign no-op rather than an error.
+    it('is idempotent — calling twice does not throw', async () => {
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.consumeMfaTempToken(FIXED_UUID)
+      await expect(service.consumeMfaTempToken(FIXED_UUID)).resolves.toBeUndefined()
     })
   })
 

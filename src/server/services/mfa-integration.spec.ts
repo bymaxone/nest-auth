@@ -136,6 +136,7 @@ const mockRedis = {
 
 const mockTokenManager = {
   verifyMfaTempToken: jest.fn(),
+  consumeMfaTempToken: jest.fn(),
   issueTokens: jest.fn(),
   issuePlatformTokens: jest.fn()
 }
@@ -261,7 +262,8 @@ describe('MFA — integration smoke tests', () => {
     const userWithMfa = { ...DASHBOARD_USER, mfaEnabled: true, mfaSecret: encryptedSecret }
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue(userWithMfa)
     mockRedis.setnx.mockResolvedValue(true) // fresh anti-replay slot
@@ -319,7 +321,8 @@ describe('MFA — integration smoke tests', () => {
     const plainCode = 'PLAIN-RECOVERY-CODE'
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
       ...DASHBOARD_USER,
@@ -373,7 +376,8 @@ describe('MFA — integration smoke tests', () => {
     const encryptedSecret = encrypt(base32, VALID_ENCRYPTION_KEY)
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
       ...DASHBOARD_USER,
@@ -403,7 +407,8 @@ describe('MFA — integration smoke tests', () => {
 
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
       ...DASHBOARD_USER,
@@ -443,7 +448,8 @@ describe('MFA — integration smoke tests', () => {
 
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
       ...DASHBOARD_USER,
@@ -487,7 +493,8 @@ describe('MFA — integration smoke tests', () => {
 
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
-      context: 'dashboard'
+      context: 'dashboard',
+      jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
       ...DASHBOARD_USER,
@@ -527,7 +534,8 @@ describe('MFA — integration smoke tests', () => {
 
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'admin-1',
-      context: 'platform'
+      context: 'platform',
+      jti: 'jti-test-platform-1'
     })
     mockPlatformUserRepo.findById.mockResolvedValue({
       ...PLATFORM_ADMIN,

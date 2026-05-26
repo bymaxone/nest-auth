@@ -530,8 +530,18 @@ export class MfaService {
     ip: string,
     userAgent: string
   ): Promise<AuthResult | PlatformAuthResult> {
-    // Step 1: Verify and consume the MFA temp token (single-use via GETDEL).
-    const { userId, context } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
+    // Step 1: Verify the MFA temp token. We DO NOT consume it here — the
+    // token stays alive in Redis until the TOTP / recovery code passes,
+    // so a single mistyped digit surfaces as `MFA_INVALID_CODE` (retryable)
+    // instead of `MFA_TEMP_TOKEN_INVALID` (dead end). The brute-force
+    // counter (Step 2) caps how many wrong codes can be tried under one
+    // token. The token is consumed atomically in Step 5 once the code is
+    // confirmed valid.
+    const {
+      userId,
+      context,
+      jti: tempTokenJti
+    } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
 
     // Step 2: Brute-force check. HMAC key prevents Redis key reversal.
     // The 'challenge:' prefix namespaces this counter away from the 'disable' counter —
@@ -569,12 +579,23 @@ export class MfaService {
     if (!codeValid) {
       await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`challenge: invalid MFA code userId=${userId} context=${context}`)
+      // Keep the MFA temp token alive — the user can retry with the next
+      // TOTP window or a different recovery code under the same token.
+      // bruteForce.recordFailure will eventually surface `ACCOUNT_LOCKED`
+      // if attempts keep failing.
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
-    // Step 5: Consume the used recovery code (branch on context to use the correct repo).
+    // Step 5a: Atomically consume the MFA temp token now that the code is
+    // confirmed valid. Idempotent — concurrent successful submissions
+    // collapse to a benign duplicate (two valid sessions for the same
+    // legitimate user). See TokenManagerService.consumeMfaTempToken for
+    // the security rationale of the split verify/consume design.
+    await this.tokenManager.consumeMfaTempToken(tempTokenJti)
+
+    // Step 5b: Consume the used recovery code (branch on context to use the correct repo).
     if (usedRecoveryIndex >= 0) {
       // mfaRecoveryCodes is guaranteed non-empty here: verifyRecoveryCode only returns ≥ 0
       // when it found a match by iterating the array, so the array cannot be empty or undefined.

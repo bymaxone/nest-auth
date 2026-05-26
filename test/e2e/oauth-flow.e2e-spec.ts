@@ -742,6 +742,100 @@ describe('oauth flow (E2E)', () => {
         // Express version — accept either.
         expect(clearedCookies).toMatch(/mfa_temp_token=;/)
       })
+
+      it('should accept a retry with the correct code after a wrong code (v1.0.8 regression)', async () => {
+        /*
+         * Scenario: prior to v1.0.8 the JWT was consumed by `verifyMfaTempToken`
+         * BEFORE the TOTP was validated, so a single mistyped digit killed the
+         * token in Redis and every subsequent attempt surfaced as
+         * `MFA_TEMP_TOKEN_INVALID` ("MFA session expired"). This test mints a
+         * fresh OAuth-driven temp token, submits a deliberately wrong code,
+         * asserts the failure is `MFA_INVALID_CODE` (not token-invalid), then
+         * submits the correct code under the SAME cookie and asserts the
+         * challenge succeeds — proving the JWT is still alive for retry.
+         * Protects the split verify/consume contract added in v1.0.8.
+         */
+        const secret = generateBase32Secret()
+        seedMfaUser(repo, {
+          tenantId: 'tenant-1',
+          email: 'retry-flow@example.com',
+          providerId: 'retry-flow-provider-id',
+          mfaSecret: encryptForMfa(secret)
+        })
+        ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+          ...MOCK_PROFILE,
+          providerId: 'retry-flow-provider-id',
+          email: 'retry-flow@example.com'
+        })
+        hookController.current = {
+          action: 'link',
+          userId: 'user-mfa-retry-flow-provider-id'
+        } as OAuthLoginResult & { userId: string }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const callback = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'mfa_code_retry', state })
+
+        const setCookieHeader = callback.headers['set-cookie']
+        const cookies = Array.isArray(setCookieHeader)
+          ? setCookieHeader
+          : setCookieHeader
+            ? [setCookieHeader]
+            : []
+        const mfaCookieHeader = cookies
+          .map((entry) => entry.split(';')[0])
+          .find((kv) => kv?.startsWith('mfa_temp_token='))
+        expect(mfaCookieHeader).toBeDefined()
+
+        // ── Attempt #1 — deliberately wrong code. The lib must surface
+        // `MFA_INVALID_CODE` and KEEP the cookie alive so retry works.
+        const firstAttempt = await request(app.getHttpServer())
+          .post('/mfa/challenge')
+          .set('Cookie', mfaCookieHeader!)
+          .send({ code: '000000' })
+
+        expect(firstAttempt.status).toBe(401)
+        expect(firstAttempt.body).toEqual(
+          expect.objectContaining({
+            error: expect.objectContaining({ code: 'auth.mfa_invalid_code' })
+          })
+        )
+        const firstSetCookie = firstAttempt.headers['set-cookie']
+        // The cookie must NOT be cleared on MFA_INVALID_CODE — retry depends on it.
+        const firstClearHeaders = Array.isArray(firstSetCookie)
+          ? firstSetCookie.join('\n')
+          : (firstSetCookie ?? '')
+        expect(firstClearHeaders).not.toMatch(/mfa_temp_token=;/)
+
+        // ── Attempt #2 — correct TOTP under the SAME cookie. The lib must
+        // accept it because the JWT is still alive in Redis.
+        const totp = generateTotp(secret)
+        const secondAttempt = await request(app.getHttpServer())
+          .post('/mfa/challenge')
+          .set('Cookie', mfaCookieHeader!)
+          .send({ code: totp })
+
+        expect(secondAttempt.status).toBe(200)
+        expect(secondAttempt.body).toEqual(
+          expect.objectContaining({
+            accessToken: expect.any(String),
+            refreshToken: expect.any(String),
+            user: expect.objectContaining({ email: 'retry-flow@example.com' })
+          })
+        )
+
+        // The cookie IS cleared on success — the JWT has been consumed.
+        const secondSetCookie = secondAttempt.headers['set-cookie']
+        const secondClearHeaders = Array.isArray(secondSetCookie)
+          ? secondSetCookie.join('\n')
+          : (secondSetCookie ?? '')
+        expect(secondClearHeaders).toMatch(/mfa_temp_token=;/)
+      })
     })
 
     describe('with mfaRedirectUrl', () => {

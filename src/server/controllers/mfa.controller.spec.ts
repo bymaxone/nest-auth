@@ -413,14 +413,13 @@ describe('MfaController', () => {
     })
 
     /**
-     * Verifies the NEW always-clear-when-cookie-present policy: when the
-     * body wins precedence but the OAuth cookie is also in the jar, the
-     * controller still clears the cookie. Rationale: `verifyMfaTempToken`
-     * GETDELs the Redis key as its first step, so on any outcome the
-     * cookie token is already dead — keeping it would only invite a
-     * misleading `MFA_TEMP_TOKEN_INVALID` on the next visit.
+     * Verifies the clear-on-success policy when both sources are present:
+     * the body wins precedence for the service call (back-compat with the
+     * sessionStorage flow), but the OAuth cookie still gets cleaned up
+     * because the underlying JWT has been consumed by a successful
+     * challenge. Leaving the dead cookie would confuse subsequent visits.
      */
-    it('should clear the cookie when body provides the token AND cookie is also present', async () => {
+    it('should clear the cookie when body provides the token AND cookie is also present (success path)', async () => {
       mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
       mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
       const reqWithBoth = {
@@ -447,15 +446,61 @@ describe('MfaController', () => {
     })
 
     /**
-     * Verifies the try/finally semantics: even when the challenge throws
-     * (e.g. MFA_INVALID_CODE), the cookie is still cleared because the
-     * underlying JWT has been consumed by `verifyMfaTempToken`. Keeping
-     * the stale cookie would only confuse a retry attempt — the user
-     * must re-drive the OAuth flow to mint a fresh token.
+     * Verifies retry-friendly cookie semantics on `MFA_INVALID_CODE` (v1.0.8+):
+     * the JWT is still alive in Redis because verify and consume are split
+     * in `MfaService.challenge`, so the cookie must stay in the jar to let
+     * the user retry with the correct code under the same temp token.
+     * Clearing here would force a needless OAuth re-drive on every typo.
      */
-    it('should clear the cookie even when the challenge throws (finally branch)', async () => {
+    it('should keep the cookie when the challenge throws MFA_INVALID_CODE (retry path)', async () => {
       mockMfaService.challenge.mockRejectedValue(
         new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
+      )
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqWithCookie, res)
+      ).rejects.toThrow(AuthException)
+      expect(res.clearCookie).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Verifies that ACCOUNT_LOCKED also keeps the cookie alive. The user is
+     * locked out for the configured brute-force window, but once the window
+     * expires (or an admin unlocks the account) the same JWT is still valid
+     * in Redis until its 5-minute TTL elapses. Clearing the cookie here
+     * would force an OAuth re-drive after every accidental lockout.
+     */
+    it('should keep the cookie when the challenge throws ACCOUNT_LOCKED (retry-after-cooldown path)', async () => {
+      mockMfaService.challenge.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED))
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqWithCookie, res)
+      ).rejects.toThrow(AuthException)
+      expect(res.clearCookie).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Verifies clear-on-dead-token: `MFA_TEMP_TOKEN_INVALID` is unrecoverable
+     * — the JWT is forged, expired, or already consumed, so a retry under
+     * the same cookie can never succeed. Clearing makes the dead state
+     * physical in the browser jar so a fresh OAuth drive can plant a new
+     * cookie cleanly.
+     */
+    it('should clear the cookie when the challenge throws MFA_TEMP_TOKEN_INVALID (unrecoverable path)', async () => {
+      mockMfaService.challenge.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
       )
       const reqWithCookie = {
         ip: '1.2.3.4',
@@ -471,6 +516,26 @@ describe('MfaController', () => {
         'mfa_temp_token',
         expect.objectContaining({ path: '/auth/mfa', httpOnly: true })
       )
+    })
+
+    /**
+     * Defence-in-depth: a non-AuthException thrown by the service (e.g. a
+     * transient Redis outage) must not clear the cookie either — the user's
+     * temp token is still presumed alive once the infra recovers.
+     */
+    it('should keep the cookie when the challenge throws a non-AuthException (transient error)', async () => {
+      mockMfaService.challenge.mockRejectedValue(new Error('boom'))
+      const reqWithCookie = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: 'cookie.temp.jwt' }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, reqWithCookie, res)
+      ).rejects.toThrow('boom')
+      expect(res.clearCookie).not.toHaveBeenCalled()
     })
 
     /**
