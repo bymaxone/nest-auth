@@ -35,6 +35,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Blocks PRs that introduce dependencies with known vulnerabilities or
+      # license violations. PR-only — on push to main there is no base ref to
+      # diff against. Free on public repos.
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -66,6 +76,22 @@ jobs:
           name: coverage-node-${{ matrix.node-version }}
           path: coverage/
           retention-days: 14
+
+      # Advisory duplication scan. Never fails the build — the JSON report is
+      # uploaded as an artifact so reviewers can inspect regressions without
+      # gating PRs on a soft metric.
+      - name: Duplication scan (jscpd)
+        continue-on-error: true
+        run: pnpm duplication:check
+
+      - name: Upload duplication report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jscpd-report-node-${{ matrix.node-version }}
+          path: reports/jscpd/
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build all subpaths
         run: pnpm build

@@ -1,0 +1,46 @@
+[
+  {
+    "name": "server (NestJS module)",
+    "path": "dist/server/index.mjs",
+    "limit": "32 KB",
+    "ignore": [
+      "@nestjs/common",
+      "@nestjs/core",
+      "@nestjs/jwt",
+      "@nestjs/throttler",
+      "@nestjs/websockets",
+      "@types/express",
+      "class-transformer",
+      "class-validator",
+      "express",
+      "ioredis",
+      "reflect-metadata",
+      "crypto",
+      "util",
+      "node:crypto",
+      "node:util"
+    ]
+  },
+  {
+    "name": "shared (types + constants)",
+    "path": "dist/shared/index.mjs",
+    "limit": "2 KB"
+  },
+  {
+    "name": "client (fetch auth client)",
+    "path": "dist/client/index.mjs",
+    "limit": "3.5 KB"
+  },
+  {
+    "name": "react (hooks + AuthProvider)",
+    "path": "dist/react/index.mjs",
+    "limit": "2.5 KB",
+    "ignore": ["react"]
+  },
+  {
+    "name": "nextjs (proxy + route handlers)",
+    "path": "dist/nextjs/index.mjs",
+    "limit": "9 KB",
+    "ignore": ["next", "react", "next/server", "next/headers"]
+  }
+]

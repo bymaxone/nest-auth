@@ -1,0 +1,22 @@
+{
+  "minTokens": 50,
+  "reporters": ["json", "console"],
+  "output": "reports/jscpd",
+  "path": ["src"],
+  "ignore": [
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.d.ts",
+    "**/__mocks__/**",
+    "**/__tests__/**",
+    "**/__fixtures__/**",
+    "**/node_modules/**",
+    "**/.stryker-tmp/**",
+    "**/dist/**",
+    "**/coverage/**"
+  ],
+  "absolute": false,
+  "gitignore": true
+}
