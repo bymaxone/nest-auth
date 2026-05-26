@@ -46,13 +46,19 @@ const mockTokenDelivery = {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a minimal `ResolvedOptions` shape sufficient for the controller. Only
- * the `oauth` block is read by the controller (`successRedirectUrl`), so the
- * remaining fields are left as `any` via the unknown cast — typing them in full
- * here would add boilerplate without exercising new code paths.
+ * Builds a minimal `ResolvedOptions` shape sufficient for the controller. The
+ * controller reads `oauth.{successRedirectUrl,mfaRedirectUrl,errorRedirectUrl}`,
+ * `routePrefix`, `secureCookies`, and `cookies.sameSite` — the rest of the
+ * shape is intentionally left as `unknown` via the cast so the fixture does
+ * not need to mirror the full options tree.
  */
 function buildOptions(oauth?: ResolvedOptions['oauth']): ResolvedOptions {
-  return { oauth } as unknown as ResolvedOptions
+  return {
+    oauth,
+    routePrefix: 'auth',
+    secureCookies: false,
+    cookies: { sameSite: 'lax' }
+  } as unknown as ResolvedOptions
 }
 
 describe('OAuthController', () => {
@@ -350,6 +356,322 @@ describe('OAuthController', () => {
       await controller.callback('google', query as never, mockReq, mockRes)
 
       expect(mockRes.redirect).toHaveBeenCalledWith('https://app.example.com/welcome')
+    })
+
+    // ─── MFA challenge branch (1.0.7) ──────────────────────────────────────
+
+    /**
+     * Verifies the OAuth + MFA cookie + JSON path (no `mfaRedirectUrl` set).
+     * The service returns the challenge discriminator, the controller plants
+     * the `mfa_temp_token` HttpOnly cookie path-scoped to the MFA challenge
+     * route, and surfaces the same token in the JSON body for SPA consumers.
+     * Session cookies and the 302 path must NOT fire on this branch.
+     */
+    it('should set mfa_temp_token cookie and return JSON body when handleCallback signals MFA required', async () => {
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        clearCookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({
+        mfaRequired: true,
+        mfaTempToken: 'mfa.temp.jwt'
+      })
+
+      const result = await controller.callback('google', query as never, mockReq, mockRes)
+
+      // Cookie was planted with the right shape. The Max-Age must equal
+      // `MFA_TEMP_COOKIE_MAX_AGE_SECONDS * 1000` = 300_000 ms (5 min) —
+      // pinned exactly to match the underlying MFA temp JWT TTL.
+      expect(mockRes.cookie).toHaveBeenCalledWith('mfa_temp_token', 'mfa.temp.jwt', {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/auth/mfa',
+        maxAge: 300_000
+      })
+      // No session delivery on the MFA branch.
+      expect(mockTokenDelivery.deliverAuthResponse).not.toHaveBeenCalled()
+      // No redirect when mfaRedirectUrl is unset — caller returns JSON.
+      expect((mockRes.redirect as jest.Mock).mock.calls).toHaveLength(0)
+      expect(result).toEqual({ mfaRequired: true, mfaTempToken: 'mfa.temp.jwt' })
+    })
+
+    /**
+     * Verifies the OAuth + MFA redirect path. With `oauth.mfaRedirectUrl`
+     * configured, the cookie is still planted (so the destination page can
+     * call `/auth/mfa/challenge` with the cookie attached) AND a 302 is
+     * issued instead of returning JSON. The handler returns `undefined` so
+     * Nest does not serialise a body over the redirect headers.
+     */
+    it('should redirect to mfaRedirectUrl when configured for the MFA branch', async () => {
+      await bootstrap({ mfaRedirectUrl: '/auth/mfa-challenge' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({
+        mfaRequired: true,
+        mfaTempToken: 'mfa.temp.jwt'
+      })
+
+      const result = await controller.callback('google', query as never, mockReq, mockRes)
+
+      expect(mockRes.cookie).toHaveBeenCalledTimes(1)
+      expect(mockRes.redirect).toHaveBeenCalledTimes(1)
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/mfa-challenge')
+      expect(result).toBeUndefined()
+    })
+
+    /**
+     * Pins the path attribute under a custom `routePrefix`: the cookie must
+     * be scoped to `/${routePrefix}/mfa` so the consumer's choice of prefix
+     * does not break the MFA challenge cookie attachment.
+     */
+    it('should scope the mfa_temp_token cookie path to the configured routePrefix', async () => {
+      const module = await Test.createTestingModule({
+        controllers: [OAuthController],
+        providers: [
+          { provide: OAuthService, useValue: mockOAuthService },
+          { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              oauth: {},
+              routePrefix: 'api/auth',
+              secureCookies: true,
+              cookies: { sameSite: 'strict' }
+            } as unknown as ResolvedOptions
+          }
+        ]
+      }).compile()
+      controller = module.get(OAuthController)
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({
+        mfaRequired: true,
+        mfaTempToken: 'mfa.temp.jwt'
+      })
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'mfa_temp_token',
+        'mfa.temp.jwt',
+        expect.objectContaining({
+          path: '/api/auth/mfa',
+          secure: true,
+          sameSite: 'strict'
+        })
+      )
+    })
+
+    // ─── error redirect branch (1.0.7) ─────────────────────────────────────
+
+    /**
+     * Verifies the error-redirect happy path. An `AuthException` thrown from
+     * `handleCallback` is converted into a `302` to the configured
+     * `errorRedirectUrl` with `?error=oauth_failed` appended. The handler
+     * returns `undefined` so Nest does not serialise an error body alongside
+     * the redirect headers.
+     */
+    it('should redirect to errorRedirectUrl with ?error code when handleCallback throws AuthException', async () => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      )
+
+      const result = await controller.callback('google', query as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+      expect(result).toBeUndefined()
+    })
+
+    /**
+     * Pins that an absolute URL passes through the WHATWG `URL` constructor:
+     * existing query parameters are preserved AND the error code is appended
+     * as a new param.
+     */
+    it('should preserve existing query params on absolute errorRedirectUrl', async () => {
+      await bootstrap({ errorRedirectUrl: 'https://app.example.com/login?from=oauth' })
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      )
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+
+      const target = (mockRes.redirect as jest.Mock).mock.calls[0]?.[0] as string
+      // The URL parser may re-order params; assert both keys are present.
+      expect(target).toMatch(/^https:\/\/app\.example\.com\/login\?/)
+      expect(target).toContain('from=oauth')
+      expect(target).toContain('error=oauth_failed')
+    })
+
+    /**
+     * Verifies the failure-mode without `errorRedirectUrl`: existing
+     * behaviour is preserved — the `AuthException` propagates so NestJS's
+     * exception filter renders the standard JSON 401/500 response.
+     */
+    it('should rethrow AuthException when no errorRedirectUrl is configured', async () => {
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      )
+
+      await expect(controller.callback('google', query as never, mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
+      expect(mockRes.redirect).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Pins the policy that non-AuthException errors propagate even when
+     * `errorRedirectUrl` is configured. Programmer bugs and infrastructure
+     * failures must surface to monitoring tooling rather than be silently
+     * converted into a friendly redirect.
+     */
+    it('should rethrow non-AuthException errors even when errorRedirectUrl is configured', async () => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockRejectedValue(new Error('boom — programmer error'))
+
+      await expect(controller.callback('google', query as never, mockReq, mockRes)).rejects.toThrow(
+        'boom — programmer error'
+      )
+      expect(mockRes.redirect).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Edge case: an `AuthException` whose response shape lacks the standard
+     * `error.code` envelope. The controller falls back to `'oauth_failed'`
+     * as the URL query value so the redirect still happens with a meaningful
+     * code instead of crashing or surfacing `undefined`.
+     */
+    it('should fall back to oauth_failed when the AuthException has no error.code', async () => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      const { AuthException } = await import('../errors/auth-exception')
+      // Construct an AuthException-like that returns a non-object response.
+      const fakeExc = new AuthException(
+        // Cast to satisfy the constructor — only `getResponse()` is exercised.
+        'auth.oauth_failed' as never
+      )
+      // Override getResponse to return a non-object (defence-in-depth path).
+      jest.spyOn(fakeExc, 'getResponse').mockReturnValue('not-an-object' as never)
+      mockOAuthService.handleCallback.mockRejectedValue(fakeExc)
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+    })
+
+    /**
+     * Edge case: an `AuthException` whose code is a non-string falls back to
+     * `'oauth_failed'`. Pins the `code` extraction guard against malformed
+     * future codes or runtime tampering.
+     */
+    it('should fall back to oauth_failed when the AuthException code is not a string', async () => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const fakeExc = new AuthException('auth.oauth_failed' as never)
+      jest
+        .spyOn(fakeExc, 'getResponse')
+        .mockReturnValue({ error: { code: 42 } } as unknown as Record<string, unknown>)
+      mockOAuthService.handleCallback.mockRejectedValue(fakeExc)
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+    })
+
+    /**
+     * Edge case: an `AuthException` whose code lacks the `auth.` prefix is
+     * forwarded verbatim. Defence-in-depth so future codes that diverge from
+     * the convention still produce a meaningful URL parameter.
+     */
+    it('should forward the code verbatim when it lacks the auth. prefix', async () => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const fakeExc = new AuthException('auth.oauth_failed' as never)
+      jest
+        .spyOn(fakeExc, 'getResponse')
+        .mockReturnValue({ error: { code: 'custom_code' } } as unknown as Record<string, unknown>)
+      mockOAuthService.handleCallback.mockRejectedValue(fakeExc)
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=custom_code')
     })
   })
 })

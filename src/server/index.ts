@@ -79,6 +79,7 @@ export type {
 export type {
   AuthResult,
   MfaChallengeResult,
+  OAuthMfaChallengeResult,
   PlatformAuthResult,
   RotatedTokenResult
 } from './interfaces/auth-result.interface'

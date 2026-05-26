@@ -173,6 +173,17 @@ export class PlatformAuthController {
     const ip = req.ip ?? ''
     // Truncate User-Agent to 512 chars (same reason as login).
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
+    // The shared `MfaChallengeDto` declares `mfaTempToken` as optional so that the
+    // dashboard cookie-based OAuth + MFA flow can omit it from the body. Platform
+    // admins never participate in the OAuth + MFA flow (no platform OAuth callback),
+    // so the token must come from the body — reject missing values explicitly so the
+    // underlying service receives a non-empty string.
+    // Use the explicit length check (mirroring `mfa.controller.ts`'s dashboard
+    // counterpart) rather than `!dto.mfaTempToken` so the missing-vs-empty
+    // distinction stays clear to future readers.
+    if (dto.mfaTempToken === undefined || dto.mfaTempToken.length === 0) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
     const result = await this.mfaService.challenge(dto.mfaTempToken, dto.code, ip, userAgent)
 
     // Guard against cross-context token abuse: reject if the temp token had context='dashboard'.

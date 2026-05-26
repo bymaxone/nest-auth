@@ -3,6 +3,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Inject,
   Post,
   Req,
   Res,
@@ -13,6 +14,9 @@ import {
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
+import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
@@ -21,6 +25,8 @@ import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -48,6 +54,27 @@ function isPlatformResult(result: AuthResult | PlatformAuthResult): result is Pl
   return 'admin' in result
 }
 
+/**
+ * Reads the `mfa_temp_token` value from a request's parsed cookie jar.
+ *
+ * Returns `undefined` when the cookie is absent or carries a non-string value
+ * (defence-in-depth against custom cookie parsers).
+ *
+ * @remarks
+ * Uses destructuring with the literal cookie name rather than the
+ * `MFA_TEMP_COOKIE_NAME` constant in a computed-property access to keep the
+ * `security/detect-object-injection` lint rule satisfied without a
+ * suppression. The literal MUST stay in sync with `MFA_TEMP_COOKIE_NAME`
+ * — `mfa.controller.spec.ts` pins the equality so a future rename
+ * surfaces as a test failure rather than as a silent cookie miss.
+ */
+function readMfaTempCookie(req: Request): string | undefined {
+  const cookies = req.cookies as { mfa_temp_token?: unknown } | undefined
+  if (cookies === undefined) return undefined
+  const { mfa_temp_token: value } = cookies
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
 // ---------------------------------------------------------------------------
 // MfaController
 // ---------------------------------------------------------------------------
@@ -68,7 +95,8 @@ function isPlatformResult(result: AuthResult | PlatformAuthResult): result is Pl
 export class MfaController {
   constructor(
     private readonly mfaService: MfaService,
-    private readonly tokenDelivery: TokenDeliveryService
+    private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 
   /**
@@ -119,17 +147,27 @@ export class MfaController {
    * Exchanges a valid MFA temp token + TOTP or recovery code for full auth tokens.
    *
    * This endpoint is public — it is called with the short-lived temp token
-   * issued after a successful password login. `@SkipMfa()` ensures that
+   * issued after a successful password login OR after the OAuth callback when
+   * the resolved user has MFA enabled. `@SkipMfa()` ensures that
    * `MfaRequiredGuard` does not block this route when applied globally.
+   *
+   * The temp token is read from `dto.mfaTempToken` (password-login flow / SPA
+   * OAuth flow that copies the cookie into sessionStorage) OR from the
+   * HttpOnly `mfa_temp_token` cookie (browser-driven OAuth flow). When both
+   * are present, the body value wins — that matches the historical contract
+   * for the password-login path. When the cookie is consumed, it is cleared
+   * on the response so the temp token is not left around if the user closes
+   * the tab mid-challenge.
    *
    * Returns either a standard auth response (dashboard) or a
    * {@link PlatformChallengeResponse} for platform admin sessions (cookie
    * delivery is not applied for the platform context — tokens are in the body).
    *
-   * @param dto - Contains the MFA temp token and the TOTP or recovery code.
+   * @param dto - Contains the optional MFA temp token and the TOTP / recovery code.
    * @param req - Incoming request (provides IP, User-Agent, and cookie context).
    * @param res - Response object in passthrough mode (used for cookie delivery).
-   * @throws `MFA_TEMP_TOKEN_INVALID` if the token is invalid or already consumed.
+   * @throws `MFA_TEMP_TOKEN_INVALID` if no token is supplied (neither body nor cookie),
+   *   the token is invalid, or it has already been consumed.
    * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
    * @throws `MFA_INVALID_CODE` if the submitted code is incorrect.
    */
@@ -147,7 +185,40 @@ export class MfaController {
   > {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    const result = await this.mfaService.challenge(dto.mfaTempToken, dto.code, ip, userAgent)
+    // Prefer the body value (back-compat with the existing sessionStorage flow);
+    // fall back to the HttpOnly cookie planted by the OAuth callback.
+    const cookieToken = readMfaTempCookie(req)
+    const mfaTempToken = dto.mfaTempToken ?? cookieToken
+    if (mfaTempToken === undefined || mfaTempToken.length === 0) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
+
+    // Use try/finally so the cookie is cleared on EVERY outcome:
+    //   - The underlying JWT is single-use: `verifyMfaTempToken` GETDELs
+    //     the Redis entry as its first step (see mfa.service.ts), so on
+    //     ANY outcome (success, MFA_INVALID_CODE, ACCOUNT_LOCKED) the
+    //     token in the cookie is already dead. Leaving it in the jar
+    //     would only invite a misleading `MFA_TEMP_TOKEN_INVALID` on a
+    //     retry that looks to the user like a still-valid session.
+    //   - A retry needs the user to re-drive the OAuth flow to mint a
+    //     fresh token; clearing the stale cookie on failure makes that
+    //     intent physically visible in the browser jar.
+    //   - The 5-minute Max-Age would handle cleanup eventually, but
+    //     immediate clearing keeps the jar tidy and surfaces failures
+    //     clearly across the lib's hot path.
+    let result: AuthResult | PlatformAuthResult
+    try {
+      result = await this.mfaService.challenge(mfaTempToken, dto.code, ip, userAgent)
+    } finally {
+      if (cookieToken !== undefined) {
+        res.clearCookie(MFA_TEMP_COOKIE_NAME, {
+          path: `/${this.options.routePrefix}/mfa`,
+          httpOnly: true,
+          secure: this.options.secureCookies,
+          sameSite: this.options.cookies.sameSite
+        })
+      }
+    }
 
     // Discriminate by result shape: PlatformAuthResult carries `admin`, AuthResult carries `user`.
     // Platform tokens are returned via deliverPlatformAuthResponse — cookie delivery does not apply

@@ -8,7 +8,7 @@
  * runs against the actual library wiring (CSRF state lifecycle, hook invocation,
  * token issuance) without a network dependency.
  *
- * The four scenarios mirror the production flow:
+ * The scenarios mirror the production flow:
  *   1. GET /oauth/google initiates the flow and produces a 302 redirect that
  *      embeds the CSRF `state` query parameter.
  *   2. GET /oauth/google/callback with a fresh state and a hook returning
@@ -19,12 +19,20 @@
  *      user and issues tokens for that user.
  *   4. A callback with an unknown state value triggers `OAUTH_FAILED` and a
  *      401 response.
+ *   5. (1.0.7) An MFA-enabled user routed through OAuth must complete the
+ *      MFA challenge before a session is issued — exercises both the cookie+
+ *      JSON branch (no mfaRedirectUrl) and the cookie+302 branch.
+ *   6. (1.0.7) An OAuth error redirects to `errorRedirectUrl` with `?error=`
+ *      when configured, and otherwise propagates as a JSON exception.
  */
+
+import * as crypto from 'node:crypto'
 
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
 import { BYMAX_AUTH_HOOKS } from '../../src/server/bymax-auth.constants'
+import { encrypt } from '../../src/server/crypto/aes-gcm'
 import type {
   HookContext,
   IAuthHooks,
@@ -37,7 +45,7 @@ import type {
 import type { SafeAuthUser } from '../../src/server/interfaces/user-repository.interface'
 import { OAUTH_PLUGINS } from '../../src/server/oauth/oauth.constants'
 import type { MockUserRepository } from './setup'
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, MFA_ENCRYPTION_KEY } from './setup'
 
 // ---------------------------------------------------------------------------
 // Mock Google plugin
@@ -525,4 +533,547 @@ describe('oauth flow (E2E)', () => {
       )
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Scenario — OAuth + MFA (1.0.7)
+  //
+  // When the resolved user has MFA enabled, the OAuth callback must NOT issue
+  // session tokens directly — that would leave the user with `mfaVerified: false`
+  // and the MfaRequiredGuard would lock them out on every subsequent request.
+  // Instead, the callback plants a short-lived HttpOnly `mfa_temp_token` cookie
+  // path-scoped to `/auth/mfa` and either redirects to `mfaRedirectUrl` or
+  // returns the temp token as JSON. The user completes `POST /auth/mfa/challenge`
+  // (which now also reads the token from the cookie) to obtain real session
+  // tokens.
+  // ---------------------------------------------------------------------------
+
+  describe('with MFA-enabled user (1.0.7)', () => {
+    /** Helper to seed an MFA-enabled user into the in-memory repo. */
+    function seedMfaUser(
+      repo: MockUserRepository,
+      params: { tenantId: string; email: string; providerId: string; mfaSecret: string }
+    ): string {
+      const id = `user-mfa-${params.providerId}`
+      repo.users.set(id, {
+        id,
+        email: params.email,
+        name: 'MFA User',
+        passwordHash: null,
+        role: 'MEMBER',
+        status: 'active',
+        tenantId: params.tenantId,
+        emailVerified: true,
+        mfaEnabled: true,
+        mfaSecret: params.mfaSecret,
+        mfaRecoveryCodes: [],
+        oauthProvider: 'google',
+        oauthProviderId: params.providerId,
+        lastLoginAt: null,
+        createdAt: new Date()
+      })
+      return id
+    }
+
+    describe('without mfaRedirectUrl', () => {
+      let app: INestApplication
+      let plugin: OAuthProviderPlugin
+      let hookController: HookController
+      let repo: MockUserRepository
+
+      beforeAll(async () => {
+        hookController = { current: null, lastCall: null }
+        const hooks = createControlledHooks(hookController)
+        plugin = createMockGooglePlugin()
+        // Override the mock plugin to return a distinct providerId so this
+        // suite does not collide with the lifecycle suite's seeded user.
+        ;(plugin.fetchProfile as jest.Mock).mockResolvedValue({
+          ...MOCK_PROFILE,
+          providerId: 'mfa-provider-id'
+        })
+
+        const bootstrap = await bootstrapTestApp(
+          {
+            tokenDelivery: 'bearer',
+            oauth: {
+              google: {
+                clientId: 'mfa-test-client',
+                clientSecret: 'mfa-test-secret',
+                callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+              }
+            }
+          },
+          {
+            controllers: {
+              auth: true,
+              mfa: true,
+              passwordReset: true,
+              sessions: true,
+              oauth: true
+            },
+            extraModuleProviders: [{ provide: BYMAX_AUTH_HOOKS, useValue: hooks }],
+            mutateBuilder: (builder) =>
+              builder.overrideProvider(OAUTH_PLUGINS).useValue([plugin]) as typeof builder
+          }
+        )
+        app = bootstrap.app
+        repo = bootstrap.repo
+      })
+
+      afterAll(async () => {
+        await app.close()
+      })
+
+      /**
+       * Verifies the JSON path: when no `mfaRedirectUrl` is configured the
+       * callback returns `{ mfaRequired: true, mfaTempToken }` and plants the
+       * `mfa_temp_token` cookie path-scoped to the MFA challenge route.
+       * Session tokens MUST NOT be issued — `MfaRequiredGuard` would otherwise
+       * lock the user out on subsequent requests.
+       */
+      it('should plant mfa_temp_token cookie and return JSON mfaRequired payload', async () => {
+        const secret = generateBase32Secret()
+        seedMfaUser(repo, {
+          tenantId: 'tenant-1',
+          email: 'oauth-mfa@example.com',
+          providerId: 'mfa-provider-id',
+          mfaSecret: encryptForMfa(secret)
+        })
+        hookController.current = {
+          action: 'link',
+          userId: 'user-mfa-mfa-provider-id'
+        } as OAuthLoginResult & { userId: string }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const res = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'mfa_code_1', state })
+
+        expect(res.status).toBe(200)
+        expect(res.body).toEqual({
+          mfaRequired: true,
+          mfaTempToken: expect.any(String)
+        })
+        // Tokens must NOT be issued on the MFA branch.
+        expect(res.body.accessToken).toBeUndefined()
+        expect(res.body.refreshToken).toBeUndefined()
+
+        // mfa_temp_token cookie was planted, path-scoped to /auth/mfa.
+        const setCookieHeader = res.headers['set-cookie']
+        const cookieString = Array.isArray(setCookieHeader)
+          ? setCookieHeader.join('\n')
+          : (setCookieHeader ?? '')
+        expect(cookieString).toMatch(/mfa_temp_token=/)
+        expect(cookieString).toMatch(/Path=\/auth\/mfa/)
+        expect(cookieString).toMatch(/HttpOnly/i)
+      })
+
+      /**
+       * Verifies the cookie-driven MFA challenge: the cookie planted by the
+       * callback is forwarded back on `POST /auth/mfa/challenge`, the body
+       * carries ONLY the TOTP code, and the lib returns full session tokens.
+       */
+      it('should complete the MFA challenge using the cookie-only flow', async () => {
+        const secret = generateBase32Secret()
+        seedMfaUser(repo, {
+          tenantId: 'tenant-1',
+          email: 'cookie-flow@example.com',
+          providerId: 'cookie-flow-provider-id',
+          mfaSecret: encryptForMfa(secret)
+        })
+        ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+          ...MOCK_PROFILE,
+          providerId: 'cookie-flow-provider-id',
+          email: 'cookie-flow@example.com'
+        })
+        hookController.current = {
+          action: 'link',
+          userId: 'user-mfa-cookie-flow-provider-id'
+        } as OAuthLoginResult & { userId: string }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const callback = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'mfa_code_2', state })
+
+        // Build the cookie header the way the browser would.
+        const setCookieHeader = callback.headers['set-cookie']
+        const cookies = Array.isArray(setCookieHeader)
+          ? setCookieHeader
+          : setCookieHeader
+            ? [setCookieHeader]
+            : []
+        const mfaCookieHeader = cookies
+          .map((entry) => entry.split(';')[0])
+          .find((kv) => kv?.startsWith('mfa_temp_token='))
+        expect(mfaCookieHeader).toBeDefined()
+
+        // Generate a valid TOTP for the seeded secret.
+        const totp = generateTotp(secret)
+
+        // Submit ONLY the code in the body — the cookie carries the temp token.
+        const challenge = await request(app.getHttpServer())
+          .post('/mfa/challenge')
+          .set('Cookie', mfaCookieHeader!)
+          .send({ code: totp })
+
+        expect(challenge.status).toBe(200)
+        expect(challenge.body).toEqual(
+          expect.objectContaining({
+            accessToken: expect.any(String),
+            refreshToken: expect.any(String),
+            user: expect.objectContaining({ email: 'cookie-flow@example.com' })
+          })
+        )
+
+        // The cookie was cleared on the response.
+        const clearCookieHeader = challenge.headers['set-cookie']
+        const clearedCookies = Array.isArray(clearCookieHeader)
+          ? clearCookieHeader.join('\n')
+          : (clearCookieHeader ?? '')
+        // clearCookie sets Expires=Thu, 01 Jan 1970 OR Max-Age=0 depending on the
+        // Express version — accept either.
+        expect(clearedCookies).toMatch(/mfa_temp_token=;/)
+      })
+    })
+
+    describe('with mfaRedirectUrl', () => {
+      let app: INestApplication
+      let plugin: OAuthProviderPlugin
+      let hookController: HookController
+      let repo: MockUserRepository
+
+      beforeAll(async () => {
+        hookController = { current: null, lastCall: null }
+        const hooks = createControlledHooks(hookController)
+        plugin = createMockGooglePlugin()
+        ;(plugin.fetchProfile as jest.Mock).mockResolvedValue({
+          ...MOCK_PROFILE,
+          providerId: 'mfa-redir-id',
+          email: 'mfa-redir@example.com'
+        })
+
+        const bootstrap = await bootstrapTestApp(
+          {
+            tokenDelivery: 'bearer',
+            oauth: {
+              mfaRedirectUrl: '/auth/mfa-challenge',
+              google: {
+                clientId: 'mfa-redir-client',
+                clientSecret: 'mfa-redir-secret',
+                callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+              }
+            }
+          },
+          {
+            controllers: {
+              auth: true,
+              mfa: true,
+              passwordReset: true,
+              sessions: true,
+              oauth: true
+            },
+            extraModuleProviders: [{ provide: BYMAX_AUTH_HOOKS, useValue: hooks }],
+            mutateBuilder: (builder) =>
+              builder.overrideProvider(OAUTH_PLUGINS).useValue([plugin]) as typeof builder
+          }
+        )
+        app = bootstrap.app
+        repo = bootstrap.repo
+      })
+
+      afterAll(async () => {
+        await app.close()
+      })
+
+      /**
+       * Verifies the browser path: with `mfaRedirectUrl` configured, the
+       * callback issues a 302 with the cookie still planted on the response.
+       */
+      it('should respond 302 to mfaRedirectUrl with mfa_temp_token cookie set', async () => {
+        const secret = generateBase32Secret()
+        seedMfaUser(repo, {
+          tenantId: 'tenant-1',
+          email: 'mfa-redir@example.com',
+          providerId: 'mfa-redir-id',
+          mfaSecret: encryptForMfa(secret)
+        })
+        hookController.current = {
+          action: 'link',
+          userId: 'user-mfa-mfa-redir-id'
+        } as OAuthLoginResult & { userId: string }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const res = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'mfa_redir_code', state })
+
+        expect(res.status).toBe(302)
+        expect(res.headers['location']).toBe('/auth/mfa-challenge')
+        // No JSON body alongside the redirect.
+        expect(res.body).toEqual({})
+
+        const setCookieHeader = res.headers['set-cookie']
+        const cookieString = Array.isArray(setCookieHeader)
+          ? setCookieHeader.join('\n')
+          : (setCookieHeader ?? '')
+        expect(cookieString).toMatch(/mfa_temp_token=/)
+        expect(cookieString).toMatch(/Path=\/auth\/mfa/)
+      })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Scenario — OAuth error redirect (1.0.7)
+  //
+  // Symmetric polish for the success/MFA redirect paths: when the callback
+  // fails with an `AuthException` (state invalid, plugin error, hook reject)
+  // and `oauth.errorRedirectUrl` is configured, the lib redirects to that URL
+  // with `?error=<code>` instead of propagating the JSON exception.
+  // ---------------------------------------------------------------------------
+
+  describe('error redirect (1.0.7)', () => {
+    describe('with errorRedirectUrl configured', () => {
+      let app: INestApplication
+      let plugin: OAuthProviderPlugin
+      let hookController: HookController
+
+      beforeAll(async () => {
+        hookController = { current: null, lastCall: null }
+        const hooks = createControlledHooks(hookController)
+        plugin = createMockGooglePlugin()
+
+        const bootstrap = await bootstrapTestApp(
+          {
+            tokenDelivery: 'bearer',
+            oauth: {
+              errorRedirectUrl: '/auth/error',
+              google: {
+                clientId: 'err-test-client',
+                clientSecret: 'err-test-secret',
+                callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+              }
+            }
+          },
+          {
+            controllers: {
+              auth: true,
+              mfa: true,
+              passwordReset: true,
+              sessions: true,
+              oauth: true
+            },
+            extraModuleProviders: [{ provide: BYMAX_AUTH_HOOKS, useValue: hooks }],
+            mutateBuilder: (builder) =>
+              builder.overrideProvider(OAUTH_PLUGINS).useValue([plugin]) as typeof builder
+          }
+        )
+        app = bootstrap.app
+      })
+
+      afterAll(async () => {
+        await app.close()
+      })
+
+      /**
+       * Verifies the redirect path: a hook that rejects the OAuth flow with
+       * `{ action: 'reject' }` raises `OAUTH_FAILED` inside the service. The
+       * controller catches that AuthException and 302s to the configured
+       * URL with `?error=oauth_failed` appended.
+       */
+      it('should redirect to errorRedirectUrl with ?error=oauth_failed when the hook rejects', async () => {
+        hookController.current = { action: 'reject', reason: 'no go' }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const res = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'fail_code', state })
+
+        expect(res.status).toBe(302)
+        expect(res.headers['location']).toBe('/auth/error?error=oauth_failed')
+        // No JSON body — only the redirect headers.
+        expect(res.body).toEqual({})
+      })
+    })
+
+    describe('without errorRedirectUrl', () => {
+      let app: INestApplication
+      let plugin: OAuthProviderPlugin
+      let hookController: HookController
+
+      beforeAll(async () => {
+        hookController = { current: null, lastCall: null }
+        const hooks = createControlledHooks(hookController)
+        plugin = createMockGooglePlugin()
+
+        const bootstrap = await bootstrapTestApp(
+          {
+            tokenDelivery: 'bearer',
+            oauth: {
+              google: {
+                clientId: 'err-throw-client',
+                clientSecret: 'err-throw-secret',
+                callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+              }
+            }
+          },
+          {
+            controllers: {
+              auth: true,
+              mfa: true,
+              passwordReset: true,
+              sessions: true,
+              oauth: true
+            },
+            extraModuleProviders: [{ provide: BYMAX_AUTH_HOOKS, useValue: hooks }],
+            mutateBuilder: (builder) =>
+              builder.overrideProvider(OAUTH_PLUGINS).useValue([plugin]) as typeof builder
+          }
+        )
+        app = bootstrap.app
+      })
+
+      afterAll(async () => {
+        await app.close()
+      })
+
+      /**
+       * Verifies the legacy contract is preserved: with no `errorRedirectUrl`
+       * the AuthException propagates to NestJS's exception filter as a JSON
+       * 401 — same behaviour as every previous library version.
+       */
+      it('should respond with the standard JSON 401 OAUTH_FAILED when no errorRedirectUrl is configured', async () => {
+        hookController.current = { action: 'reject', reason: 'no go' }
+
+        const initiate = await request(app.getHttpServer())
+          .get('/oauth/google')
+          .query({ tenantId: 'tenant-1' })
+        const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+
+        const res = await request(app.getHttpServer())
+          .get('/oauth/google/callback')
+          .query({ code: 'fail_code', state })
+
+        expect(res.status).toBe(401)
+        expect(res.body).toEqual(
+          expect.objectContaining({
+            error: expect.objectContaining({ code: 'auth.oauth_failed' })
+          })
+        )
+      })
+    })
+  })
 })
+
+// ---------------------------------------------------------------------------
+// TOTP helper — RFC 6238 / RFC 4226 implementation using node:crypto only.
+//
+// Mirrors `test/e2e/mfa-flow.e2e-spec.ts` so the OAuth + MFA scenarios can
+// produce real TOTP codes without coupling to lib internals.
+// ---------------------------------------------------------------------------
+
+/** TOTP time step in seconds (RFC 6238 §5.2). */
+const TOTP_STEP_SECONDS = 30
+
+/** Number of digits in a TOTP code (RFC 4226 §5.3). */
+const TOTP_DIGITS = 6
+
+/** Base32 alphabet per RFC 4648 §6 (uppercase A–Z and digits 2–7). */
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+/**
+ * Encrypts a Base32 TOTP secret with the lib's AES-256-GCM helper so it
+ * can be written into the in-memory user repo in the same shape the lib
+ * persists on real `userRepo.updateMfa` calls.
+ *
+ * Uses statically imported `encrypt` + `MFA_ENCRYPTION_KEY` (top of file)
+ * so the suite stays consistent with the rest of the codebase's
+ * ESM-import convention — no runtime `require()` and no eslint-disable.
+ */
+function encryptForMfa(base32Secret: string): string {
+  return encrypt(base32Secret, MFA_ENCRYPTION_KEY)
+}
+
+/**
+ * Generates a fresh Base32-encoded TOTP secret. Lives in this file so the
+ * OAuth + MFA suite does not depend on lib internals beyond `aes-gcm.ts`.
+ */
+function generateBase32Secret(): string {
+  const bytes = crypto.randomBytes(20)
+  let result = ''
+  let bits = 0
+  let value = 0
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      result += BASE32_ALPHABET[(value >>> (bits - 5)) & 0x1f]
+      bits -= 5
+    }
+  }
+  if (bits > 0) {
+    result += BASE32_ALPHABET[(value << (5 - bits)) & 0x1f]
+  }
+  return result
+}
+
+/**
+ * Generates a 6-digit TOTP code for the given Base32 secret at the given time.
+ *
+ * Mirrors `src/server/crypto/totp.ts` so the test stays decoupled from library
+ * internals. Uses HMAC-SHA1 + 30s step + 6-digit code.
+ */
+function generateTotp(base32Secret: string, time: number = Date.now()): string {
+  const key = base32Decode(base32Secret)
+  const counter = Math.floor(time / 1000 / TOTP_STEP_SECONDS)
+
+  const buf = Buffer.alloc(8)
+  buf.writeBigUInt64BE(BigInt(counter))
+
+  const hmac = crypto.createHmac('sha1', key).update(buf).digest()
+
+  const offset = (hmac[hmac.length - 1] as number) & 0x0f
+  const code =
+    (((hmac[offset] as number) & 0x7f) << 24) |
+    (((hmac[offset + 1] as number) & 0xff) << 16) |
+    (((hmac[offset + 2] as number) & 0xff) << 8) |
+    ((hmac[offset + 3] as number) & 0xff)
+
+  return (code % 10 ** TOTP_DIGITS).toString().padStart(TOTP_DIGITS, '0')
+}
+
+/** Decodes a Base32 string per RFC 4648 §6 into raw bytes. */
+function base32Decode(input: string): Buffer {
+  const cleaned = input.replace(/=+$/, '').toUpperCase()
+  const bytes: number[] = []
+  let bits = 0
+  let value = 0
+
+  for (const c of cleaned) {
+    const idx = BASE32_ALPHABET.indexOf(c)
+    if (idx < 0) continue
+    value = (value << 5) | idx
+    bits += 5
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+
+  return Buffer.from(bytes)
+}

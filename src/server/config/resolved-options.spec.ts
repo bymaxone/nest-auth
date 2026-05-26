@@ -1322,6 +1322,311 @@ describe('resolveOptions — oauth provider validation', () => {
       })
     ).not.toThrow()
   })
+
+  // ─── oauth.mfaRedirectUrl validation (1.0.7) ─────────────────────────────
+
+  /**
+   * Verifies the non-empty-string shape check for `mfaRedirectUrl`.
+   * A misconfigured `process.env.OAUTH_MFA_REDIRECT_URL` could surface as
+   * `''` in the options object — silently allowing that would land the
+   * browser on the empty string. Failing loud at boot is the less-surprising
+   * posture.
+   */
+  it('should throw when oauth.mfaRedirectUrl is the empty string', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          mfaRedirectUrl: '',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).toThrow(/mfaRedirectUrl must be a non-empty string/)
+  })
+
+  /**
+   * Verifies an HTTPS URL passes in production for `mfaRedirectUrl`. Same
+   * security posture as `successRedirectUrl` — TLS must protect both legs
+   * of the OAuth → MFA challenge round-trip.
+   */
+  it('should accept an HTTPS mfaRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: 'https://app.example.com/auth/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies that a relative path passes in production for `mfaRedirectUrl`.
+   */
+  it('should accept a same-origin (leading-slash) mfaRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: '/auth/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies an HTTP `mfaRedirectUrl` is rejected in production. The
+   * redirect must not downgrade the user from HTTPS to plain HTTP — that
+   * would expose the freshly-set `mfa_temp_token` cookie on the next leg.
+   */
+  it('should throw when mfaRedirectUrl uses HTTP in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: 'http://app.example.com/auth/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow(/mfaRedirectUrl must use HTTPS or be a same-origin path/)
+    })
+  })
+
+  /**
+   * Verifies an HTTP `mfaRedirectUrl` is accepted outside production. Local
+   * development typically uses `http://localhost:3000/auth/mfa`, which must
+   * remain valid.
+   */
+  it('should accept an HTTP mfaRedirectUrl outside production', () => {
+    withNodeEnv('development', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: 'http://localhost:3000/auth/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://localhost:3000/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Unlike `successRedirectUrl`, `mfaRedirectUrl` is compatible with every
+   * `tokenDelivery` mode because no session token travels through the
+   * redirect — only the dedicated `mfa_temp_token` cookie.
+   */
+  it('should accept mfaRedirectUrl together with tokenDelivery: bearer', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          mfaRedirectUrl: '/auth/mfa',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).not.toThrow()
+  })
+
+  /**
+   * Back-compat guard: omitting `mfaRedirectUrl` must not trip the validator.
+   */
+  it('should not throw when mfaRedirectUrl is absent', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).not.toThrow()
+  })
+
+  // ─── oauth.errorRedirectUrl validation (1.0.7) ───────────────────────────
+
+  /**
+   * Verifies the non-empty-string shape check for `errorRedirectUrl`. The
+   * same posture as `successRedirectUrl` / `mfaRedirectUrl` — empty values
+   * are rejected at boot.
+   */
+  it('should throw when oauth.errorRedirectUrl is the empty string', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          errorRedirectUrl: '',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).toThrow(/errorRedirectUrl must be a non-empty string/)
+  })
+
+  /**
+   * Verifies an HTTPS URL passes in production for `errorRedirectUrl`.
+   */
+  it('should accept an HTTPS errorRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: 'https://app.example.com/auth/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies a same-origin path passes in production for `errorRedirectUrl`.
+   */
+  it('should accept a same-origin (leading-slash) errorRedirectUrl in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: '/auth/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Verifies an HTTP `errorRedirectUrl` is rejected in production.
+   */
+  it('should throw when errorRedirectUrl uses HTTP in production', () => {
+    withNodeEnv('production', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: 'http://app.example.com/auth/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow(/errorRedirectUrl must use HTTPS or be a same-origin path/)
+    })
+  })
+
+  /**
+   * Verifies HTTP outside production is allowed for `errorRedirectUrl`.
+   */
+  it('should accept an HTTP errorRedirectUrl outside production', () => {
+    withNodeEnv('development', () => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: 'http://localhost:3000/auth/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'http://localhost:3000/cb'
+            }
+          }
+        })
+      ).not.toThrow()
+    })
+  })
+
+  /**
+   * Back-compat guard: omitting `errorRedirectUrl` must not trip the
+   * validator — the lib still propagates the AuthException to NestJS's
+   * exception filter in that case.
+   */
+  it('should not throw when errorRedirectUrl is absent', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).not.toThrow()
+  })
+
+  /**
+   * Verifies all three redirect URLs can co-exist. Pins the interaction
+   * between the three independent validators so a future refactor cannot
+   * accidentally couple them.
+   */
+  it('should accept successRedirectUrl, mfaRedirectUrl, and errorRedirectUrl together', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        oauth: {
+          successRedirectUrl: '/dashboard',
+          mfaRedirectUrl: '/auth/mfa',
+          errorRedirectUrl: '/auth/error',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.com/cb'
+          }
+        }
+      })
+    ).not.toThrow()
+  })
 })
 
 // ---------------------------------------------------------------------------
