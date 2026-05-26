@@ -61,7 +61,10 @@ function makeOptions(tokenDelivery: 'cookie' | 'bearer' | 'both') {
       accessTokenName: 'access_token',
       refreshTokenName: 'refresh_token',
       sessionSignalName: 'has_session',
-      refreshCookiePath: '/auth/refresh'
+      refreshCookiePath: '/auth/refresh',
+      // Widened so tests can override per-case without fighting TS narrowing
+      // from `'lax' as const`. The runtime default mirrors DEFAULT_OPTIONS.
+      sameSite: 'lax' as 'lax' | 'strict' | 'none'
     }
   }
 }
@@ -170,6 +173,81 @@ describe('TokenDeliveryService', () => {
         (call: [string, ...unknown[]]) => call[0] === 'has_session'
       ) as [string, string, Record<string, unknown>] | undefined
       expect(sessionCookieCall?.[2]?.['httpOnly']).toBe(false)
+    })
+
+    /**
+     * Verifies that the resolved `cookies.sameSite` value reaches the
+     * `res.cookie()` call for every issued cookie. The default in the test
+     * fixture is `'lax'`, which mirrors the lib's startup default since v1.0.5.
+     * A drift here (e.g. baseCookieOptions hardcoding 'strict' again) would
+     * silently break OAuth redirects on cross-site-initiated navigations.
+     */
+    it('should apply the configured cookies.sameSite to access, refresh, and has_session cookies', async () => {
+      const service = await buildService('cookie')
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const calls = (res.cookie as jest.Mock).mock.calls as Array<
+        [string, string, Record<string, unknown>]
+      >
+      const access = calls.find((c) => c[0] === 'access_token')?.[2]
+      const refresh = calls.find((c) => c[0] === 'refresh_token')?.[2]
+      const session = calls.find((c) => c[0] === 'has_session')?.[2]
+      expect(access?.['sameSite']).toBe('lax')
+      expect(refresh?.['sameSite']).toBe('lax')
+      expect(session?.['sameSite']).toBe('lax')
+    })
+
+    /**
+     * Verifies that a consumer-chosen `cookies.sameSite: 'strict'` overrides
+     * the default. Pins the wiring between the resolved option and the actual
+     * Set-Cookie attribute so a regression that drops the option (e.g. base
+     * options hardcoded again) is caught immediately. Each cookie is asserted
+     * separately because the lib spreads the base options into three distinct
+     * calls — only the access cookie failing would slip past a single check.
+     */
+    it('should propagate cookies.sameSite: "strict" to every cookie when configured', async () => {
+      const options = makeOptions('cookie')
+      options.cookies.sameSite = 'strict'
+      const service = await buildServiceWithOptions(options)
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const calls = (res.cookie as jest.Mock).mock.calls as Array<
+        [string, string, Record<string, unknown>]
+      >
+      expect(calls.find((c) => c[0] === 'access_token')?.[2]?.['sameSite']).toBe('strict')
+      expect(calls.find((c) => c[0] === 'refresh_token')?.[2]?.['sameSite']).toBe('strict')
+      expect(calls.find((c) => c[0] === 'has_session')?.[2]?.['sameSite']).toBe('strict')
+    })
+
+    /**
+     * Verifies that `cookies.sameSite: 'none'` reaches the Set-Cookie call.
+     * The lib's startup validator requires `secureCookies: true` for this
+     * combination, but `TokenDeliveryService` does not re-check at runtime —
+     * the value is forwarded verbatim. This test pins that contract so a
+     * future change that silently rewrites 'none' to 'lax' for safety would
+     * be caught by the suite.
+     */
+    it('should propagate cookies.sameSite: "none" to every cookie when configured', async () => {
+      const options = makeOptions('cookie')
+      options.cookies.sameSite = 'none'
+      const service = await buildServiceWithOptions(options)
+      const res = makeRes()
+      const req = makeReq()
+
+      service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
+
+      const calls = (res.cookie as jest.Mock).mock.calls as Array<
+        [string, string, Record<string, unknown>]
+      >
+      expect(calls.find((c) => c[0] === 'access_token')?.[2]?.['sameSite']).toBe('none')
+      expect(calls.find((c) => c[0] === 'refresh_token')?.[2]?.['sameSite']).toBe('none')
+      expect(calls.find((c) => c[0] === 'has_session')?.[2]?.['sameSite']).toBe('none')
     })
 
     // Verifies that the refresh token cookie uses the configured path to limit its scope.
@@ -645,11 +723,14 @@ describe('TokenDeliveryService', () => {
       expect(refreshClear?.[1]?.['path']).toBe('/auth/refresh')
     })
 
-    // Scenario: the has_session signal cookie is cleared with httpOnly:false and sameSite:'strict'.
-    // Expected: options contain httpOnly === false and sameSite === 'strict'. Why: kills the
-    // ObjectLiteral mutant on line 261:63 (options → `{}`) and the BooleanLiteral mutant on line
-    // 263:19 (`httpOnly: false` → `true`) — both would alter how the signal cookie is cleared.
-    it('clears the has_session signal cookie with httpOnly false and strict sameSite', async () => {
+    // Scenario: the has_session signal cookie is cleared with httpOnly:false and sameSite='lax'
+    // (the resolved default from cookies.sameSite). Expected: options contain httpOnly === false
+    // and sameSite === 'lax'. Why: kills the ObjectLiteral mutant on line 261:63 (options → `{}`)
+    // and the BooleanLiteral mutant on line 263:19 (`httpOnly: false` → `true`) — both would alter
+    // how the signal cookie is cleared. The sameSite value mirrors the configured option so the
+    // clear request matches the original Set-Cookie attributes (browsers require identical name +
+    // path + domain + sameSite to delete a cookie).
+    it('clears the has_session signal cookie with httpOnly false and the configured sameSite', async () => {
       const service = await buildService('cookie')
       const res = makeRes()
       const req = makeReq()
@@ -660,7 +741,7 @@ describe('TokenDeliveryService', () => {
         (call: [string, ...unknown[]]) => call[0] === 'has_session'
       ) as [string, Record<string, unknown>] | undefined
       expect(signalClear?.[1]?.['httpOnly']).toBe(false)
-      expect(signalClear?.[1]?.['sameSite']).toBe('strict')
+      expect(signalClear?.[1]?.['sameSite']).toBe('lax')
     })
   })
 

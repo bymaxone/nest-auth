@@ -349,9 +349,19 @@ export class TokenDeliveryService {
     })
   }
 
-  private baseCookieOptions(domain: string | undefined): { sameSite: 'strict'; domain?: string } {
+  /**
+   * Returns the shared cookie attributes applied to every cookie issued by
+   * this service. `sameSite` comes from the resolved options (defaults to
+   * `'lax'`); the `domain` is folded in only when the consumer supplies a
+   * resolver. Other per-cookie attributes (`httpOnly`, `secure`, `path`,
+   * `maxAge`) are spread on top of this base by the callers.
+   */
+  private baseCookieOptions(domain: string | undefined): {
+    sameSite: 'lax' | 'strict' | 'none'
+    domain?: string
+  } {
     return {
-      sameSite: 'strict',
+      sameSite: this.options.cookies.sameSite,
       ...(domain ? { domain } : {})
     }
   }

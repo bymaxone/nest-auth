@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-05-25
+
+### Changed
+
+- **Default `cookies.sameSite` lowered from `'strict'` to `'lax'`** ([`src/server/config/default-options.ts`](src/server/config/default-options.ts), [`src/server/services/token-delivery.service.ts`](src/server/services/token-delivery.service.ts)). The previous `'strict'` default broke the OAuth return-trip: Chromium does not include `SameSite=Strict` cookies on the very first request after a cross-site-initiated navigation (e.g. `accounts.google.com → /auth/oauth/google/callback → /dashboard`), so the freshly-issued auth cookies never reached the destination route. The `'lax'` default mirrors what Chromium applies to cookies that omit the attribute entirely and is the industry posture for browser auth cookies (Passport, Auth0, NextAuth all default to or expect Lax). The CSRF margin loss is negligible — POST endpoints are still cross-site safe under Lax, and the lib already short-circuits forgery vectors with origin checks at the controller boundary.
+
+  This is a **behavior change** for consumers that relied on the `'strict'` posture; they can restore it explicitly with `cookies.sameSite: 'strict'`. SemVer-wise this is a patch because the previous behavior broke a documented feature (OAuth callbacks).
+
+### Added
+
+- **`cookies.sameSite?: 'lax' | 'strict' | 'none'` configuration option** ([`src/server/interfaces/auth-module-options.interface.ts`](src/server/interfaces/auth-module-options.interface.ts)). Lets consumers explicitly pick the SameSite posture for every cookie the module issues (access token, refresh token, session signal). Defaults to `'lax'` (see Changed above).
+
+  Validated at startup by [`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts): `cookies.sameSite: 'none'` requires `secureCookies: true` (browser-spec rule — `SameSite=None` cookies without `Secure` are silently dropped, which would surface as "auth doesn't work" instead of a configuration error).
+
+  Covered by 3 new unit tests in [`src/server/services/token-delivery.service.spec.ts`](src/server/services/token-delivery.service.spec.ts) (default propagates, explicit `'strict'` overrides, explicit `'none'` propagates) and 5 new validator tests in [`src/server/config/resolved-options.spec.ts`](src/server/config/resolved-options.spec.ts) (default to `'lax'`, explicit override, `'none' + secureCookies: true` accepted, `'none' + secureCookies: false` rejected, `'none'` accepted in production via `NODE_ENV`-driven default). One existing e2e cookie-header assertion in [`test/e2e/auth-flow.e2e-spec.ts`](test/e2e/auth-flow.e2e-spec.ts) updated to match the new default; the rest of the suite continues to pass unmodified.
+
 ## [1.0.4] - 2026-05-25
 
 ### Added

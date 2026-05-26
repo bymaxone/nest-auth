@@ -175,6 +175,27 @@ export interface BymaxAuthModuleOptions {
      * @returns Array of domain strings where cookies should be set (e.g. `['.example.com']`).
      */
     resolveDomains?: (requestDomain: string) => string[]
+
+    /**
+     * `SameSite` attribute applied to every cookie issued by the module
+     * (access token, refresh token, session signal). Default: `'lax'`.
+     *
+     * Trade-offs:
+     * - `'lax'` (default): cookies travel on top-level cross-site GET navigations.
+     *   This is the standard posture for browser auth — OAuth redirects from a
+     *   provider (Google, GitHub, …) back to the app deliver the auth cookies on
+     *   the first navigation, which is exactly what users expect after sign-in.
+     *   Aligns with Chromium's behavior for cookies that omit `SameSite`.
+     * - `'strict'`: cookies are withheld on every cross-site request, including
+     *   the OAuth return-trip. Choose this only when the app does not use
+     *   third-party identity providers and the extra CSRF margin justifies the
+     *   broken OAuth flow.
+     * - `'none'`: cookies are sent on every cross-site request. The browser
+     *   requires `Secure` for `SameSite=None`, so the resolver throws at startup
+     *   when this combination would be unset (`secureCookies` must be `true`).
+     *   Pick this for embedded scenarios (iframes, third-party widgets).
+     */
+    sameSite?: 'lax' | 'strict' | 'none'
   }
 
   /**

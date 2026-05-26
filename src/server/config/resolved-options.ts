@@ -155,6 +155,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthProviders(userOptions.oauth)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
+  validateSameSiteNoneRequiresSecure(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
@@ -512,6 +513,32 @@ function validateRefreshCookiePath(
         `The refresh cookie path defaults to '/auth', which will not match your routes — ` +
         `the refresh cookie will be sent on every request instead of only to the refresh endpoint. ` +
         `Set cookies.refreshCookiePath: '/${prefix}' to restrict the refresh cookie correctly.`
+    )
+  }
+}
+
+/**
+ * Validates that `cookies.sameSite: 'none'` is only used with `Secure` cookies.
+ *
+ * Per the HTTP cookie spec, browsers reject `SameSite=None` cookies that lack
+ * the `Secure` attribute. Catching this combination at startup turns a silent
+ * runtime failure (browser drops the cookie, user can't log in) into a loud
+ * configuration error.
+ *
+ * `secureCookies` defaults to `true` in production and `false` otherwise. The
+ * `'none'` posture is only meaningful with a TLS-served origin, so requiring
+ * `secureCookies: true` regardless of `NODE_ENV` is the safe rule.
+ */
+function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions): void {
+  const sameSite = userOptions.cookies?.sameSite
+  if (sameSite !== 'none') return
+  const secureCookies = userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production'
+  if (!secureCookies) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.sameSite is 'none' but secureCookies is false. ` +
+        `Browsers reject SameSite=None cookies without the Secure attribute, so the auth ` +
+        `cookies would never be stored. Set secureCookies: true (and serve over HTTPS) or ` +
+        `use cookies.sameSite: 'lax' / 'strict'.`
     )
   }
 }
