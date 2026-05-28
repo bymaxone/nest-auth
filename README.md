@@ -25,7 +25,8 @@
   <a href="https://github.com/bymaxone/nest-auth">GitHub</a> ·
   <a href="https://github.com/bymaxone/nest-auth/issues">Issues</a> ·
   <a href="#-quick-start">Quick Start</a> ·
-  <a href="#-subpath-exports">API Reference</a>
+  <a href="#-subpath-exports">API Reference</a> ·
+  <a href="https://github.com/bymaxone/nest-auth-example">Example App</a>
 </p>
 
 ---
@@ -110,6 +111,9 @@ server    client
 ```
 
 ---
+
+> [!TIP]
+> Prefer to learn from a working app? See the [nest-auth-example](https://github.com/bymaxone/nest-auth-example) — a full NestJS + Next.js project wired with this library.
 
 ## 🚀 Quick Start
 
