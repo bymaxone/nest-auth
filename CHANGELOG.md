@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-05-30
+
+### Security
+
+- **`tmp` forced to `>=0.2.6` via pnpm `overrides`** ([`package.json`](package.json)). The vulnerable `tmp` (`<0.2.6`) shipped transitively through `ioredis-mock` → `fengari` (dev-only). Dependabot cannot bump a sub-dependency, so its security update reported `security_update_not_possible`. The override resolves `tmp` to `0.2.7`, clearing the advisory. Dev-only — not present in the published bundle.
+
 ## [1.0.10] - 2026-05-26
 
 ### Added
