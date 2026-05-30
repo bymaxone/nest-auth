@@ -38,15 +38,15 @@ The primary entry point for consumers is `registerAsync`. This allows the host a
 ```typescript
 // bymax-auth.module.ts
 
-import { DynamicModule, Module, Provider, Type } from '@nestjs/common';
+import { DynamicModule, Module, Provider, Type } from '@nestjs/common'
 import {
   AUTH_MODULE_OPTIONS,
   USER_REPOSITORY,
   EMAIL_PROVIDER,
   AUTH_REDIS_CLIENT,
-  AUTH_HOOKS,
-} from './bymax-auth.constants';
-import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface';
+  AUTH_HOOKS
+} from './bymax-auth.constants'
+import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
 
 @Module({})
 export class BymaxAuthModule {
@@ -55,9 +55,9 @@ export class BymaxAuthModule {
    * This is the ONLY public registration method.
    */
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
-    const asyncProviders = this.createAsyncProviders(options);
-    const conditionalProviders = this.createConditionalProviders();
-    const conditionalControllers = this.createConditionalControllers();
+    const asyncProviders = this.createAsyncProviders(options)
+    const conditionalProviders = this.createConditionalProviders()
+    const conditionalControllers = this.createConditionalControllers()
 
     return {
       module: BymaxAuthModule,
@@ -70,15 +70,11 @@ export class BymaxAuthModule {
         AuthService,
         PasswordService,
         TokenManagerService,
-        BruteForceService,
+        BruteForceService
       ],
       controllers: [...conditionalControllers],
-      exports: [
-        AuthService,
-        TokenManagerService,
-        AUTH_MODULE_OPTIONS,
-      ],
-    };
+      exports: [AuthService, TokenManagerService, AUTH_MODULE_OPTIONS]
+    }
   }
 
   // No static register() — async-only for this package
@@ -90,35 +86,35 @@ export class BymaxAuthModule {
 ```typescript
 // interfaces/auth-module-options.interface.ts
 
-import { ModuleMetadata, Type } from '@nestjs/common';
+import { ModuleMetadata, Type } from '@nestjs/common'
 
 export interface AuthModuleOptions {
   jwt: {
-    accessSecret: string;
-    refreshSecret: string;
-    accessExpiresIn: string;   // e.g., '15m'
-    refreshExpiresIn: string;  // e.g., '7d'
-  };
-  tokenDelivery: 'cookie' | 'body' | 'both';
-  mfa?: { issuer: string };
-  sessions?: { enabled: boolean; maxPerUser?: number };
-  oauth?: { google?: GoogleOAuthConfig };
-  platform?: { enabled: boolean };
-  invitations?: { enabled: boolean };
+    accessSecret: string
+    refreshSecret: string
+    accessExpiresIn: string // e.g., '15m'
+    refreshExpiresIn: string // e.g., '7d'
+  }
+  tokenDelivery: 'cookie' | 'body' | 'both'
+  mfa?: { issuer: string }
+  sessions?: { enabled: boolean; maxPerUser?: number }
+  oauth?: { google?: GoogleOAuthConfig }
+  platform?: { enabled: boolean }
+  invitations?: { enabled: boolean }
   controllers?: {
-    auth?: boolean;
-    mfa?: boolean;
-    passwordReset?: boolean;
-    sessions?: boolean;
-    platform?: boolean;
-    invitations?: boolean;
-  };
+    auth?: boolean
+    mfa?: boolean
+    passwordReset?: boolean
+    sessions?: boolean
+    platform?: boolean
+    invitations?: boolean
+  }
 }
 
 export interface AuthModuleAsyncOptions extends Pick<ModuleMetadata, 'imports'> {
-  isGlobal?: boolean;
-  useFactory: (...args: unknown[]) => Promise<AuthModuleOptions> | AuthModuleOptions;
-  inject?: (Type | string | symbol)[];
+  isGlobal?: boolean
+  useFactory: (...args: unknown[]) => Promise<AuthModuleOptions> | AuthModuleOptions
+  inject?: (Type | string | symbol)[]
 }
 ```
 
@@ -144,8 +140,8 @@ This is how a host application imports the module:
 
 ```typescript
 // In the host application's AppModule
-import { BymaxAuthModule } from '@bymax-one/nest-auth';
-import { ConfigService } from '@nestjs/config';
+import { BymaxAuthModule } from '@bymax-one/nest-auth'
+import { ConfigService } from '@nestjs/config'
 
 @Module({
   imports: [
@@ -157,28 +153,28 @@ import { ConfigService } from '@nestjs/config';
           accessSecret: config.getOrThrow('JWT_ACCESS_SECRET'),
           refreshSecret: config.getOrThrow('JWT_REFRESH_SECRET'),
           accessExpiresIn: '15m',
-          refreshExpiresIn: '7d',
+          refreshExpiresIn: '7d'
         },
         tokenDelivery: 'cookie',
         mfa: { issuer: 'MyApp' },
-        sessions: { enabled: true, maxPerUser: 5 },
+        sessions: { enabled: true, maxPerUser: 5 }
       }),
-      inject: [ConfigService],
-    }),
-  ],
+      inject: [ConfigService]
+    })
+  ]
 })
 export class AppModule {}
 ```
 
 ### 1.6 Rules for Dynamic Modules in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Async only** | Only expose `registerAsync()`. Never expose a synchronous `register()` — all real-world configs depend on environment variables. |
-| **No `forRoot` / `forFeature` split** | This package is a single cohesive module, not an ORM-style multi-instance module. Use `registerAsync` exclusively. |
-| **Conditional registration** | Controllers and optional services (MFA, sessions, OAuth) are registered only when their configuration section is present. |
-| **`global` is opt-in** | The `isGlobal` option defaults to `false`. The host decides whether the module is global. |
-| **No hard dependencies** | The module must never import concrete implementations. All external dependencies (user repository, email provider, Redis client) are injected via tokens. |
+| Rule                                  | Description                                                                                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Async only**                        | Only expose `registerAsync()`. Never expose a synchronous `register()` — all real-world configs depend on environment variables.                          |
+| **No `forRoot` / `forFeature` split** | This package is a single cohesive module, not an ORM-style multi-instance module. Use `registerAsync` exclusively.                                        |
+| **Conditional registration**          | Controllers and optional services (MFA, sessions, OAuth) are registered only when their configuration section is present.                                 |
+| **`global` is opt-in**                | The `isGlobal` option defaults to `false`. The host decides whether the module is global.                                                                 |
+| **No hard dependencies**              | The module must never import concrete implementations. All external dependencies (user repository, email provider, Redis client) are injected via tokens. |
 
 ### 1.7 Conditional Controller Registration
 
@@ -238,41 +234,41 @@ This package uses `Symbol()` for all injection tokens to avoid naming collisions
  * Injection token for the resolved auth module options.
  * Provided by the async factory in registerAsync().
  */
-export const AUTH_MODULE_OPTIONS = Symbol('AUTH_MODULE_OPTIONS');
+export const AUTH_MODULE_OPTIONS = Symbol('AUTH_MODULE_OPTIONS')
 
 /**
  * Injection token for the user repository implementation.
  * The host application must provide a class implementing IUserRepository.
  */
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
+export const USER_REPOSITORY = Symbol('USER_REPOSITORY')
 
 /**
  * Injection token for the email provider implementation.
  * The host application must provide a class implementing IEmailProvider.
  */
-export const EMAIL_PROVIDER = Symbol('EMAIL_PROVIDER');
+export const EMAIL_PROVIDER = Symbol('EMAIL_PROVIDER')
 
 /**
  * Injection token for the ioredis client instance.
  * The host application must provide a configured Redis client.
  */
-export const AUTH_REDIS_CLIENT = Symbol('AUTH_REDIS_CLIENT');
+export const AUTH_REDIS_CLIENT = Symbol('AUTH_REDIS_CLIENT')
 
 /**
  * Injection token for auth lifecycle hooks.
  * Optional — falls back to NoOpAuthHooks if not provided.
  */
-export const AUTH_HOOKS = Symbol('AUTH_HOOKS');
+export const AUTH_HOOKS = Symbol('AUTH_HOOKS')
 ```
 
 ### 2.2 Why `Symbol()` Instead of Strings
 
 ```typescript
 // WRONG: String tokens can collide with host application tokens
-export const USER_REPOSITORY = 'USER_REPOSITORY';
+export const USER_REPOSITORY = 'USER_REPOSITORY'
 
 // CORRECT: Symbol tokens are unique by identity
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
+export const USER_REPOSITORY = Symbol('USER_REPOSITORY')
 ```
 
 String tokens like `'USER_REPOSITORY'` can collide if the host application or another package uses the same string. `Symbol()` guarantees uniqueness because each call creates a distinct identity. The string argument is purely a debug label.
@@ -282,10 +278,10 @@ String tokens like `'USER_REPOSITORY'` can collide if the host application or an
 When a token is not a class (i.e., it is a Symbol, string, or abstract class), you must use the `@Inject()` decorator explicitly:
 
 ```typescript
-import { Injectable, Inject } from '@nestjs/common';
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants';
-import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
-import type { IUserRepository } from '../interfaces/user-repository.interface';
+import { Injectable, Inject } from '@nestjs/common'
+import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants'
+import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 
 @Injectable()
 export class AuthService {
@@ -297,7 +293,7 @@ export class AuthService {
     private readonly userRepository: IUserRepository,
 
     // Class-based tokens do NOT need @Inject()
-    private readonly tokenManager: TokenManagerService,
+    private readonly tokenManager: TokenManagerService
   ) {}
 }
 ```
@@ -379,7 +375,7 @@ export class AuthService {
 export class AuthService {
   constructor(
     @Inject(USER_REPOSITORY)
-    private readonly userRepo: IUserRepository,
+    private readonly userRepo: IUserRepository
   ) {}
 }
 ```
@@ -394,12 +390,12 @@ const mfaProvider: Provider = {
   provide: MfaService,
   useFactory: (options: AuthModuleOptions) => {
     if (!options.mfa) {
-      return null; // Or a no-op stub
+      return null // Or a no-op stub
     }
-    return new MfaService(options.mfa);
+    return new MfaService(options.mfa)
   },
-  inject: [AUTH_MODULE_OPTIONS],
-};
+  inject: [AUTH_MODULE_OPTIONS]
+}
 ```
 
 ### 2.7 Provider Scope
@@ -419,12 +415,12 @@ export class AuthService { ... }
 
 ### 2.8 Rules for Dependency Injection in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Symbol tokens only** | All injection tokens use `Symbol()`. Never use string tokens. |
-| **Explicit `@Inject()`** | Always use `@Inject(TOKEN)` for non-class tokens. Never rely on type inference for interfaces. |
-| **No `Scope.REQUEST`** | All services are singletons. If you need request data, pass it as a method parameter. |
-| **No circular references** | Design service boundaries to avoid circular DI. If unavoidable, use `forwardRef()` (see Section 5.5). |
+| Rule                       | Description                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Symbol tokens only**     | All injection tokens use `Symbol()`. Never use string tokens.                                                                                       |
+| **Explicit `@Inject()`**   | Always use `@Inject(TOKEN)` for non-class tokens. Never rely on type inference for interfaces.                                                      |
+| **No `Scope.REQUEST`**     | All services are singletons. If you need request data, pass it as a method parameter.                                                               |
+| **No circular references** | Design service boundaries to avoid circular DI. If unavoidable, use `forwardRef()` (see Section 5.5).                                               |
 | **Validate injected deps** | The module should validate that required external dependencies (user repo, Redis, email provider) are provided at initialization, not at first use. |
 
 ---
@@ -438,10 +434,10 @@ This package does **not** use Passport.js. All authentication and authorization 
 Every guard implements `CanActivate`, which requires a single method:
 
 ```typescript
-import { CanActivate, ExecutionContext } from '@nestjs/common';
+import { CanActivate, ExecutionContext } from '@nestjs/common'
 
 export interface CanActivate {
-  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean>;
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean>
 }
 ```
 
@@ -459,15 +455,15 @@ import {
   ExecutionContext,
   Injectable,
   Inject,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
-import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
-import type { Request } from 'express';
+  UnauthorizedException
+} from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
+import { JwtService } from '@nestjs/jwt'
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
+import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { Request } from 'express'
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -475,40 +471,39 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     private readonly reflector: Reflector,
     @Inject(AUTH_MODULE_OPTIONS)
-    private readonly options: AuthModuleOptions,
+    private readonly options: AuthModuleOptions
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // Check if the route is marked as public
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
-      context.getClass(),
-    ]);
+      context.getClass()
+    ])
 
     if (isPublic) {
-      return true;
+      return true
     }
 
-    const request = context.switchToHttp().getRequest<Request>();
-    const token = this.extractToken(request);
+    const request = context.switchToHttp().getRequest<Request>()
+    const token = this.extractToken(request)
 
     if (!token) {
-      throw new UnauthorizedException('Missing authentication token');
+      throw new UnauthorizedException('Missing authentication token')
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync<DashboardJwtPayload>(
-        token,
-        { secret: this.options.jwt.accessSecret },
-      );
+      const payload = await this.jwtService.verifyAsync<DashboardJwtPayload>(token, {
+        secret: this.options.jwt.accessSecret
+      })
 
       // Attach the validated payload to the request for downstream use
-      request['user'] = payload;
+      request['user'] = payload
     } catch {
-      throw new UnauthorizedException('Invalid or expired token');
+      throw new UnauthorizedException('Invalid or expired token')
     }
 
-    return true;
+    return true
   }
 
   /**
@@ -517,18 +512,18 @@ export class JwtAuthGuard implements CanActivate {
    */
   private extractToken(request: Request): string | undefined {
     // 1. Try cookie
-    const cookieToken = request.cookies?.['access_token'];
+    const cookieToken = request.cookies?.['access_token']
     if (cookieToken) {
-      return cookieToken;
+      return cookieToken
     }
 
     // 2. Fall back to Authorization: Bearer <token>
-    const authHeader = request.headers.authorization;
+    const authHeader = request.headers.authorization
     if (authHeader?.startsWith('Bearer ')) {
-      return authHeader.slice(7);
+      return authHeader.slice(7)
     }
 
-    return undefined;
+    return undefined
   }
 }
 ```
@@ -540,46 +535,41 @@ Checks that the authenticated user has the required role(s) based on a hierarchi
 ```typescript
 // guards/roles.guard.ts
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ForbiddenException,
-} from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '../decorators/roles.decorator';
-import { hasRole } from '../utils/roles.util';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
+import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
+import { ROLES_KEY } from '../decorators/roles.decorator'
+import { hasRole } from '../utils/roles.util'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<string[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass()
+    ])
 
     // If no roles are specified, the route is accessible to any authenticated user
     if (!requiredRoles || requiredRoles.length === 0) {
-      return true;
+      return true
     }
 
-    const request = context.switchToHttp().getRequest();
-    const user = request['user'] as DashboardJwtPayload;
+    const request = context.switchToHttp().getRequest()
+    const user = request['user'] as DashboardJwtPayload
 
     if (!user) {
-      throw new ForbiddenException('Authentication required');
+      throw new ForbiddenException('Authentication required')
     }
 
-    const authorized = requiredRoles.some((role) => hasRole(user.role, role));
+    const authorized = requiredRoles.some((role) => hasRole(user.role, role))
 
     if (!authorized) {
-      throw new ForbiddenException('Insufficient permissions');
+      throw new ForbiddenException('Insufficient permissions')
     }
 
-    return true;
+    return true
   }
 }
 ```
@@ -591,35 +581,30 @@ Prevents banned or inactive users from accessing resources:
 ```typescript
 // guards/user-status.guard.ts
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ForbiddenException,
-} from '@nestjs/common';
-import { AuthRedisService } from '../redis/auth-redis.service';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
+import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { AuthRedisService } from '../redis/auth-redis.service'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
 @Injectable()
 export class UserStatusGuard implements CanActivate {
   constructor(private readonly redisService: AuthRedisService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const user = request['user'] as DashboardJwtPayload | undefined;
+    const request = context.switchToHttp().getRequest()
+    const user = request['user'] as DashboardJwtPayload | undefined
 
     if (!user) {
       // If no user is attached, this guard should not block (let JwtAuthGuard handle it)
-      return true;
+      return true
     }
 
-    const isBlocked = await this.redisService.isUserBlocked(user.sub);
+    const isBlocked = await this.redisService.isUserBlocked(user.sub)
 
     if (isBlocked) {
-      throw new ForbiddenException('Account is suspended');
+      throw new ForbiddenException('Account is suspended')
     }
 
-    return true;
+    return true
   }
 }
 ```
@@ -631,15 +616,10 @@ Ensures that MFA-enabled users have completed the MFA challenge:
 ```typescript
 // guards/mfa-required.guard.ts
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ForbiddenException,
-} from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
+import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
+import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
 @Injectable()
 export class MfaRequiredGuard implements CanActivate {
@@ -648,26 +628,26 @@ export class MfaRequiredGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const skipMfa = this.reflector.getAllAndOverride<boolean>(SKIP_MFA_KEY, [
       context.getHandler(),
-      context.getClass(),
-    ]);
+      context.getClass()
+    ])
 
     if (skipMfa) {
-      return true;
+      return true
     }
 
-    const request = context.switchToHttp().getRequest();
-    const user = request['user'] as DashboardJwtPayload | undefined;
+    const request = context.switchToHttp().getRequest()
+    const user = request['user'] as DashboardJwtPayload | undefined
 
     if (!user) {
-      return true; // Let JwtAuthGuard handle missing user
+      return true // Let JwtAuthGuard handle missing user
     }
 
     // If the user has MFA enabled but has not completed the challenge
     if (user.mfaEnabled && !user.mfaVerified) {
-      throw new ForbiddenException('MFA verification required');
+      throw new ForbiddenException('MFA verification required')
     }
 
-    return true;
+    return true
   }
 }
 ```
@@ -679,37 +659,37 @@ Attaches user data if a valid token is present, but does not reject unauthentica
 ```typescript
 // guards/optional-auth.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
-import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
-import type { Request } from 'express';
+import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
+import { JwtService } from '@nestjs/jwt'
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type { Request } from 'express'
 
 @Injectable()
 export class OptionalAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     @Inject(AUTH_MODULE_OPTIONS)
-    private readonly options: AuthModuleOptions,
+    private readonly options: AuthModuleOptions
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request>();
-    const token = this.extractToken(request);
+    const request = context.switchToHttp().getRequest<Request>()
+    const token = this.extractToken(request)
 
     if (token) {
       try {
         const payload = await this.jwtService.verifyAsync(token, {
-          secret: this.options.jwt.accessSecret,
-        });
-        request['user'] = payload;
+          secret: this.options.jwt.accessSecret
+        })
+        request['user'] = payload
       } catch {
         // Token is invalid — proceed without user (do not throw)
       }
     }
 
     // Always return true — this guard never blocks
-    return true;
+    return true
   }
 
   private extractToken(request: Request): string | undefined {
@@ -717,7 +697,7 @@ export class OptionalAuthGuard implements CanActivate {
       request.cookies?.['access_token'] ??
       request.headers.authorization?.replace('Bearer ', '') ??
       undefined
-    );
+    )
   }
 }
 ```
@@ -729,40 +709,40 @@ For WebSocket gateways, extract the token from the handshake:
 ```typescript
 // guards/ws-jwt.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { WsException } from '@nestjs/websockets';
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
-import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
+import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
+import { JwtService } from '@nestjs/jwt'
+import { WsException } from '@nestjs/websockets'
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 @Injectable()
 export class WsJwtGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     @Inject(AUTH_MODULE_OPTIONS)
-    private readonly options: AuthModuleOptions,
+    private readonly options: AuthModuleOptions
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const client = context.switchToWs().getClient();
+    const client = context.switchToWs().getClient()
     const token =
       client.handshake?.auth?.token ??
-      client.handshake?.headers?.authorization?.replace('Bearer ', '');
+      client.handshake?.headers?.authorization?.replace('Bearer ', '')
 
     if (!token) {
-      throw new WsException('Missing authentication token');
+      throw new WsException('Missing authentication token')
     }
 
     try {
       const payload = await this.jwtService.verifyAsync(token, {
-        secret: this.options.jwt.accessSecret,
-      });
-      client.data = { user: payload };
+        secret: this.options.jwt.accessSecret
+      })
+      client.data = { user: payload }
     } catch {
-      throw new WsException('Invalid or expired token');
+      throw new WsException('Invalid or expired token')
     }
 
-    return true;
+    return true
   }
 }
 ```
@@ -808,16 +788,14 @@ This package does **not** register global guards via `APP_GUARD`. Global guard r
 // WRONG: Library should NOT register global guards
 // This would force every route in the host app through our guard
 @Module({
-  providers: [
-    { provide: APP_GUARD, useClass: JwtAuthGuard },
-  ],
+  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }]
 })
 export class BymaxAuthModule {}
 
 // CORRECT: Export guards for the host to use or register globally
 @Module({
   providers: [JwtAuthGuard, RolesGuard, UserStatusGuard],
-  exports: [JwtAuthGuard, RolesGuard, UserStatusGuard],
+  exports: [JwtAuthGuard, RolesGuard, UserStatusGuard]
 })
 export class BymaxAuthModule {}
 ```
@@ -829,22 +807,22 @@ The host application can then register them globally if desired:
 @Module({
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: RolesGuard },
-  ],
+    { provide: APP_GUARD, useClass: RolesGuard }
+  ]
 })
 export class AppModule {}
 ```
 
 ### 3.10 Rules for Guards in This Project
 
-| Rule | Description |
-|------|-------------|
-| **No Passport** | All guards implement `CanActivate` directly. Never import `@nestjs/passport`. |
-| **No `APP_GUARD`** | The library never registers global guards. It exports them for the host to use. |
-| **Reflector for metadata** | Use `Reflector.getAllAndOverride()` to read decorator metadata. |
-| **Throw specific exceptions** | Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403) — never generic errors. |
+| Rule                          | Description                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **No Passport**               | All guards implement `CanActivate` directly. Never import `@nestjs/passport`.                          |
+| **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                        |
+| **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                        |
+| **Throw specific exceptions** | Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403) — never generic errors.       |
 | **Attach payload to request** | After successful validation, assign `request['user'] = payload`. Use bracket notation for type safety. |
-| **Token extraction order** | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly). |
+| **Token extraction order**    | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly).        |
 
 ---
 
@@ -857,8 +835,8 @@ Use `createParamDecorator` to extract data from the request in a clean, reusable
 ```typescript
 // decorators/current-user.decorator.ts
 
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
+import { createParamDecorator, ExecutionContext } from '@nestjs/common'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
 /**
  * Extracts the authenticated user payload from the request.
@@ -881,16 +859,16 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
  */
 export const CurrentUser = createParamDecorator(
   (data: keyof DashboardJwtPayload | undefined, ctx: ExecutionContext) => {
-    const request = ctx.switchToHttp().getRequest();
-    const user = request['user'] as DashboardJwtPayload;
+    const request = ctx.switchToHttp().getRequest()
+    const user = request['user'] as DashboardJwtPayload
 
     if (!user) {
-      return undefined;
+      return undefined
     }
 
-    return data ? user[data] : user;
-  },
-);
+    return data ? user[data] : user
+  }
+)
 ```
 
 ### 4.2 Metadata Decorators with `SetMetadata`
@@ -900,9 +878,9 @@ Use `SetMetadata` to attach metadata to route handlers, then read it in guards w
 ```typescript
 // decorators/public.decorator.ts
 
-import { SetMetadata } from '@nestjs/common';
+import { SetMetadata } from '@nestjs/common'
 
-export const IS_PUBLIC_KEY = Symbol('isPublic');
+export const IS_PUBLIC_KEY = Symbol('isPublic')
 
 /**
  * Marks a route as public — bypasses JwtAuthGuard.
@@ -912,15 +890,15 @@ export const IS_PUBLIC_KEY = Symbol('isPublic');
  * @Post('login')
  * async login(@Body() dto: LoginDto) { ... }
  */
-export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true)
 ```
 
 ```typescript
 // decorators/roles.decorator.ts
 
-import { SetMetadata } from '@nestjs/common';
+import { SetMetadata } from '@nestjs/common'
 
-export const ROLES_KEY = Symbol('roles');
+export const ROLES_KEY = Symbol('roles')
 
 /**
  * Specifies which roles can access a route.
@@ -931,15 +909,15 @@ export const ROLES_KEY = Symbol('roles');
  * @Get('admin/users')
  * async listUsers() { ... }
  */
-export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
+export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles)
 ```
 
 ```typescript
 // decorators/skip-mfa.decorator.ts
 
-import { SetMetadata } from '@nestjs/common';
+import { SetMetadata } from '@nestjs/common'
 
-export const SKIP_MFA_KEY = Symbol('skipMfa');
+export const SKIP_MFA_KEY = Symbol('skipMfa')
 
 /**
  * Skips MFA verification for a specific route.
@@ -950,22 +928,21 @@ export const SKIP_MFA_KEY = Symbol('skipMfa');
  * @Post('mfa/verify')
  * async verifyMfa(@Body() dto: MfaVerifyDto) { ... }
  */
-export const SkipMfa = () => SetMetadata(SKIP_MFA_KEY, true);
+export const SkipMfa = () => SetMetadata(SKIP_MFA_KEY, true)
 ```
 
 ```typescript
 // decorators/platform-roles.decorator.ts
 
-import { SetMetadata } from '@nestjs/common';
+import { SetMetadata } from '@nestjs/common'
 
-export const PLATFORM_ROLES_KEY = Symbol('platformRoles');
+export const PLATFORM_ROLES_KEY = Symbol('platformRoles')
 
 /**
  * Specifies required platform-level roles for admin routes.
  * Used with PlatformRolesGuard.
  */
-export const PlatformRoles = (...roles: string[]) =>
-  SetMetadata(PLATFORM_ROLES_KEY, roles);
+export const PlatformRoles = (...roles: string[]) => SetMetadata(PLATFORM_ROLES_KEY, roles)
 ```
 
 ### 4.3 Composing Decorators with `applyDecorators`
@@ -973,10 +950,10 @@ export const PlatformRoles = (...roles: string[]) =>
 When multiple decorators are frequently used together, compose them:
 
 ```typescript
-import { applyDecorators, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { RolesGuard } from '../guards/roles.guard';
-import { Roles } from './roles.decorator';
+import { applyDecorators, UseGuards } from '@nestjs/common'
+import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { RolesGuard } from '../guards/roles.guard'
+import { Roles } from './roles.decorator'
 
 /**
  * Composite decorator: requires authentication + specific roles.
@@ -987,10 +964,7 @@ import { Roles } from './roles.decorator';
  * async dashboard() { ... }
  */
 export function Auth(...roles: string[]) {
-  return applyDecorators(
-    Roles(...roles),
-    UseGuards(JwtAuthGuard, RolesGuard),
-  );
+  return applyDecorators(Roles(...roles), UseGuards(JwtAuthGuard, RolesGuard))
 }
 ```
 
@@ -998,23 +972,23 @@ export function Auth(...roles: string[]) {
 
 ```typescript
 // WRONG: String metadata keys can collide across packages
-export const ROLES_KEY = 'roles';
+export const ROLES_KEY = 'roles'
 
 // CORRECT: Symbol keys are collision-proof
-export const ROLES_KEY = Symbol('roles');
+export const ROLES_KEY = Symbol('roles')
 ```
 
 This is critical for a library — the host application may have its own `'roles'` metadata key. Symbol keys prevent collisions.
 
 ### 4.5 Rules for Decorators in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Symbol metadata keys** | All `SetMetadata` keys use `Symbol()`, not strings. |
-| **Export the key** | Always export the metadata key constant so guards can import it. |
-| **JSDoc every decorator** | Each decorator must have JSDoc with at least one `@example`. |
+| Rule                          | Description                                                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Symbol metadata keys**      | All `SetMetadata` keys use `Symbol()`, not strings.                                                             |
+| **Export the key**            | Always export the metadata key constant so guards can import it.                                                |
+| **JSDoc every decorator**     | Each decorator must have JSDoc with at least one `@example`.                                                    |
 | **Type the `data` parameter** | In `createParamDecorator`, type the `data` parameter to the expected shape (e.g., `keyof DashboardJwtPayload`). |
-| **No side effects** | Decorators must not perform async operations, I/O, or throw errors. They only attach metadata. |
+| **No side effects**           | Decorators must not perform async operations, I/O, or throw errors. They only attach metadata.                  |
 
 ---
 
@@ -1034,10 +1008,10 @@ Services in this package follow these principles:
 ```typescript
 // services/example.service.ts
 
-import { Injectable, Inject } from '@nestjs/common';
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants';
-import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface';
-import type { IUserRepository } from '../interfaces/user-repository.interface';
+import { Injectable, Inject } from '@nestjs/common'
+import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants'
+import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 
 @Injectable()
 export class ExampleService {
@@ -1046,7 +1020,7 @@ export class ExampleService {
     private readonly options: AuthModuleOptions,
 
     @Inject(USER_REPOSITORY)
-    private readonly userRepository: IUserRepository,
+    private readonly userRepository: IUserRepository
   ) {}
 
   /**
@@ -1055,9 +1029,9 @@ export class ExampleService {
    * and return typed results.
    */
   async doSomething(input: SomeDto): Promise<SomeResult> {
-    this.validateInput(input);
-    const data = await this.fetchData(input.id);
-    return this.transformResult(data);
+    this.validateInput(input)
+    const data = await this.fetchData(input.id)
+    return this.transformResult(data)
   }
 
   /**
@@ -1069,31 +1043,33 @@ export class ExampleService {
   }
 
   private async fetchData(id: string): Promise<RawData> {
-    return this.userRepository.findById(id);
+    return this.userRepository.findById(id)
   }
 
   private transformResult(data: RawData): SomeResult {
-    return { /* ... */ };
+    return {
+      /* ... */
+    }
   }
 }
 ```
 
 ### 5.3 Core Service Catalog
 
-| Service | Responsibility | Always Active |
-|---------|---------------|:---:|
-| `AuthService` | Register, login, logout, refresh, profile | Yes |
-| `PasswordService` | Hash and compare passwords (scrypt via `node:crypto`) | Yes |
-| `TokenManagerService` | Issue and verify JWT tokens via `@nestjs/jwt` | Yes |
-| `TokenDeliveryService` | Deliver tokens via cookies, body, or both | Yes |
-| `BruteForceService` | Track failed login attempts, lockout by email | Yes |
-| `AuthRedisService` | Redis operations: token blacklist, refresh sessions | Yes |
-| `PasswordResetService` | Forgot/reset password flow | Yes |
-| `MfaService` | TOTP setup, verify, recovery codes | Opt-in |
-| `SessionService` | Active session tracking, FIFO eviction | Opt-in |
-| `OtpService` | Email OTP codes for password reset / verification | Opt-in |
-| `PlatformAuthService` | Platform admin authentication | Opt-in |
-| `InvitationService` | User invitations via email | Opt-in |
+| Service                | Responsibility                                        | Always Active |
+| ---------------------- | ----------------------------------------------------- | :-----------: |
+| `AuthService`          | Register, login, logout, refresh, profile             |      Yes      |
+| `PasswordService`      | Hash and compare passwords (scrypt via `node:crypto`) |      Yes      |
+| `TokenManagerService`  | Issue and verify JWT tokens via `@nestjs/jwt`         |      Yes      |
+| `TokenDeliveryService` | Deliver tokens via cookies, body, or both             |      Yes      |
+| `BruteForceService`    | Track failed login attempts, lockout by email         |      Yes      |
+| `AuthRedisService`     | Redis operations: token blacklist, refresh sessions   |      Yes      |
+| `PasswordResetService` | Forgot/reset password flow                            |      Yes      |
+| `MfaService`           | TOTP setup, verify, recovery codes                    |    Opt-in     |
+| `SessionService`       | Active session tracking, FIFO eviction                |    Opt-in     |
+| `OtpService`           | Email OTP codes for password reset / verification     |    Opt-in     |
+| `PlatformAuthService`  | Platform admin authentication                         |    Opt-in     |
+| `InvitationService`    | User invitations via email                            |    Opt-in     |
 
 ### 5.4 Service-to-Service Communication
 
@@ -1111,7 +1087,7 @@ export class AuthService {
     @Inject(USER_REPOSITORY)
     private readonly userRepository: IUserRepository,
     @Inject(AUTH_HOOKS)
-    private readonly hooks: IAuthHooks,
+    private readonly hooks: IAuthHooks
   ) {}
 }
 ```
@@ -1139,19 +1115,21 @@ export class ServiceA {
 }
 
 // CORRECT: Use forwardRef() if unavoidable
-import { forwardRef, Inject } from '@nestjs/common';
+import { forwardRef, Inject } from '@nestjs/common'
 
 @Injectable()
 export class ServiceA {
   constructor(
     @Inject(forwardRef(() => ServiceB))
-    private readonly serviceB: ServiceB,
+    private readonly serviceB: ServiceB
   ) {}
 }
 
 // BEST: Extract shared logic into a third service
 @Injectable()
-export class SharedService { /* common logic */ }
+export class SharedService {
+  /* common logic */
+}
 
 @Injectable()
 export class ServiceA {
@@ -1169,24 +1147,24 @@ export class ServiceB {
 If a service needs async setup (e.g., verifying Redis connection), implement `OnModuleInit`:
 
 ```typescript
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common'
 
 @Injectable()
 export class AuthRedisService implements OnModuleInit {
-  private readonly logger = new Logger(AuthRedisService.name);
+  private readonly logger = new Logger(AuthRedisService.name)
 
   constructor(
     @Inject(AUTH_REDIS_CLIENT)
-    private readonly redis: Redis,
+    private readonly redis: Redis
   ) {}
 
   async onModuleInit(): Promise<void> {
     try {
-      await this.redis.ping();
-      this.logger.log('Redis connection verified');
+      await this.redis.ping()
+      this.logger.log('Redis connection verified')
     } catch (error) {
-      this.logger.error('Redis connection failed', error);
-      throw error; // Fail fast — do not start with broken Redis
+      this.logger.error('Redis connection failed', error)
+      throw error // Fail fast — do not start with broken Redis
     }
   }
 }
@@ -1197,22 +1175,22 @@ export class AuthRedisService implements OnModuleInit {
 For authentication services, use constant-time comparisons and normalize execution time to prevent timing attacks:
 
 ```typescript
-import { timingSafeEqual, randomBytes } from 'node:crypto';
+import { timingSafeEqual, randomBytes } from 'node:crypto'
 
 /**
  * Constant-time string comparison to prevent timing attacks.
  */
 function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
+  const bufA = Buffer.from(a, 'utf8')
+  const bufB = Buffer.from(b, 'utf8')
 
   if (bufA.length !== bufB.length) {
     // Compare against random bytes to maintain constant time
-    timingSafeEqual(bufA, randomBytes(bufA.length));
-    return false;
+    timingSafeEqual(bufA, randomBytes(bufA.length))
+    return false
   }
 
-  return timingSafeEqual(bufA, bufB);
+  return timingSafeEqual(bufA, bufB)
 }
 
 /**
@@ -1220,29 +1198,26 @@ function safeCompare(a: string, b: string): boolean {
  * Ensures login attempts take a consistent amount of time
  * regardless of whether the user exists.
  */
-async function normalizeLoginTime(
-  startTime: bigint,
-  targetMs: number,
-): Promise<void> {
-  const elapsed = Number(process.hrtime.bigint() - startTime) / 1_000_000;
-  const remaining = targetMs - elapsed;
+async function normalizeLoginTime(startTime: bigint, targetMs: number): Promise<void> {
+  const elapsed = Number(process.hrtime.bigint() - startTime) / 1_000_000
+  const remaining = targetMs - elapsed
   if (remaining > 0) {
-    await new Promise((resolve) => setTimeout(resolve, remaining));
+    await new Promise((resolve) => setTimeout(resolve, remaining))
   }
 }
 ```
 
 ### 5.8 Rules for Services in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Singleton scope only** | All services use default scope. No `Scope.REQUEST`. |
-| **No direct DB access** | Services interact with the database exclusively through injected repository interfaces. |
-| **No `node:fs` or `node:net`** | Services must not perform file I/O or raw network calls. |
+| Rule                             | Description                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Singleton scope only**         | All services use default scope. No `Scope.REQUEST`.                                           |
+| **No direct DB access**          | Services interact with the database exclusively through injected repository interfaces.       |
+| **No `node:fs` or `node:net`**   | Services must not perform file I/O or raw network calls.                                      |
 | **All crypto via `node:crypto`** | Hashing, TOTP, encryption — all use native Node.js crypto. Zero external crypto dependencies. |
-| **Timing-safe comparisons** | All token/password comparisons use `timingSafeEqual`. |
-| **Structured logging** | Use `Logger` from `@nestjs/common`. Never use `console.log`. |
-| **Type method signatures** | Every public method must have explicit return types. |
+| **Timing-safe comparisons**      | All token/password comparisons use `timingSafeEqual`.                                         |
+| **Structured logging**           | Use `Logger` from `@nestjs/common`. Never use `console.log`.                                  |
+| **Type method signatures**       | Every public method must have explicit return types.                                          |
 
 ---
 
@@ -1257,24 +1232,15 @@ Controllers in this package are **optional** and **conditionally registered**. T
 ```typescript
 // controllers/auth.controller.ts
 
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Res,
-  HttpCode,
-  HttpStatus,
-  UseGuards,
-} from '@nestjs/common';
-import type { Response } from 'express';
-import { AuthService } from '../services/auth.service';
-import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { Public } from '../decorators/public.decorator';
-import { CurrentUser } from '../decorators/current-user.decorator';
-import { RegisterDto } from '../dto/register.dto';
-import { LoginDto } from '../dto/login.dto';
-import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface';
+import { Controller, Post, Get, Body, Res, HttpCode, HttpStatus, UseGuards } from '@nestjs/common'
+import type { Response } from 'express'
+import { AuthService } from '../services/auth.service'
+import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { Public } from '../decorators/public.decorator'
+import { CurrentUser } from '../decorators/current-user.decorator'
+import { RegisterDto } from '../dto/register.dto'
+import { LoginDto } from '../dto/login.dto'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
 @Controller('auth')
 export class AuthController {
@@ -1284,14 +1250,14 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
-    return this.authService.register(dto, res);
+    return this.authService.register(dto, res)
   }
 
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    return this.authService.login(dto, res);
+    return this.authService.login(dto, res)
   }
 
   @UseGuards(JwtAuthGuard)
@@ -1299,15 +1265,15 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(
     @CurrentUser() user: DashboardJwtPayload,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: Response
   ) {
-    return this.authService.logout(user, res);
+    return this.authService.logout(user, res)
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async me(@CurrentUser() user: DashboardJwtPayload) {
-    return this.authService.getProfile(user.sub);
+    return this.authService.getProfile(user.sub)
   }
 }
 ```
@@ -1339,11 +1305,11 @@ Use `class-validator` and `class-transformer` for input validation. The host app
 ```typescript
 // dto/register.dto.ts
 
-import { IsEmail, IsString, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsEmail, IsString, MinLength, MaxLength, Matches } from 'class-validator'
 
 export class RegisterDto {
   @IsEmail({}, { message: 'Invalid email format' })
-  email!: string;
+  email!: string
 
   @IsString()
   @MinLength(8, { message: 'Password must be at least 8 characters' })
@@ -1351,27 +1317,27 @@ export class RegisterDto {
   @Matches(/[A-Z]/, { message: 'Password must contain at least one uppercase letter' })
   @Matches(/[a-z]/, { message: 'Password must contain at least one lowercase letter' })
   @Matches(/\d/, { message: 'Password must contain at least one number' })
-  password!: string;
+  password!: string
 
   @IsString()
   @MinLength(1)
   @MaxLength(100)
-  name!: string;
+  name!: string
 }
 ```
 
 ```typescript
 // dto/login.dto.ts
 
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MinLength } from 'class-validator'
 
 export class LoginDto {
   @IsEmail({}, { message: 'Invalid email format' })
-  email!: string;
+  email!: string
 
   @IsString()
   @MinLength(1, { message: 'Password is required' })
-  password!: string;
+  password!: string
 }
 ```
 
@@ -1426,29 +1392,29 @@ The package does not hardcode route prefixes. The host application can wrap the 
 
 ```typescript
 // Host application can namespace all auth routes
-import { RouterModule } from '@nestjs/core';
+import { RouterModule } from '@nestjs/core'
 
 @Module({
   imports: [
-    BymaxAuthModule.registerAsync({ /* ... */ }),
-    RouterModule.register([
-      { path: 'api/v1', module: BymaxAuthModule },
-    ]),
-  ],
+    BymaxAuthModule.registerAsync({
+      /* ... */
+    }),
+    RouterModule.register([{ path: 'api/v1', module: BymaxAuthModule }])
+  ]
 })
 export class AppModule {}
 ```
 
 ### 6.8 Rules for Controllers in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Thin controllers** | Controllers only validate, call services, and return. No business logic in controllers. |
-| **Explicit `@HttpCode()`** | Every route handler must have an explicit HTTP status code. |
-| **`passthrough: true`** | Always use `@Res({ passthrough: true })` when injecting the response object. |
-| **No global `ValidationPipe`** | The package does not register global pipes. Document this for consumers. |
+| Rule                            | Description                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Thin controllers**            | Controllers only validate, call services, and return. No business logic in controllers.                 |
+| **Explicit `@HttpCode()`**      | Every route handler must have an explicit HTTP status code.                                             |
+| **`passthrough: true`**         | Always use `@Res({ passthrough: true })` when injecting the response object.                            |
+| **No global `ValidationPipe`**  | The package does not register global pipes. Document this for consumers.                                |
 | **No hardcoded route prefixes** | Do not use `@Controller('api/v1/auth')`. Use `@Controller('auth')` and let the host configure prefixes. |
-| **Type all return values** | Every handler method must have an explicit return type annotation. |
+| **Type all return values**      | Every handler method must have an explicit return type annotation.                                      |
 
 ---
 
@@ -1461,28 +1427,28 @@ The package defines a custom exception for auth-specific errors. This extends `H
 ```typescript
 // errors/auth-exception.ts
 
-import { HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus } from '@nestjs/common'
 
 export interface AuthErrorPayload {
   /** Machine-readable error code (e.g., 'AUTH_INVALID_CREDENTIALS') */
-  code: string;
+  code: string
   /** Human-readable error message */
-  message: string;
+  message: string
   /** HTTP status code */
-  statusCode: number;
+  statusCode: number
 }
 
 export class AuthException extends HttpException {
-  public readonly code: string;
+  public readonly code: string
 
   constructor(code: string, message: string, status: HttpStatus) {
     const payload: AuthErrorPayload = {
       code,
       message,
-      statusCode: status,
-    };
-    super(payload, status);
-    this.code = code;
+      statusCode: status
+    }
+    super(payload, status)
+    this.code = code
   }
 }
 ```
@@ -1535,55 +1501,52 @@ export const AUTH_ERROR_CODES = {
 
   // Invitations
   INVITATION_EXPIRED: 'AUTH_INVITATION_EXPIRED',
-  INVITATION_ALREADY_ACCEPTED: 'AUTH_INVITATION_ALREADY_ACCEPTED',
-} as const;
+  INVITATION_ALREADY_ACCEPTED: 'AUTH_INVITATION_ALREADY_ACCEPTED'
+} as const
 
-export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES];
+export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]
 ```
 
 ### 7.3 Using AuthException in Services
 
 ```typescript
-import { HttpStatus } from '@nestjs/common';
-import { AuthException } from '../errors/auth-exception';
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes';
+import { HttpStatus } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 @Injectable()
 export class AuthService {
   async login(dto: LoginDto, res: Response): Promise<AuthResult> {
-    const user = await this.userRepository.findByEmail(dto.email);
+    const user = await this.userRepository.findByEmail(dto.email)
 
     if (!user) {
       // Use constant-time flow — do not reveal if the email exists
-      await this.passwordService.fakeCompare();
+      await this.passwordService.fakeCompare()
       throw new AuthException(
         AUTH_ERROR_CODES.INVALID_CREDENTIALS,
         'Invalid email or password',
-        HttpStatus.UNAUTHORIZED,
-      );
+        HttpStatus.UNAUTHORIZED
+      )
     }
 
-    const isLocked = await this.bruteForce.isLocked(dto.email);
+    const isLocked = await this.bruteForce.isLocked(dto.email)
     if (isLocked) {
       throw new AuthException(
         AUTH_ERROR_CODES.ACCOUNT_LOCKED,
         'Account temporarily locked due to too many failed attempts',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+        HttpStatus.TOO_MANY_REQUESTS
+      )
     }
 
-    const passwordValid = await this.passwordService.compare(
-      dto.password,
-      user.passwordHash,
-    );
+    const passwordValid = await this.passwordService.compare(dto.password, user.passwordHash)
 
     if (!passwordValid) {
-      await this.bruteForce.recordFailure(dto.email);
+      await this.bruteForce.recordFailure(dto.email)
       throw new AuthException(
         AUTH_ERROR_CODES.INVALID_CREDENTIALS,
         'Invalid email or password',
-        HttpStatus.UNAUTHORIZED,
-      );
+        HttpStatus.UNAUTHORIZED
+      )
     }
 
     // ... continue with token generation
@@ -1598,31 +1561,26 @@ The package optionally exports an exception filter that formats `AuthException` 
 ```typescript
 // filters/auth-exception.filter.ts
 
-import {
-  ExceptionFilter,
-  Catch,
-  ArgumentsHost,
-  HttpException,
-} from '@nestjs/common';
-import { AuthException } from '../errors/auth-exception';
-import type { Response } from 'express';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
+import type { Response } from 'express'
 
 @Catch(AuthException)
 export class AuthExceptionFilter implements ExceptionFilter {
   catch(exception: AuthException, host: ArgumentsHost): void {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const status = exception.getStatus();
+    const ctx = host.switchToHttp()
+    const response = ctx.getResponse<Response>()
+    const status = exception.getStatus()
 
     response.status(status).json({
       success: false,
       error: {
         code: exception.code,
         message: exception.message,
-        statusCode: status,
+        statusCode: status
       },
-      timestamp: new Date().toISOString(),
-    });
+      timestamp: new Date().toISOString()
+    })
   }
 }
 ```
@@ -1650,27 +1608,27 @@ All error responses from this package follow a consistent shape:
 throw new AuthException(
   AUTH_ERROR_CODES.INVALID_CREDENTIALS,
   `User with email ${dto.email} not found in PostgreSQL users table`,
-  HttpStatus.UNAUTHORIZED,
-);
+  HttpStatus.UNAUTHORIZED
+)
 
 // CORRECT: Generic, safe error message
 throw new AuthException(
   AUTH_ERROR_CODES.INVALID_CREDENTIALS,
   'Invalid email or password',
-  HttpStatus.UNAUTHORIZED,
-);
+  HttpStatus.UNAUTHORIZED
+)
 ```
 
 ### 7.7 Rules for Error Handling in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Use `AuthException`** | All auth-related errors throw `AuthException`, not generic `HttpException`. |
-| **Use error code constants** | Always reference `AUTH_ERROR_CODES.*`, never hardcode error code strings. |
-| **No stack traces to client** | Never include stack traces or internal details in error responses. |
-| **Consistent response shape** | All errors follow the `{ success, error: { code, message, statusCode }, timestamp }` format. |
-| **No generic `Error`** | Never `throw new Error('...')`. Always throw NestJS exceptions or `AuthException`. |
-| **Log internally, respond generically** | Use `Logger.error()` for internal details, send generic messages to clients. |
+| Rule                                    | Description                                                                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Use `AuthException`**                 | All auth-related errors throw `AuthException`, not generic `HttpException`.                  |
+| **Use error code constants**            | Always reference `AUTH_ERROR_CODES.*`, never hardcode error code strings.                    |
+| **No stack traces to client**           | Never include stack traces or internal details in error responses.                           |
+| **Consistent response shape**           | All errors follow the `{ success, error: { code, message, statusCode }, timestamp }` format. |
+| **No generic `Error`**                  | Never `throw new Error('...')`. Always throw NestJS exceptions or `AuthException`.           |
+| **Log internally, respond generically** | Use `Logger.error()` for internal details, send generic messages to clients.                 |
 
 ---
 
@@ -1696,29 +1654,29 @@ Each entry point has a barrel `index.ts` that controls the public API surface:
 // src/server/index.ts — Server barrel export
 
 // Module
-export { BymaxAuthModule } from './bymax-auth.module';
+export { BymaxAuthModule } from './bymax-auth.module'
 
 // Services (export class, not type)
-export { AuthService } from './services/auth.service';
-export { TokenManagerService } from './services/token-manager.service';
-export { PasswordService } from './services/password.service';
-export { MfaService } from './services/mfa.service';
-export { SessionService } from './services/session.service';
+export { AuthService } from './services/auth.service'
+export { TokenManagerService } from './services/token-manager.service'
+export { PasswordService } from './services/password.service'
+export { MfaService } from './services/mfa.service'
+export { SessionService } from './services/session.service'
 
 // Guards
-export { JwtAuthGuard } from './guards/jwt-auth.guard';
-export { RolesGuard } from './guards/roles.guard';
-export { UserStatusGuard } from './guards/user-status.guard';
-export { MfaRequiredGuard } from './guards/mfa-required.guard';
-export { OptionalAuthGuard } from './guards/optional-auth.guard';
-export { WsJwtGuard } from './guards/ws-jwt.guard';
+export { JwtAuthGuard } from './guards/jwt-auth.guard'
+export { RolesGuard } from './guards/roles.guard'
+export { UserStatusGuard } from './guards/user-status.guard'
+export { MfaRequiredGuard } from './guards/mfa-required.guard'
+export { OptionalAuthGuard } from './guards/optional-auth.guard'
+export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // Decorators
-export { CurrentUser } from './decorators/current-user.decorator';
-export { Public } from './decorators/public.decorator';
-export { Roles } from './decorators/roles.decorator';
-export { SkipMfa } from './decorators/skip-mfa.decorator';
-export { PlatformRoles } from './decorators/platform-roles.decorator';
+export { CurrentUser } from './decorators/current-user.decorator'
+export { Public } from './decorators/public.decorator'
+export { Roles } from './decorators/roles.decorator'
+export { SkipMfa } from './decorators/skip-mfa.decorator'
+export { PlatformRoles } from './decorators/platform-roles.decorator'
 
 // Constants (injection tokens)
 export {
@@ -1726,46 +1684,51 @@ export {
   USER_REPOSITORY,
   EMAIL_PROVIDER,
   AUTH_REDIS_CLIENT,
-  AUTH_HOOKS,
-} from './bymax-auth.constants';
+  AUTH_HOOKS
+} from './bymax-auth.constants'
 
 // Interfaces (export type, not class)
-export type { AuthModuleOptions, AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface';
-export type { IUserRepository } from './interfaces/user-repository.interface';
-export type { IEmailProvider } from './interfaces/email-provider.interface';
-export type { IAuthHooks } from './interfaces/auth-hooks.interface';
-export type { DashboardJwtPayload, PlatformJwtPayload } from './interfaces/jwt-payload.interface';
-export type { AuthResult } from './interfaces/auth-result.interface';
-export type { AuthenticatedRequest } from './interfaces/authenticated-request.interface';
+export type {
+  AuthModuleOptions,
+  AuthModuleAsyncOptions
+} from './interfaces/auth-module-options.interface'
+export type { IUserRepository } from './interfaces/user-repository.interface'
+export type { IEmailProvider } from './interfaces/email-provider.interface'
+export type { IAuthHooks } from './interfaces/auth-hooks.interface'
+export type { DashboardJwtPayload, PlatformJwtPayload } from './interfaces/jwt-payload.interface'
+export type { AuthResult } from './interfaces/auth-result.interface'
+export type { AuthenticatedRequest } from './interfaces/authenticated-request.interface'
 
 // Error handling
-export { AuthException } from './errors/auth-exception';
-export { AUTH_ERROR_CODES } from './errors/auth-error-codes';
-export type { AuthErrorCode, AuthErrorPayload } from './errors/auth-error-codes';
-export { AuthExceptionFilter } from './filters/auth-exception.filter';
+export { AuthException } from './errors/auth-exception'
+export { AUTH_ERROR_CODES } from './errors/auth-error-codes'
+export type { AuthErrorCode, AuthErrorPayload } from './errors/auth-error-codes'
+export { AuthExceptionFilter } from './filters/auth-exception.filter'
 ```
 
 ### 8.3 Distinguishing `export` vs `export type`
 
 ```typescript
 // WRONG: Exporting an interface as a value — may cause issues with bundlers
-export { IUserRepository } from './interfaces/user-repository.interface';
+export { IUserRepository } from './interfaces/user-repository.interface'
 
 // CORRECT: Use 'export type' for types and interfaces
-export type { IUserRepository } from './interfaces/user-repository.interface';
+export type { IUserRepository } from './interfaces/user-repository.interface'
 
 // CORRECT: Use 'export' (no 'type') for classes, functions, constants, decorators
-export { AuthService } from './services/auth.service';
-export { AUTH_MODULE_OPTIONS } from './bymax-auth.constants';
-export { Public } from './decorators/public.decorator';
+export { AuthService } from './services/auth.service'
+export { AUTH_MODULE_OPTIONS } from './bymax-auth.constants'
+export { Public } from './decorators/public.decorator'
 ```
 
 TypeScript's `isolatedModules` and bundlers like `tsup` require this distinction. Use `export type` for:
+
 - Interfaces
 - Type aliases
 - Any export that does not exist at runtime
 
 Use `export` (without `type`) for:
+
 - Classes (services, guards, filters, modules)
 - Functions (decorators, utilities)
 - Constants (injection tokens, error codes)
@@ -1804,7 +1767,7 @@ export class BymaxAuthModule {
         MfaRequiredGuard,
 
         // 5. Conditional services (opt-in features)
-        ...this.createConditionalProviders(),
+        ...this.createConditionalProviders()
       ],
       exports: [
         // Export tokens and services that consumers need
@@ -1812,9 +1775,9 @@ export class BymaxAuthModule {
         AuthService,
         TokenManagerService,
         JwtAuthGuard,
-        RolesGuard,
-      ],
-    };
+        RolesGuard
+      ]
+    }
   }
 }
 ```
@@ -1856,20 +1819,20 @@ If the package grows, split into sub-modules:
 @Module({})
 export class OAuthModule {
   static register(oauthConfig: OAuthConfig): DynamicModule {
-    const providers: Provider[] = [OAuthService];
+    const providers: Provider[] = [OAuthService]
 
     if (oauthConfig.google) {
       providers.push({
         provide: 'GOOGLE_OAUTH_PLUGIN',
-        useFactory: () => new GoogleOAuthPlugin(oauthConfig.google!),
-      });
+        useFactory: () => new GoogleOAuthPlugin(oauthConfig.google!)
+      })
     }
 
     return {
       module: OAuthModule,
       providers,
-      exports: [OAuthService],
-    };
+      exports: [OAuthService]
+    }
   }
 }
 ```
@@ -1892,14 +1855,14 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 
 ### 8.7 Rules for Module Organization in This Project
 
-| Rule | Description |
-|------|-------------|
-| **`export type` for interfaces** | Always use `export type` in barrel files for types, interfaces, and type aliases. |
-| **Single barrel per entry point** | Each subpath has exactly one `index.ts` barrel file. |
-| **No deep imports** | Consumers must only import from barrel files (`@bymax-one/nest-auth`, `@bymax-one/nest-auth/shared`, etc.). Never expose internal paths. |
-| **Group providers by purpose** | In the module definition, group providers as: config, infrastructure, business, guards, conditional. |
-| **No circular module imports** | Sub-modules must not import the root module. |
-| **Explicit exports** | Only export what consumers need. Internal services stay internal. |
+| Rule                              | Description                                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **`export type` for interfaces**  | Always use `export type` in barrel files for types, interfaces, and type aliases.                                                        |
+| **Single barrel per entry point** | Each subpath has exactly one `index.ts` barrel file.                                                                                     |
+| **No deep imports**               | Consumers must only import from barrel files (`@bymax-one/nest-auth`, `@bymax-one/nest-auth/shared`, etc.). Never expose internal paths. |
+| **Group providers by purpose**    | In the module definition, group providers as: config, infrastructure, business, guards, conditional.                                     |
+| **No circular module imports**    | Sub-modules must not import the root module.                                                                                             |
+| **Explicit exports**              | Only export what consumers need. Internal services stay internal.                                                                        |
 
 ---
 
@@ -1912,33 +1875,29 @@ Every service, guard, and controller must have unit tests. Use the NestJS testin
 ```typescript
 // services/auth.service.spec.ts
 
-import { Test, TestingModule } from '@nestjs/testing';
-import { AuthService } from './auth.service';
-import { PasswordService } from './password.service';
-import { TokenManagerService } from './token-manager.service';
-import { BruteForceService } from './brute-force.service';
-import { TokenDeliveryService } from './token-delivery.service';
-import {
-  AUTH_MODULE_OPTIONS,
-  USER_REPOSITORY,
-  AUTH_HOOKS,
-} from '../bymax-auth.constants';
+import { Test, TestingModule } from '@nestjs/testing'
+import { AuthService } from './auth.service'
+import { PasswordService } from './password.service'
+import { TokenManagerService } from './token-manager.service'
+import { BruteForceService } from './brute-force.service'
+import { TokenDeliveryService } from './token-delivery.service'
+import { AUTH_MODULE_OPTIONS, USER_REPOSITORY, AUTH_HOOKS } from '../bymax-auth.constants'
 
 describe('AuthService', () => {
-  let service: AuthService;
-  let userRepository: jest.Mocked<IUserRepository>;
-  let passwordService: jest.Mocked<PasswordService>;
-  let tokenManager: jest.Mocked<TokenManagerService>;
+  let service: AuthService
+  let userRepository: jest.Mocked<IUserRepository>
+  let passwordService: jest.Mocked<PasswordService>
+  let tokenManager: jest.Mocked<TokenManagerService>
 
   const mockOptions: AuthModuleOptions = {
     jwt: {
       accessSecret: 'test-access-secret',
       refreshSecret: 'test-refresh-secret',
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d',
+      refreshExpiresIn: '7d'
     },
-    tokenDelivery: 'body',
-  };
+    tokenDelivery: 'body'
+  }
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -1946,7 +1905,7 @@ describe('AuthService', () => {
         AuthService,
         {
           provide: AUTH_MODULE_OPTIONS,
-          useValue: mockOptions,
+          useValue: mockOptions
         },
         {
           provide: USER_REPOSITORY,
@@ -1954,55 +1913,55 @@ describe('AuthService', () => {
             findByEmail: jest.fn(),
             findById: jest.fn(),
             create: jest.fn(),
-            update: jest.fn(),
-          },
+            update: jest.fn()
+          }
         },
         {
           provide: AUTH_HOOKS,
           useValue: {
             afterRegister: jest.fn(),
             afterLogin: jest.fn(),
-            afterLogout: jest.fn(),
-          },
+            afterLogout: jest.fn()
+          }
         },
         {
           provide: PasswordService,
           useValue: {
             hash: jest.fn(),
             compare: jest.fn(),
-            fakeCompare: jest.fn(),
-          },
+            fakeCompare: jest.fn()
+          }
         },
         {
           provide: TokenManagerService,
           useValue: {
             generateAccessToken: jest.fn(),
             generateRefreshToken: jest.fn(),
-            verifyRefreshToken: jest.fn(),
-          },
+            verifyRefreshToken: jest.fn()
+          }
         },
         {
           provide: BruteForceService,
           useValue: {
             isLocked: jest.fn().mockResolvedValue(false),
             recordFailure: jest.fn(),
-            clearFailures: jest.fn(),
-          },
+            clearFailures: jest.fn()
+          }
         },
         {
           provide: TokenDeliveryService,
           useValue: {
-            deliver: jest.fn(),
-          },
-        },
-      ],
-    }).compile();
+            deliver: jest.fn()
+          }
+        }
+      ]
+    }).compile()
 
-    service = module.get<AuthService>(AuthService);
-    userRepository = module.get(USER_REPOSITORY);
-    passwordService = module.get(PasswordService);
-    tokenManager = module.get(TokenManagerService);
-  });
+    service = module.get<AuthService>(AuthService)
+    userRepository = module.get(USER_REPOSITORY)
+    passwordService = module.get(PasswordService)
+    tokenManager = module.get(TokenManagerService)
+  })
 
   describe('login', () => {
     it('should return tokens for valid credentials', async () => {
@@ -2011,48 +1970,42 @@ describe('AuthService', () => {
         email: 'test@example.com',
         passwordHash: 'hashed-password',
         role: 'member',
-        status: 'active',
-      };
+        status: 'active'
+      }
 
-      userRepository.findByEmail.mockResolvedValue(mockUser);
-      passwordService.compare.mockResolvedValue(true);
-      tokenManager.generateAccessToken.mockResolvedValue('access-token');
-      tokenManager.generateRefreshToken.mockResolvedValue('refresh-token');
+      userRepository.findByEmail.mockResolvedValue(mockUser)
+      passwordService.compare.mockResolvedValue(true)
+      tokenManager.generateAccessToken.mockResolvedValue('access-token')
+      tokenManager.generateRefreshToken.mockResolvedValue('refresh-token')
 
       const result = await service.login(
         { email: 'test@example.com', password: 'Password1' },
-        {} as Response,
-      );
+        {} as Response
+      )
 
-      expect(result.accessToken).toBe('access-token');
-      expect(userRepository.findByEmail).toHaveBeenCalledWith('test@example.com');
-      expect(passwordService.compare).toHaveBeenCalledWith('Password1', 'hashed-password');
-    });
+      expect(result.accessToken).toBe('access-token')
+      expect(userRepository.findByEmail).toHaveBeenCalledWith('test@example.com')
+      expect(passwordService.compare).toHaveBeenCalledWith('Password1', 'hashed-password')
+    })
 
     it('should throw AuthException for invalid credentials', async () => {
-      userRepository.findByEmail.mockResolvedValue(null);
+      userRepository.findByEmail.mockResolvedValue(null)
 
       await expect(
-        service.login(
-          { email: 'wrong@example.com', password: 'Password1' },
-          {} as Response,
-        ),
-      ).rejects.toThrow(AuthException);
-    });
+        service.login({ email: 'wrong@example.com', password: 'Password1' }, {} as Response)
+      ).rejects.toThrow(AuthException)
+    })
 
     it('should throw AuthException when account is locked', async () => {
-      const bruteForce = module.get(BruteForceService);
-      bruteForce.isLocked.mockResolvedValue(true);
+      const bruteForce = module.get(BruteForceService)
+      bruteForce.isLocked.mockResolvedValue(true)
 
       await expect(
-        service.login(
-          { email: 'test@example.com', password: 'Password1' },
-          {} as Response,
-        ),
-      ).rejects.toThrow(AuthException);
-    });
-  });
-});
+        service.login({ email: 'test@example.com', password: 'Password1' }, {} as Response)
+      ).rejects.toThrow(AuthException)
+    })
+  })
+})
 ```
 
 ### 9.2 Testing Guards
@@ -2060,17 +2013,17 @@ describe('AuthService', () => {
 ```typescript
 // guards/jwt-auth.guard.spec.ts
 
-import { Test, TestingModule } from '@nestjs/testing';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { JwtAuthGuard } from './jwt-auth.guard';
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants';
+import { Test, TestingModule } from '@nestjs/testing'
+import { ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { Reflector } from '@nestjs/core'
+import { JwtService } from '@nestjs/jwt'
+import { JwtAuthGuard } from './jwt-auth.guard'
+import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
 
 describe('JwtAuthGuard', () => {
-  let guard: JwtAuthGuard;
-  let jwtService: jest.Mocked<JwtService>;
-  let reflector: Reflector;
+  let guard: JwtAuthGuard
+  let jwtService: jest.Mocked<JwtService>
+  let reflector: Reflector
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -2079,59 +2032,57 @@ describe('JwtAuthGuard', () => {
         {
           provide: JwtService,
           useValue: {
-            verifyAsync: jest.fn(),
-          },
+            verifyAsync: jest.fn()
+          }
         },
         {
           provide: AUTH_MODULE_OPTIONS,
           useValue: {
-            jwt: { accessSecret: 'test-secret' },
-          },
+            jwt: { accessSecret: 'test-secret' }
+          }
         },
-        Reflector,
-      ],
-    }).compile();
+        Reflector
+      ]
+    }).compile()
 
-    guard = module.get<JwtAuthGuard>(JwtAuthGuard);
-    jwtService = module.get(JwtService);
-    reflector = module.get(Reflector);
-  });
+    guard = module.get<JwtAuthGuard>(JwtAuthGuard)
+    jwtService = module.get(JwtService)
+    reflector = module.get(Reflector)
+  })
 
   it('should allow access for public routes', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true)
 
-    const context = createMockExecutionContext();
-    const result = await guard.canActivate(context);
+    const context = createMockExecutionContext()
+    const result = await guard.canActivate(context)
 
-    expect(result).toBe(true);
-  });
+    expect(result).toBe(true)
+  })
 
   it('should throw UnauthorizedException when no token is present', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
 
-    const context = createMockExecutionContext({ cookies: {}, headers: {} });
+    const context = createMockExecutionContext({ cookies: {}, headers: {} })
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+  })
 
   it('should attach user payload to request on valid token', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
-    const mockPayload = { sub: 'user-1', role: 'member' };
-    jwtService.verifyAsync.mockResolvedValue(mockPayload);
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+    const mockPayload = { sub: 'user-1', role: 'member' }
+    jwtService.verifyAsync.mockResolvedValue(mockPayload)
 
     const request = {
       cookies: { access_token: 'valid-token' },
-      headers: {},
-    };
-    const context = createMockExecutionContext(request);
+      headers: {}
+    }
+    const context = createMockExecutionContext(request)
 
-    await guard.canActivate(context);
+    await guard.canActivate(context)
 
-    expect(request['user']).toEqual(mockPayload);
-  });
-});
+    expect(request['user']).toEqual(mockPayload)
+  })
+})
 
 /**
  * Helper to create a mock ExecutionContext.
@@ -2140,11 +2091,11 @@ function createMockExecutionContext(request?: Partial<Request>): ExecutionContex
   return {
     switchToHttp: () => ({
       getRequest: () => request ?? { cookies: {}, headers: {} },
-      getResponse: () => ({}),
+      getResponse: () => ({})
     }),
     getHandler: () => jest.fn(),
-    getClass: () => jest.fn(),
-  } as unknown as ExecutionContext;
+    getClass: () => jest.fn()
+  } as unknown as ExecutionContext
 }
 ```
 
@@ -2168,20 +2119,24 @@ function createMockExecutionContext(request?: Partial<Request>): ExecutionContex
 
 ```typescript
 const module = await Test.createTestingModule({
-  imports: [BymaxAuthModule.registerAsync({ /* ... */ })],
+  imports: [
+    BymaxAuthModule.registerAsync({
+      /* ... */
+    })
+  ]
 })
   .overrideProvider(USER_REPOSITORY)
   .useValue(mockUserRepository)
   .overrideProvider(AUTH_REDIS_CLIENT)
   .useValue(mockRedisClient)
-  .compile();
+  .compile()
 ```
 
 #### Mock `Reflector`
 
 ```typescript
-const reflector = module.get(Reflector);
-jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['admin']);
+const reflector = module.get(Reflector)
+jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['admin'])
 ```
 
 ### 9.4 Integration (e2e) Testing
@@ -2191,13 +2146,13 @@ Use `@nestjs/testing` with a real NestJS application to test the full request li
 ```typescript
 // test/auth.e2e-spec.ts
 
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { BymaxAuthModule } from '../src/server';
+import { Test, TestingModule } from '@nestjs/testing'
+import { INestApplication, ValidationPipe } from '@nestjs/common'
+import * as request from 'supertest'
+import { BymaxAuthModule } from '../src/server'
 
 describe('AuthController (e2e)', () => {
-  let app: INestApplication;
+  let app: INestApplication
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -2208,12 +2163,12 @@ describe('AuthController (e2e)', () => {
               accessSecret: 'e2e-access-secret',
               refreshSecret: 'e2e-refresh-secret',
               accessExpiresIn: '15m',
-              refreshExpiresIn: '7d',
+              refreshExpiresIn: '7d'
             },
-            tokenDelivery: 'body',
-          }),
-        }),
-      ],
+            tokenDelivery: 'body'
+          })
+        })
+      ]
     })
       .overrideProvider(USER_REPOSITORY)
       .useValue(createInMemoryUserRepository())
@@ -2221,16 +2176,16 @@ describe('AuthController (e2e)', () => {
       .useValue(createNoOpEmailProvider())
       .overrideProvider(AUTH_REDIS_CLIENT)
       .useValue(createMockRedisClient())
-      .compile();
+      .compile()
 
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
-    await app.init();
-  });
+    app = moduleFixture.createNestApplication()
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true }))
+    await app.init()
+  })
 
   afterAll(async () => {
-    await app.close();
-  });
+    await app.close()
+  })
 
   describe('POST /auth/register', () => {
     it('should register a new user', () => {
@@ -2239,14 +2194,14 @@ describe('AuthController (e2e)', () => {
         .send({
           email: 'test@example.com',
           password: 'SecurePass1',
-          name: 'Test User',
+          name: 'Test User'
         })
         .expect(201)
         .expect((res) => {
-          expect(res.body).toHaveProperty('accessToken');
-          expect(res.body).toHaveProperty('refreshToken');
-        });
-    });
+          expect(res.body).toHaveProperty('accessToken')
+          expect(res.body).toHaveProperty('refreshToken')
+        })
+    })
 
     it('should reject invalid email', () => {
       return request(app.getHttpServer())
@@ -2254,12 +2209,12 @@ describe('AuthController (e2e)', () => {
         .send({
           email: 'not-an-email',
           password: 'SecurePass1',
-          name: 'Test User',
+          name: 'Test User'
         })
-        .expect(400);
-    });
-  });
-});
+        .expect(400)
+    })
+  })
+})
 ```
 
 ### 9.5 Test Utilities
@@ -2269,43 +2224,43 @@ Create reusable test helpers:
 ```typescript
 // test/helpers/mock-execution-context.ts
 
-import { ExecutionContext } from '@nestjs/common';
+import { ExecutionContext } from '@nestjs/common'
 
 export function createMockExecutionContext(
   overrides: {
-    request?: Partial<Request>;
-    handler?: () => void;
-    classRef?: () => void;
-  } = {},
+    request?: Partial<Request>
+    handler?: () => void
+    classRef?: () => void
+  } = {}
 ): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => overrides.request ?? { cookies: {}, headers: {} },
       getResponse: () => ({}),
-      getNext: () => jest.fn(),
+      getNext: () => jest.fn()
     }),
     switchToWs: () => ({
       getClient: () => ({ handshake: { auth: {}, headers: {} }, data: {} }),
-      getData: () => ({}),
+      getData: () => ({})
     }),
     getHandler: () => overrides.handler ?? jest.fn(),
     getClass: () => overrides.classRef ?? jest.fn(),
     getType: () => 'http',
     getArgs: () => [],
     getArgByIndex: () => undefined,
-    switchToRpc: () => ({}),
-  } as unknown as ExecutionContext;
+    switchToRpc: () => ({})
+  } as unknown as ExecutionContext
 }
 ```
 
 ### 9.6 Coverage Requirements
 
-| Metric | Minimum |
-|--------|---------|
-| Line coverage | 80% |
-| Branch coverage | 75% |
-| Function coverage | 80% |
-| Statement coverage | 80% |
+| Metric             | Minimum  |
+| ------------------ | -------- |
+| Line coverage      | **100%** |
+| Branch coverage    | **100%** |
+| Function coverage  | **100%** |
+| Statement coverage | **100%** |
 
 Configure in `jest.config.ts`:
 
@@ -2317,23 +2272,23 @@ export default {
       branches: 75,
       functions: 80,
       lines: 80,
-      statements: 80,
-    },
-  },
-};
+      statements: 80
+    }
+  }
+}
 ```
 
 ### 9.7 Rules for Testing in This Project
 
-| Rule | Description |
-|------|-------------|
-| **Test file collocation** | Test files live next to source files as `*.spec.ts`. |
-| **Use `Test.createTestingModule`** | Always use NestJS testing utilities, not manual instantiation. |
-| **Mock via injection tokens** | Mock dependencies using their Symbol tokens, not by class reference. |
-| **No real Redis in unit tests** | Always mock `AUTH_REDIS_CLIENT`. Use testcontainers for integration tests if needed. |
-| **No real JWT secrets** | Use deterministic test secrets like `'test-access-secret'`. |
-| **Test error paths** | Every service test must cover the error/exception paths, not just happy paths. |
-| **80% coverage minimum** | The CI pipeline must enforce the coverage threshold. |
+| Rule                               | Description                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| **Test file collocation**          | Test files live next to source files as `*.spec.ts`.                                 |
+| **Use `Test.createTestingModule`** | Always use NestJS testing utilities, not manual instantiation.                       |
+| **Mock via injection tokens**      | Mock dependencies using their Symbol tokens, not by class reference.                 |
+| **No real Redis in unit tests**    | Always mock `AUTH_REDIS_CLIENT`. Use testcontainers for integration tests if needed. |
+| **No real JWT secrets**            | Use deterministic test secrets like `'test-access-secret'`.                          |
+| **Test error paths**               | Every service test must cover the error/exception paths, not just happy paths.       |
+| **100% coverage gate**             | The CI pipeline enforces 100% on all four metrics.                                   |
 
 ---
 
@@ -2345,7 +2300,7 @@ This section documents common mistakes and their corrections. Every pattern belo
 
 ```typescript
 // WRONG: Library depends on a specific ORM — breaks the abstraction
-import { PrismaService } from '@prisma/client';
+import { PrismaService } from '@prisma/client'
 
 @Injectable()
 export class AuthService {
@@ -2359,7 +2314,7 @@ export class AuthService {
 export class AuthService {
   constructor(
     @Inject(USER_REPOSITORY)
-    private readonly userRepository: IUserRepository,
+    private readonly userRepository: IUserRepository
   ) {}
 }
 ```
@@ -2369,14 +2324,14 @@ export class AuthService {
 ```typescript
 // WRONG: Forces global guard on the host application
 @Module({
-  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
+  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }]
 })
 export class BymaxAuthModule {}
 
 // CORRECT: Export the guard; let the host decide
 @Module({
   providers: [JwtAuthGuard],
-  exports: [JwtAuthGuard],
+  exports: [JwtAuthGuard]
 })
 export class BymaxAuthModule {}
 ```
@@ -2385,10 +2340,10 @@ export class BymaxAuthModule {}
 
 ```typescript
 // WRONG: String tokens collide across packages
-export const USER_REPO = 'USER_REPO';
+export const USER_REPO = 'USER_REPO'
 
 // CORRECT: Symbol tokens are unique
-export const USER_REPO = Symbol('USER_REPO');
+export const USER_REPO = Symbol('USER_REPO')
 ```
 
 ### 10.4 Using `console.log` Instead of `Logger`
@@ -2411,12 +2366,12 @@ this.logger.error(`Token verification failed`, error.stack);
 
 ```typescript
 // WRONG: Logging passwords, tokens, or secrets
-this.logger.debug(`Login attempt with password: ${dto.password}`);
-this.logger.log(`Generated token: ${accessToken}`);
+this.logger.debug(`Login attempt with password: ${dto.password}`)
+this.logger.log(`Generated token: ${accessToken}`)
 
 // CORRECT: Log only identifiers and actions
-this.logger.log(`Login successful for user: ${user.id}`);
-this.logger.warn(`Failed login attempt for email: ${dto.email}`);
+this.logger.log(`Login successful for user: ${user.id}`)
+this.logger.warn(`Failed login attempt for email: ${dto.email}`)
 ```
 
 ### 10.6 Using `any` Type
@@ -2474,23 +2429,23 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 export class AuthService {
   constructor(
     @Inject(AUTH_MODULE_OPTIONS)
-    private readonly options: AuthModuleOptions,
+    private readonly options: AuthModuleOptions
   ) {
     // This mutates the singleton options for all consumers
-    this.options.jwt.accessExpiresIn = '30m';
+    this.options.jwt.accessExpiresIn = '30m'
   }
 }
 
 // CORRECT: Treat options as readonly
 @Injectable()
 export class AuthService {
-  private readonly accessExpiresIn: string;
+  private readonly accessExpiresIn: string
 
   constructor(
     @Inject(AUTH_MODULE_OPTIONS)
-    private readonly options: Readonly<AuthModuleOptions>,
+    private readonly options: Readonly<AuthModuleOptions>
   ) {
-    this.accessExpiresIn = options.jwt.accessExpiresIn;
+    this.accessExpiresIn = options.jwt.accessExpiresIn
   }
 }
 ```
@@ -2500,18 +2455,18 @@ export class AuthService {
 ```typescript
 // WRONG: Simple equality is vulnerable to timing attacks
 if (hash === providedHash) {
-  return true;
+  return true
 }
 
 // CORRECT: Use timingSafeEqual from node:crypto
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto'
 
-const a = Buffer.from(hash, 'hex');
-const b = Buffer.from(providedHash, 'hex');
+const a = Buffer.from(hash, 'hex')
+const b = Buffer.from(providedHash, 'hex')
 if (a.length !== b.length) {
-  return false;
+  return false
 }
-return timingSafeEqual(a, b);
+return timingSafeEqual(a, b)
 ```
 
 ### 10.10 Using `@Res()` Without Passthrough
@@ -2537,9 +2492,7 @@ async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
 // WRONG: Request scope propagates to the entire dependency tree
 @Injectable({ scope: Scope.REQUEST })
 export class AuthService {
-  constructor(
-    @Inject(REQUEST) private readonly request: Request,
-  ) {}
+  constructor(@Inject(REQUEST) private readonly request: Request) {}
 }
 
 // CORRECT: Pass request data as method arguments
@@ -2555,32 +2508,28 @@ export class AuthService {
 
 ```typescript
 // WRONG: Hardcoded values that cannot be customized
-res.cookie('access_token', token, { httpOnly: true, path: '/' });
+res.cookie('access_token', token, { httpOnly: true, path: '/' })
 
 // CORRECT: Read from configuration or shared constants
-import { COOKIE_DEFAULTS } from '../../shared/constants/cookie-defaults';
+import { COOKIE_DEFAULTS } from '../../shared/constants/cookie-defaults'
 
-res.cookie(
-  this.options.cookies?.accessTokenName ?? COOKIE_DEFAULTS.ACCESS_TOKEN_NAME,
-  token,
-  {
-    httpOnly: true,
-    secure: this.options.cookies?.secure ?? true,
-    sameSite: this.options.cookies?.sameSite ?? 'lax',
-    path: this.options.cookies?.path ?? '/',
-  },
-);
+res.cookie(this.options.cookies?.accessTokenName ?? COOKIE_DEFAULTS.ACCESS_TOKEN_NAME, token, {
+  httpOnly: true,
+  secure: this.options.cookies?.secure ?? true,
+  sameSite: this.options.cookies?.sameSite ?? 'lax',
+  path: this.options.cookies?.path ?? '/'
+})
 ```
 
 ### 10.13 Using External Crypto Libraries
 
 ```typescript
 // WRONG: External dependency for crypto operations
-import bcrypt from 'bcrypt';        // C++ binding, supply chain risk
-import speakeasy from 'speakeasy';  // Unmaintained, bloated
+import bcrypt from 'bcrypt' // C++ binding, supply chain risk
+import speakeasy from 'speakeasy' // Unmaintained, bloated
 
 // CORRECT: Native node:crypto
-import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
+import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto'
 ```
 
 ### 10.14 Not Validating Required Dependencies at Module Init
@@ -2591,7 +2540,7 @@ import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 export class AuthService {
   async login(dto: LoginDto) {
     // This will throw a cryptic NestJS error if USER_REPOSITORY was never provided
-    const user = await this.userRepository.findByEmail(dto.email);
+    const user = await this.userRepository.findByEmail(dto.email)
   }
 }
 
@@ -2600,15 +2549,15 @@ export class AuthService {
 export class AuthService implements OnModuleInit {
   constructor(
     @Inject(USER_REPOSITORY)
-    private readonly userRepository: IUserRepository,
+    private readonly userRepository: IUserRepository
   ) {}
 
   onModuleInit() {
     if (!this.userRepository) {
       throw new Error(
         '@bymax-one/nest-auth: USER_REPOSITORY provider is required. ' +
-        'Please provide an implementation of IUserRepository in your module configuration.',
-      );
+          'Please provide an implementation of IUserRepository in your module configuration.'
+      )
     }
   }
 }
@@ -2683,7 +2632,7 @@ Use this checklist when writing or reviewing NestJS code in this project:
 - [ ] Dependencies mocked via their Symbol tokens
 - [ ] Error paths are tested, not just happy paths
 - [ ] No real Redis or JWT secrets in unit tests
-- [ ] 80% minimum coverage enforced
+- [ ] 100% coverage enforced (all four metrics)
 - [ ] Test files are colocated with source as `*.spec.ts`
 
 ### Security

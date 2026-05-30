@@ -35,25 +35,16 @@ const config: Config = {
     '!**/index.ts',
     '!**/*.d.ts'
   ],
+  // 100% across the board. The lib already meets it (verified via test:cov:all),
+  // so the day-to-day `pnpm test:cov` enforces the same hard gate as the release
+  // `test:cov:all` — no drift between local and CI. A global 100% makes the
+  // former per-directory 95% overrides (crypto/, guards/) redundant.
   coverageThreshold: {
     global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80
-    },
-    // Paths are relative to the project root (where jest.config.ts lives), not rootDir
-    './src/server/crypto/': {
-      branches: 95,
-      functions: 95,
-      lines: 95,
-      statements: 95
-    },
-    './src/server/guards/': {
-      branches: 95,
-      functions: 95,
-      lines: 95,
-      statements: 95
+      branches: 100,
+      functions: 100,
+      lines: 100,
+      statements: 100
     }
   },
   coverageReporters: ['text', 'lcov', 'clover'],

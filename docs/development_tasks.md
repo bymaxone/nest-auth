@@ -8,13 +8,13 @@
 
 ## Status Control
 
-| Status      | Emoji | Description               |
-| ----------- | ----- | ------------------------- |
-| TODO        | ⬜    | Not started               |
-| IN_PROGRESS | 🔄    | In progress               |
-| DONE        | ✅    | Completed and verified    |
-| BLOCKED     | 🚫    | Blocked by dependency     |
-| REVIEW      | 👀    | Under review              |
+| Status      | Emoji | Description            |
+| ----------- | ----- | ---------------------- |
+| TODO        | ⬜    | Not started            |
+| IN_PROGRESS | 🔄    | In progress            |
+| DONE        | ✅    | Completed and verified |
+| BLOCKED     | 🚫    | Blocked by dependency  |
+| REVIEW      | 👀    | Under review           |
 
 ## Specialist Agents
 
@@ -30,18 +30,18 @@
 
 ## Progress Dashboard
 
-| Phase                                       | Total   | TODO    | DONE   | Progress  |
-| ------------------------------------------- | ------- | ------- | ------ | --------- |
-| Phase 1 — Foundation and Infrastructure     | 42      | 0       | 42     | 100%      |
-| Phase 2 — Core Authentication               | 22      | 0       | 22     | 100%      |
-| Phase 3 — Multi-Factor Authentication (MFA) | 15      | 0       | 15     | 100%      |
-| Phase 4 — Sessions and Password Reset       | 17      | 0       | 17     | 100%      |
-| Phase 5 — Platform, OAuth and Invitations   | 25      | 0       | 25     | 100%      |
-| Phase 6 — Integration, Polish and Publishing| 30      | 0       | 30     | 100%      |
-| Phase 7 — Shared + Client Subpath           | 9       | 0       | 9      | 100%      |
-| Phase 8 — React Subpath                     | 8       | 0       | 8      | 100%      |
-| Phase 9 — Next.js Subpath                   | 17      | 0       | 17     | 100%      |
-| **TOTAL**                                   | **185** | **0**   | **185**| **100%**  |
+| Phase                                        | Total   | TODO  | DONE    | Progress |
+| -------------------------------------------- | ------- | ----- | ------- | -------- |
+| Phase 1 — Foundation and Infrastructure      | 42      | 0     | 42      | 100%     |
+| Phase 2 — Core Authentication                | 22      | 0     | 22      | 100%     |
+| Phase 3 — Multi-Factor Authentication (MFA)  | 15      | 0     | 15      | 100%     |
+| Phase 4 — Sessions and Password Reset        | 17      | 0     | 17      | 100%     |
+| Phase 5 — Platform, OAuth and Invitations    | 25      | 0     | 25      | 100%     |
+| Phase 6 — Integration, Polish and Publishing | 30      | 0     | 30      | 100%     |
+| Phase 7 — Shared + Client Subpath            | 9       | 0     | 9       | 100%     |
+| Phase 8 — React Subpath                      | 8       | 0     | 8       | 100%     |
+| Phase 9 — Next.js Subpath                    | 17      | 0     | 17      | 100%     |
+| **TOTAL**                                    | **185** | **0** | **185** | **100%** |
 
 ---
 
@@ -87,11 +87,11 @@
 - **Dependencies:** NEST-001
 - **Agent:** architect
 - **Estimate:** ~20min
-- **Description:** Configure ESLint with @typescript-eslint, Jest with ts-jest preset and 80% coverage thresholds, .gitignore, LICENSE (MIT), and empty CHANGELOG.md.
+- **Description:** Configure ESLint with @typescript-eslint, Jest with ts-jest preset and 100% coverage thresholds, .gitignore, LICENSE (MIT), and empty CHANGELOG.md.
 
 **Prompt for the agent:**
 
-> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 80% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/server/index.ts as empty barrel export. Verify `pnpm build` compiles without errors.
+> Create /Users/maximiliano/Documents/My Apps/nest-auth/.eslintrc.js with @typescript-eslint plugin and NestJS-appropriate rules. Create /Users/maximiliano/Documents/My Apps/nest-auth/jest.config.ts with preset ts-jest, rootDir src/, coverage thresholds of 100% for branches, functions, lines, and statements. Create .gitignore (node_modules/, dist/, coverage/, .env). Create LICENSE with MIT license per section 1.4 of the spec. Create CHANGELOG.md as empty placeholder. Create src/server/index.ts as empty barrel export. Verify `pnpm build` compiles without errors.
 
 ---
 
@@ -711,11 +711,11 @@
 - **Dependencies:** NEST-041
 - **Agent:** architect
 - **Estimate:** ~30min
-- **Description:** Run full build and test suite, verify compilation is clean and coverage meets 80% threshold.
+- **Description:** Run full build and test suite, verify compilation is clean and coverage meets 100% threshold.
 
 **Prompt for the agent:**
 
-> Run the following validation checks for Phase 1 completion: (1) `pnpm build` must compile with zero errors. (2) `pnpm test --coverage` must pass with >= 80% coverage on branches, functions, lines, statements. (3) Verify all interfaces are exported correctly (check index.ts for both export type and export). (4) Verify AuthResult, PlatformAuthResult, MfaChallengeResult are defined and exported. (5) Verify resolveOptions validates jwt.secret, mfa.encryptionKey, jwt.algorithm and preserves functions after merge. (6) Verify encrypt/decrypt AES-256-GCM round-trip works and IVs are unique. (7) Verify Redis namespace prefixing. (8) Verify PasswordService hash/compare round-trip. (9) Verify BruteForceService lockout. (10) Verify TokenManagerService token operations. (11) Verify TokenDeliveryService in all 3 modes. (12) Verify 33 error codes in AUTH_ERROR_CODES. (13) Verify extractDomain rejects malicious hostnames. Fix any issues found.
+> Run the following validation checks for Phase 1 completion: (1) `pnpm build` must compile with zero errors. (2) `pnpm test --coverage` must pass with >= 100% coverage on branches, functions, lines, statements. (3) Verify all interfaces are exported correctly (check index.ts for both export type and export). (4) Verify AuthResult, PlatformAuthResult, MfaChallengeResult are defined and exported. (5) Verify resolveOptions validates jwt.secret, mfa.encryptionKey, jwt.algorithm and preserves functions after merge. (6) Verify encrypt/decrypt AES-256-GCM round-trip works and IVs are unique. (7) Verify Redis namespace prefixing. (8) Verify PasswordService hash/compare round-trip. (9) Verify BruteForceService lockout. (10) Verify TokenManagerService token operations. (11) Verify TokenDeliveryService in all 3 modes. (12) Verify 33 error codes in AUTH_ERROR_CODES. (13) Verify extractDomain rejects malicious hostnames. Fix any issues found.
 
 ---
 
@@ -781,7 +781,7 @@
 > Acceptance criteria:
 >
 > - All 8 scenarios tested and passing
-> - Coverage >= 90% on the guard file
+> - Coverage >= 100% on the guard file
 > - No use of Passport in the tests
 
 ---
@@ -1082,11 +1082,11 @@
 - **Dependencies:** NEST-063
 - **Agent:** architect
 - **Estimate:** ~30min
-- **Description:** Run full build and test suite for Phase 2, verify all flows work end-to-end and coverage meets 80%.
+- **Description:** Run full build and test suite for Phase 2, verify all flows work end-to-end and coverage meets 100%.
 
 **Prompt for the agent:**
 
-> Run Phase 2 validation: (1) `pnpm build` compiles without errors. (2) `pnpm test --coverage` passes with >= 80% coverage. (3) Verify register -> login -> refresh -> logout flow works (via unit tests confirming correct service calls and data flow). (4) Guards work: public routes skip JWT, protected routes require JWT, roles are checked hierarchically. (5) TokenDelivery works in all 3 modes. (6) Brute-force blocks after N attempts with Retry-After header. (7) Dynamic module compiles and initializes. (8) Controllers are registered conditionally. (9) Route prefix works via RouterModule. (10) tenantIdResolver is called when configured. (11) OtpService constant-time comparison works. Fix any issues found.
+> Run Phase 2 validation: (1) `pnpm build` compiles without errors. (2) `pnpm test --coverage` passes with >= 100% coverage. (3) Verify register -> login -> refresh -> logout flow works (via unit tests confirming correct service calls and data flow). (4) Guards work: public routes skip JWT, protected routes require JWT, roles are checked hierarchically. (5) TokenDelivery works in all 3 modes. (6) Brute-force blocks after N attempts with Retry-After header. (7) Dynamic module compiles and initializes. (8) Controllers are registered conditionally. (9) Route prefix works via RouterModule. (10) tenantIdResolver is called when configured. (11) OtpService constant-time comparison works. Fix any issues found.
 
 ---
 
@@ -1527,7 +1527,7 @@
 >    - Invalid code records brute-force failure
 >    - Email notification and hook called on success
 >
-> Mock all dependencies (userRepo, platformUserRepo, Redis, tokenManager, bruteForce, emailProvider, hooks, sessionService). Use Jest. Aim for >= 80% coverage of mfa.service.ts.
+> Mock all dependencies (userRepo, platformUserRepo, Redis, tokenManager, bruteForce, emailProvider, hooks, sessionService). Use Jest. Aim for >= 100% coverage of mfa.service.ts.
 >
 > Acceptance criteria:
 >
@@ -2093,7 +2093,7 @@
 > - BOLA prevention verified
 > - FIFO eviction logic verified
 > - Rotation atomicity tested (mock Lua script execution)
-> - > = 80% coverage of session.service.ts
+> - > = 100% coverage of session.service.ts
 
 ---
 
@@ -2134,7 +2134,7 @@
 > - Cross-tenant rejection verified
 > - Anti-enumeration (no user existence leak) verified
 > - Cooldown atomicity tested
-> - > = 80% coverage
+> - > = 100% coverage
 
 ---
 
@@ -2260,7 +2260,7 @@
 > 9. DTOs validate correctly: VerifyOtpDto, ResendOtpDto, VerifyEmailDto, ResendVerificationDto
 > 10. `logout()` derives sessionHash via `sha256(rawRefreshToken)` for revokeSession
 > 11. Cooldown of OTP resend (60s) works via Redis NX key
-> 12. Coverage >= 80% for all Phase 4 files
+> 12. Coverage >= 100% for all Phase 4 files
 >
 > Use mocked repositories but real service chain where possible.
 >
@@ -2268,7 +2268,7 @@
 >
 > - All 11 scenarios have passing tests
 > - Validates the complete checklist from section 5.9
-> - Overall Phase 4 coverage >= 80%
+> - Overall Phase 4 coverage >= 100%
 
 ---
 
@@ -2326,7 +2326,7 @@
 > Acceptance criteria:
 >
 > - All 9 scenarios tested and passing
-> - Coverage >= 90% on the guard file
+> - Coverage >= 100% on the guard file
 > - No use of Passport in the tests
 
 ---
@@ -2570,7 +2570,7 @@
 > 11. A token with type 'platform' is accepted.
 > 12. A token without jti is rejected with TOKEN_INVALID.
 >     Mock: IPlatformUserRepository, TokenManagerService, BruteForceService, CryptoService, Redis, TokenDeliveryService.
->     Acceptance criteria: all tests pass, coverage >= 80% for platform-auth.service.ts.
+>     Acceptance criteria: all tests pass, coverage >= 100% for platform-auth.service.ts.
 
 ---
 
@@ -2696,7 +2696,7 @@
 > 7. `tenantId` is correctly extracted from the stored state.
 > 8. Google plugin extracts profile with the correct fields.
 >    Mock: Redis, IUserRepository, TokenManagerService, hooks, SessionService.
->    Acceptance criteria: all tests pass, coverage >= 80% for oauth.service.ts.
+>    Acceptance criteria: all tests pass, coverage >= 100% for oauth.service.ts.
 
 ---
 
@@ -2842,7 +2842,7 @@
 > 8. Controller POST / extracts tenantId from the JWT, not from the body.
 > 9. `afterInvitationAccepted` hook is executed.
 >    Mock: IUserRepository, IEmailProvider, Redis, TokenManagerService, CryptoService, hooks.
->    Acceptance criteria: all tests pass, coverage >= 80%.
+>    Acceptance criteria: all tests pass, coverage >= 100%.
 
 ---
 
@@ -3568,18 +3568,18 @@
 - **Dependencies:** NEST-134
 - **Agent:** tester
 - **Estimate:** ~30min
-- **Description:** Run test coverage and ensure >= 80% on branches, functions and lines.
+- **Description:** Run test coverage and ensure >= 100% on branches, functions and lines.
 
 **Prompt for the agent:**
 
 > Run `pnpm test:cov` and analyze the report:
 >
-> 1. Verify total coverage >= 80% for: branches, functions, lines, statements.
-> 2. Identify files with coverage < 80%.
-> 3. For each file below 80%, list the uncovered methods/branches.
+> 1. Verify total coverage >= 100% for: branches, functions, lines, statements.
+> 2. Identify files with coverage < 100%.
+> 3. For each file below 100%, list the uncovered methods/branches.
 > 4. Write additional tests to cover the most critical gaps (prioritize services and guards over controllers).
-> 5. Re-run coverage and confirm >= 80%.
->    Acceptance criteria: total coverage >= 80% on all metrics, clean report.
+> 5. Re-run coverage and confirm >= 100%.
+>    Acceptance criteria: total coverage >= 100% on all metrics, clean report.
 
 ---
 
@@ -3631,7 +3631,7 @@
 > Run the publish checklist:
 >
 > 1. `pnpm build` — verify zero errors and zero warnings.
-> 2. `pnpm test:cov` — verify coverage >= 80%.
+> 2. `pnpm test:cov` — verify coverage >= 100%.
 > 3. `pnpm pack` — verify the package contents (only dist, package.json, README, LICENSE, CHANGELOG).
 > 4. Verify `package.json`: name `@bymax-one/nest-auth`, version `1.0.0`, license, repository, keywords, correct peerDependencies.
 > 5. Verify that `.npmignore` or `files` in package.json excludes src/, test/, docs/, .github/.
@@ -3656,7 +3656,7 @@
 > Run and verify each item of the Phase 6 validation checklist:
 >
 > 1. [ ] All E2E tests passing (including refresh concurrency and FIFO eviction).
-> 2. [ ] Total coverage >= 80%.
+> 2. [ ] Total coverage >= 100%.
 > 3. [ ] Build without errors or warnings.
 > 4. [ ] README complete and functional with security sections.
 > 5. [ ] JSDoc on all public exports.
@@ -3933,7 +3933,7 @@
 >
 > - Barrel export compiles without errors
 > - All tests pass
-> - Coverage >= 80% in the client files
+> - Coverage >= 100% in the client files
 > - The fetch mock does not leak between tests
 
 ---
@@ -3955,7 +3955,7 @@
 > 1. Verify that `src/shared/` has zero external dependencies (only TypeScript types and constants).
 > 2. Verify that `src/client/` has zero external dependencies (only native `fetch` and imports from `../shared`).
 > 3. Verify that the shared types are compatible with the server exports (e.g., `AuthUserClient` is a subset of `AuthUser`).
-> 4. Run `pnpm test --coverage` and verify coverage >= 80%.
+> 4. Run `pnpm test --coverage` and verify coverage >= 100%.
 > 5. Run `pnpm build` and verify compilation without errors.
 > 6. Verify that the shared and client barrel exports are correct.
 >
@@ -3964,7 +3964,7 @@
 > - Shared: zero external dependencies
 > - Client: zero external dependencies (only native fetch)
 > - Types compatible with the server
-> - Coverage >= 80%
+> - Coverage >= 100%
 > - Build without errors
 
 ---
@@ -4204,7 +4204,7 @@
 > Acceptance criteria:
 >
 > - All tests pass
-> - Coverage >= 80% in the react files
+> - Coverage >= 100% in the react files
 > - The AuthClient mock does not leak between tests
 > - Tests are isolated and deterministic
 
@@ -4226,7 +4226,7 @@
 >
 > 1. Verify that `react` is declared as a `peerDependency` with `^19` (not as a direct dependency).
 > 2. Verify that the hooks are tested in isolation with a mocked AuthClient.
-> 3. Run `pnpm test --coverage` and verify coverage >= 80% in the `src/react/` files.
+> 3. Run `pnpm test --coverage` and verify coverage >= 100% in the `src/react/` files.
 > 4. Run `pnpm build` and verify compilation without errors.
 > 5. Verify that there are no external dependencies besides `react` as a peer dep.
 > 6. Verify that the barrel export of `src/react/index.ts` is complete.
@@ -4235,7 +4235,7 @@
 >
 > - React ^19 as a peerDependency only
 > - Hooks tested in isolation
-> - Coverage >= 80%
+> - Coverage >= 100%
 > - Build without errors
 
 ---
@@ -4621,7 +4621,7 @@
 > Execute the Phase 9 validation checklist:
 >
 > 1. [ ] Verify peer dependencies: `next ^16` and `react ^19` are declared.
-> 2. [ ] Verify proxy logic has 90%+ test coverage on critical paths (redirect loop, RBAC, status blocking).
+> 2. [ ] Verify proxy logic has 100%+ test coverage on critical paths (redirect loop, RBAC, status blocking).
 > 3. [ ] Verify ALL redirect loop scenarios are tested (NEST-181).
 > 4. [ ] Verify `pnpm build` compiles without errors.
 > 5. [ ] Verify open redirect defense is tested (NEST-183).
@@ -4695,4 +4695,4 @@ Groups of tasks that can be executed simultaneously:
 - Phase 8 (React: NEST-161..168) and Phase 9 (Next.js: NEST-169..185) both depend on Phase 7, but are independent of each other
 - Within Phase 9, helpers (NEST-169..172) can run in parallel
 - Tests (NEST-181..184) can run in parallel with each other
-4
+  4

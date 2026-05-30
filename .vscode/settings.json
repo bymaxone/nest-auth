@@ -1,0 +1,48 @@
+{
+  // Formatting model (conflict-free):
+  // - Prettier (esbenp.prettier-vscode) owns formatting via .prettierrc.
+  // - ESLint flat config auto-fixes lint + import order on save; its
+  //   `prettier/prettier` rule produces identical output, and
+  //   `eslint-config-prettier` disables stylistic ESLint rules, so the two
+  //   never fight. Per-language formatters below stop VS Code's built-in
+  //   TS/JSON formatters from clashing with Prettier.
+  // NOTE: includes the React/TSX language overrides (this package ships
+  //   client/react/nextjs subpaths); the backend-only nest-logger omits them.
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.tabSize": 2,
+  "editor.rulers": [100],
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[javascript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[javascriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[yaml]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[markdown]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  // ESLint 9 flat config (eslint.config.mjs).
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+
+  // Use the workspace TypeScript (forward slashes — macOS/Linux/Windows safe).
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  // Keep search/quick-open focused on source.
+  "search.exclude": {
+    "**/dist": true,
+    "**/coverage": true,
+    "**/.stryker-tmp": true,
+    "**/src/coverage": true,
+    "**/.next": true,
+    "**/pnpm-lock.yaml": true
+  }
+}
