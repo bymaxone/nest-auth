@@ -35,7 +35,7 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 ### 1.2 Guiding principles
 
-- **TDD in each phase:** Unit tests are written alongside the code, not accumulated at the end. Minimum coverage of 80% per phase.
+- **TDD in each phase:** Unit tests are written alongside the code, not accumulated at the end. Minimum coverage of 100% per phase.
 - **Clean compilation:** Each phase must compile (`tsc`) without errors before being considered complete.
 - **Incremental barrel export:** The `index.ts` is updated in each phase with the new public exports. Distinguish `export type` (interfaces, type aliases) from `export` (classes, constants, decorators, guards).
 - **Security validation:** Each phase includes an explicit review of the security points listed in Appendix B of the specification.
@@ -44,17 +44,17 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 ### 1.3 Schedule summary
 
-| Phase | Week     | Focus                             | Dependency  |
-| ---- | -------- | --------------------------------- | ----------- |
-| 1    | Week 1   | Foundation and infrastructure     | —           |
-| 2    | Week 2   | Core authentication               | Phase 1     |
-| 3    | Week 3   | MFA (TOTP)                        | Phase 2     |
-| 4    | Week 3-4 | Sessions + password reset         | Phase 2     |
-| 5    | Week 4-5 | Platform + OAuth + invitations    | Phases 2-4  |
-| 6    | Week 5-6 | Integration, polishing, publishing | Phases 1-5 |
-| 7    | Week 6-7 | Shared + Client subpath           | Phase 6     |
-| 8    | Week 7   | React subpath                     | Phase 7     |
-| 9    | Week 7-8 | Next.js subpath                   | Phase 7     |
+| Phase | Week     | Focus                              | Dependency |
+| ----- | -------- | ---------------------------------- | ---------- |
+| 1     | Week 1   | Foundation and infrastructure      | —          |
+| 2     | Week 2   | Core authentication                | Phase 1    |
+| 3     | Week 3   | MFA (TOTP)                         | Phase 2    |
+| 4     | Week 3-4 | Sessions + password reset          | Phase 2    |
+| 5     | Week 4-5 | Platform + OAuth + invitations     | Phases 2-4 |
+| 6     | Week 5-6 | Integration, polishing, publishing | Phases 1-5 |
+| 7     | Week 6-7 | Shared + Client subpath            | Phase 6    |
+| 8     | Week 7   | React subpath                      | Phase 7    |
+| 9     | Week 7-8 | Next.js subpath                    | Phase 7    |
 
 ---
 
@@ -67,18 +67,18 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                  | Description                                                                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| File                  | Description                                                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `package.json`        | Name `@bymax-one/nest-auth`, version `1.0.0`, peer dependencies as per section 18 of the spec, `"dependencies": {}` (zero direct dependencies), scripts `"build": "tsup"`, `lint`, `test`, `test:cov`, `prepublishOnly`. devDependencies includes `tsup ^8.0.0` |
-| `tsconfig.json`       | Target ES2022, module CommonJS, strict mode enabled, experimental decorators, emitDecoratorMetadata                                                                              |
-| `tsconfig.build.json` | Extends `tsconfig.json`, excludes `**/*.spec.ts` and `test/`, outDir `dist`                                                                                                              |
-| `.eslintrc.js`        | ESLint configuration with `@typescript-eslint`, NestJS rules                                                                                                                       |
-| `jest.config.ts`      | Preset `ts-jest`, root `src/`, coverage threshold 80%                                                                                                                                |
-| `.gitignore`          | `node_modules/`, `dist/`, `coverage/`, `.env`                                                                                                                                        |
-| `.npmignore`          | Everything except `dist/`, `package.json`, `README.md`, `LICENSE`                                                                                                                          |
-| `LICENSE`             | MIT license as per section 1.4 of the spec                                                                                                                                               |
-| `CHANGELOG.md`        | Initial empty file — will be populated with the v1.0.0 entry in Phase 6                                                                                                                   |
-| `src/server/index.ts`        | Initial barrel export (empty, will be populated incrementally)                                                                                                                        |
+| `tsconfig.json`       | Target ES2022, module CommonJS, strict mode enabled, experimental decorators, emitDecoratorMetadata                                                                                                                                                             |
+| `tsconfig.build.json` | Extends `tsconfig.json`, excludes `**/*.spec.ts` and `test/`, outDir `dist`                                                                                                                                                                                     |
+| `.eslintrc.js`        | ESLint configuration with `@typescript-eslint`, NestJS rules                                                                                                                                                                                                    |
+| `jest.config.ts`      | Preset `ts-jest`, root `src/`, coverage threshold 100%                                                                                                                                                                                                          |
+| `.gitignore`          | `node_modules/`, `dist/`, `coverage/`, `.env`                                                                                                                                                                                                                   |
+| `.npmignore`          | Everything except `dist/`, `package.json`, `README.md`, `LICENSE`                                                                                                                                                                                               |
+| `LICENSE`             | MIT license as per section 1.4 of the spec                                                                                                                                                                                                                      |
+| `CHANGELOG.md`        | Initial empty file — will be populated with the v1.0.0 entry in Phase 6                                                                                                                                                                                         |
+| `src/server/index.ts` | Initial barrel export (empty, will be populated incrementally)                                                                                                                                                                                                  |
 
 **Detailed tasks:**
 
@@ -99,7 +99,7 @@ Development follows an **incremental, layered approach**, where each phase produ
    - `"outDir": "./dist"`
    - `"rootDir": "./src"`
 7. Configure `tsconfig.build.json` excluding tests
-8. Configure Jest with preset `ts-jest`, minimum coverage of 80% (branches, functions, lines, statements)
+8. Configure Jest with preset `ts-jest`, minimum coverage of 100% (branches, functions, lines, statements)
 9. Create the directory structure: `src/server/` (main backend directory), `src/shared/`, `src/client/`, `src/react/`, `src/nextjs/`, and inside `src/server/`: `interfaces/`, `config/`, `services/`, `controllers/`, `guards/`, `decorators/`, `redis/`, `dto/`, `crypto/`, `errors/`, `oauth/`, `constants/`, `providers/`, `hooks/`
 10. Verify that `pnpm build` compiles without errors (even with an empty barrel export)
 
@@ -107,17 +107,17 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                                                   | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/interfaces/auth-module-options.interface.ts`      | Complete `BymaxAuthModuleOptions` interface as per section 4.1 of the spec — all 15 option groups (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platform, invitations, roles, blockedStatuses, oauth, controllers)                                                                                                                                                                       |
-| `src/server/interfaces/user-repository.interface.ts`          | Interface `AuthUser` (15 fields) and `IUserRepository` (11 methods: findById, findByEmail, create, updatePassword, updateMfa, updateLastLogin, updateStatus, updateEmailVerified, findByOAuthId, linkOAuth, createWithOAuth)                                                                                                                                                                                                                               |
-| `src/server/interfaces/platform-user-repository.interface.ts` | Interface `AuthPlatformUser` (13 fields) and `IPlatformUserRepository` (6 methods: findById, findByEmail, updateLastLogin, updateMfa, updatePassword, updateStatus)                                                                                                                                                                                                                                                                                        |
-| `src/server/interfaces/email-provider.interface.ts`           | Interface `IEmailProvider` with 7 methods: sendPasswordResetToken, sendPasswordResetOtp, sendEmailVerificationOtp, sendMfaEnabledNotification, sendMfaDisabledNotification, sendNewSessionAlert, sendInvitation — all with a `locale?` parameter                                                                                                                                                                           |
-| `src/server/interfaces/auth-hooks.interface.ts`               | Interface `IAuthHooks` (12 optional hooks), `HookContext`, `BeforeRegisterResult`, `OAuthLoginResult`, `OAuthProfile`                                                                                                                                                                                                                                                                                                                                   |
+| File                                                          | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/interfaces/auth-module-options.interface.ts`      | Complete `BymaxAuthModuleOptions` interface as per section 4.1 of the spec — all 15 option groups (jwt, password, tokenDelivery, cookies, mfa, sessions, bruteForce, passwordReset, emailVerification, platform, invitations, roles, blockedStatuses, oauth, controllers)                                                                                                                                                                                            |
+| `src/server/interfaces/user-repository.interface.ts`          | Interface `AuthUser` (15 fields) and `IUserRepository` (11 methods: findById, findByEmail, create, updatePassword, updateMfa, updateLastLogin, updateStatus, updateEmailVerified, findByOAuthId, linkOAuth, createWithOAuth)                                                                                                                                                                                                                                         |
+| `src/server/interfaces/platform-user-repository.interface.ts` | Interface `AuthPlatformUser` (13 fields) and `IPlatformUserRepository` (6 methods: findById, findByEmail, updateLastLogin, updateMfa, updatePassword, updateStatus)                                                                                                                                                                                                                                                                                                  |
+| `src/server/interfaces/email-provider.interface.ts`           | Interface `IEmailProvider` with 7 methods: sendPasswordResetToken, sendPasswordResetOtp, sendEmailVerificationOtp, sendMfaEnabledNotification, sendMfaDisabledNotification, sendNewSessionAlert, sendInvitation — all with a `locale?` parameter                                                                                                                                                                                                                     |
+| `src/server/interfaces/auth-hooks.interface.ts`               | Interface `IAuthHooks` (12 optional hooks), `HookContext`, `BeforeRegisterResult`, `OAuthLoginResult`, `OAuthProfile`                                                                                                                                                                                                                                                                                                                                                |
 | `src/server/interfaces/jwt-payload.interface.ts`              | Interfaces `DashboardJwtPayload` (with jti, sub, tenantId, role, type, status, mfaVerified, iat, exp), `PlatformJwtPayload` (with jti, sub, role, type, mfaVerified, iat, exp), `MfaTempPayload` (with sub, type, context, iat, exp). **Note:** `emailVerified` is NOT a JWT claim (despite being mentioned in spec section 6.1 as available in the JWT). The host app must verify via `AuthUser.emailVerified` from the `/me` endpoint or the `afterRegister` hook. |
-| `src/server/interfaces/auth-result.interface.ts`              | Interfaces `AuthResult` (user, accessToken, rawRefreshToken, sessionHash?), `PlatformAuthResult` (admin, accessToken, rawRefreshToken), `MfaChallengeResult` (mfaRequired, mfaToken). **Note:** Defined in Phase 1 so that Phase 3 can compile `MfaService.challenge()` which returns `AuthResult \| PlatformAuthResult`.                                                                                                                            |
-| `src/server/interfaces/authenticated-request.interface.ts`    | Interfaces `AuthenticatedRequest` (Request + user: DashboardJwtPayload) and `PlatformAuthenticatedRequest` (Request + user: PlatformJwtPayload)                                                                                                                                                                                                                                                                                                            |
-| `src/server/interfaces/oauth-provider.interface.ts`           | Interface `OAuthProviderPlugin` (name, strategy, guard, extractProfile). OAuth flow based on native `fetch` — no external dependencies. `extractProfile(rawProfile: Record<string, unknown>)` converts the provider's raw profile into `OAuthProfile`.                                                                                                                                                                                                                               |
+| `src/server/interfaces/auth-result.interface.ts`              | Interfaces `AuthResult` (user, accessToken, rawRefreshToken, sessionHash?), `PlatformAuthResult` (admin, accessToken, rawRefreshToken), `MfaChallengeResult` (mfaRequired, mfaToken). **Note:** Defined in Phase 1 so that Phase 3 can compile `MfaService.challenge()` which returns `AuthResult \| PlatformAuthResult`.                                                                                                                                            |
+| `src/server/interfaces/authenticated-request.interface.ts`    | Interfaces `AuthenticatedRequest` (Request + user: DashboardJwtPayload) and `PlatformAuthenticatedRequest` (Request + user: PlatformJwtPayload)                                                                                                                                                                                                                                                                                                                      |
+| `src/server/interfaces/oauth-provider.interface.ts`           | Interface `OAuthProviderPlugin` (name, strategy, guard, extractProfile). OAuth flow based on native `fetch` — no external dependencies. `extractProfile(rawProfile: Record<string, unknown>)` converts the provider's raw profile into `OAuthProfile`.                                                                                                                                                                                                               |
 
 **Detailed tasks:**
 
@@ -139,14 +139,14 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                                   | Content                                                                                                                                                                                                                                                                                                              |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/bymax-auth.constants.ts` | 6 Symbols: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `BYMAX_AUTH_PLATFORM_USER_REPOSITORY`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `BYMAX_AUTH_REDIS_CLIENT`                                                                                                                                     |
-| `src/server/config/default-options.ts`        | Object with all default values as per table 4.2 of the spec                                                                                                                                                                                                                                                       |
-| `src/server/config/resolved-options.ts`       | Type `ResolvedOptions` (options with defaults applied) + function `resolveOptions(userOptions)` that does a deep merge with defaults + validation of `jwt.secret` (min 32 chars, Shannon entropy >= 3.5 bits/char, rejects repetitive patterns) + validation of `mfa.encryptionKey` (32 bytes when decoded from base64) |
-| `src/server/constants/index.ts`               | Re-export of public constants                                                                                                                                                                                                                                                                                     |
-| `src/server/constants/throttle-configs.ts`    | Object `AUTH_THROTTLE_CONFIGS` with 14 rate limiting configurations as per section 16.2                                                                                                                                                                                                                             |
-| `src/server/constants/error-codes.ts`         | Re-export of `AUTH_ERROR_CODES`                                                                                                                                                                                                                                                                                      |
+| File                                       | Content                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/bymax-auth.constants.ts`       | 6 Symbols: `BYMAX_AUTH_OPTIONS`, `BYMAX_AUTH_USER_REPOSITORY`, `BYMAX_AUTH_PLATFORM_USER_REPOSITORY`, `BYMAX_AUTH_EMAIL_PROVIDER`, `BYMAX_AUTH_HOOKS`, `BYMAX_AUTH_REDIS_CLIENT`                                                                                                                                        |
+| `src/server/config/default-options.ts`     | Object with all default values as per table 4.2 of the spec                                                                                                                                                                                                                                                             |
+| `src/server/config/resolved-options.ts`    | Type `ResolvedOptions` (options with defaults applied) + function `resolveOptions(userOptions)` that does a deep merge with defaults + validation of `jwt.secret` (min 32 chars, Shannon entropy >= 3.5 bits/char, rejects repetitive patterns) + validation of `mfa.encryptionKey` (32 bytes when decoded from base64) |
+| `src/server/constants/index.ts`            | Re-export of public constants                                                                                                                                                                                                                                                                                           |
+| `src/server/constants/throttle-configs.ts` | Object `AUTH_THROTTLE_CONFIGS` with 14 rate limiting configurations as per section 16.2                                                                                                                                                                                                                                 |
+| `src/server/constants/error-codes.ts`      | Re-export of `AUTH_ERROR_CODES`                                                                                                                                                                                                                                                                                         |
 
 **Detailed tasks:**
 
@@ -170,11 +170,11 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                             | Content                                                                                                                                                                                 |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/errors/auth-error-codes.ts` | Constant `AUTH_ERROR_CODES` (33 codes) + `AUTH_ERROR_MESSAGES` (mapping code → message in Portuguese) as per section 15                                                          |
-| `src/server/errors/auth-exception.ts`   | Class `AuthException extends HttpException` with constructor `(code, statusCode?, details?)` that formats the response in the pattern `{ error: { code, message, details } }`                       |
-| `src/server/utils/sleep.ts`             | Function `sleep(ms: number): Promise<void>` — wrapper of `setTimeout` in a Promise. Used for timing normalization in anti-enumeration endpoints                                           |
+| File                                    | Content                                                                                                                                                                            |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/errors/auth-error-codes.ts` | Constant `AUTH_ERROR_CODES` (33 codes) + `AUTH_ERROR_MESSAGES` (mapping code → message in Portuguese) as per section 15                                                            |
+| `src/server/errors/auth-exception.ts`   | Class `AuthException extends HttpException` with constructor `(code, statusCode?, details?)` that formats the response in the pattern `{ error: { code, message, details } }`      |
+| `src/server/utils/sleep.ts`             | Function `sleep(ms: number): Promise<void>` — wrapper of `setTimeout` in a Promise. Used for timing normalization in anti-enumeration endpoints                                    |
 | `src/server/utils/roles.util.ts`        | Function `hasRole(userRole, requiredRole, hierarchy): boolean` — hierarchical verification logic extracted for reuse by `RolesGuard`, `PlatformRolesGuard` and `InvitationService` |
 
 **Detailed tasks:**
@@ -189,11 +189,11 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                         | Content                                                                                                                                                                                                                                                             |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/crypto/aes-gcm.ts`      | Functions `encrypt(plaintext, key)` and `decrypt(ciphertext, key)` using AES-256-GCM. 12-byte IV generated with `crypto.randomBytes(12)`. Output format: `base64(iv):base64(authTag):base64(ciphertext)`. Uses Node.js `crypto.createCipheriv('aes-256-gcm', ...)` |
-| `src/server/crypto/secure-token.ts` | Functions `generateSecureToken(bytes?)` (returns hex from `crypto.randomBytes`) and `sha256(input)` (returns hex from `crypto.createHash('sha256')`)                                                                                                                         |
-| `src/server/crypto/scrypt.ts`       | Functions `scryptHash(plain)` and `scryptCompare(plain, hash)` using `node:crypto` scrypt. Parameters: N=2^15, r=8, p=1, keyLen=64, salt=16 bytes via `crypto.randomBytes`. Output format: `scrypt:{salt_hex}:{derived_hex}`. Comparison via `crypto.timingSafeEqual` |
+| File                                | Content                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/crypto/aes-gcm.ts`      | Functions `encrypt(plaintext, key)` and `decrypt(ciphertext, key)` using AES-256-GCM. 12-byte IV generated with `crypto.randomBytes(12)`. Output format: `base64(iv):base64(authTag):base64(ciphertext)`. Uses Node.js `crypto.createCipheriv('aes-256-gcm', ...)`                                                                                                                                                               |
+| `src/server/crypto/secure-token.ts` | Functions `generateSecureToken(bytes?)` (returns hex from `crypto.randomBytes`) and `sha256(input)` (returns hex from `crypto.createHash('sha256')`)                                                                                                                                                                                                                                                                             |
+| `src/server/crypto/scrypt.ts`       | Functions `scryptHash(plain)` and `scryptCompare(plain, hash)` using `node:crypto` scrypt. Parameters: N=2^15, r=8, p=1, keyLen=64, salt=16 bytes via `crypto.randomBytes`. Output format: `scrypt:{salt_hex}:{derived_hex}`. Comparison via `crypto.timingSafeEqual`                                                                                                                                                            |
 | `src/server/crypto/totp.ts`         | Native TOTP implementation using `node:crypto`. Includes: `base32Decode(encoded)` (Base32 decoding helper), `hotp(secret, counter)` (HMAC-SHA1 as per RFC 4226), `totp(secret, period?)` (RFC 6238 with counter = `Math.floor(Date.now() / 1000 / period)`), `verifyTotp(secret, code, window?)` (verification with configurable window), `buildTotpUri(secret, email, issuer)` (generates `otpauth://totp/...` URI for QR code) |
 
 **Detailed tasks:**
@@ -237,10 +237,10 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                              | Content                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File                                     | Content                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/server/redis/auth-redis.service.ts` | Service `AuthRedisService` that wraps the `ioredis` instance injected via `BYMAX_AUTH_REDIS_CLIENT`. Methods: `get(key)`, `set(key, value, ttl?)`, `del(key)`, `incr(key)`, `expire(key, ttl)`, `ttl(key)`, `sadd(setKey, member)`, `srem(setKey, member)`, `smembers(setKey)`, `sismember(setKey, member)`, `eval(script, keys, args)`. All methods automatically prefix the key with `{namespace}:`. |
-| `src/server/redis/auth-redis.module.ts`  | Internal NestJS module that registers `AuthRedisService` as a provider                                                                                                                                                                                                                                                                                                                                        |
+| `src/server/redis/auth-redis.module.ts`  | Internal NestJS module that registers `AuthRedisService` as a provider                                                                                                                                                                                                                                                                                                                                 |
 
 **Detailed tasks:**
 
@@ -256,12 +256,12 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 > **Additional Redis keys (not present in the spec, added by the plan):**
 >
-> | Prefix      | Key Pattern                                          | Value                                             | TTL               | Purpose                                           |
-> | ----------- | ---------------------------------------------------- | ------------------------------------------------- | ----------------- | ------------------------------------------------- |
-> | `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                    | JSON: `{ encryptedSecret, hashedCodes }`          | 600s              | Temporary MFA setup data (Phase 3)           |
-> | `psess`     | `auth:psess:{userId}`                                | SET of platform session hashes               | = max refresh TTL | Tracking of active admin sessions (Phase 5) |
-> | `psd`       | `auth:psd:{sessionHash}`                             | JSON: `{ device, ip, createdAt, lastActivityAt }` | = max refresh TTL | Platform session details (Phase 5)         |
-> | `resend`    | `auth:resend:{purpose}:{sha256(tenantId+':'+email)}` | `'1'`                                             | 60s               | Cooldown between OTP resends (Phase 4)           |
+> | Prefix      | Key Pattern                                          | Value                                             | TTL               | Purpose                                     |
+> | ----------- | ---------------------------------------------------- | ------------------------------------------------- | ----------------- | ------------------------------------------- |
+> | `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                    | JSON: `{ encryptedSecret, hashedCodes }`          | 600s              | Temporary MFA setup data (Phase 3)          |
+> | `psess`     | `auth:psess:{userId}`                                | SET of platform session hashes                    | = max refresh TTL | Tracking of active admin sessions (Phase 5) |
+> | `psd`       | `auth:psd:{sessionHash}`                             | JSON: `{ device, ip, createdAt, lastActivityAt }` | = max refresh TTL | Platform session details (Phase 5)          |
+> | `resend`    | `auth:resend:{purpose}:{sha256(tenantId+':'+email)}` | `'1'`                                             | 60s               | Cooldown between OTP resends (Phase 4)      |
 >
 > **Note:** `mfa_setup` uses `sha256(userId)` as the key (not userId in plaintext) to follow the spec's principle that all sensitive identifiers are hashed with SHA-256.
 
@@ -269,12 +269,12 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                                     | Content                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/services/password.service.ts`       | `PasswordService` with `hash(plain)` and `compare(plain, hash)` using `node:crypto` scrypt. Delegates to `scryptHash()` and `scryptCompare()` from `src/server/crypto/scrypt.ts`. Parameters: N=2^15, r=8, p=1, keyLen=64, salt=16 bytes. Format: `scrypt:{salt_hex}:{derived_hex}`.                                                                                                                                                             |
+| File                                            | Content                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/services/password.service.ts`       | `PasswordService` with `hash(plain)` and `compare(plain, hash)` using `node:crypto` scrypt. Delegates to `scryptHash()` and `scryptCompare()` from `src/server/crypto/scrypt.ts`. Parameters: N=2^15, r=8, p=1, keyLen=64, salt=16 bytes. Format: `scrypt:{salt_hex}:{derived_hex}`.                                                                                                                                               |
 | `src/server/services/token-manager.service.ts`  | `TokenManagerService` with `issueAccess()`, `issueTokens()`, `issuePlatformTokens()`, `reissueTokens()`, `decodeToken()`, `issueMfaTempToken()`, `verifyMfaTempToken()`. Uses `@nestjs/jwt` for JWT operations. Refresh tokens are opaque UUID v4 stored in Redis. `issuePlatformTokens()` issues a JWT with `type: 'platform'` and a refresh with prefix `prt:` — needed for `MfaService.challenge()` with `context: 'platform'`. |
-| `src/server/services/token-delivery.service.ts` | `TokenDeliveryService` with `deliverAuthResponse()`, `deliverRefreshResponse()`, `extractAccessToken()`, `extractRefreshToken()`, `clearAuthSession()`, `resolveCookieDomains()`, `extractDomain()`. Behavior changes according to `tokenDelivery` (cookie/bearer/both).                                                                                                                                                             |
-| `src/server/services/brute-force.service.ts`    | `BruteForceService` with `isLockedOut(identifier)`, `recordFailure(identifier)`, `resetFailures(identifier)`, `getRemainingLockoutSeconds(identifier)`. Uses Redis keys `lf:{identifier}`.                                                                                                                                                                                                                                        |
+| `src/server/services/token-delivery.service.ts` | `TokenDeliveryService` with `deliverAuthResponse()`, `deliverRefreshResponse()`, `extractAccessToken()`, `extractRefreshToken()`, `clearAuthSession()`, `resolveCookieDomains()`, `extractDomain()`. Behavior changes according to `tokenDelivery` (cookie/bearer/both).                                                                                                                                                           |
+| `src/server/services/brute-force.service.ts`    | `BruteForceService` with `isLockedOut(identifier)`, `recordFailure(identifier)`, `resetFailures(identifier)`, `getRemainingLockoutSeconds(identifier)`. Uses Redis keys `lf:{identifier}`.                                                                                                                                                                                                                                         |
 
 **Detailed tasks for PasswordService:**
 
@@ -365,9 +365,9 @@ Development follows an **incremental, layered approach**, where each phase produ
 
 **Files to create:**
 
-| File                                    | Content                                                                                                                                                                                                                     |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/providers/no-op-email.provider.ts` | `NoOpEmailProvider implements IEmailProvider` — all methods log to the console via the NestJS `Logger`, do not send real email. Useful for development.                                                                  |
+| File                                           | Content                                                                                                                                                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/server/providers/no-op-email.provider.ts` | `NoOpEmailProvider implements IEmailProvider` — all methods log to the console via the NestJS `Logger`, do not send real email. Useful for development.                                                                                    |
 | `src/server/hooks/no-op-auth.hooks.ts`         | `NoOpAuthHooks implements IAuthHooks` — `beforeRegister` returns `{ allowed: true }`, the remaining hooks are no-ops. `onOAuthLogin` implements safe default logic (link if email matches, create if new, reject if email does not match). |
 
 **Detailed tasks:**
@@ -390,7 +390,7 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 ### 2.10 Phase 1 validation
 
 - [ ] `pnpm build` compiles without errors
-- [ ] `pnpm test` passes with coverage >= 80%
+- [ ] `pnpm test` passes with coverage >= 100%
 - [ ] All interfaces are exported and typed correctly (`export type` for interfaces, `export` for values)
 - [ ] `AuthResult`, `PlatformAuthResult` and `MfaChallengeResult` defined and exported
 - [ ] `resolveOptions()` validates jwt.secret, mfa.encryptionKey, jwt.algorithm and preserves functions after merge
@@ -417,11 +417,11 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 
 **Files to create:**
 
-| File                              | Content                                                                                                                                                                                                                                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File                                     | Content                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/server/guards/jwt-auth.guard.ts`    | `JwtAuthGuard implements CanActivate` — native NestJS guard (no external authentication dependencies). Extracts the token via `TokenDeliveryService.extractAccessToken()`, verifies with `jwtService.verify(token, { algorithms: ['HS256'] })`, validates claims (`type`, `jti`), checks the Redis blacklist, populates `request.user`. Respects the `@Public()` decorator via `Reflector`. |
-| `src/server/guards/roles.guard.ts`       | `RolesGuard implements CanActivate` — reads the required roles from the `roles` metadata (via `Reflector`), compares with `request.user.role` using the hierarchy configured in `roles.hierarchy`. Implement `hasRole(userRole, requiredRole)` that checks hierarchical inheritance.                    |
-| `src/server/guards/user-status.guard.ts` | `UserStatusGuard implements CanActivate` — fetches the user status from the Redis cache (`us:{userId}`), if not found fetches from the database via `IUserRepository.findById()` and caches it with TTL. Compares against `blockedStatuses`. Throws a status-specific error (BANNED, INACTIVE, SUSPENDED). |
+| `src/server/guards/roles.guard.ts`       | `RolesGuard implements CanActivate` — reads the required roles from the `roles` metadata (via `Reflector`), compares with `request.user.role` using the hierarchy configured in `roles.hierarchy`. Implement `hasRole(userRole, requiredRole)` that checks hierarchical inheritance.                                                                                                        |
+| `src/server/guards/user-status.guard.ts` | `UserStatusGuard implements CanActivate` — fetches the user status from the Redis cache (`us:{userId}`), if not found fetches from the database via `IUserRepository.findById()` and caches it with TTL. Compares against `blockedStatuses`. Throws a status-specific error (BANNED, INACTIVE, SUSPENDED).                                                                                  |
 
 **Detailed tasks:**
 
@@ -466,11 +466,11 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 
 **Files to create:**
 
-| File                                       | Content                                                                                                 |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| File                                              | Content                                                                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `src/server/decorators/current-user.decorator.ts` | `@CurrentUser(property?)` — `createParamDecorator` that extracts `request.user` or `request.user[property]` |
-| `src/server/decorators/roles.decorator.ts`        | `@Roles(...roles)` — `SetMetadata(ROLES_KEY, roles)` for use with `RolesGuard`                           |
-| `src/server/decorators/public.decorator.ts`       | `@Public()` — `SetMetadata(IS_PUBLIC_KEY, true)` to skip `JwtAuthGuard`                               |
+| `src/server/decorators/roles.decorator.ts`        | `@Roles(...roles)` — `SetMetadata(ROLES_KEY, roles)` for use with `RolesGuard`                              |
+| `src/server/decorators/public.decorator.ts`       | `@Public()` — `SetMetadata(IS_PUBLIC_KEY, true)` to skip `JwtAuthGuard`                                     |
 
 **Detailed tasks:**
 
@@ -484,9 +484,9 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 
 **Files to create:**
 
-| File                      | Content                                                                                                                                                                                                                                                        |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/dto/register.dto.ts` | `RegisterDto` with validators: `@IsEmail() email`, `@IsString() @MinLength(8) @MaxLength(128) password`, `@IsString() @MinLength(2) name`, `@IsString() @IsNotEmpty() tenantId`                                                                                  |
+| File                             | Content                                                                                                                                                                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/dto/register.dto.ts` | `RegisterDto` with validators: `@IsEmail() email`, `@IsString() @MinLength(8) @MaxLength(128) password`, `@IsString() @MinLength(2) name`, `@IsString() @IsNotEmpty() tenantId`                                                                                                       |
 | `src/server/dto/login.dto.ts`    | `LoginDto` with validators: `@IsEmail() email`, `@IsString() @MaxLength(128) password`, `@IsString() @IsNotEmpty() tenantId`. **No `@MinLength` on the password** — deliberate so as not to reveal whether the password is too short before the scrypt comparison (anti-enumeration). |
 
 **Detailed tasks:**
@@ -586,15 +586,15 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 1. Apply decorators: `@Controller(routePrefix)` with a dynamic prefix
 2. Implement 7 endpoints as per table 7.1:
 
-   | Method | Route                  | Decorators                                   | Implementation                                                                                              |
-   | ------ | ---------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+   | Method | Route                  | Decorators                                   | Implementation                                                                                           |
+   | ------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
    | POST   | `/register`            | `@Public()`, `@Throttle(register)`           | Call `authService.register()`, deliver via `tokenDeliveryService`                                        |
    | POST   | `/login`               | `@Public()`, `@Throttle(login)`              | Call `authService.login()`, deliver via `tokenDeliveryService` (or return `MfaChallengeResult` directly) |
-   | POST   | `/logout`              | `@UseGuards(JwtAuthGuard)`                   | Extract tokens via `tokenDeliveryService`, call `authService.logout()`, clear the session                     |
-   | POST   | `/refresh`             | `@Public()`, `@Throttle(refresh)`            | Extract refresh via `tokenDeliveryService`, call `authService.refresh()`, deliver new tokens           |
-   | GET    | `/me`                  | `@UseGuards(JwtAuthGuard)`                   | Call `authService.getMe(user.sub)`                                                                        |
-   | POST   | `/verify-email`        | `@Public()`, `@Throttle(verifyEmail)`        | Call `authService.verifyEmail()`                                                                          |
-   | POST   | `/resend-verification` | `@Public()`, `@Throttle(resendVerification)` | Call `authService.resendVerificationEmail()`                                                              |
+   | POST   | `/logout`              | `@UseGuards(JwtAuthGuard)`                   | Extract tokens via `tokenDeliveryService`, call `authService.logout()`, clear the session                |
+   | POST   | `/refresh`             | `@Public()`, `@Throttle(refresh)`            | Extract refresh via `tokenDeliveryService`, call `authService.refresh()`, deliver new tokens             |
+   | GET    | `/me`                  | `@UseGuards(JwtAuthGuard)`                   | Call `authService.getMe(user.sub)`                                                                       |
+   | POST   | `/verify-email`        | `@Public()`, `@Throttle(verifyEmail)`        | Call `authService.verifyEmail()`                                                                         |
+   | POST   | `/resend-verification` | `@Public()`, `@Throttle(resendVerification)` | Call `authService.resendVerificationEmail()`                                                             |
 
 3. Use `@Res({ passthrough: true })` to preserve NestJS interceptors when manipulating cookies
 4. Extract `req.ip` and `req.headers['user-agent']` to pass to the services
@@ -644,10 +644,10 @@ Update `src/server/index.ts` with all the exports from Phase 1:
 8. Import `JwtModule.registerAsync()` with `secret` and `signOptions` from the resolved options
 
 9. Write integration tests for the module:
-    - The module compiles and initializes with minimal configuration
-    - Secret validation fails with a weak secret
-    - Controllers are registered conditionally (auth: false → AuthController absent)
-    - The route prefix works correctly
+   - The module compiles and initializes with minimal configuration
+   - Secret validation fails with a weak secret
+   - Controllers are registered conditionally (auth: false → AuthController absent)
+   - The route prefix works correctly
 
 ### 3.7 Barrel export update
 
@@ -671,7 +671,7 @@ Add to `index.ts`:
 - [ ] Dynamic route prefix works via RouterModule
 - [ ] `tenantIdResolver` is called when provided, and `tenantId` from the body is ignored
 - [ ] `pnpm build` without errors
-- [ ] `pnpm test` with coverage >= 80%
+- [ ] `pnpm test` with coverage >= 100%
 
 ---
 
@@ -777,12 +777,12 @@ Add to `index.ts`:
 1. Prefix: `{routePrefix}/mfa`
 2. Implement 4 endpoints as per table 7.2:
 
-   | Method | Route        | Guards         | Throttle       | Implementation                                                       |
-   | ------ | ------------ | -------------- | -------------- | -------------------------------------------------------------------- |
-   | POST   | `/setup`     | `JwtAuthGuard` | `mfaSetup`     | Call `mfaService.setup(user.sub)`                                  |
-   | POST   | `/verify`    | `JwtAuthGuard` | —              | Call `mfaService.verifyAndEnable()`                                |
+   | Method | Route        | Guards         | Throttle       | Implementation                                                    |
+   | ------ | ------------ | -------------- | -------------- | ----------------------------------------------------------------- |
+   | POST   | `/setup`     | `JwtAuthGuard` | `mfaSetup`     | Call `mfaService.setup(user.sub)`                                 |
+   | POST   | `/verify`    | `JwtAuthGuard` | —              | Call `mfaService.verifyAndEnable()`                               |
    | POST   | `/challenge` | Public         | `mfaChallenge` | Call `mfaService.challenge()`, deliver via `tokenDeliveryService` |
-   | POST   | `/disable`   | `JwtAuthGuard` | `mfaDisable`   | Call `mfaService.disable()`                                        |
+   | POST   | `/disable`   | `JwtAuthGuard` | `mfaDisable`   | Call `mfaService.disable()`                                       |
 
 3. The `/challenge` endpoint is public because the user does not yet have a session JWT — it uses `mfaTempToken` in the body
 4. Write unit tests for the controller
@@ -791,20 +791,20 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                           | Fields                                                                                                                                                                                                                                         |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/dto/mfa-verify.dto.ts`    | `@IsString() @IsNotEmpty() @Length(6, 6) code`                                                                                                                                                                                                 |
-| `src/server/dto/mfa-challenge.dto.ts` | `@IsString() @IsNotEmpty() mfaTempToken`, `@IsString() @IsNotEmpty() @MaxLength(128) code`                                                                                                                                                     |
+| File                                  | Fields                                                                                                                                                                                                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/dto/mfa-verify.dto.ts`    | `@IsString() @IsNotEmpty() @Length(6, 6) code`                                                                                                                                                                                                        |
+| `src/server/dto/mfa-challenge.dto.ts` | `@IsString() @IsNotEmpty() mfaTempToken`, `@IsString() @IsNotEmpty() @MaxLength(128) code`                                                                                                                                                            |
 | `src/server/dto/mfa-disable.dto.ts`   | `@IsString() @IsNotEmpty() @Length(6, 6) code`. **Note:** Accepts only TOTP — recovery codes are not accepted to disable MFA (design decision from the spec). Document in the README that recovery without TOTP requires administrative intervention. |
 
 ### 4.4 MFA Guard and Decorator
 
 **Files to create:**
 
-| File                                   | Content                                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| File                                          | Content                                                                                                                    |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `src/server/guards/mfa-required.guard.ts`     | Checks `request.user.mfaVerified === true`. If MFA enabled and not verified, throws `MFA_REQUIRED`. Respects `@SkipMfa()`. |
-| `src/server/decorators/skip-mfa.decorator.ts` | `@SkipMfa()` — `SetMetadata(SKIP_MFA_KEY, true)`                                                                               |
+| `src/server/decorators/skip-mfa.decorator.ts` | `@SkipMfa()` — `SetMetadata(SKIP_MFA_KEY, true)`                                                                           |
 
 ### 4.5 Integration in the dynamic module
 
@@ -835,7 +835,7 @@ Add to `index.ts`:
 - [ ] After enabling MFA, all existing sessions are invalidated
 - [ ] Disable requires the correct TOTP code (recovery codes not accepted)
 - [ ] `@SkipMfa()` bypasses `MfaRequiredGuard`
-- [ ] Coverage >= 80%
+- [ ] Coverage >= 100%
 
 ---
 
@@ -938,11 +938,11 @@ Add to `index.ts`:
 1. Prefix: `{routePrefix}/sessions`
 2. Implement 3 endpoints as per table 7.4:
 
-   | Method | Route  | Guards         | Implementation                                 |
-   | ------ | ------ | -------------- | ---------------------------------------------- |
+   | Method | Route  | Guards         | Implementation                                       |
+   | ------ | ------ | -------------- | ---------------------------------------------------- |
    | GET    | `/`    | `JwtAuthGuard` | List sessions with `currentSessionHash` from the JWT |
-   | DELETE | `/:id` | `JwtAuthGuard` | Revoke session by `sessionHash`               |
-   | DELETE | `/all` | `JwtAuthGuard` | Revoke all except the current one                     |
+   | DELETE | `/:id` | `JwtAuthGuard` | Revoke session by `sessionHash`                      |
+   | DELETE | `/all` | `JwtAuthGuard` | Revoke all except the current one                    |
 
 3. Extract `currentSessionHash` from the JWT or compute it from the refresh token in the cookie
 4. Write tests for the controller
@@ -1003,8 +1003,8 @@ Add to `index.ts`:
 1. Prefix: `{routePrefix}/password`
 2. Implement 4 endpoints as per table 7.3:
 
-   | Method | Route              | Throttle            | Implementation           |
-   | ------ | ------------------ | ------------------- | ------------------------ |
+   | Method | Route              | Throttle            | Implementation         |
+   | ------ | ------------------ | ------------------- | ---------------------- |
    | POST   | `/forgot-password` | `forgotPassword`    | Call `initiateReset()` |
    | POST   | `/reset-password`  | `resetPassword`     | Call `resetPassword()` |
    | POST   | `/verify-otp`      | `verifyOtp`         | Call `verifyOtp()`     |
@@ -1017,14 +1017,14 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                                 | Fields as per section 7.3                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/dto/forgot-password.dto.ts`     | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                      |
+| File                                        | Fields as per section 7.3                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/dto/forgot-password.dto.ts`     | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                                        |
 | `src/server/dto/reset-password.dto.ts`      | `@IsEmail() email`, `@IsString() @MinLength(8) @MaxLength(128) newPassword`, `@IsOptional() @IsString() @IsNotEmpty() token?`, `@IsOptional() @IsString() @IsNotEmpty() otp?`, `@IsOptional() @IsString() @IsNotEmpty() verifiedToken?`, `@IsString() @IsNotEmpty() tenantId`. **Note:** `@IsNotEmpty()` on the optional fields ensures that if present, they are not an empty string (which would generate a valid but incorrect `sha256("")`) |
-| `src/server/dto/verify-otp.dto.ts`          | `@IsEmail() email`, `@IsString() @IsNotEmpty() @Length(6, 8) otp` (min 6 = default, max 8 = maximum otpLength), `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                            |
-| `src/server/dto/resend-otp.dto.ts`          | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                      |
-| `src/server/dto/verify-email.dto.ts`        | `@IsEmail() email`, `@IsString() @IsNotEmpty() otp`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                     |
-| `src/server/dto/resend-verification.dto.ts` | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                      |
+| `src/server/dto/verify-otp.dto.ts`          | `@IsEmail() email`, `@IsString() @IsNotEmpty() @Length(6, 8) otp` (min 6 = default, max 8 = maximum otpLength), `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                            |
+| `src/server/dto/resend-otp.dto.ts`          | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                                        |
+| `src/server/dto/verify-email.dto.ts`        | `@IsEmail() email`, `@IsString() @IsNotEmpty() otp`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                       |
+| `src/server/dto/resend-verification.dto.ts` | `@IsEmail() email`, `@IsString() @IsNotEmpty() tenantId`                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### 5.7 Integration in the dynamic module
 
@@ -1063,7 +1063,7 @@ Add to `index.ts`:
 - [ ] DTOs `VerifyOtpDto`, `ResendOtpDto`, `VerifyEmailDto`, `ResendVerificationDto` validate correctly
 - [ ] `logout()` derives `sessionHash` via `sha256(rawRefreshToken)` to call `revokeSession()`
 - [ ] OTP resend cooldown (60s) works via a Redis key
-- [ ] Coverage >= 80%
+- [ ] Coverage >= 100%
 
 ---
 
@@ -1077,14 +1077,14 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                                          | Content                                                                                                                                                                                              |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File                                                 | Content                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/server/guards/jwt-platform.guard.ts`            | Native NestJS guard (same pattern as the `JwtAuthGuard` from Phase 2) that validates `payload.type === 'platform'`. Rejects `dashboard` with `PLATFORM_AUTH_REQUIRED`. Validates `jti` present. **MANDATORY:** pin `algorithms: ['HS256']` via `JwtService.verify()`. |
-| `src/server/guards/platform-roles.guard.ts`          | Roles guard using `platformHierarchy`.                                                                                                                                                            |
-| `src/server/decorators/platform-roles.decorator.ts`  | `@PlatformRoles()` for platform endpoints.                                                                                                                                                      |
-| `src/server/services/platform-auth.service.ts`       | Login, logout, refresh, getMe, revokeAllPlatformSessions for admins.                                                                                                                                 |
-| `src/server/controllers/platform-auth.controller.ts` | 6 endpoints as per table 7.5.                                                                                                                                                                      |
-| `src/server/dto/platform-login.dto.ts`               | `email`, `password` (max 72).                                                                                                                                                                         |
+| `src/server/guards/platform-roles.guard.ts`          | Roles guard using `platformHierarchy`.                                                                                                                                                                                                                                |
+| `src/server/decorators/platform-roles.decorator.ts`  | `@PlatformRoles()` for platform endpoints.                                                                                                                                                                                                                            |
+| `src/server/services/platform-auth.service.ts`       | Login, logout, refresh, getMe, revokeAllPlatformSessions for admins.                                                                                                                                                                                                  |
+| `src/server/controllers/platform-auth.controller.ts` | 6 endpoints as per table 7.5.                                                                                                                                                                                                                                         |
+| `src/server/dto/platform-login.dto.ts`               | `email`, `password` (max 72).                                                                                                                                                                                                                                         |
 
 **Detailed tasks for PlatformAuthService:**
 
@@ -1127,12 +1127,12 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                                      | Content                                                                                                                                                  |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/oauth/oauth.module.ts`               | Dynamic module that registers OAuth providers based on the configuration. Imported conditionally by `BymaxAuthModule`.                                                                                                                                                                                           |
-| `src/server/oauth/oauth.service.ts`              | Central service: `handleCallback(provider, code, state, ip, ua)` — exchanges the code via the plugin, executes `onOAuthLogin`, creates/links the user, issues tokens. Manages CSRF state via Redis.                                                                                                                             |
+| File                                             | Content                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/oauth/oauth.module.ts`               | Dynamic module that registers OAuth providers based on the configuration. Imported conditionally by `BymaxAuthModule`.                                                                                                                                                        |
+| `src/server/oauth/oauth.service.ts`              | Central service: `handleCallback(provider, code, state, ip, ua)` — exchanges the code via the plugin, executes `onOAuthLogin`, creates/links the user, issues tokens. Manages CSRF state via Redis.                                                                           |
 | `src/server/oauth/oauth-provider.plugin.ts`      | Interface `OAuthProviderPlugin` with 3 methods: `authorizeUrl(state, redirectUri): string`, `exchangeCode(code, redirectUri): Promise<OAuthTokens>`, `fetchProfile(accessToken): Promise<OAuthProfile>`. All implementations use native `fetch` — zero external dependencies. |
-| `src/server/oauth/google/google-oauth.plugin.ts` | Google plugin implementing `OAuthProviderPlugin`. Builds Google OAuth2 URLs, exchanges the code via POST `https://oauth2.googleapis.com/token`, fetches the profile via GET `https://www.googleapis.com/oauth2/v3/userinfo`. All via native `fetch`.                                                                      |
+| `src/server/oauth/google/google-oauth.plugin.ts` | Google plugin implementing `OAuthProviderPlugin`. Builds Google OAuth2 URLs, exchanges the code via POST `https://oauth2.googleapis.com/token`, fetches the profile via GET `https://www.googleapis.com/oauth2/v3/userinfo`. All via native `fetch`.                          |
 
 **Detailed tasks for OAuthService:**
 
@@ -1172,12 +1172,12 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                                       | Content                                                                                                                                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/server/services/invitation.service.ts`       | `invite()` and `acceptInvitation()`.                                                                                                                                                                                                   |
-| `src/server/controllers/invitation.controller.ts` | POST `/` (create invitation) and POST `/accept`.                                                                                                                                                                                           |
+| File                                              | Content                                                                                                                                                                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/server/services/invitation.service.ts`       | `invite()` and `acceptInvitation()`.                                                                                                                                                                                                                   |
+| `src/server/controllers/invitation.controller.ts` | POST `/` (create invitation) and POST `/accept`.                                                                                                                                                                                                       |
 | `src/server/dto/create-invitation.dto.ts`         | `@IsEmail() email`, `@IsString() @IsNotEmpty() role`, `@IsOptional() @IsString() tenantName?`. **Note:** `tenantId` is NOT in the DTO — it is extracted from the inviter's JWT. Validation of `role` against `roles.hierarchy` is done in the service. |
-| `src/server/dto/accept-invitation.dto.ts`         | `@IsString() @IsNotEmpty() token`, `@IsString() @MinLength(2) name`, `@IsString() @MinLength(8) @MaxLength(128) password`                                                                                                             |
+| `src/server/dto/accept-invitation.dto.ts`         | `@IsString() @IsNotEmpty() token`, `@IsString() @MinLength(2) name`, `@IsString() @MinLength(8) @MaxLength(128) password`                                                                                                                              |
 
 **Detailed tasks for InvitationService:**
 
@@ -1238,7 +1238,7 @@ Add to `index.ts`:
 - [ ] Role validation on the invitation: inviter without authorization → `INSUFFICIENT_ROLE`
 - [ ] TenantId on the invitation comes from the JWT, not the body
 - [ ] All platform endpoints use `TokenDeliveryService`
-- [ ] Coverage >= 80%
+- [ ] Coverage >= 100%
 
 ---
 
@@ -1252,11 +1252,11 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                                | Content                                                                                                                         |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| File                                       | Content                                                                                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/server/guards/ws-jwt.guard.ts`        | Guard for WebSocket — extracts the JWT from the handshake via the `Authorization` header (NOT a query param). Validates and populates `client.data.user`. |
-| `src/server/guards/self-or-admin.guard.ts` | Allows access if `:userId === JWT.sub` or if the role is admin in the hierarchy. Primary protection against IDOR.                         |
-| `src/server/guards/optional-auth.guard.ts` | Tries to authenticate via JWT, but does not fail if absent. Populates `request.user` or null.                                               |
+| `src/server/guards/self-or-admin.guard.ts` | Allows access if `:userId === JWT.sub` or if the role is admin in the hierarchy. Primary protection against IDOR.                                         |
+| `src/server/guards/optional-auth.guard.ts` | Tries to authenticate via JWT, but does not fail if absent. Populates `request.user` or null.                                                             |
 
 **Tasks for each guard:**
 
@@ -1367,14 +1367,14 @@ Add to `index.ts`:
 ### 7.7 Publishing
 
 1. Run `pnpm build`
-2. Run `pnpm test:cov` — verify coverage >= 80%
+2. Run `pnpm test:cov` — verify coverage >= 100%
 3. Run `pnpm pack` to verify the package content
 4. Publish with `pnpm publish --access public`
 
 ### 7.8 Phase 6 validation
 
 - [ ] All E2E tests passing (including refresh concurrency and FIFO eviction)
-- [ ] Total coverage >= 80%
+- [ ] Total coverage >= 100%
 - [ ] Build without errors or warnings
 - [ ] README complete and functional with security sections
 - [ ] JSDoc on all public exports
@@ -1396,15 +1396,15 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                              | Content                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `src/shared/types/auth-user.types.ts`       | `AuthUserClient` — representation of the authenticated user on the client-side                                    |
-| `src/shared/types/auth-result.types.ts`     | `AuthClientResponse`, `MfaChallengeResult`, `AuthErrorResponse` — API result types              |
-| `src/shared/types/jwt-payload.types.ts`     | `DashboardJwtPayload`, `PlatformJwtPayload`, `MfaTempPayload` — JWT payload types                     |
-| `src/shared/constants/cookie-defaults.ts`   | `AUTH_ACCESS_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_NAME`, `AUTH_HAS_SESSION_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_PATH` |
-| `src/shared/constants/error-codes.ts`       | `AUTH_ERROR_CODES` — error codes used by the client to handle responses                             |
-| `src/shared/constants/routes.ts`            | `AUTH_ROUTES` — map of default auth API routes                                                      |
-| `src/shared/index.ts`                       | Barrel export of all the types and constants of the shared subpath                                            |
+| File                                      | Content                                                                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `src/shared/types/auth-user.types.ts`     | `AuthUserClient` — representation of the authenticated user on the client-side                                    |
+| `src/shared/types/auth-result.types.ts`   | `AuthClientResponse`, `MfaChallengeResult`, `AuthErrorResponse` — API result types                                |
+| `src/shared/types/jwt-payload.types.ts`   | `DashboardJwtPayload`, `PlatformJwtPayload`, `MfaTempPayload` — JWT payload types                                 |
+| `src/shared/constants/cookie-defaults.ts` | `AUTH_ACCESS_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_NAME`, `AUTH_HAS_SESSION_COOKIE_NAME`, `AUTH_REFRESH_COOKIE_PATH` |
+| `src/shared/constants/error-codes.ts`     | `AUTH_ERROR_CODES` — error codes used by the client to handle responses                                           |
+| `src/shared/constants/routes.ts`          | `AUTH_ROUTES` — map of default auth API routes                                                                    |
+| `src/shared/index.ts`                     | Barrel export of all the types and constants of the shared subpath                                                |
 
 **Detailed tasks:**
 
@@ -1429,12 +1429,12 @@ Add to `index.ts`:
 
 **Files to create:**
 
-| File                              | Content                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `src/client/createAuthClient.ts`  | Factory `createAuthClient(config: AuthClientConfig)` that returns typed authentication methods           |
-| `src/client/createAuthFetch.ts`   | `fetch` wrapper with 401 interception, automatic refresh and refresh dedup                        |
-| `src/client/types.ts`             | `AuthClientConfig`, `AuthFetchConfig` and internal client types                                          |
-| `src/client/index.ts`             | Barrel export of the client subpath                                                                           |
+| File                             | Content                                                                                        |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/client/createAuthClient.ts` | Factory `createAuthClient(config: AuthClientConfig)` that returns typed authentication methods |
+| `src/client/createAuthFetch.ts`  | `fetch` wrapper with 401 interception, automatic refresh and refresh dedup                     |
+| `src/client/types.ts`            | `AuthClientConfig`, `AuthFetchConfig` and internal client types                                |
+| `src/client/index.ts`            | Barrel export of the client subpath                                                            |
 
 **Detailed tasks:**
 
@@ -1471,7 +1471,7 @@ Add to `index.ts`:
 - [ ] `onSessionExpired` is called when refresh fails
 - [ ] Zero external dependencies — only native `fetch`
 - [ ] Server still compiles after extracting the types to shared
-- [ ] Coverage >= 80%
+- [ ] Coverage >= 100%
 
 ---
 
@@ -1483,14 +1483,14 @@ Add to `index.ts`:
 
 ### 9.1 Files to create
 
-| File                              | Content                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `src/react/AuthProvider.tsx`      | Context component that manages session state, periodic auto-revalidation and integration with `createAuthClient` |
-| `src/react/useSession.ts`         | Hook that returns `{ user, status, isLoading, refresh, lastValidation }`                                   |
-| `src/react/useAuth.ts`            | Hook that returns `{ login, register, logout, forgotPassword, resetPassword }`                             |
-| `src/react/useAuthStatus.ts`      | Convenience hook that returns `{ isAuthenticated, isLoading }`                                         |
-| `src/react/types.ts`              | Internal types of the React subpath: `AuthProviderProps`, `SessionState`, `AuthContextValue`                  |
-| `src/react/index.ts`              | Barrel export of the react subpath                                                                            |
+| File                         | Content                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `src/react/AuthProvider.tsx` | Context component that manages session state, periodic auto-revalidation and integration with `createAuthClient` |
+| `src/react/useSession.ts`    | Hook that returns `{ user, status, isLoading, refresh, lastValidation }`                                         |
+| `src/react/useAuth.ts`       | Hook that returns `{ login, register, logout, forgotPassword, resetPassword }`                                   |
+| `src/react/useAuthStatus.ts` | Convenience hook that returns `{ isAuthenticated, isLoading }`                                                   |
+| `src/react/types.ts`         | Internal types of the React subpath: `AuthProviderProps`, `SessionState`, `AuthContextValue`                     |
+| `src/react/index.ts`         | Barrel export of the react subpath                                                                               |
 
 ### 9.2 Detailed tasks
 
@@ -1539,7 +1539,7 @@ Add to `index.ts`:
 - [ ] Auto-revalidation works with a configurable interval
 - [ ] Tests with React Testing Library passing
 - [ ] Peer dependency `react ^19` declared
-- [ ] Coverage >= 80%
+- [ ] Coverage >= 100%
 
 ---
 
@@ -1551,23 +1551,22 @@ Add to `index.ts`:
 
 ### 10.1 Files to create
 
-| File                                        | Content                                                                                                  |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `src/nextjs/createAuthProxy.ts`             | Factory `createAuthProxy(config)` that returns `{ proxy, config }` for use in Next.js 16's `proxy.ts`   |
-| `src/nextjs/createSilentRefreshHandler.ts`      | Factory that returns a GET handler for `/api/auth/silent-refresh`                                           |
-| `src/nextjs/createClientRefreshHandler.ts`      | Factory that returns a POST handler for `/api/auth/client-refresh`                                          |
-| `src/nextjs/createLogoutHandler.ts`             | Factory that returns a POST handler for `/api/auth/logout` — forward to the backend + cookie cleanup      |
-| `src/nextjs/helpers/buildSilentRefreshUrl.ts`   | Builds the URL for `/api/auth/silent-refresh?dest=<dest>&_r=<currentR+1>` with propagation of the `_r` counter  |
-| `src/nextjs/helpers/isBackgroundRequest.ts`     | Detects RSC/prefetch requests via headers (`RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree`) |
-| `src/nextjs/helpers/dedupeSetCookieHeaders.ts`  | `dedupeSetCookieHeaders()`, `parseSetCookieHeader()` — cookie deduplication utilities              |
-| `src/nextjs/helpers/jwt.ts`                     | `decodeJwtToken()` (decode-only) and `verifyJwtToken()` (HS256 via Web Crypto API with algorithm pinning)    |
-| `src/nextjs/types.ts`                           | `AuthProxyConfig`, `SilentRefreshConfig`, `ClientRefreshConfig`, `LogoutHandlerConfig` and internal types   |
-| `src/nextjs/index.ts`                       | Barrel export of the nextjs subpath                                                                           |
+| File                                           | Content                                                                                                        |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `src/nextjs/createAuthProxy.ts`                | Factory `createAuthProxy(config)` that returns `{ proxy, config }` for use in Next.js 16's `proxy.ts`          |
+| `src/nextjs/createSilentRefreshHandler.ts`     | Factory that returns a GET handler for `/api/auth/silent-refresh`                                              |
+| `src/nextjs/createClientRefreshHandler.ts`     | Factory that returns a POST handler for `/api/auth/client-refresh`                                             |
+| `src/nextjs/createLogoutHandler.ts`            | Factory that returns a POST handler for `/api/auth/logout` — forward to the backend + cookie cleanup           |
+| `src/nextjs/helpers/buildSilentRefreshUrl.ts`  | Builds the URL for `/api/auth/silent-refresh?dest=<dest>&_r=<currentR+1>` with propagation of the `_r` counter |
+| `src/nextjs/helpers/isBackgroundRequest.ts`    | Detects RSC/prefetch requests via headers (`RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree`)      |
+| `src/nextjs/helpers/dedupeSetCookieHeaders.ts` | `dedupeSetCookieHeaders()`, `parseSetCookieHeader()` — cookie deduplication utilities                          |
+| `src/nextjs/helpers/jwt.ts`                    | `decodeJwtToken()` (decode-only) and `verifyJwtToken()` (HS256 via Web Crypto API with algorithm pinning)      |
+| `src/nextjs/types.ts`                          | `AuthProxyConfig`, `SilentRefreshConfig`, `ClientRefreshConfig`, `LogoutHandlerConfig` and internal types      |
+| `src/nextjs/index.ts`                          | Barrel export of the nextjs subpath                                                                            |
 
 ### 10.2 Detailed tasks
 
 1. **`createAuthProxy(config: AuthProxyConfig)`** — Factory that returns `{ proxy, config }` for `proxy.ts`:
-
    - **`isBackgroundRequest(request)`:** Detects RSC/prefetch requests via headers (`RSC: 1`, `Next-Router-Prefetch: 1`, `Next-Router-State-Tree`). Background requests return 401 instead of a redirect — without this, the Next.js prefetcher would receive redirect HTML instead of an RSC payload, causing hydration errors
 
    - **`_r` counter:** Limits silent-refresh attempts to `maxRefreshAttempts` (default 2). Prevents a redirect loop when the browser does not process the Set-Cookie between consecutive redirects. On each refresh attempt, the proxy increments `_r` in the query string. If `_r >= maxRefreshAttempts`, it redirects to login with `reason=expired` instead of trying again
@@ -1585,7 +1584,6 @@ Add to `index.ts`:
    - **`buildSilentRefreshUrl(destination, currentR)`:** Builds the URL for `/api/auth/silent-refresh?dest=<destination>&_r=<currentR+1>` with propagation of the `_r` counter
 
 2. **`createSilentRefreshHandler(config?)`** — GET handler for `/api/auth/silent-refresh`:
-
    - Receives `dest` (post-refresh destination) and `_r` (counter) from the query string
    - Forward the request's cookies to the backend POST `/auth/refresh`
    - **Success:** 302 redirect to `dest` with propagation of Set-Cookie (new tokens)
@@ -1595,7 +1593,6 @@ Add to `index.ts`:
    - **`getSetCookie()` fallback:** For pre-Node 18.14 runtimes that do not support `Headers.getSetCookie()`, implement a fallback by parsing the `set-cookie` header manually
 
 3. **`createClientRefreshHandler(config?)`** — POST handler for `/api/auth/client-refresh`:
-
    - Same-origin bridge to avoid CORS/credential cookie problems
    - The client-side `createAuthFetch` calls this endpoint instead of going directly to the backend
    - Forward the request's cookies to the backend POST `/auth/refresh`
@@ -1637,49 +1634,49 @@ Add to `index.ts`:
 - [ ] Client refresh handler returns 200/401 correctly
 - [ ] `verifyJwtToken` rejects `alg: 'none'` (algorithm pinning)
 - [ ] Peer dependencies `next ^16` and `react ^19` declared
-- [ ] Proxy coverage >= 90% (critical path)
-- [ ] Overall coverage >= 80%
+- [ ] Proxy coverage >= 100% (critical path)
+- [ ] Overall coverage >= 100%
 
 ---
 
 ## 11. Quality Criteria per Phase
 
-| Criterion               | Requirement                                                                                                                                                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Compilation**          | `pnpm build` without errors in each phase                                                                                                                                                    |
-| **Test coverage** | >= 80% (branches, functions, lines) per phase                                                                                                                                              |
-| **Linting**             | Zero ESLint errors                                                                                                                                                                      |
-| **Typing**             | Zero use of `any` in production code. Prefer discriminated types over `Record<string, unknown>`. For untyped external data, use narrowing documented via JSDoc                   |
-| **Security**           | Review of the Appendix B items applicable to the phase                                                                                                                                         |
-| **Redis performance**   | All operations O(1) except session listing                                                                                                                                        |
-| **DI without cycles**       | `TokenManagerService` NEVER injects `SessionService`. Session rotation is called by `AuthService`. `InvitationService` uses `hasRole()` from `utils/roles.util.ts`, does not inject `RolesGuard` |
-| **Barrel export**       | Updated in each phase with new exports. DTOs always `export` (never `export type`) to preserve `class-validator` metadata at runtime                                              |
-| **Inline documentation** | JSDoc on all public methods (minimal in the phase, complete in 6)                                                                                                                        |
-| **Phase 7**              | 80% coverage, zero external dependencies verified, types compatible with the server's exports                                                                                             |
-| **Phase 8**              | Component tests with React Testing Library, hooks tested in isolation                                                                                                             |
-| **Phase 9**              | Proxy logic with 90%+ coverage (critical path), redirect loop scenarios tested                                                                                               |
+| Criterion                | Requirement                                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Compilation**          | `pnpm build` without errors in each phase                                                                                                                                                        |
+| **Test coverage**        | >= 100% (branches, functions, lines) per phase                                                                                                                                                   |
+| **Linting**              | Zero ESLint errors                                                                                                                                                                               |
+| **Typing**               | Zero use of `any` in production code. Prefer discriminated types over `Record<string, unknown>`. For untyped external data, use narrowing documented via JSDoc                                   |
+| **Security**             | Review of the Appendix B items applicable to the phase                                                                                                                                           |
+| **Redis performance**    | All operations O(1) except session listing                                                                                                                                                       |
+| **DI without cycles**    | `TokenManagerService` NEVER injects `SessionService`. Session rotation is called by `AuthService`. `InvitationService` uses `hasRole()` from `utils/roles.util.ts`, does not inject `RolesGuard` |
+| **Barrel export**        | Updated in each phase with new exports. DTOs always `export` (never `export type`) to preserve `class-validator` metadata at runtime                                                             |
+| **Inline documentation** | JSDoc on all public methods (minimal in the phase, complete in 6)                                                                                                                                |
+| **Phase 7**              | 100% coverage, zero external dependencies verified, types compatible with the server's exports                                                                                                   |
+| **Phase 8**              | Component tests with React Testing Library, hooks tested in isolation                                                                                                                            |
+| **Phase 9**              | Proxy logic with 100%+ coverage (critical path), redirect loop scenarios tested                                                                                                                  |
 
 ---
 
 ## 12. Risks and Mitigations
 
-| Risk                                                                          | Probability   | Impact  | Mitigation                                                                                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------- | ------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Complexity of the NestJS dynamic module                                        | High          | High    | Implement a basic scaffold in Phase 1, iterate in Phase 2. Use `DynamicModule` with a dynamic `controllers` array + `RouterModule` for the prefix                                                                                                                                                                    |
-| Conditional controller registration                                           | High          | High    | Build the `controllers` array dynamically in `registerAsync`. Test with each controller enabled/disabled                                                                                                                                                                                              |
-| Refresh token Lua script with a race condition                                | Medium        | High    | Tests with simulated concurrency, review of the Lua script                                                                                                                                                                                                                                                         |
-| Incompatibility of peer dep versions                                     | Medium        | Medium  | Use flexible ranges (`^11.0.0`), test with minimum and maximum versions                                                                                                                                                                                                                                           |
-| AES-256-GCM cryptography with subtle errors                                      | Medium        | High    | Extensive round-trip tests, use native Node.js crypto (not a polyfill)                                                                                                                                                                                                                                      |
-| `resolveOptions` stripping functions in a deep merge                               | Medium        | High    | Use shallow merge per group (spread), never `JSON.parse/stringify`. Test that functions survive the merge                                                                                                                                                                                                     |
-| Optional peer dependencies (`@nestjs/websockets`)                            | Medium        | Medium  | Use `require.resolve()` with try/catch. Descriptive error if absent and the functionality is configured                                                                                                                                                                                                                 |
-| OAuth state CSRF with multiple instances                                     | Low           | High    | Test with Redis shared across instances                                                                                                                                                                                                                                                                 |
-| DoS via long recovery codes in scrypt                                       | Low           | Medium  | `@MaxLength(128)` in the MFA challenge DTO                                                                                                                                                                                                                                                                       |
-| Timing side-channel in OTP verification                                       | Low           | Medium  | Use `timingSafeEqual` with buffers of the same length; reject beforehand if the length differs                                                                                                                                                                                                                  |
-| Cookie domain injection via Host header                                       | Low           | High    | Validate the hostname in `extractDomain()`, document the allowlist in `resolveDomains`                                                                                                                                                                                                                                 |
-| Timing normalization in anti-enumeration endpoints                           | Medium        | Medium  | Concrete pattern: `const start = Date.now()` at the beginning, `await sleep(Math.max(0, MIN_RESPONSE_MS - (Date.now() - start)))` before returning (MIN_RESPONSE_MS = 300ms). Apply on the 4 endpoints: `initiateReset`, `resendOtp`, `resendVerificationEmail`, `verifyEmail`. Best-effort, not a cryptographic guarantee |
-| Recovery codes exhausted without TOTP                                             | Low           | High    | Document that recovery requires admin intervention. No regeneration endpoint in v1                                                                                                                                                                                                                          |
-| Set-Cookie not processed between redirects (browser behavior)                  | Medium        | High    | Mitigated by the `_r` counter that limits silent-refresh attempts and by the `reason=expired` guard that interrupts the loop                                                                                                                                                                          |
-| Race condition between the proxy and the client-side interceptor                          | Medium        | Medium  | Mitigated by the 500ms delay in the client-side interceptor's redirect, allowing the proxy to process first                                                                                                                                                                                   |
+| Risk                                                             | Probability | Impact | Mitigation                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complexity of the NestJS dynamic module                          | High        | High   | Implement a basic scaffold in Phase 1, iterate in Phase 2. Use `DynamicModule` with a dynamic `controllers` array + `RouterModule` for the prefix                                                                                                                                                                          |
+| Conditional controller registration                              | High        | High   | Build the `controllers` array dynamically in `registerAsync`. Test with each controller enabled/disabled                                                                                                                                                                                                                   |
+| Refresh token Lua script with a race condition                   | Medium      | High   | Tests with simulated concurrency, review of the Lua script                                                                                                                                                                                                                                                                 |
+| Incompatibility of peer dep versions                             | Medium      | Medium | Use flexible ranges (`^11.0.0`), test with minimum and maximum versions                                                                                                                                                                                                                                                    |
+| AES-256-GCM cryptography with subtle errors                      | Medium      | High   | Extensive round-trip tests, use native Node.js crypto (not a polyfill)                                                                                                                                                                                                                                                     |
+| `resolveOptions` stripping functions in a deep merge             | Medium      | High   | Use shallow merge per group (spread), never `JSON.parse/stringify`. Test that functions survive the merge                                                                                                                                                                                                                  |
+| Optional peer dependencies (`@nestjs/websockets`)                | Medium      | Medium | Use `require.resolve()` with try/catch. Descriptive error if absent and the functionality is configured                                                                                                                                                                                                                    |
+| OAuth state CSRF with multiple instances                         | Low         | High   | Test with Redis shared across instances                                                                                                                                                                                                                                                                                    |
+| DoS via long recovery codes in scrypt                            | Low         | Medium | `@MaxLength(128)` in the MFA challenge DTO                                                                                                                                                                                                                                                                                 |
+| Timing side-channel in OTP verification                          | Low         | Medium | Use `timingSafeEqual` with buffers of the same length; reject beforehand if the length differs                                                                                                                                                                                                                             |
+| Cookie domain injection via Host header                          | Low         | High   | Validate the hostname in `extractDomain()`, document the allowlist in `resolveDomains`                                                                                                                                                                                                                                     |
+| Timing normalization in anti-enumeration endpoints               | Medium      | Medium | Concrete pattern: `const start = Date.now()` at the beginning, `await sleep(Math.max(0, MIN_RESPONSE_MS - (Date.now() - start)))` before returning (MIN_RESPONSE_MS = 300ms). Apply on the 4 endpoints: `initiateReset`, `resendOtp`, `resendVerificationEmail`, `verifyEmail`. Best-effort, not a cryptographic guarantee |
+| Recovery codes exhausted without TOTP                            | Low         | High   | Document that recovery requires admin intervention. No regeneration endpoint in v1                                                                                                                                                                                                                                         |
+| Set-Cookie not processed between redirects (browser behavior)    | Medium      | High   | Mitigated by the `_r` counter that limits silent-refresh attempts and by the `reason=expired` guard that interrupts the loop                                                                                                                                                                                               |
+| Race condition between the proxy and the client-side interceptor | Medium      | Medium | Mitigated by the 500ms delay in the client-side interceptor's redirect, allowing the proxy to process first                                                                                                                                                                                                                |
 
 ---
 
@@ -1723,11 +1720,11 @@ Phase 1 (Foundation)
 
 ## 14. Audit Log
 
-| Version | Date       | Description                                                                                                                                                                                                               |
-| ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.0.0 | 2026-04-10 | Initial version of the plan — Phases 1-6 (complete server)                                                                                                                                                                    |
-| v1.1.0 | 2026-04-10 | Initial version after an audit by 4 specialist agents. Security, typing and consistency fixes                                                                                                                  |
-| v1.2.0 | 2026-04-13 | Addition of Phases 7-9 (frontend subpaths: shared, client, react, nextjs). Removal of Passport/bcrypt/otpauth — native JWT guards via `@nestjs/jwt`, cryptography via `node:crypto`. Build tool changed to `tsup ^8.0.0` |
+| Version | Date       | Description                                                                                                                                                                                                              |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v1.0.0  | 2026-04-10 | Initial version of the plan — Phases 1-6 (complete server)                                                                                                                                                               |
+| v1.1.0  | 2026-04-10 | Initial version after an audit by 4 specialist agents. Security, typing and consistency fixes                                                                                                                            |
+| v1.2.0  | 2026-04-13 | Addition of Phases 7-9 (frontend subpaths: shared, client, react, nextjs). Removal of Passport/bcrypt/otpauth — native JWT guards via `@nestjs/jwt`, cryptography via `node:crypto`. Build tool changed to `tsup ^8.0.0` |
 
 ---
 

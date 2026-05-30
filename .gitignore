@@ -93,8 +93,15 @@ yarn.lock
 .settings/
 *.sublime-workspace
 .vscode-test
-.vscode/
+# Ignore machine-specific VS Code state, but VERSION the shareable workspace config.
+# Use `.vscode/*` (not `.vscode/`) so the negations below can re-include files —
+# a dir-level ignore would block re-inclusion entirely.
+.vscode/*
+!.vscode/settings.json
 !.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/*.code-snippets
 
 # ============================================
 # OS Generated Files

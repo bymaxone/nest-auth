@@ -66,14 +66,14 @@ In a multi-tenant SaaS architecture, each application in the Bymax ecosystem nee
 
 ### 1.4 Distribution model
 
-| Aspect    | Detail                               |
-| --------- | ------------------------------------ |
-| Registry  | public npm (`@bymax-one/nest-auth`) |
-| Cost      | Zero — open source package           |
-| License   | MIT                                  |
-| Runtime   | Node.js 24+                          |
+| Aspect    | Detail                                                       |
+| --------- | ------------------------------------------------------------ |
+| Registry  | public npm (`@bymax-one/nest-auth`)                          |
+| Cost      | Zero — open source package                                   |
+| License   | MIT                                                          |
+| Runtime   | Node.js 24+                                                  |
 | Framework | NestJS 11+ (server), Next.js 16+ (nextjs), React 19+ (react) |
-| Subpaths  | `.` (server), `./shared`, `./client`, `./react`, `./nextjs` |
+| Subpaths  | `.` (server), `./shared`, `./client`, `./react`, `./nextjs`  |
 
 ### 1.5 Design principles
 
@@ -93,46 +93,46 @@ The package organizes its functionality into four layers with distinct activatio
 
 Functionality that is registered automatically and cannot be disabled:
 
-| Module                   | Responsibility                                                      |
-| ------------------------ | ------------------------------------------------------------------- |
-| **AuthService**          | Registration, login, logout, refresh, me                            |
-| **PasswordService**      | Password hashing and comparison (native scrypt)                            |
-| **TokenManagerService**  | JWT issuance and verification                                       |
+| Module                   | Responsibility                                                       |
+| ------------------------ | -------------------------------------------------------------------- |
+| **AuthService**          | Registration, login, logout, refresh, me                             |
+| **PasswordService**      | Password hashing and comparison (native scrypt)                      |
+| **TokenManagerService**  | JWT issuance and verification                                        |
 | **TokenDeliveryService** | Token delivery (cookies, body, or both) according to `tokenDelivery` |
-| **BruteForceService**    | Brute-force protection by email                                     |
-| **AuthRedisService**     | Redis operations (blacklist, refresh sessions)                      |
-| **JwtAuthGuard**         | JWT validation in cookie or `Authorization: Bearer` header          |
-| **RolesGuard**           | Role-based access control                                           |
-| **UserStatusGuard**      | Blocking of inactive/banned users                                   |
-| **PasswordResetService** | Password reset flow                                                 |
+| **BruteForceService**    | Brute-force protection by email                                      |
+| **AuthRedisService**     | Redis operations (blacklist, refresh sessions)                       |
+| **JwtAuthGuard**         | JWT validation in cookie or `Authorization: Bearer` header           |
+| **RolesGuard**           | Role-based access control                                            |
+| **UserStatusGuard**      | Blocking of inactive/banned users                                    |
+| **PasswordResetService** | Password reset flow                                                  |
 
 #### Security Extensions (opt-in via configuration)
 
 Enabled when the corresponding configuration is provided:
 
-| Module             | Activation                                                                    | Responsibility                         |
-| ------------------ | ----------------------------------------------------------------------------- | -------------------------------------- |
-| **MfaService**     | `mfa: { ... }`                                                                | TOTP, recovery codes, MFA challenge    |
-| **SessionService** | `sessions: { enabled: true }`                                                 | Session tracking, FIFO eviction        |
-| **OtpService**     | `passwordReset: { method: 'otp' }` or `emailVerification: { required: true }` | OTP codes by email                     |
+| Module             | Activation                                                                    | Responsibility                      |
+| ------------------ | ----------------------------------------------------------------------------- | ----------------------------------- |
+| **MfaService**     | `mfa: { ... }`                                                                | TOTP, recovery codes, MFA challenge |
+| **SessionService** | `sessions: { enabled: true }`                                                 | Session tracking, FIFO eviction     |
+| **OtpService**     | `passwordReset: { method: 'otp' }` or `emailVerification: { required: true }` | OTP codes by email                  |
 
 #### Platform Extensions (opt-in via configuration)
 
 Functionality for platform administration:
 
-| Module                  | Activation                         | Responsibility                        |
-| ----------------------- | ---------------------------------- | ------------------------------------- |
-| **PlatformAuthService** | `platform: { enabled: true }` | Login and JWT for platform admins     |
-| **InvitationService**   | `invitations: { enabled: true }`   | User invitations by email             |
+| Module                  | Activation                       | Responsibility                    |
+| ----------------------- | -------------------------------- | --------------------------------- |
+| **PlatformAuthService** | `platform: { enabled: true }`    | Login and JWT for platform admins |
+| **InvitationService**   | `invitations: { enabled: true }` | User invitations by email         |
 
 #### Integrations (opt-in via configuration)
 
 External authentication providers:
 
-| Module               | Activation                   | Responsibility        |
-| -------------------- | ---------------------------- | --------------------- |
-| **Google OAuth**     | `oauth: { google: { ... } }` | Login via Google      |
-| _Future providers_   | `oauth: { github: { ... } }` | Extensible via plugin |
+| Module             | Activation                   | Responsibility        |
+| ------------------ | ---------------------------- | --------------------- |
+| **Google OAuth**   | `oauth: { google: { ... } }` | Login via Google      |
+| _Future providers_ | `oauth: { github: { ... } }` | Extensible via plugin |
 
 > **Principle:** When an opt-in module is not configured, its controllers, guards, and services are **not registered** in the NestJS container. This ensures zero overhead and no unnecessary dependencies.
 
@@ -371,13 +371,13 @@ server    client (depends on shared)
 
 The package uses the `exports` field of `package.json` to expose multiple entry points with automatic tree-shaking:
 
-| Subpath | Entry point | Description | Dependencies |
-|---------|-------------|-----------|--------------|
-| `.` (server) | `dist/server/index.js` | NestJS module, guards, decorators, services | NestJS, ioredis |
-| `./shared` | `dist/shared/index.js` | Types, constants, error codes | Zero |
-| `./client` | `dist/client/index.js` | Fetch-based auth client | Zero (native fetch) |
-| `./react` | `dist/react/index.js` | React hooks and AuthProvider | react ^19 |
-| `./nextjs` | `dist/nextjs/index.js` | Proxy factory, route handlers, JWT helpers | next ^16, react ^19 |
+| Subpath      | Entry point            | Description                                 | Dependencies        |
+| ------------ | ---------------------- | ------------------------------------------- | ------------------- |
+| `.` (server) | `dist/server/index.js` | NestJS module, guards, decorators, services | NestJS, ioredis     |
+| `./shared`   | `dist/shared/index.js` | Types, constants, error codes               | Zero                |
+| `./client`   | `dist/client/index.js` | Fetch-based auth client                     | Zero (native fetch) |
+| `./react`    | `dist/react/index.js`  | React hooks and AuthProvider                | react ^19           |
+| `./nextjs`   | `dist/nextjs/index.js` | Proxy factory, route handlers, JWT helpers  | next ^16, react ^19 |
 
 ```json
 {
@@ -419,15 +419,40 @@ The package uses the `exports` field of `package.json` to expose multiple entry 
 // Main module
 export { BymaxAuthModule } from './bymax-auth.module'
 // Injection constants
-export { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY, BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-  BYMAX_AUTH_EMAIL_PROVIDER, BYMAX_AUTH_HOOKS, BYMAX_AUTH_REDIS_CLIENT } from './bymax-auth.constants'
+export {
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_REDIS_CLIENT
+} from './bymax-auth.constants'
 // Interfaces (types)
-export type { BymaxAuthModuleOptions, IUserRepository, AuthUser, IPlatformUserRepository,
-  AuthPlatformUser, IEmailProvider, IAuthHooks, OAuthProviderPlugin, DashboardJwtPayload,
-  PlatformJwtPayload, AuthenticatedRequest } from './interfaces'
+export type {
+  BymaxAuthModuleOptions,
+  IUserRepository,
+  AuthUser,
+  IPlatformUserRepository,
+  AuthPlatformUser,
+  IEmailProvider,
+  IAuthHooks,
+  OAuthProviderPlugin,
+  DashboardJwtPayload,
+  PlatformJwtPayload,
+  AuthenticatedRequest
+} from './interfaces'
 // Guards
-export { JwtAuthGuard, JwtPlatformGuard, RolesGuard, PlatformRolesGuard, UserStatusGuard,
-  MfaRequiredGuard, WsJwtGuard, SelfOrAdminGuard, OptionalAuthGuard } from './guards'
+export {
+  JwtAuthGuard,
+  JwtPlatformGuard,
+  RolesGuard,
+  PlatformRolesGuard,
+  UserStatusGuard,
+  MfaRequiredGuard,
+  WsJwtGuard,
+  SelfOrAdminGuard,
+  OptionalAuthGuard
+} from './guards'
 // Decorators
 export { CurrentUser, Roles, PlatformRoles, Public, SkipMfa } from './decorators'
 // Services (public API only)
@@ -442,13 +467,25 @@ export { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 
 ```typescript
 // Shared types (zero deps)
-export type { DashboardJwtPayload, PlatformJwtPayload, MfaTempPayload } from './types/jwt-payload.types'
-export type { AuthUserClient, AuthClientResponse, MfaChallengeResult } from './types/auth-result.types'
+export type {
+  DashboardJwtPayload,
+  PlatformJwtPayload,
+  MfaTempPayload
+} from './types/jwt-payload.types'
+export type {
+  AuthUserClient,
+  AuthClientResponse,
+  MfaChallengeResult
+} from './types/auth-result.types'
 export type { AuthErrorResponse } from './types/auth-error.types'
 // Constants
 export { AUTH_ERROR_CODES } from './constants/error-codes'
-export { AUTH_ACCESS_COOKIE_NAME, AUTH_REFRESH_COOKIE_NAME, AUTH_HAS_SESSION_COOKIE_NAME,
-  AUTH_REFRESH_COOKIE_PATH } from './constants/cookie-defaults'
+export {
+  AUTH_ACCESS_COOKIE_NAME,
+  AUTH_REFRESH_COOKIE_NAME,
+  AUTH_HAS_SESSION_COOKIE_NAME,
+  AUTH_REFRESH_COOKIE_PATH
+} from './constants/cookie-defaults'
 export { AUTH_ROUTES } from './constants/routes'
 ```
 
@@ -513,35 +550,35 @@ export interface BymaxAuthModuleOptions {
      *   4. Recommended: crypto.randomBytes(32).toString('base64') — 44 chars, ~5.9 bits/char
      * - The same criterion applies to `mfa.encryptionKey`
      */
-    secret: string;
+    secret: string
 
     /** Access token expiration time. Default: '15m' */
-    accessExpiresIn?: string;
+    accessExpiresIn?: string
 
     /** Max-age of the access token cookie in milliseconds. Default: 900_000 (15 minutes) */
-    accessCookieMaxAgeMs?: number;
+    accessCookieMaxAgeMs?: number
 
     /** Refresh token expiration time in days. Default: 7 */
-    refreshExpiresInDays?: number;
+    refreshExpiresInDays?: number
 
     /** Signing algorithm. Default: 'HS256' */
-    algorithm?: "HS256";
+    algorithm?: 'HS256'
 
     /** Tolerance window for refresh token rotation in seconds. Default: 30 */
-    refreshGraceWindowSeconds?: number;
-  };
+    refreshGraceWindowSeconds?: number
+  }
 
   /**
    * Password hashing configuration.
    */
   password?: {
     /** Cost factor N for scrypt. Default: 2^15 (32768) */
-    costFactor?: number;
+    costFactor?: number
     /** Block size r for scrypt. Default: 8 */
-    blockSize?: number;
+    blockSize?: number
     /** Parallelization factor p for scrypt. Default: 1 */
-    parallelization?: number;
-  };
+    parallelization?: number
+  }
 
   /**
    * JWT token delivery mode.
@@ -554,7 +591,7 @@ export interface BymaxAuthModuleOptions {
    *
    * Default: `'cookie'`
    */
-  tokenDelivery?: "cookie" | "bearer" | "both";
+  tokenDelivery?: 'cookie' | 'bearer' | 'both'
 
   /**
    * HTTP cookie configuration.
@@ -562,24 +599,24 @@ export interface BymaxAuthModuleOptions {
    */
   cookies?: {
     /** Access token cookie name. Default: 'access_token' */
-    accessTokenName?: string;
+    accessTokenName?: string
 
     /** Refresh token cookie name. Default: 'refresh_token' */
-    refreshTokenName?: string;
+    refreshTokenName?: string
 
     /** Session signal cookie name. Default: 'has_session' */
-    sessionSignalName?: string;
+    sessionSignalName?: string
 
     /** Refresh cookie path. Default: '/auth' */
-    refreshCookiePath?: string;
+    refreshCookiePath?: string
 
     /**
      * Function to resolve cookie domains from the request domain.
      * Useful for multi-domain support (e.g.: api.example.com and app.example.com).
      * Returns an array of domains where the cookies must be set.
      */
-    resolveDomains?: (requestDomain: string) => string[];
-  };
+    resolveDomains?: (requestDomain: string) => string[]
+  }
 
   /**
    * Multi-factor authentication (MFA) configuration.
@@ -591,95 +628,95 @@ export interface BymaxAuthModuleOptions {
      * Must be exactly 32 bytes (e.g.: crypto.randomBytes(32).toString('base64') → 44 base64 characters).
      * Validated at startup — the module rejects keys with incorrect length.
      */
-    encryptionKey: string;
+    encryptionKey: string
 
     /** Application name displayed in the authenticator app. REQUIRED. */
-    issuer: string;
+    issuer: string
 
     /** Number of recovery codes generated. Default: 8 */
-    recoveryCodeCount?: number;
+    recoveryCodeCount?: number
 
     /** TOTP tolerance window (30s periods). Default: 1 */
-    totpWindow?: number;
-  };
+    totpWindow?: number
+  }
 
   /**
    * Session system configuration.
    */
   sessions?: {
     /** Enables session management. Default: false */
-    enabled?: boolean;
+    enabled?: boolean
 
     /** Maximum number of simultaneous sessions per user. Default: 5 */
-    defaultMaxSessions?: number;
+    defaultMaxSessions?: number
 
     /**
      * Function to resolve the session limit per user.
      * Allows different limits per plan/role.
      */
-    maxSessionsResolver?: (user: AuthUser) => number | Promise<number>;
+    maxSessionsResolver?: (user: AuthUser) => number | Promise<number>
 
     /** Eviction strategy when the limit is reached. Default: 'fifo' */
-    evictionStrategy?: "fifo";
-  };
+    evictionStrategy?: 'fifo'
+  }
 
   /**
    * Brute-force protection configuration.
    */
   bruteForce?: {
     /** Maximum number of attempts before lockout. Default: 10 */
-    maxAttempts?: number;
+    maxAttempts?: number
 
     /** Time window in seconds for counting attempts. Default: 900 (15 minutes) */
-    windowSeconds?: number;
-  };
+    windowSeconds?: number
+  }
 
   /**
    * Password reset configuration.
    */
   passwordReset?: {
     /** Reset method: token (link by email) or otp (numeric code). Default: 'token' */
-    method?: "token" | "otp";
+    method?: 'token' | 'otp'
 
     /** Reset token TTL in seconds. Default: 3600 (1 hour) */
-    tokenTtlSeconds?: number;
+    tokenTtlSeconds?: number
 
     /** Reset OTP TTL in seconds. Default: 600 (10 minutes) */
-    otpTtlSeconds?: number;
+    otpTtlSeconds?: number
 
     /** OTP code length. Default: 6 */
-    otpLength?: number;
-  };
+    otpLength?: number
+  }
 
   /**
    * Email verification configuration.
    */
   emailVerification?: {
     /** If true, users must verify email before logging in. Default: false */
-    required?: boolean;
+    required?: boolean
 
     /** Verification OTP TTL in seconds. Default: 600 (10 minutes) */
-    otpTtlSeconds?: number;
-  };
+    otpTtlSeconds?: number
+  }
 
   /**
    * Platform administration module configuration.
    */
   platform?: {
     /** Enables platform admin endpoints and logic. Default: false */
-    enabled?: boolean;
-  };
+    enabled?: boolean
+  }
 
   /**
    * Invitation system configuration.
    */
   invitations?: {
     /** Enables invitation system. Default: false */
-    enabled?: boolean;
+    enabled?: boolean
 
     /** Invitation token TTL in seconds. Default: 604800 (7 days) */
-    tokenTtlSeconds?: number;
-  };
+    tokenTtlSeconds?: number
+  }
 
   /**
    * Roles and hierarchy configuration.
@@ -698,43 +735,43 @@ export interface BymaxAuthModuleOptions {
      *   VIEWER: []
      * }
      */
-    hierarchy: Record<string, string[]>;
+    hierarchy: Record<string, string[]>
 
     /**
      * Platform role hierarchy (super-admins).
      * Optional — required only if platform.enabled = true.
      */
-    platformHierarchy?: Record<string, string[]>;
-  };
+    platformHierarchy?: Record<string, string[]>
+  }
 
   /**
    * List of statuses that block access.
    * Default: ['BANNED', 'INACTIVE', 'SUSPENDED']
    */
-  blockedStatuses?: string[];
+  blockedStatuses?: string[]
 
   /**
    * Namespace for Redis keys. Default: 'auth'
    * All keys will be prefixed with this namespace.
    */
-  redisNamespace?: string;
+  redisNamespace?: string
 
   /**
    * OAuth providers configuration.
    */
   oauth?: {
     google?: {
-      clientId: string;
-      clientSecret: string;
-      callbackUrl: string;
-    };
-  };
+      clientId: string
+      clientSecret: string
+      callbackUrl: string
+    }
+  }
 
   /**
    * Prefix for all module routes. Default: 'auth'
    * Example: with prefix 'auth', the routes will be /auth/login, /auth/register, etc.
    */
-  routePrefix?: string;
+  routePrefix?: string
 
   /**
    * Function to resolve the tenantId from the request.
@@ -749,9 +786,7 @@ export interface BymaxAuthModuleOptions {
    * If not provided, the package uses the tenantId from the request body/DTO.
    * In this case, the host application is responsible for validating the tenantId.
    */
-  tenantIdResolver?: (
-    req: import("express").Request,
-  ) => string | Promise<string>;
+  tenantIdResolver?: (req: import('express').Request) => string | Promise<string>
 
   /**
    * Granular control over which controllers are registered.
@@ -759,108 +794,108 @@ export interface BymaxAuthModuleOptions {
    */
   controllers?: {
     /** Enables AuthController (register, login, logout, refresh, me). Default: true */
-    auth?: boolean;
+    auth?: boolean
 
     /** Enables MfaController. Default: true (if mfa configured) */
-    mfa?: boolean;
+    mfa?: boolean
 
     /** Enables PasswordResetController. Default: true */
-    passwordReset?: boolean;
+    passwordReset?: boolean
 
     /** Enables SessionController. Default: true (if sessions.enabled) */
-    sessions?: boolean;
+    sessions?: boolean
 
     /** Enables PlatformAuthController. Default: true (if platform.enabled) */
-    platform?: boolean;
+    platform?: boolean
 
     /** Enables InvitationController. Default: true (if invitations.enabled) */
-    invitations?: boolean;
-  };
+    invitations?: boolean
+  }
 
   /**
    * User status cache TTL in seconds. Default: 60
    * The status is cached in Redis to avoid database queries on every request.
    */
-  userStatusCacheTtlSeconds?: number;
+  userStatusCacheTtlSeconds?: number
 }
 ```
 
 ### 4.2 Options table with default values
 
-| Option                            | Type                             | Required    | Default                               | Description                                       |
-| --------------------------------- | -------------------------------- | ----------- | ------------------------------------- | ------------------------------------------------- |
-| `tokenDelivery`                   | `'cookie' \| 'bearer' \| 'both'` | No          | `'cookie'`                            | Token delivery mode (web, mobile, or both)        |
-| `jwt.secret`                      | `string`                         | Yes         | —                                     | JWT secret key, min 32 characters                 |
-| `jwt.accessExpiresIn`             | `string`                         | No          | `'15m'`                               | Access token expiration                           |
-| `jwt.accessCookieMaxAgeMs`        | `number`                         | No          | `900_000`                             | Max-age of the access cookie                      |
-| `jwt.refreshExpiresInDays`        | `number`                         | No          | `7`                                   | Refresh token expiration in days                  |
-| `jwt.algorithm`                   | `'HS256'`                        | No          | `'HS256'`                             | JWT signature algorithm                           |
-| `jwt.refreshGraceWindowSeconds`   | `number`                         | No          | `30`                                  | Grace window for refresh rotation                 |
-| `password.costFactor`             | `number`                         | No          | `32768`                               | scrypt cost factor N                                  |
-| `password.blockSize`              | `number`                         | No          | `8`                                   | scrypt block size r                              |
-| `password.parallelization`        | `number`                         | No          | `1`                                   | scrypt parallelization factor p                  |
-| `cookies.accessTokenName`         | `string`                         | No          | `'access_token'`                      | Access cookie name                                |
-| `cookies.refreshTokenName`        | `string`                         | No          | `'refresh_token'`                     | Refresh cookie name                               |
-| `cookies.sessionSignalName`       | `string`                         | No          | `'has_session'`                       | Signal cookie name                                |
-| `cookies.refreshCookiePath`       | `string`                         | No          | `'/auth'`                             | Refresh cookie path                               |
-| `cookies.resolveDomains`          | `function`                       | No          | `undefined`                           | Multi-domain domain resolver                      |
-| `mfa.encryptionKey`               | `string`                         | Conditional | —                                     | AES-256-GCM key (required if MFA)                 |
-| `mfa.issuer`                      | `string`                         | Conditional | —                                     | App name in the authenticator                     |
-| `mfa.recoveryCodeCount`           | `number`                         | No          | `8`                                   | Number of recovery codes                          |
-| `mfa.totpWindow`                  | `number`                         | No          | `1`                                   | TOTP tolerance window                             |
-| `sessions.enabled`                | `boolean`                        | No          | `false`                               | Enables session management                        |
-| `sessions.defaultMaxSessions`     | `number`                         | No          | `5`                                   | Maximum simultaneous sessions                     |
-| `sessions.maxSessionsResolver`    | `function`                       | No          | `undefined`                           | Custom limit resolver                             |
-| `sessions.evictionStrategy`       | `'fifo'`                         | No          | `'fifo'`                              | Session eviction strategy                         |
-| `bruteForce.maxAttempts`          | `number`                         | No          | `10`                                  | Attempts before lockout                           |
-| `bruteForce.windowSeconds`        | `number`                         | No          | `900`                                 | Counting window (15 min)                          |
-| `passwordReset.method`            | `'token' \| 'otp'`               | No          | `'token'`                             | Reset method                                      |
-| `passwordReset.tokenTtlSeconds`   | `number`                         | No          | `3600`                                | Reset token TTL                                   |
-| `passwordReset.otpTtlSeconds`     | `number`                         | No          | `600`                                 | Reset OTP TTL                                      |
-| `passwordReset.otpLength`         | `number`                         | No          | `6`                                   | OTP length                                        |
-| `emailVerification.required`      | `boolean`                        | No          | `false`                               | Requires email verification                       |
-| `emailVerification.otpTtlSeconds` | `number`                         | No          | `600`                                 | Verification OTP TTL                              |
-| `platform.enabled`           | `boolean`                        | No          | `false`                               | Enables platform admin                            |
-| `invitations.enabled`             | `boolean`                        | No          | `false`                               | Enables invitation system                         |
-| `invitations.tokenTtlSeconds`     | `number`                         | No          | `604800`                              | Invitation token TTL (7 days)                     |
-| `roles.hierarchy`                 | `Record<string, string[]>`       | Yes         | —                                     | Role hierarchy                                    |
-| `roles.platformHierarchy`         | `Record<string, string[]>`       | No          | `undefined`                           | Platform role hierarchy                           |
-| `blockedStatuses`                 | `string[]`                       | No          | `['BANNED', 'INACTIVE', 'SUSPENDED']` | Statuses that block access                        |
-| `redisNamespace`                  | `string`                         | No          | `'auth'`                              | Redis key namespace                               |
-| `oauth.google.clientId`           | `string`                         | Conditional | —                                     | Google OAuth Client ID                            |
-| `oauth.google.clientSecret`       | `string`                         | Conditional | —                                     | Google OAuth Client Secret                        |
-| `oauth.google.callbackUrl`        | `string`                         | Conditional | —                                     | Google OAuth callback URL                         |
-| `routePrefix`                     | `string`                         | No          | `'auth'`                              | Route prefix                                      |
-| `tenantIdResolver`                | `function`                       | No          | `undefined`                           | tenantId resolver (prevents spoofing)             |
-| `controllers.auth`                | `boolean`                        | No          | `true`                                | Enables AuthController                            |
-| `controllers.mfa`                 | `boolean`                        | No          | `true`                                | Enables MfaController                             |
-| `controllers.passwordReset`       | `boolean`                        | No          | `true`                                | Enables PasswordResetController                   |
-| `controllers.sessions`            | `boolean`                        | No          | `true`                                | Enables SessionController                         |
-| `controllers.platformAuth`        | `boolean`                        | No          | `true`                                | Enables PlatformAuthController                    |
-| `controllers.invitations`         | `boolean`                        | No          | `true`                                | Enables InvitationController                      |
-| `userStatusCacheTtlSeconds`       | `number`                         | No          | `60`                                  | Status cache TTL                                  |
+| Option                            | Type                             | Required    | Default                               | Description                                |
+| --------------------------------- | -------------------------------- | ----------- | ------------------------------------- | ------------------------------------------ |
+| `tokenDelivery`                   | `'cookie' \| 'bearer' \| 'both'` | No          | `'cookie'`                            | Token delivery mode (web, mobile, or both) |
+| `jwt.secret`                      | `string`                         | Yes         | —                                     | JWT secret key, min 32 characters          |
+| `jwt.accessExpiresIn`             | `string`                         | No          | `'15m'`                               | Access token expiration                    |
+| `jwt.accessCookieMaxAgeMs`        | `number`                         | No          | `900_000`                             | Max-age of the access cookie               |
+| `jwt.refreshExpiresInDays`        | `number`                         | No          | `7`                                   | Refresh token expiration in days           |
+| `jwt.algorithm`                   | `'HS256'`                        | No          | `'HS256'`                             | JWT signature algorithm                    |
+| `jwt.refreshGraceWindowSeconds`   | `number`                         | No          | `30`                                  | Grace window for refresh rotation          |
+| `password.costFactor`             | `number`                         | No          | `32768`                               | scrypt cost factor N                       |
+| `password.blockSize`              | `number`                         | No          | `8`                                   | scrypt block size r                        |
+| `password.parallelization`        | `number`                         | No          | `1`                                   | scrypt parallelization factor p            |
+| `cookies.accessTokenName`         | `string`                         | No          | `'access_token'`                      | Access cookie name                         |
+| `cookies.refreshTokenName`        | `string`                         | No          | `'refresh_token'`                     | Refresh cookie name                        |
+| `cookies.sessionSignalName`       | `string`                         | No          | `'has_session'`                       | Signal cookie name                         |
+| `cookies.refreshCookiePath`       | `string`                         | No          | `'/auth'`                             | Refresh cookie path                        |
+| `cookies.resolveDomains`          | `function`                       | No          | `undefined`                           | Multi-domain domain resolver               |
+| `mfa.encryptionKey`               | `string`                         | Conditional | —                                     | AES-256-GCM key (required if MFA)          |
+| `mfa.issuer`                      | `string`                         | Conditional | —                                     | App name in the authenticator              |
+| `mfa.recoveryCodeCount`           | `number`                         | No          | `8`                                   | Number of recovery codes                   |
+| `mfa.totpWindow`                  | `number`                         | No          | `1`                                   | TOTP tolerance window                      |
+| `sessions.enabled`                | `boolean`                        | No          | `false`                               | Enables session management                 |
+| `sessions.defaultMaxSessions`     | `number`                         | No          | `5`                                   | Maximum simultaneous sessions              |
+| `sessions.maxSessionsResolver`    | `function`                       | No          | `undefined`                           | Custom limit resolver                      |
+| `sessions.evictionStrategy`       | `'fifo'`                         | No          | `'fifo'`                              | Session eviction strategy                  |
+| `bruteForce.maxAttempts`          | `number`                         | No          | `10`                                  | Attempts before lockout                    |
+| `bruteForce.windowSeconds`        | `number`                         | No          | `900`                                 | Counting window (15 min)                   |
+| `passwordReset.method`            | `'token' \| 'otp'`               | No          | `'token'`                             | Reset method                               |
+| `passwordReset.tokenTtlSeconds`   | `number`                         | No          | `3600`                                | Reset token TTL                            |
+| `passwordReset.otpTtlSeconds`     | `number`                         | No          | `600`                                 | Reset OTP TTL                              |
+| `passwordReset.otpLength`         | `number`                         | No          | `6`                                   | OTP length                                 |
+| `emailVerification.required`      | `boolean`                        | No          | `false`                               | Requires email verification                |
+| `emailVerification.otpTtlSeconds` | `number`                         | No          | `600`                                 | Verification OTP TTL                       |
+| `platform.enabled`                | `boolean`                        | No          | `false`                               | Enables platform admin                     |
+| `invitations.enabled`             | `boolean`                        | No          | `false`                               | Enables invitation system                  |
+| `invitations.tokenTtlSeconds`     | `number`                         | No          | `604800`                              | Invitation token TTL (7 days)              |
+| `roles.hierarchy`                 | `Record<string, string[]>`       | Yes         | —                                     | Role hierarchy                             |
+| `roles.platformHierarchy`         | `Record<string, string[]>`       | No          | `undefined`                           | Platform role hierarchy                    |
+| `blockedStatuses`                 | `string[]`                       | No          | `['BANNED', 'INACTIVE', 'SUSPENDED']` | Statuses that block access                 |
+| `redisNamespace`                  | `string`                         | No          | `'auth'`                              | Redis key namespace                        |
+| `oauth.google.clientId`           | `string`                         | Conditional | —                                     | Google OAuth Client ID                     |
+| `oauth.google.clientSecret`       | `string`                         | Conditional | —                                     | Google OAuth Client Secret                 |
+| `oauth.google.callbackUrl`        | `string`                         | Conditional | —                                     | Google OAuth callback URL                  |
+| `routePrefix`                     | `string`                         | No          | `'auth'`                              | Route prefix                               |
+| `tenantIdResolver`                | `function`                       | No          | `undefined`                           | tenantId resolver (prevents spoofing)      |
+| `controllers.auth`                | `boolean`                        | No          | `true`                                | Enables AuthController                     |
+| `controllers.mfa`                 | `boolean`                        | No          | `true`                                | Enables MfaController                      |
+| `controllers.passwordReset`       | `boolean`                        | No          | `true`                                | Enables PasswordResetController            |
+| `controllers.sessions`            | `boolean`                        | No          | `true`                                | Enables SessionController                  |
+| `controllers.platformAuth`        | `boolean`                        | No          | `true`                                | Enables PlatformAuthController             |
+| `controllers.invitations`         | `boolean`                        | No          | `true`                                | Enables InvitationController               |
+| `userStatusCacheTtlSeconds`       | `number`                         | No          | `60`                                  | Status cache TTL                           |
 
 ### 4.3 Registration example with `registerAsync`
 
 ```typescript
 // app.module.ts
-import { Module } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { ThrottlerModule } from "@nestjs/throttler";
+import { Module } from '@nestjs/common'
+import { ConfigModule, ConfigService } from '@nestjs/config'
+import { ThrottlerModule } from '@nestjs/throttler'
 import {
   BymaxAuthModule,
   BYMAX_AUTH_USER_REPOSITORY,
   BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
-  BYMAX_AUTH_REDIS_CLIENT,
-} from "@bymax-one/nest-auth";
+  BYMAX_AUTH_REDIS_CLIENT
+} from '@bymax-one/nest-auth'
 
-import { PrismaUserRepository } from "./auth/repositories/prisma-user.repository";
-import { PrismaPlatformUserRepository } from "./auth/repositories/prisma-platform-user.repository";
-import { ResendEmailProvider } from "./auth/providers/resend-email.provider";
-import { AppAuthHooks } from "./auth/hooks/app-auth.hooks";
-import { RedisService } from "./redis/redis.service";
+import { PrismaUserRepository } from './auth/repositories/prisma-user.repository'
+import { PrismaPlatformUserRepository } from './auth/repositories/prisma-platform-user.repository'
+import { ResendEmailProvider } from './auth/providers/resend-email.provider'
+import { AppAuthHooks } from './auth/hooks/app-auth.hooks'
+import { RedisService } from './redis/redis.service'
 
 @Module({
   imports: [
@@ -872,105 +907,105 @@ import { RedisService } from "./redis/redis.service";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         jwt: {
-          secret: config.getOrThrow<string>("JWT_SECRET"),
-          accessExpiresIn: "15m",
-          refreshExpiresInDays: 7,
+          secret: config.getOrThrow<string>('JWT_SECRET'),
+          accessExpiresIn: '15m',
+          refreshExpiresInDays: 7
         },
         password: {
           costFactor: 32768,
           blockSize: 8,
-          parallelization: 1,
+          parallelization: 1
         },
         cookies: {
           resolveDomains: (domain: string) => {
             // Multi-domain support: api.example.com → ['.example.com']
-            const parts = domain.split(".");
+            const parts = domain.split('.')
             if (parts.length >= 2) {
-              return ["." + parts.slice(-2).join(".")];
+              return ['.' + parts.slice(-2).join('.')]
             }
-            return [domain];
-          },
+            return [domain]
+          }
         },
         mfa: {
-          encryptionKey: config.getOrThrow<string>("MFA_ENCRYPTION_KEY"),
-          issuer: "Bymax Finance",
+          encryptionKey: config.getOrThrow<string>('MFA_ENCRYPTION_KEY'),
+          issuer: 'Bymax Finance'
         },
         sessions: {
           enabled: true,
           defaultMaxSessions: 5,
           maxSessionsResolver: async (user) => {
             // Premium plans allow more sessions
-            return user.role === "OWNER" ? 10 : 5;
-          },
+            return user.role === 'OWNER' ? 10 : 5
+          }
         },
         bruteForce: {
           maxAttempts: 10,
-          windowSeconds: 900,
+          windowSeconds: 900
         },
         passwordReset: {
-          method: "otp",
+          method: 'otp',
           otpLength: 6,
-          otpTtlSeconds: 600,
+          otpTtlSeconds: 600
         },
         emailVerification: {
-          required: true,
+          required: true
         },
         platform: {
-          enabled: true,
+          enabled: true
         },
         invitations: {
           enabled: true,
-          tokenTtlSeconds: 604800,
+          tokenTtlSeconds: 604800
         },
         roles: {
           hierarchy: {
-            OWNER: ["ADMIN", "MEMBER", "VIEWER"],
-            ADMIN: ["MEMBER", "VIEWER"],
-            MEMBER: ["VIEWER"],
-            VIEWER: [],
+            OWNER: ['ADMIN', 'MEMBER', 'VIEWER'],
+            ADMIN: ['MEMBER', 'VIEWER'],
+            MEMBER: ['VIEWER'],
+            VIEWER: []
           },
           platformHierarchy: {
-            SUPER_ADMIN: ["ADMIN", "SUPPORT"],
-            ADMIN: ["SUPPORT"],
-            SUPPORT: [],
-          },
+            SUPER_ADMIN: ['ADMIN', 'SUPPORT'],
+            ADMIN: ['SUPPORT'],
+            SUPPORT: []
+          }
         },
-        blockedStatuses: ["BANNED", "INACTIVE", "SUSPENDED"],
+        blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
         oauth: {
           google: {
-            clientId: config.getOrThrow<string>("GOOGLE_CLIENT_ID"),
-            clientSecret: config.getOrThrow<string>("GOOGLE_CLIENT_SECRET"),
-            callbackUrl: config.getOrThrow<string>("GOOGLE_CALLBACK_URL"),
-          },
+            clientId: config.getOrThrow<string>('GOOGLE_CLIENT_ID'),
+            clientSecret: config.getOrThrow<string>('GOOGLE_CLIENT_SECRET'),
+            callbackUrl: config.getOrThrow<string>('GOOGLE_CALLBACK_URL')
+          }
         },
-        routePrefix: "auth",
+        routePrefix: 'auth'
         // tenantIdResolver: (req) => req.hostname.split('.')[0], // uncomment to resolve tenantId by subdomain
       }),
       providers: [
         {
           provide: BYMAX_AUTH_USER_REPOSITORY,
-          useClass: PrismaUserRepository,
+          useClass: PrismaUserRepository
         },
         {
           provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY,
-          useClass: PrismaPlatformUserRepository,
+          useClass: PrismaPlatformUserRepository
         },
         {
           provide: BYMAX_AUTH_EMAIL_PROVIDER,
-          useClass: ResendEmailProvider,
+          useClass: ResendEmailProvider
         },
         {
           provide: BYMAX_AUTH_HOOKS,
-          useClass: AppAuthHooks,
+          useClass: AppAuthHooks
         },
         {
           provide: BYMAX_AUTH_REDIS_CLIENT,
           useFactory: (redisService: RedisService) => redisService.getClient(),
-          inject: [RedisService],
-        },
-      ],
-    }),
-  ],
+          inject: [RedisService]
+        }
+      ]
+    })
+  ]
 })
 export class AppModule {}
 ```
@@ -983,50 +1018,48 @@ The package defines injection constants that the host application must provide:
 // bymax-auth.constants.ts
 
 /** Token for the module's resolved options */
-export const BYMAX_AUTH_OPTIONS = Symbol("BYMAX_AUTH_OPTIONS");
+export const BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS')
 
 /**
  * Token for the dashboard/tenant user repository.
  * The host application MUST provide an implementation of IUserRepository.
  */
-export const BYMAX_AUTH_USER_REPOSITORY = Symbol("BYMAX_AUTH_USER_REPOSITORY");
+export const BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY')
 
 /**
  * Token for the platform user repository.
  * Required only if platform.enabled = true.
  */
-export const BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol(
-  "BYMAX_AUTH_PLATFORM_USER_REPOSITORY",
-);
+export const BYMAX_AUTH_PLATFORM_USER_REPOSITORY = Symbol('BYMAX_AUTH_PLATFORM_USER_REPOSITORY')
 
 /**
  * Token for the email provider.
  * The host application MUST provide an implementation of IEmailProvider.
  */
-export const BYMAX_AUTH_EMAIL_PROVIDER = Symbol("BYMAX_AUTH_EMAIL_PROVIDER");
+export const BYMAX_AUTH_EMAIL_PROVIDER = Symbol('BYMAX_AUTH_EMAIL_PROVIDER')
 
 /**
  * Token for the lifecycle hooks.
  * Optional — if not provided, a NoOpAuthHooks is used.
  */
-export const BYMAX_AUTH_HOOKS = Symbol("BYMAX_AUTH_HOOKS");
+export const BYMAX_AUTH_HOOKS = Symbol('BYMAX_AUTH_HOOKS')
 
 /**
  * Token for the Redis client instance (ioredis).
  * The host application MUST provide a Redis instance.
  */
-export const BYMAX_AUTH_REDIS_CLIENT = Symbol("BYMAX_AUTH_REDIS_CLIENT");
+export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
 ```
 
 **Summary of required and optional providers:**
 
-| Token                                 | Interface                 | Required    | Description                                        |
-| ------------------------------------- | ------------------------- | ----------- | -------------------------------------------------- |
-| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Yes         | User repository                                    |
-| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | Conditional | Admin repository (if `platform.enabled`)      |
-| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Yes         | Email sending provider                             |
-| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | No          | Lifecycle hooks                                    |
-| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis` (ioredis)         | Yes         | Redis client instance                              |
+| Token                                 | Interface                 | Required    | Description                              |
+| ------------------------------------- | ------------------------- | ----------- | ---------------------------------------- |
+| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Yes         | User repository                          |
+| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | Conditional | Admin repository (if `platform.enabled`) |
+| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Yes         | Email sending provider                   |
+| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | No          | Lifecycle hooks                          |
+| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis` (ioredis)         | Yes         | Redis client instance                    |
 
 ---
 
@@ -1039,49 +1072,49 @@ This interface defines the minimal shape of a user that the module expects. The 
 ```typescript
 export interface AuthUser {
   /** Unique identifier of the user (UUID or string) */
-  id: string;
+  id: string
 
   /** User email (unique per tenant) */
-  email: string;
+  email: string
 
   /**
    * scrypt hash of the password. Null for users who registered via OAuth.
    * When null, password login is blocked.
    */
-  passwordHash: string | null;
+  passwordHash: string | null
 
   /** Full name of the user */
-  name: string;
+  name: string
 
   /** User role in the tenant (e.g.: 'OWNER', 'ADMIN', 'MEMBER', 'VIEWER') */
-  role: string;
+  role: string
 
   /** Account status (e.g.: 'ACTIVE', 'PENDING_APPROVAL', 'BANNED', 'INACTIVE', 'SUSPENDED') */
-  status: string;
+  status: string
 
   /** Whether the email was verified */
-  emailVerified: boolean;
+  emailVerified: boolean
 
-  mfaEnabled?: boolean; // Optional — present only when MFA is enabled in the configuration
+  mfaEnabled?: boolean // Optional — present only when MFA is enabled in the configuration
 
-  mfaSecret?: string | null; // Optional — encrypted TOTP secret (AES-256-GCM)
+  mfaSecret?: string | null // Optional — encrypted TOTP secret (AES-256-GCM)
 
-  mfaRecoveryCodes?: string[] | null; // Optional — Recovery codes hashed with scrypt
+  mfaRecoveryCodes?: string[] | null // Optional — Recovery codes hashed with scrypt
 
   /** Timestamp of the last login */
-  lastLoginAt: Date | null;
+  lastLoginAt: Date | null
 
   /** ID of the tenant the user belongs to */
-  tenantId: string;
+  tenantId: string
 
   /** Soft delete timestamp. Null if not deleted. */
-  deletedAt: Date | null;
+  deletedAt: Date | null
 
   /** Creation timestamp */
-  createdAt: Date;
+  createdAt: Date
 
   /** Last update timestamp */
-  updatedAt: Date;
+  updatedAt: Date
 }
 ```
 
@@ -1096,14 +1129,14 @@ export interface IUserRepository {
    * Must ignore users with deletedAt != null.
    * @returns The user or null if not found
    */
-  findById(id: string): Promise<AuthUser | null>;
+  findById(id: string): Promise<AuthUser | null>
 
   /**
    * Finds a user by email within a tenant.
    * Must ignore users with deletedAt != null.
    * @returns The user or null if not found
    */
-  findByEmail(email: string, tenantId: string): Promise<AuthUser | null>;
+  findByEmail(email: string, tenantId: string): Promise<AuthUser | null>
 
   /**
    * Creates a new user in the database.
@@ -1112,20 +1145,20 @@ export interface IUserRepository {
    * @returns The created user
    */
   create(data: {
-    email: string;
-    passwordHash: string | null;
-    name: string;
-    role: string;
-    status: string;
-    emailVerified: boolean;
-    tenantId: string;
-  }): Promise<AuthUser>;
+    email: string
+    passwordHash: string | null
+    name: string
+    role: string
+    status: string
+    emailVerified: boolean
+    tenantId: string
+  }): Promise<AuthUser>
 
   /**
    * Updates the password hash of a user.
    * Must also update updatedAt.
    */
-  updatePassword(userId: string, passwordHash: string): Promise<void>;
+  updatePassword(userId: string, passwordHash: string): Promise<void>
 
   /**
    * Updates a user's MFA settings.
@@ -1134,26 +1167,26 @@ export interface IUserRepository {
   updateMfa(
     userId: string,
     data: {
-      mfaEnabled: boolean;
-      mfaSecret: string | null;
-      mfaRecoveryCodes: string[] | null;
-    },
-  ): Promise<void>;
+      mfaEnabled: boolean
+      mfaSecret: string | null
+      mfaRecoveryCodes: string[] | null
+    }
+  ): Promise<void>
 
   /**
    * Updates the last login timestamp.
    */
-  updateLastLogin(userId: string): Promise<void>;
+  updateLastLogin(userId: string): Promise<void>
 
   /**
    * Updates a user's status.
    */
-  updateStatus(userId: string, status: string): Promise<void>;
+  updateStatus(userId: string, status: string): Promise<void>
 
   /**
    * Marks the email as verified.
    */
-  updateEmailVerified(userId: string, verified: boolean): Promise<void>;
+  updateEmailVerified(userId: string, verified: boolean): Promise<void>
 
   /**
    * Finds a user by OAuth provider ID (e.g.: Google ID).
@@ -1162,36 +1195,28 @@ export interface IUserRepository {
    * @param tenantId Tenant ID
    * @returns The user or null if not found
    */
-  findByOAuthId(
-    provider: string,
-    providerId: string,
-    tenantId: string,
-  ): Promise<AuthUser | null>;
+  findByOAuthId(provider: string, providerId: string, tenantId: string): Promise<AuthUser | null>
 
   /**
    * Links an OAuth account to an existing user.
    * Saves the provider and providerId in the OAuth links table.
    */
-  linkOAuth(
-    userId: string,
-    provider: string,
-    providerId: string,
-  ): Promise<void>;
+  linkOAuth(userId: string, provider: string, providerId: string): Promise<void>
 
   /**
    * Creates a new user via OAuth (without a password).
    * @returns The created user
    */
   createWithOAuth(data: {
-    email: string;
-    name: string;
-    role: string;
-    status: string;
-    emailVerified: boolean;
-    tenantId: string;
-    provider: string;
-    providerId: string;
-  }): Promise<AuthUser>;
+    email: string
+    name: string
+    role: string
+    status: string
+    emailVerified: boolean
+    tenantId: string
+    provider: string
+    providerId: string
+  }): Promise<AuthUser>
 }
 ```
 
@@ -1204,40 +1229,40 @@ Platform users (super-admins) have a simpler structure, as they do not belong to
 ```typescript
 export interface AuthPlatformUser {
   /** Unique identifier of the admin */
-  id: string;
+  id: string
 
   /** Admin email */
-  email: string;
+  email: string
 
   /** scrypt hash of the password */
-  passwordHash: string;
+  passwordHash: string
 
   /** Full name */
-  name: string;
+  name: string
 
   /** Role on the platform (e.g.: 'SUPER_ADMIN', 'ADMIN', 'SUPPORT') */
-  role: string;
+  role: string
 
   /** Account status */
-  status: string;
+  status: string
 
   /** Whether MFA is enabled */
-  mfaEnabled: boolean;
+  mfaEnabled: boolean
 
   /** Encrypted TOTP secret */
-  mfaSecret: string | null;
+  mfaSecret: string | null
 
   /** Hashed recovery codes */
-  mfaRecoveryCodes: string[] | null;
+  mfaRecoveryCodes: string[] | null
 
   /** Timestamp of the last login */
-  lastLoginAt: Date | null;
+  lastLoginAt: Date | null
 
   /** Creation timestamp */
-  createdAt: Date;
+  createdAt: Date
 
   /** Last update timestamp */
-  updatedAt: Date;
+  updatedAt: Date
 
   /**
    * Logical deletion (soft-delete) timestamp.
@@ -1247,7 +1272,7 @@ export interface AuthPlatformUser {
    * - When deleting an admin, the host application MUST call `PlatformAuthService.revokeAllPlatformSessions()`
    *   to invalidate all active tokens immediately
    */
-  deletedAt: Date | null;
+  deletedAt: Date | null
 }
 ```
 
@@ -1258,17 +1283,17 @@ export interface IPlatformUserRepository {
   /**
    * Finds a platform admin by ID.
    */
-  findById(id: string): Promise<AuthPlatformUser | null>;
+  findById(id: string): Promise<AuthPlatformUser | null>
 
   /**
    * Finds a platform admin by email.
    */
-  findByEmail(email: string): Promise<AuthPlatformUser | null>;
+  findByEmail(email: string): Promise<AuthPlatformUser | null>
 
   /**
    * Updates the last login timestamp.
    */
-  updateLastLogin(userId: string): Promise<void>;
+  updateLastLogin(userId: string): Promise<void>
 
   /**
    * Updates the MFA settings.
@@ -1276,21 +1301,21 @@ export interface IPlatformUserRepository {
   updateMfa(
     userId: string,
     data: {
-      mfaEnabled: boolean;
-      mfaSecret: string | null;
-      mfaRecoveryCodes: string[] | null;
-    },
-  ): Promise<void>;
+      mfaEnabled: boolean
+      mfaSecret: string | null
+      mfaRecoveryCodes: string[] | null
+    }
+  ): Promise<void>
 
   /**
    * Updates the password (hash) of a platform admin.
    */
-  updatePassword(userId: string, passwordHash: string): Promise<void>;
+  updatePassword(userId: string, passwordHash: string): Promise<void>
 
   /**
    * Updates the status of a platform admin.
    */
-  updateStatus(userId: string, status: string): Promise<void>;
+  updateStatus(userId: string, status: string): Promise<void>
 }
 ```
 
@@ -1302,51 +1327,28 @@ export interface IEmailProvider {
    * Sends an email with a password reset token (link).
    * Used when passwordReset.method = 'token'.
    */
-  sendPasswordResetToken(
-    email: string,
-    token: string,
-    name: string,
-    locale?: string,
-  ): Promise<void>;
+  sendPasswordResetToken(email: string, token: string, name: string, locale?: string): Promise<void>
 
   /**
    * Sends an email with a password reset OTP (numeric code).
    * Used when passwordReset.method = 'otp'.
    */
-  sendPasswordResetOtp(
-    email: string,
-    otp: string,
-    name: string,
-    locale?: string,
-  ): Promise<void>;
+  sendPasswordResetOtp(email: string, otp: string, name: string, locale?: string): Promise<void>
 
   /**
    * Sends an email with an email verification OTP.
    */
-  sendEmailVerificationOtp(
-    email: string,
-    otp: string,
-    name: string,
-    locale?: string,
-  ): Promise<void>;
+  sendEmailVerificationOtp(email: string, otp: string, name: string, locale?: string): Promise<void>
 
   /**
    * Notifies the user that MFA was enabled.
    */
-  sendMfaEnabledNotification(
-    email: string,
-    name: string,
-    locale?: string,
-  ): Promise<void>;
+  sendMfaEnabledNotification(email: string, name: string, locale?: string): Promise<void>
 
   /**
    * Notifies the user that MFA was disabled.
    */
-  sendMfaDisabledNotification(
-    email: string,
-    name: string,
-    locale?: string,
-  ): Promise<void>;
+  sendMfaDisabledNotification(email: string, name: string, locale?: string): Promise<void>
 
   /**
    * Alerts the user about a new login/session.
@@ -1356,8 +1358,8 @@ export interface IEmailProvider {
     email: string,
     name: string,
     sessionInfo: { device: string; ip: string; timestamp: Date },
-    locale?: string,
-  ): Promise<void>;
+    locale?: string
+  ): Promise<void>
 
   /**
    * Sends an invitation email to a new user.
@@ -1366,14 +1368,14 @@ export interface IEmailProvider {
   sendInvitation(
     email: string,
     data: {
-      inviterName: string;
-      tenantName: string;
-      role: string;
-      token: string;
-      expiresAt: Date;
+      inviterName: string
+      tenantName: string
+      role: string
+      token: string
+      expiresAt: Date
     },
-    locale?: string,
-  ): Promise<void>;
+    locale?: string
+  ): Promise<void>
 }
 ```
 
@@ -1416,11 +1418,7 @@ class AuthService {
    *
    * @throws AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS if email already registered
    */
-  register(
-    dto: RegisterDto,
-    ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult>;
+  register(dto: RegisterDto, ipAddress: string, userAgent: string): Promise<AuthResult>
 
   /**
    * Authenticates a user with email and password.
@@ -1449,8 +1447,8 @@ class AuthService {
   login(
     dto: LoginDto,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult | MfaChallengeResult>;
+    userAgent: string
+  ): Promise<AuthResult | MfaChallengeResult>
 
   /**
    * Logs the user out.
@@ -1462,7 +1460,7 @@ class AuthService {
    * 4. Runs the afterLogout hook
    * 5. Returns void — the controller delivers the response via TokenDeliveryService
    */
-  logout(accessToken: string, refreshToken: string): Promise<void>;
+  logout(accessToken: string, refreshToken: string): Promise<void>
 
   /**
    * Renews the access token using the refresh token from the cookie.
@@ -1479,11 +1477,7 @@ class AuthService {
    *
    * @throws AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID if token invalid or expired
    */
-  refresh(
-    rawRefreshToken: string,
-    ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult>;
+  refresh(rawRefreshToken: string, ipAddress: string, userAgent: string): Promise<AuthResult>
 
   /**
    * Returns the authenticated user's data.
@@ -1491,7 +1485,7 @@ class AuthService {
    *
    * @throws AUTH_ERROR_CODES.TOKEN_INVALID if user not found
    */
-  getMe(userId: string): Promise<AuthUser>;
+  getMe(userId: string): Promise<AuthUser>
 
   /**
    * Verifies the user's email with an OTP.
@@ -1506,14 +1500,14 @@ class AuthService {
    * @param tenantId Tenant ID (required for scoped lookup)
    * @throws AUTH_ERROR_CODES.OTP_INVALID / OTP_EXPIRED / OTP_MAX_ATTEMPTS
    */
-  verifyEmail(email: string, otp: string, tenantId: string): Promise<void>;
+  verifyEmail(email: string, otp: string, tenantId: string): Promise<void>
 
   /**
    * Resends the email verification OTP.
    * Generates a new OTP and stores it in Redis.
    * Sends it via IEmailProvider.sendEmailVerificationOtp().
    */
-  resendVerificationEmail(email: string, tenantId: string): Promise<void>;
+  resendVerificationEmail(email: string, tenantId: string): Promise<void>
 }
 ```
 
@@ -1521,16 +1515,16 @@ class AuthService {
 
 ```typescript
 interface AuthResult {
-  user: AuthUser;
-  accessToken: string;
-  rawRefreshToken: string;
+  user: AuthUser
+  accessToken: string
+  rawRefreshToken: string
   /** Session hash (sha256 of the refresh token). Present when sessions.enabled = true. */
-  sessionHash?: string;
+  sessionHash?: string
 }
 
 interface MfaChallengeResult {
-  mfaRequired: true;
-  mfaTempToken: string;
+  mfaRequired: true
+  mfaTempToken: string
 }
 ```
 
@@ -1544,13 +1538,13 @@ Service responsible for hashing and comparing passwords using native `node:crypt
 
 **scrypt parameters:**
 
-| Parameter | Config key | Default | Description |
-| --------- | ---------- | ------- | --------- |
-| N (cost factor) | `password.costFactor` | 2^15 (32768) | Memory/CPU cost factor |
-| r (block size) | `password.blockSize` | 8 | Block size |
-| p (parallelization) | `password.parallelization` | 1 | Parallelization factor |
-| keyLen | — | 64 | Derived key size in bytes |
-| salt | — | 16 bytes (`crypto.randomBytes`) | Random salt per password |
+| Parameter           | Config key                 | Default                         | Description               |
+| ------------------- | -------------------------- | ------------------------------- | ------------------------- |
+| N (cost factor)     | `password.costFactor`      | 2^15 (32768)                    | Memory/CPU cost factor    |
+| r (block size)      | `password.blockSize`       | 8                               | Block size                |
+| p (parallelization) | `password.parallelization` | 1                               | Parallelization factor    |
+| keyLen              | —                          | 64                              | Derived key size in bytes |
+| salt                | —                          | 16 bytes (`crypto.randomBytes`) | Random salt per password  |
 
 **Storage format:** `scrypt:{salt_hex}:{derived_hex}`
 
@@ -1563,7 +1557,7 @@ class PasswordService {
    * @param plainPassword Plain-text password
    * @returns scrypt hash in the format scrypt:{salt_hex}:{derived_hex}
    */
-  hash(plainPassword: string): Promise<string>;
+  hash(plainPassword: string): Promise<string>
 
   /**
    * Compares a plain-text password with a stored scrypt hash.
@@ -1574,7 +1568,7 @@ class PasswordService {
    * @param hash Stored scrypt hash
    * @returns true if they match
    */
-  compare(plainPassword: string, hash: string): Promise<boolean>;
+  compare(plainPassword: string, hash: string): Promise<boolean>
 }
 ```
 
@@ -1624,9 +1618,7 @@ class TokenManagerService {
    * @param payload JWT claims (sub, tenantId, role, type, status, mfaVerified)
    * @returns Signed JWT string
    */
-  issueAccess(
-    payload: Omit<DashboardJwtPayload, "jti" | "iat" | "exp">,
-  ): string;
+  issueAccess(payload: Omit<DashboardJwtPayload, 'jti' | 'iat' | 'exp'>): string
 
   /**
    * Issues access + refresh tokens.
@@ -1644,8 +1636,8 @@ class TokenManagerService {
     user: AuthUser,
     ipAddress: string,
     userAgent: string,
-    options?: { mfaVerified?: boolean },
-  ): Promise<AuthResult>;
+    options?: { mfaVerified?: boolean }
+  ): Promise<AuthResult>
 
   /**
    * Reissues tokens using an existing refresh token.
@@ -1656,11 +1648,7 @@ class TokenManagerService {
    * @param refreshToken Opaque token (extracted by the controller via TokenDeliveryService)
    * @returns AuthResult with new tokens
    */
-  reissueTokens(
-    refreshToken: string,
-    ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult>;
+  reissueTokens(refreshToken: string, ipAddress: string, userAgent: string): Promise<AuthResult>
 
   /**
    * Issues access + refresh tokens for a platform admin.
@@ -1677,8 +1665,8 @@ class TokenManagerService {
     admin: AuthPlatformUser,
     ipAddress: string,
     userAgent: string,
-    options?: { mfaVerified?: boolean },
-  ): Promise<PlatformAuthResult>;
+    options?: { mfaVerified?: boolean }
+  ): Promise<PlatformAuthResult>
 
   /**
    * Reissues platform tokens using an existing refresh token.
@@ -1689,15 +1677,15 @@ class TokenManagerService {
   reissuePlatformTokens(
     refreshToken: string,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<PlatformAuthResult>;
+    userAgent: string
+  ): Promise<PlatformAuthResult>
 
   /**
    * Decodes and verifies a JWT without validating expiration.
    * Useful for extracting claims from expired tokens (e.g., blacklist).
    * @internal — NEVER use for authorization decisions.
    */
-  decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | null;
+  decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | null
 
   /**
    * Issues a temporary token for the MFA flow.
@@ -1707,7 +1695,7 @@ class TokenManagerService {
    * @param context Origin context: 'dashboard' for tenant users, 'platform' for admins
    * @returns JWT string of the MFA temp token (includes the `context` claim in the payload)
    */
-  issueMfaTempToken(userId: string, context: "dashboard" | "platform"): string;
+  issueMfaTempToken(userId: string, context: 'dashboard' | 'platform'): string
 
   /**
    * Verifies and extracts userId and context from an MFA temp token.
@@ -1719,9 +1707,7 @@ class TokenManagerService {
    *          and result type to use.
    * @throws AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID if invalid or expired
    */
-  verifyMfaTempToken(
-    token: string,
-  ): Promise<{ userId: string; context: "dashboard" | "platform" }>;
+  verifyMfaTempToken(token: string): Promise<{ userId: string; context: 'dashboard' | 'platform' }>
 }
 ```
 
@@ -1752,18 +1738,15 @@ class SessionService {
     userId: string,
     refreshToken: string,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<void>;
+    userAgent: string
+  ): Promise<void>
 
   /**
    * Lists all of the user's active sessions.
    *
    * @returns Array of sessions with device, IP, timestamps, and a current-session indicator
    */
-  listSessions(
-    userId: string,
-    currentSessionHash?: string,
-  ): Promise<SessionInfo[]>;
+  listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]>
 
   /**
    * Revokes a specific session.
@@ -1775,16 +1758,13 @@ class SessionService {
    *
    * @throws AUTH_ERROR_CODES.SESSION_NOT_FOUND if session not found
    */
-  revokeSession(userId: string, sessionHash: string): Promise<void>;
+  revokeSession(userId: string, sessionHash: string): Promise<void>
 
   /**
    * Revokes all sessions except the current one.
    * Useful for "log out of all other devices".
    */
-  revokeAllExceptCurrent(
-    userId: string,
-    currentSessionHash: string,
-  ): Promise<void>;
+  revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void>
 
   /**
    * Applies the session limit using the FIFO strategy.
@@ -1799,7 +1779,7 @@ class SessionService {
    * @param user Full AuthUser object (required for `maxSessionsResolver`)
    *             If `maxSessionsResolver` is not configured, it can be omitted (null)
    */
-  enforceSessionLimit(userId: string, user: AuthUser | null): Promise<void>;
+  enforceSessionLimit(userId: string, user: AuthUser | null): Promise<void>
 }
 ```
 
@@ -1807,12 +1787,12 @@ class SessionService {
 
 ```typescript
 interface SessionInfo {
-  sessionHash: string;
-  device: string;
-  ip: string;
-  createdAt: Date;
-  lastActivityAt: Date;
-  isCurrent: boolean;
+  sessionHash: string
+  device: string
+  ip: string
+  createdAt: Date
+  lastActivityAt: Date
+  isCurrent: boolean
 }
 ```
 
@@ -1849,7 +1829,7 @@ function generateHOTP(secret: Buffer, counter: number, digits = 6): string {
 
   const hmac = createHmac('sha1', secret).update(buf).digest()
   const offset = hmac[hmac.length - 1] & 0xf
-  const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % (10 ** digits)
+  const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % 10 ** digits
   return code.toString().padStart(digits, '0')
 }
 
@@ -1860,13 +1840,7 @@ function generateTOTP(secret: Buffer, period = 30, digits = 6): string {
 }
 
 /** Verifies a TOTP code with a tolerance window. */
-function verifyTOTP(
-  secret: Buffer,
-  code: string,
-  window = 1,
-  period = 30,
-  digits = 6,
-): boolean {
+function verifyTOTP(secret: Buffer, code: string, window = 1, period = 30, digits = 6): boolean {
   const counter = Math.floor(Date.now() / 1000 / period)
   for (let i = -window; i <= window; i++) {
     if (generateHOTP(secret, counter + i, digits) === code) return true
@@ -1898,7 +1872,7 @@ class MfaService {
    * @throws AUTH_ERROR_CODES.MFA_ALREADY_ENABLED if already enabled
    * @returns MfaSetupResult with secret, QR code, and recovery codes
    */
-  setup(userId: string): Promise<MfaSetupResult>;
+  setup(userId: string): Promise<MfaSetupResult>
 
   /**
    * Verifies the TOTP code and enables MFA.
@@ -1913,7 +1887,7 @@ class MfaService {
    * @throws AUTH_ERROR_CODES.MFA_INVALID_CODE if code incorrect
    * @throws AUTH_ERROR_CODES.MFA_SETUP_REQUIRED if setup was not performed
    */
-  verifyAndEnable(userId: string, code: string): Promise<void>;
+  verifyAndEnable(userId: string, code: string): Promise<void>
 
   /**
    * Processes the MFA challenge during login.
@@ -1946,8 +1920,8 @@ class MfaService {
     mfaTempToken: string,
     code: string,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult | PlatformAuthResult>;
+    userAgent: string
+  ): Promise<AuthResult | PlatformAuthResult>
 
   /**
    * Disables MFA for a user.
@@ -1961,7 +1935,7 @@ class MfaService {
    * @throws AUTH_ERROR_CODES.MFA_NOT_ENABLED if not enabled
    * @throws AUTH_ERROR_CODES.MFA_INVALID_CODE if code incorrect
    */
-  disable(userId: string, code: string): Promise<void>;
+  disable(userId: string, code: string): Promise<void>
 
   /**
    * Encrypts a TOTP secret with AES-256-GCM.
@@ -1972,29 +1946,29 @@ class MfaService {
    *
    * @returns String in the format "iv:authTag:ciphertext" (base64)
    */
-  encryptSecret(secret: string): string;
+  encryptSecret(secret: string): string
 
   /**
    * Decrypts a TOTP secret.
    * @returns TOTP secret in plaintext
    */
-  decryptSecret(encrypted: string): string;
+  decryptSecret(encrypted: string): string
 
   /**
    * Generates and hashes the recovery codes.
    * @returns { plainCodes: string[], hashedCodes: string[] }
    */
   hashRecoveryCodes(count: number): {
-    plainCodes: string[];
-    hashedCodes: string[];
-  };
+    plainCodes: string[]
+    hashedCodes: string[]
+  }
 
   /**
    * Verifies a recovery code against the list of hashes.
    * Uses constant-time comparison.
    * @returns Index of the code if valid, -1 if invalid
    */
-  verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number>;
+  verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number>
 }
 
 // Dependencies injected by MfaService:
@@ -2015,13 +1989,13 @@ class MfaService {
 ```typescript
 interface MfaSetupResult {
   /** TOTP secret in plaintext (display only once to the user) */
-  secret: string;
+  secret: string
 
   /** URI for QR code generation (otpauth://totp/...) */
-  qrCodeUri: string;
+  qrCodeUri: string
 
   /** Recovery codes in plaintext (display only once — user must store them) */
-  recoveryCodes: string[];
+  recoveryCodes: string[]
 }
 ```
 
@@ -2048,7 +2022,7 @@ class PasswordResetService {
    *
    * Security: Never returns an error if the email does not exist (prevents enumeration).
    */
-  initiateReset(email: string, tenantId: string): Promise<void>;
+  initiateReset(email: string, tenantId: string): Promise<void>
 
   /**
    * Resets the password using a token or OTP.
@@ -2068,7 +2042,7 @@ class PasswordResetService {
    * @throws AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID / EXPIRED
    * @throws AUTH_ERROR_CODES.OTP_INVALID / EXPIRED / MAX_ATTEMPTS
    */
-  resetPassword(dto: ResetPasswordDto): Promise<void>;
+  resetPassword(dto: ResetPasswordDto): Promise<void>
 
   /**
    * Verifies an OTP and issues a temporary verification token.
@@ -2089,11 +2063,7 @@ class PasswordResetService {
    * @throws AUTH_ERROR_CODES.OTP_INVALID / EXPIRED / MAX_ATTEMPTS
    * @returns Temporary verification token (5 minutes of validity)
    */
-  verifyOtp(
-    email: string,
-    otp: string,
-    tenantId: string,
-  ): Promise<{ verifiedToken: string }>;
+  verifyOtp(email: string, otp: string, tenantId: string): Promise<{ verifiedToken: string }>
 
   /**
    * Resends the password reset OTP.
@@ -2103,7 +2073,7 @@ class PasswordResetService {
    * @param email User's email
    * @param tenantId Tenant ID
    */
-  resendOtp(email: string, tenantId: string): Promise<void>;
+  resendOtp(email: string, tenantId: string): Promise<void>
 }
 ```
 
@@ -2122,7 +2092,7 @@ class OtpService {
    * @param length OTP length (default: 6). Recommended maximum: 8
    * @returns Numeric string with leading zeros if needed (e.g., '048291' for length=6)
    */
-  generate(length?: number): string;
+  generate(length?: number): string
 
   /**
    * Stores an OTP in Redis.
@@ -2131,12 +2101,7 @@ class OtpService {
    * @param code OTP code
    * @param ttlSeconds TTL in seconds
    */
-  store(
-    purpose: string,
-    identifier: string,
-    code: string,
-    ttlSeconds: number,
-  ): Promise<void>;
+  store(purpose: string, identifier: string, code: string, ttlSeconds: number): Promise<void>
 
   /**
    * Verifies an OTP.
@@ -2152,13 +2117,13 @@ class OtpService {
    *
    * @throws AUTH_ERROR_CODES.OTP_INVALID / OTP_EXPIRED / OTP_MAX_ATTEMPTS
    */
-  verify(purpose: string, identifier: string, code: string): Promise<void>;
+  verify(purpose: string, identifier: string, code: string): Promise<void>
 
   /**
    * Increments the failed-attempt counter of an OTP.
    * Called internally by verify() in case of failure.
    */
-  incrementAttempts(purpose: string, identifier: string): Promise<void>;
+  incrementAttempts(purpose: string, identifier: string): Promise<void>
 }
 ```
 
@@ -2174,7 +2139,7 @@ class BruteForceService {
    * @param identifier sha256(tenantId + ":" + email) — scoped per tenant to avoid cross-tenant lockout
    * @returns true if the number of attempts exceeded maxAttempts
    */
-  isLockedOut(identifier: string): Promise<boolean>;
+  isLockedOut(identifier: string): Promise<boolean>
 
   /**
    * Records a failed attempt.
@@ -2182,7 +2147,7 @@ class BruteForceService {
    *
    * @param identifier sha256(tenantId + ":" + email) — scoped per tenant to avoid cross-tenant lockout
    */
-  recordFailure(identifier: string): Promise<void>;
+  recordFailure(identifier: string): Promise<void>
 
   /**
    * Resets the failed-attempt counter.
@@ -2190,7 +2155,7 @@ class BruteForceService {
    *
    * @param identifier sha256(tenantId + ":" + email) — scoped per tenant to avoid cross-tenant lockout
    */
-  resetFailures(identifier: string): Promise<void>;
+  resetFailures(identifier: string): Promise<void>
 
   /**
    * Returns the remaining lockout time in seconds.
@@ -2200,7 +2165,7 @@ class BruteForceService {
    * @param identifier sha256(tenantId + ":" + email)
    * @returns Remaining lockout seconds
    */
-  getRemainingLockoutSeconds(identifier: string): Promise<number>;
+  getRemainingLockoutSeconds(identifier: string): Promise<number>
 }
 ```
 
@@ -2228,13 +2193,13 @@ class PlatformAuthService {
   login(
     dto: PlatformLoginDto,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<PlatformAuthResult | MfaChallengeResult>;
+    userAgent: string
+  ): Promise<PlatformAuthResult | MfaChallengeResult>
 
   /**
    * Returns the authenticated admin's data.
    */
-  getMe(userId: string): Promise<AuthPlatformUser>;
+  getMe(userId: string): Promise<AuthPlatformUser>
 
   /**
    * Logs out the platform admin.
@@ -2246,7 +2211,7 @@ class PlatformAuthService {
    *
    * @throws AUTH_ERROR_CODES.TOKEN_INVALID if token invalid
    */
-  logout(accessToken: string, refreshToken: string): Promise<void>;
+  logout(accessToken: string, refreshToken: string): Promise<void>
 
   /**
    * Renews the platform admin's tokens.
@@ -2262,8 +2227,8 @@ class PlatformAuthService {
   refresh(
     rawRefreshToken: string,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<PlatformAuthResult>;
+    userAgent: string
+  ): Promise<PlatformAuthResult>
 
   /**
    * Revokes ALL active refresh tokens of a platform admin.
@@ -2283,7 +2248,7 @@ class PlatformAuthService {
    *
    * @param userId Platform admin ID
    */
-  revokeAllPlatformSessions(userId: string): Promise<void>;
+  revokeAllPlatformSessions(userId: string): Promise<void>
 }
 ```
 
@@ -2291,9 +2256,9 @@ class PlatformAuthService {
 
 ```typescript
 interface PlatformAuthResult {
-  admin: AuthPlatformUser;
-  accessToken: string;
-  rawRefreshToken: string;
+  admin: AuthPlatformUser
+  accessToken: string
+  rawRefreshToken: string
 }
 ```
 
@@ -2322,12 +2287,7 @@ class InvitationService {
    * @param tenantId Tenant ID
    * @throws AUTH_ERROR_CODES.INSUFFICIENT_ROLE if the inviter cannot grant the role
    */
-  invite(
-    inviterId: string,
-    email: string,
-    role: string,
-    tenantId: string,
-  ): Promise<void>;
+  invite(inviterId: string, email: string, role: string, tenantId: string): Promise<void>
 
   /**
    * Accepts an invitation and creates the user.
@@ -2349,8 +2309,8 @@ class InvitationService {
   acceptInvitation(
     dto: AcceptInvitationDto,
     ipAddress: string,
-    userAgent: string,
-  ): Promise<AuthResult>;
+    userAgent: string
+  ): Promise<AuthResult>
 }
 ```
 
@@ -2367,12 +2327,12 @@ type AuthResponseBody =
   | { user: AuthUser; accessToken: string; refreshToken: string } // 'bearer' mode
   | { user: AuthUser; accessToken: string; refreshToken: string } // 'both' mode
   | { admin: AuthPlatformUser } // 'cookie' mode (platform)
-  | { admin: AuthPlatformUser; accessToken: string; refreshToken: string }; // 'bearer'/'both' mode (platform)
+  | { admin: AuthPlatformUser; accessToken: string; refreshToken: string } // 'bearer'/'both' mode (platform)
 
 /** Return of deliverRefreshResponse — discriminated by delivery mode */
 type RefreshResponseBody =
   | Record<string, never> // 'cookie' mode (empty body)
-  | { accessToken: string; refreshToken: string }; // 'bearer' or 'both' mode
+  | { accessToken: string; refreshToken: string } // 'bearer' or 'both' mode
 ```
 
 ```typescript
@@ -2396,8 +2356,8 @@ class TokenDeliveryService {
   deliverAuthResponse(
     res: Response,
     req: Request,
-    authResult: AuthResult | PlatformAuthResult,
-  ): AuthResponseBody;
+    authResult: AuthResult | PlatformAuthResult
+  ): AuthResponseBody
 
   /**
    * Delivers new tokens after a refresh.
@@ -2412,8 +2372,8 @@ class TokenDeliveryService {
   deliverRefreshResponse(
     res: Response,
     req: Request,
-    authResult: AuthResult | PlatformAuthResult,
-  ): RefreshResponseBody;
+    authResult: AuthResult | PlatformAuthResult
+  ): RefreshResponseBody
 
   /**
    * Extracts the access token from the request.
@@ -2425,7 +2385,7 @@ class TokenDeliveryService {
    *
    * @returns JWT string or null if not found
    */
-  extractAccessToken(req: Request): string | null;
+  extractAccessToken(req: Request): string | null
 
   /**
    * Extracts the refresh token from the request.
@@ -2437,7 +2397,7 @@ class TokenDeliveryService {
    *
    * @returns Refresh token string or null if not found
    */
-  extractRefreshToken(req: Request): string | null;
+  extractRefreshToken(req: Request): string | null
 
   /**
    * Clears the client's authentication session.
@@ -2447,31 +2407,31 @@ class TokenDeliveryService {
    * - 'bearer': no-op (the client is responsible for discarding tokens)
    * - 'both': clears cookies (the client discards the tokens from the body)
    */
-  clearAuthSession(res: Response, req: Request): void;
+  clearAuthSession(res: Response, req: Request): void
 
   /**
    * Sets the access token cookie (internal use).
    * Ignored when `tokenDelivery: 'bearer'`.
    */
-  private setAccessCookie(res: Response, token: string): void;
+  private setAccessCookie(res: Response, token: string): void
 
   /**
    * Sets the refresh token cookie (internal use).
    * Ignored when `tokenDelivery: 'bearer'`.
    */
-  private setRefreshCookie(res: Response, token: string): void;
+  private setRefreshCookie(res: Response, token: string): void
 
   /**
    * Resolves all the domains where cookies should be set.
    * Uses resolveDomains from the configuration or extractDomain as a fallback.
    */
-  resolveCookieDomains(req: Request): string[];
+  resolveCookieDomains(req: Request): string[]
 
   /**
    * Extracts the base domain from the request's hostname.
    * E.g.: 'api.example.com' → '.example.com'
    */
-  extractDomain(hostname: string): string;
+  extractDomain(hostname: string): string
 }
 ```
 
@@ -2483,15 +2443,15 @@ class TokenDeliveryService {
 
 **Prefix:** `/{routePrefix}` (default: `/auth`)
 
-| Method | Route                  | Auth          | Guards         | Body                       | Description                                                   |
-| ------ | ---------------------- | ------------- | -------------- | -------------------------- | ------------------------------------------------------------- |
-| `POST` | `/register`            | Public        | —              | `RegisterDto`              | Registers a new user                                          |
-| `POST` | `/login`               | Public        | —              | `LoginDto`                 | Authenticates user with email/password                        |
-| `POST` | `/logout`              | JWT           | `JwtAuthGuard` | —                          | Logs out user, revokes tokens (cookie or header)              |
+| Method | Route                  | Auth          | Guards         | Body                       | Description                                                        |
+| ------ | ---------------------- | ------------- | -------------- | -------------------------- | ------------------------------------------------------------------ |
+| `POST` | `/register`            | Public        | —              | `RegisterDto`              | Registers a new user                                               |
+| `POST` | `/login`               | Public        | —              | `LoginDto`                 | Authenticates user with email/password                             |
+| `POST` | `/logout`              | JWT           | `JwtAuthGuard` | —                          | Logs out user, revokes tokens (cookie or header)                   |
 | `POST` | `/refresh`             | Cookie/Bearer | —              | `{ refreshToken? }`        | Renews tokens; accepts cookie or body according to `tokenDelivery` |
-| `GET`  | `/me`                  | JWT           | `JwtAuthGuard` | —                          | Returns the authenticated user's data                         |
-| `POST` | `/verify-email`        | Public        | —              | `{ email, otp, tenantId }` | Verifies email with OTP                                       |
-| `POST` | `/resend-verification` | Public        | —              | `{ email, tenantId }`      | Resends verification OTP                                      |
+| `GET`  | `/me`                  | JWT           | `JwtAuthGuard` | —                          | Returns the authenticated user's data                              |
+| `POST` | `/verify-email`        | Public        | —              | `{ email, otp, tenantId }` | Verifies email with OTP                                            |
+| `POST` | `/resend-verification` | Public        | —              | `{ email, tenantId }`      | Resends verification OTP                                           |
 
 **DTOs:**
 
@@ -2499,32 +2459,32 @@ class TokenDeliveryService {
 // register.dto.ts
 export class RegisterDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
   @MinLength(8)
   @MaxLength(128) // Practical limit for passwords
-  password: string;
+  password: string
 
   @IsString()
   @MinLength(2)
-  name: string;
+  name: string
 
   @IsString()
-  tenantId: string;
+  tenantId: string
 }
 
 // login.dto.ts
 export class LoginDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
   @MaxLength(128) // Practical limit for passwords
-  password: string;
+  password: string
 
   @IsString()
-  tenantId: string;
+  tenantId: string
 }
 ```
 
@@ -2532,12 +2492,12 @@ export class LoginDto {
 
 **Prefix:** `/{routePrefix}/mfa` (default: `/auth/mfa`)
 
-| Method | Route        | Auth              | Guards         | Body              | Description                              |
-| ------ | ------------ | ----------------- | -------------- | ----------------- | ---------------------------------------- |
-| `POST` | `/setup`     | JWT               | `JwtAuthGuard` | —                 | Starts MFA setup, returns QR code        |
-| `POST` | `/verify`    | JWT               | `JwtAuthGuard` | `MfaVerifyDto`    | Verifies code and enables MFA            |
-| `POST` | `/challenge` | Public + mfaTempToken | —              | `MfaChallengeDto` | Completes MFA challenge during login     |
-| `POST` | `/disable`   | JWT               | `JwtAuthGuard` | `MfaDisableDto`   | Disables MFA                             |
+| Method | Route        | Auth                  | Guards         | Body              | Description                          |
+| ------ | ------------ | --------------------- | -------------- | ----------------- | ------------------------------------ |
+| `POST` | `/setup`     | JWT                   | `JwtAuthGuard` | —                 | Starts MFA setup, returns QR code    |
+| `POST` | `/verify`    | JWT                   | `JwtAuthGuard` | `MfaVerifyDto`    | Verifies code and enables MFA        |
+| `POST` | `/challenge` | Public + mfaTempToken | —              | `MfaChallengeDto` | Completes MFA challenge during login |
+| `POST` | `/disable`   | JWT                   | `JwtAuthGuard` | `MfaDisableDto`   | Disables MFA                         |
 
 **DTOs:**
 
@@ -2546,24 +2506,24 @@ export class LoginDto {
 export class MfaVerifyDto {
   @IsString()
   @Length(6, 6)
-  code: string;
+  code: string
 }
 
 // mfa-challenge.dto.ts
 export class MfaChallengeDto {
   @IsString()
-  mfaTempToken: string;
+  mfaTempToken: string
 
   @IsString()
   @MaxLength(128) // TOTP has 6 chars; recovery codes have ~32 chars; the limit prevents hash bombing
-  code: string; // 6-digit TOTP or recovery code
+  code: string // 6-digit TOTP or recovery code
 }
 
 // mfa-disable.dto.ts
 export class MfaDisableDto {
   @IsString()
   @Length(6, 6)
-  code: string;
+  code: string
 }
 ```
 
@@ -2571,12 +2531,12 @@ export class MfaDisableDto {
 
 **Prefix:** `/{routePrefix}/password` (default: `/auth/password`)
 
-| Method | Route              | Auth   | Guards | Body                       | Description                                            |
-| ------ | ------------------ | ------ | ------ | -------------------------- | ------------------------------------------------------ |
-| `POST` | `/forgot-password` | Public | —      | `ForgotPasswordDto`        | Starts password reset                                  |
-| `POST` | `/reset-password`  | Public | —      | `ResetPasswordDto`         | Resets password with token or OTP                      |
+| Method | Route              | Auth   | Guards | Body                       | Description                                             |
+| ------ | ------------------ | ------ | ------ | -------------------------- | ------------------------------------------------------- |
+| `POST` | `/forgot-password` | Public | —      | `ForgotPasswordDto`        | Starts password reset                                   |
+| `POST` | `/reset-password`  | Public | —      | `ResetPasswordDto`         | Resets password with token or OTP                       |
 | `POST` | `/verify-otp`      | Public | —      | `{ email, otp, tenantId }` | Verifies OTP and returns a temporary verification token |
-| `POST` | `/resend-otp`      | Public | —      | `{ email, tenantId }`      | Resends reset OTP                                      |
+| `POST` | `/resend-otp`      | Public | —      | `{ email, tenantId }`      | Resends reset OTP                                       |
 
 **DTOs:**
 
@@ -2584,36 +2544,36 @@ export class MfaDisableDto {
 // forgot-password.dto.ts
 export class ForgotPasswordDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
-  tenantId: string;
+  tenantId: string
 }
 
 // reset-password.dto.ts
 export class ResetPasswordDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
   @MinLength(8)
   @MaxLength(128) // Practical limit for passwords
-  newPassword: string;
+  newPassword: string
 
   @IsOptional()
   @IsString()
-  token?: string; // For method = 'token'
+  token?: string // For method = 'token'
 
   @IsOptional()
   @IsString()
-  otp?: string; // For method = 'otp'
+  otp?: string // For method = 'otp'
 
   @IsOptional()
   @IsString()
-  verifiedToken?: string; // For the 2-step flow (OTP → verifiedToken → reset)
+  verifiedToken?: string // For the 2-step flow (OTP → verifiedToken → reset)
 
   @IsString()
-  tenantId: string;
+  tenantId: string
 }
 ```
 
@@ -2621,10 +2581,10 @@ export class ResetPasswordDto {
 
 **Prefix:** `/{routePrefix}/sessions` (default: `/auth/sessions`)
 
-| Method   | Route  | Auth | Guards         | Body | Description                   |
-| -------- | ------ | ---- | -------------- | ---- | ----------------------------- |
-| `GET`    | `/`    | JWT  | `JwtAuthGuard` | —    | Lists all active sessions     |
-| `DELETE` | `/:id` | JWT  | `JwtAuthGuard` | —    | Revokes a specific session    |
+| Method   | Route  | Auth | Guards         | Body | Description                    |
+| -------- | ------ | ---- | -------------- | ---- | ------------------------------ |
+| `GET`    | `/`    | JWT  | `JwtAuthGuard` | —    | Lists all active sessions      |
+| `DELETE` | `/:id` | JWT  | `JwtAuthGuard` | —    | Revokes a specific session     |
 | `DELETE` | `/all` | JWT  | `JwtAuthGuard` | —    | Revokes all except the current |
 
 **Responses:**
@@ -2658,14 +2618,14 @@ export class ResetPasswordDto {
 
 **Prefix:** `/{routePrefix}/platform` (default: `/auth/platform`)
 
-| Method   | Route            | Auth              | Guards             | Body                | Description                                                         |
-| -------- | ---------------- | ----------------- | ------------------ | ------------------- | ------------------------------------------------------------------- |
-| `POST`   | `/login`         | Public            | —                  | `PlatformLoginDto`  | Authenticates platform admin                                        |
-| `POST`   | `/mfa/challenge` | Public + mfaTempToken | —                  | `MfaChallengeDto`   | Completes MFA challenge for platform admins                         |
-| `GET`    | `/me`            | Platform JWT      | `JwtPlatformGuard` | —                   | Returns the admin's data                                            |
-| `POST`   | `/logout`        | Platform JWT      | `JwtPlatformGuard` | —                   | Logs out admin, revokes tokens                                      |
-| `POST`   | `/refresh`       | Cookie/Bearer     | —                  | `{ refreshToken? }` | Renews platform admin tokens                                        |
-| `DELETE` | `/sessions`      | Platform JWT      | `JwtPlatformGuard` | —                   | Revokes all admin sessions (useful in compromise scenarios)         |
+| Method   | Route            | Auth                  | Guards             | Body                | Description                                                 |
+| -------- | ---------------- | --------------------- | ------------------ | ------------------- | ----------------------------------------------------------- |
+| `POST`   | `/login`         | Public                | —                  | `PlatformLoginDto`  | Authenticates platform admin                                |
+| `POST`   | `/mfa/challenge` | Public + mfaTempToken | —                  | `MfaChallengeDto`   | Completes MFA challenge for platform admins                 |
+| `GET`    | `/me`            | Platform JWT          | `JwtPlatformGuard` | —                   | Returns the admin's data                                    |
+| `POST`   | `/logout`        | Platform JWT          | `JwtPlatformGuard` | —                   | Logs out admin, revokes tokens                              |
+| `POST`   | `/refresh`       | Cookie/Bearer         | —                  | `{ refreshToken? }` | Renews platform admin tokens                                |
+| `DELETE` | `/sessions`      | Platform JWT          | `JwtPlatformGuard` | —                   | Revokes all admin sessions (useful in compromise scenarios) |
 
 > **Platform MFA flow:** `POST /auth/platform/login` → if MFA enabled, returns `{ mfaRequired: true, mfaTempToken }` → `POST /auth/platform/mfa/challenge` with `MfaChallengeDto` → `MfaService.challenge()` reads `context: 'platform'` from the `MfaTempPayload` → returns `PlatformAuthResult` with platform tokens.
 
@@ -2675,11 +2635,11 @@ export class ResetPasswordDto {
 // platform-login.dto.ts
 export class PlatformLoginDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
   @MaxLength(128) // Practical limit for passwords
-  password: string;
+  password: string
 }
 ```
 
@@ -2687,10 +2647,10 @@ export class PlatformLoginDto {
 
 **Prefix:** `/{routePrefix}/invitations` (default: `/auth/invitations`)
 
-| Method | Route     | Auth           | Guards                       | Body                  | Description                                                                      |
-| ------ | --------- | -------------- | ---------------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| Method | Route     | Auth           | Guards                       | Body                  | Description                                                                                |
+| ------ | --------- | -------------- | ---------------------------- | --------------------- | ------------------------------------------------------------------------------------------ |
 | `POST` | `/`       | JWT            | `JwtAuthGuard`, `RolesGuard` | `CreateInvitationDto` | Creates and sends invitation (tenantId extracted from JWT) (requires role >= granted role) |
-| `POST` | `/accept` | Public + token | —                            | `AcceptInvitationDto` | Accepts invitation and creates account                                          |
+| `POST` | `/accept` | Public + token | —                            | `AcceptInvitationDto` | Accepts invitation and creates account                                                     |
 
 **DTO:**
 
@@ -2698,16 +2658,16 @@ export class PlatformLoginDto {
 // accept-invitation.dto.ts
 export class AcceptInvitationDto {
   @IsString()
-  token: string;
+  token: string
 
   @IsString()
   @MinLength(2)
-  name: string;
+  name: string
 
   @IsString()
   @MinLength(8)
   @MaxLength(128) // Practical limit for passwords
-  password: string;
+  password: string
 }
 
 // create-invitation.dto.ts
@@ -2715,12 +2675,12 @@ export class AcceptInvitationDto {
 // to prevent cross-tenant invitation injection.
 export class CreateInvitationDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsString()
   // Validated dynamically against roles.hierarchy at module initialization
   // Rejects roles that do not exist in the configured hierarchy
-  role: string;
+  role: string
 }
 ```
 
@@ -2730,17 +2690,17 @@ export class CreateInvitationDto {
 
 ### 8.1 Guards
 
-| Guard                | Description                                                                                                                                                                                                                                                                                                                                                                                                                          | Application                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `JwtAuthGuard`       | Validates the dashboard/tenant JWT in the cookie or `Authorization: Bearer` header. Checks `payload.type === 'dashboard'` — rejects `platform` and `mfa_challenge` tokens with `auth.token_invalid`. Extracts the payload and populates `request.user`. Respects the `@Public()` decorator to skip validation.                                                                                                                                         | Global or per-route guard for authenticated endpoints       |
-| `JwtPlatformGuard`   | Validates the platform JWT. Checks `payload.type === 'platform'` — rejects `dashboard` tokens with `auth.platform_auth_required`. Shares `jwt.secret` with `JwtAuthGuard` (isolation via the `type` claim, not via the key).                                                                                                                                                                                                         | Platform admin endpoints                           |
-| `RolesGuard`         | Checks whether the user's role satisfies the defined hierarchy. Uses metadata set by `@Roles()`. A parent role inherits all child roles.                                                                                                                                                                                                                                                                                         | Endpoints with role restriction                            |
-| `PlatformRolesGuard` | Same as `RolesGuard` but for the platform hierarchy. Uses metadata set by `@PlatformRoles()`.                                                                                                                                                                                                                                                                                                                            | Admin endpoints with role restriction                   |
-| `UserStatusGuard`    | Checks whether the user's status is not in the `blockedStatuses` list. Queries the Redis cache (configurable TTL) before going to the database. If the status is blocked, rejects with a specific error.                                                                                                                                                                                                                                       | Global guard, applied automatically after `JwtAuthGuard` |
-| `MfaRequiredGuard`   | Checks whether the `mfaVerified` claim is `true` in the JWT. If the user has MFA enabled but the JWT does not have `mfaVerified: true`, rejects with `auth.mfa_required`. Respects `@SkipMfa()`.                                                                                                                                                                                                                                                  | Sensitive endpoints that require completed MFA              |
-| `WsJwtGuard`         | Guard for WebSocket connections. Extracts the JWT from the handshake via the `Authorization` header. **Does not use query param** (tokens in query params are logged in plaintext by proxies/CDNs). Validates and populates `client.data.user`.                                                                                                                                                                                                                 | WebSocket gateways                                         |
-| `SelfOrAdminGuard`   | Allows access if the user is accessing their own resources (`:userId` == JWT sub) or if they have an admin role in the hierarchy. The `params.userId === user.sub` comparison is the primary protection against IDOR — the `ParseUUIDPipe` is a defense in depth for applications that use UUIDs. If the host application uses IDs in another format (numeric, slug, etc.), replace `ParseUUIDPipe` with the validation appropriate to the format. | Endpoints such as `GET /users/:userId`                        |
-| `OptionalAuthGuard`  | Attempts to authenticate via JWT, but does not fail if the token is absent. Populates `request.user` if present, or null if absent.                                                                                                                                                                                                                                                                                                                   | Public endpoints that show extra content to logged-in users |
+| Guard                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                        | Application                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `JwtAuthGuard`       | Validates the dashboard/tenant JWT in the cookie or `Authorization: Bearer` header. Checks `payload.type === 'dashboard'` — rejects `platform` and `mfa_challenge` tokens with `auth.token_invalid`. Extracts the payload and populates `request.user`. Respects the `@Public()` decorator to skip validation.                                                                                                                                     | Global or per-route guard for authenticated endpoints       |
+| `JwtPlatformGuard`   | Validates the platform JWT. Checks `payload.type === 'platform'` — rejects `dashboard` tokens with `auth.platform_auth_required`. Shares `jwt.secret` with `JwtAuthGuard` (isolation via the `type` claim, not via the key).                                                                                                                                                                                                                       | Platform admin endpoints                                    |
+| `RolesGuard`         | Checks whether the user's role satisfies the defined hierarchy. Uses metadata set by `@Roles()`. A parent role inherits all child roles.                                                                                                                                                                                                                                                                                                           | Endpoints with role restriction                             |
+| `PlatformRolesGuard` | Same as `RolesGuard` but for the platform hierarchy. Uses metadata set by `@PlatformRoles()`.                                                                                                                                                                                                                                                                                                                                                      | Admin endpoints with role restriction                       |
+| `UserStatusGuard`    | Checks whether the user's status is not in the `blockedStatuses` list. Queries the Redis cache (configurable TTL) before going to the database. If the status is blocked, rejects with a specific error.                                                                                                                                                                                                                                           | Global guard, applied automatically after `JwtAuthGuard`    |
+| `MfaRequiredGuard`   | Checks whether the `mfaVerified` claim is `true` in the JWT. If the user has MFA enabled but the JWT does not have `mfaVerified: true`, rejects with `auth.mfa_required`. Respects `@SkipMfa()`.                                                                                                                                                                                                                                                   | Sensitive endpoints that require completed MFA              |
+| `WsJwtGuard`         | Guard for WebSocket connections. Extracts the JWT from the handshake via the `Authorization` header. **Does not use query param** (tokens in query params are logged in plaintext by proxies/CDNs). Validates and populates `client.data.user`.                                                                                                                                                                                                    | WebSocket gateways                                          |
+| `SelfOrAdminGuard`   | Allows access if the user is accessing their own resources (`:userId` == JWT sub) or if they have an admin role in the hierarchy. The `params.userId === user.sub` comparison is the primary protection against IDOR — the `ParseUUIDPipe` is a defense in depth for applications that use UUIDs. If the host application uses IDs in another format (numeric, slug, etc.), replace `ParseUUIDPipe` with the validation appropriate to the format. | Endpoints such as `GET /users/:userId`                      |
+| `OptionalAuthGuard`  | Attempts to authenticate via JWT, but does not fail if the token is absent. Populates `request.user` if present, or null if absent.                                                                                                                                                                                                                                                                                                                | Public endpoints that show extra content to logged-in users |
 
 ### 8.1.1 Native implementation of the JWT guards (without Passport)
 
@@ -2754,14 +2714,14 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     private readonly authRedis: AuthRedisService,
-    private readonly tokenDelivery: TokenDeliveryService,
+    private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // 1. Check whether the endpoint is @Public()
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
-      context.getClass(),
+      context.getClass()
     ])
     if (isPublic) return true
 
@@ -2776,7 +2736,7 @@ export class JwtAuthGuard implements CanActivate {
       // (CVE-2015-9235) where an attacker sends alg:none or alg:RS256
       const payload = this.jwtService.verify(token, {
         secret: this.options.jwt.secret,
-        algorithms: ['HS256'],
+        algorithms: ['HS256']
       })
 
       // 4. Validate the token type (dashboard vs platform vs mfa_challenge)
@@ -2785,7 +2745,7 @@ export class JwtAuthGuard implements CanActivate {
       }
 
       // 5. Check the blacklist via jti (the token may have been revoked at logout)
-      if (payload.jti && await this.authRedis.isBlacklisted(payload.jti)) {
+      if (payload.jti && (await this.authRedis.isBlacklisted(payload.jti))) {
         throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
       }
 
@@ -2870,13 +2830,13 @@ async canActivate(context: ExecutionContext): Promise<boolean> {
 
 ### 8.4 Decorators
 
-| Decorator                  | Application         | Description                                                                                                                       |
-| -------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Decorator                  | Application      | Description                                                                                                                      |
+| -------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `@CurrentUser()`           | Method parameter | Extracts the authenticated user from `request.user`. Can receive a specific property: `@CurrentUser('sub')` returns only the ID. |
-| `@Roles(...roles)`         | Method or class    | Defines which roles can access the endpoint. Used together with `RolesGuard`.                                                |
-| `@PlatformRoles(...roles)` | Method or class    | Defines which platform roles can access the endpoint. Used with `PlatformRolesGuard`.                                      |
-| `@Public()`                | Method or class    | Marks the endpoint as public, making `JwtAuthGuard` skip authentication.                                                         |
-| `@SkipMfa()`               | Method or class    | Allows access even without verified MFA. Useful for endpoints that require a JWT but are not sensitive (e.g., MFA setup).      |
+| `@Roles(...roles)`         | Method or class  | Defines which roles can access the endpoint. Used together with `RolesGuard`.                                                    |
+| `@PlatformRoles(...roles)` | Method or class  | Defines which platform roles can access the endpoint. Used with `PlatformRolesGuard`.                                            |
+| `@Public()`                | Method or class  | Marks the endpoint as public, making `JwtAuthGuard` skip authentication.                                                         |
+| `@SkipMfa()`               | Method or class  | Allows access even without verified MFA. Useful for endpoints that require a JWT but are not sensitive (e.g., MFA setup).        |
 
 ### 8.5 Usage examples
 
@@ -2955,9 +2915,9 @@ export interface IAuthHooks {
    */
   beforeRegister?(
     context: HookContext & {
-      dto: { email: string; name: string; tenantId: string };
-    },
-  ): Promise<BeforeRegisterResult>;
+      dto: { email: string; name: string; tenantId: string }
+    }
+  ): Promise<BeforeRegisterResult>
 
   /**
    * Executed BEFORE the login of a user.
@@ -2971,7 +2931,7 @@ export interface IAuthHooks {
    * @param dto Login data (email, password, tenantId)
    * @param context Request data (IP, user-agent, etc.)
    */
-  beforeLogin?(dto: LoginDto, context: HookContext): Promise<void>;
+  beforeLogin?(dto: LoginDto, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER the successful registration of a user.
@@ -2983,7 +2943,7 @@ export interface IAuthHooks {
    * @param user Newly created user
    * @param context Request data
    */
-  afterRegister?(user: AuthUser, context: HookContext): Promise<void>;
+  afterRegister?(user: AuthUser, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER successful login (including after MFA, if applicable).
@@ -2992,7 +2952,7 @@ export interface IAuthHooks {
    * - Updating metrics
    * - Running additional checks
    */
-  afterLogin?(user: AuthUser, context: HookContext): Promise<void>;
+  afterLogin?(user: AuthUser, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER logout.
@@ -3000,7 +2960,7 @@ export interface IAuthHooks {
    * - Clearing user-specific cache
    * - Recording in an audit log
    */
-  afterLogout?(userId: string, context: HookContext): Promise<void>;
+  afterLogout?(userId: string, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER a successful password reset.
@@ -3008,7 +2968,7 @@ export interface IAuthHooks {
    * - Sending a confirmation notification
    * - Recording in an audit log
    */
-  afterPasswordReset?(userId: string, context: HookContext): Promise<void>;
+  afterPasswordReset?(userId: string, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER successful email verification.
@@ -3016,7 +2976,7 @@ export interface IAuthHooks {
    * - Enabling features blocked by verification
    * - Sending a welcome email
    */
-  afterEmailVerified?(userId: string, context: HookContext): Promise<void>;
+  afterEmailVerified?(userId: string, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER MFA is successfully enabled.
@@ -3024,7 +2984,7 @@ export interface IAuthHooks {
    * - Recording in an audit log
    * - Granting benefits for using MFA
    */
-  afterMfaEnabled?(userId: string, context: HookContext): Promise<void>;
+  afterMfaEnabled?(userId: string, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER MFA is disabled.
@@ -3032,7 +2992,7 @@ export interface IAuthHooks {
    * - Recording in an audit log
    * - Applying security restrictions
    */
-  afterMfaDisabled?(userId: string, context: HookContext): Promise<void>;
+  afterMfaDisabled?(userId: string, context: HookContext): Promise<void>
 
   /**
    * Executed AFTER an invitation is accepted and the user is created.
@@ -3043,10 +3003,10 @@ export interface IAuthHooks {
   afterInvitationAccepted?(
     user: AuthUser,
     context: HookContext & {
-      inviterId: string;
-      tenantId: string;
-    },
-  ): Promise<void>;
+      inviterId: string
+      tenantId: string
+    }
+  ): Promise<void>
 
   /**
    * Executed when a new session is created.
@@ -3057,12 +3017,12 @@ export interface IAuthHooks {
   onNewSession?(
     userId: string,
     sessionInfo: {
-      device: string;
-      ip: string;
-      sessionHash: string;
+      device: string
+      ip: string
+      sessionHash: string
     },
-    context: HookContext,
-  ): Promise<void>;
+    context: HookContext
+  ): Promise<void>
 
   /**
    * Executed when a user logs in via OAuth.
@@ -3076,8 +3036,8 @@ export interface IAuthHooks {
   onOAuthLogin?(
     profile: OAuthProfile,
     existingUser: AuthUser | null,
-    context: HookContext,
-  ): Promise<OAuthLoginResult>;
+    context: HookContext
+  ): Promise<OAuthLoginResult>
 }
 ```
 
@@ -3090,16 +3050,16 @@ export interface IAuthHooks {
  */
 export interface HookContext {
   /** IP address of the request */
-  ip: string;
+  ip: string
 
   /** User-Agent of the request */
-  userAgent: string;
+  userAgent: string
 
   /** Headers of the request (sanitized) */
-  headers: Record<string, string>;
+  headers: Record<string, string>
 
   /** Timestamp of the operation */
-  timestamp: Date;
+  timestamp: Date
 }
 ```
 
@@ -3111,17 +3071,17 @@ export interface HookContext {
  */
 export interface BeforeRegisterResult {
   /** Whether the registration is allowed */
-  allowed: boolean;
+  allowed: boolean
 
   /** Reason for the rejection (if allowed = false) */
-  reason?: string;
+  reason?: string
 
   /** Modified registration data (partial merge) */
   modifiedData?: Partial<{
-    role: string;
-    status: string;
-    emailVerified: boolean;
-  }>;
+    role: string
+    status: string
+    emailVerified: boolean
+  }>
 }
 
 /**
@@ -3134,29 +3094,29 @@ export interface OAuthLoginResult {
    * - 'link': Links OAuth to an existing user
    * - 'reject': Rejects the OAuth login
    */
-  action: "create" | "link" | "reject";
+  action: 'create' | 'link' | 'reject'
 
   /** Reason for the rejection (if action = 'reject') */
-  rejectReason?: string;
+  rejectReason?: string
 
   /** Extra data for creation (if action = 'create') */
   createData?: Partial<{
-    role: string;
-    status: string;
-    tenantId: string;
-  }>;
+    role: string
+    status: string
+    tenantId: string
+  }>
 }
 
 /**
  * Profile returned by the OAuth provider.
  */
 export interface OAuthProfile {
-  provider: string;
-  providerId: string;
-  email: string;
-  name: string;
-  avatarUrl?: string;
-  raw: Record<string, unknown>;
+  provider: string
+  providerId: string
+  email: string
+  name: string
+  avatarUrl?: string
+  raw: Record<string, unknown>
 }
 ```
 
@@ -3169,43 +3129,31 @@ export interface OAuthProfile {
  */
 export class NoOpAuthHooks implements IAuthHooks {
   async beforeRegister(): Promise<BeforeRegisterResult> {
-    return { allowed: true };
+    return { allowed: true }
   }
 
   async beforeLogin(_dto: LoginDto, _context: HookContext): Promise<void> {}
   async afterRegister(_user: AuthUser, _context: HookContext): Promise<void> {}
   async afterLogin(_user: AuthUser, _context: HookContext): Promise<void> {}
   async afterLogout(_userId: string, _context: HookContext): Promise<void> {}
-  async afterPasswordReset(
-    _userId: string,
-    _context: HookContext,
-  ): Promise<void> {}
-  async afterEmailVerified(
-    _userId: string,
-    _context: HookContext,
-  ): Promise<void> {}
-  async afterMfaEnabled(
-    _userId: string,
-    _context: HookContext,
-  ): Promise<void> {}
-  async afterMfaDisabled(
-    _userId: string,
-    _context: HookContext,
-  ): Promise<void> {}
+  async afterPasswordReset(_userId: string, _context: HookContext): Promise<void> {}
+  async afterEmailVerified(_userId: string, _context: HookContext): Promise<void> {}
+  async afterMfaEnabled(_userId: string, _context: HookContext): Promise<void> {}
+  async afterMfaDisabled(_userId: string, _context: HookContext): Promise<void> {}
   async afterInvitationAccepted(
     _user: AuthUser,
-    _context: HookContext & { inviterId: string; tenantId: string },
+    _context: HookContext & { inviterId: string; tenantId: string }
   ): Promise<void> {}
   async onNewSession(
     _userId: string,
     _sessionInfo: { device: string; ip: string; sessionHash: string },
-    _context: HookContext,
+    _context: HookContext
   ): Promise<void> {}
 
   async onOAuthLogin(
     profile: OAuthProfile,
     existingUser: AuthUser | null,
-    _context: HookContext,
+    _context: HookContext
   ): Promise<OAuthLoginResult> {
     if (existingUser) {
       // SECURITY: only links if the OAuth profile email matches the existing account email.
@@ -3213,13 +3161,13 @@ export class NoOpAuthHooks implements IAuthHooks {
       // an existing account if the OAuth provider does not validate emails properly.
       if (existingUser.email !== profile.email) {
         return {
-          action: "reject",
-          reason: "OAuth email does not match existing account email",
-        };
+          action: 'reject',
+          reason: 'OAuth email does not match existing account email'
+        }
       }
-      return { action: "link" };
+      return { action: 'link' }
     }
-    return { action: "create" };
+    return { action: 'create' }
   }
 }
 ```
@@ -3237,97 +3185,97 @@ The host application can customize this behavior if necessary.
 
 ```typescript
 // app-auth.hooks.ts
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from '@nestjs/common'
 import {
   IAuthHooks,
   HookContext,
   BeforeRegisterResult,
   OAuthLoginResult,
   OAuthProfile,
-  AuthUser,
-} from "@bymax-one/nest-auth";
-import { PrismaService } from "../prisma/prisma.service";
-import { AnalyticsService } from "../analytics/analytics.service";
+  AuthUser
+} from '@bymax-one/nest-auth'
+import { PrismaService } from '../prisma/prisma.service'
+import { AnalyticsService } from '../analytics/analytics.service'
 
 @Injectable()
 export class AppAuthHooks implements IAuthHooks {
-  private readonly logger = new Logger(AppAuthHooks.name);
+  private readonly logger = new Logger(AppAuthHooks.name)
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly analytics: AnalyticsService,
+    private readonly analytics: AnalyticsService
   ) {}
 
   async beforeRegister(
     context: HookContext & {
-      dto: { email: string; name: string; tenantId: string };
-    },
+      dto: { email: string; name: string; tenantId: string }
+    }
   ): Promise<BeforeRegisterResult> {
     // Checks the user limit on the tenant's plan
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: context.dto.tenantId },
-      include: { plan: true, _count: { select: { users: true } } },
-    });
+      include: { plan: true, _count: { select: { users: true } } }
+    })
 
     if (!tenant) {
-      return { allowed: false, reason: "Tenant not found" };
+      return { allowed: false, reason: 'Tenant not found' }
     }
 
     if (tenant._count.users >= tenant.plan.maxUsers) {
       return {
         allowed: false,
-        reason: "User limit reached on the current plan",
-      };
+        reason: 'User limit reached on the current plan'
+      }
     }
 
     // Sets default role as MEMBER
     return {
       allowed: true,
-      modifiedData: { role: "MEMBER", status: "ACTIVE" },
-    };
+      modifiedData: { role: 'MEMBER', status: 'ACTIVE' }
+    }
   }
 
   async afterRegister(user: AuthUser, context: HookContext): Promise<void> {
-    this.analytics.track("user.registered", {
+    this.analytics.track('user.registered', {
       userId: user.id,
       tenantId: user.tenantId,
-      ip: context.ip,
-    });
+      ip: context.ip
+    })
   }
 
   async afterLogin(user: AuthUser, context: HookContext): Promise<void> {
-    this.analytics.track("user.logged_in", {
+    this.analytics.track('user.logged_in', {
       userId: user.id,
       ip: context.ip,
-      userAgent: context.userAgent,
-    });
+      userAgent: context.userAgent
+    })
   }
 
   async onOAuthLogin(
     profile: OAuthProfile,
     existingUser: AuthUser | null,
-    _context: HookContext,
+    _context: HookContext
   ): Promise<OAuthLoginResult> {
     if (existingUser) {
       // Checks that the OAuth email matches the existing account email
       if (existingUser.email !== profile.email) {
         return {
-          action: "reject",
-          reason: "OAuth email does not match existing account",
-        };
+          action: 'reject',
+          reason: 'OAuth email does not match existing account'
+        }
       }
-      return { action: "link" };
+      return { action: 'link' }
     }
 
     // Auto-create OAuth user with default tenant
     return {
-      action: "create",
+      action: 'create',
       createData: {
-        role: "MEMBER",
-        status: "ACTIVE",
-        tenantId: "default-tenant-id",
-      },
-    };
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        tenantId: 'default-tenant-id'
+      }
+    }
   }
 }
 ```
@@ -3360,86 +3308,74 @@ To make local development easier, the package provides an implementation that on
  * Logs the content to the console for debugging.
  */
 export class NoOpEmailProvider implements IEmailProvider {
-  private readonly logger = new Logger(NoOpEmailProvider.name);
+  private readonly logger = new Logger(NoOpEmailProvider.name)
 
   async sendPasswordResetToken(
     email: string,
     token: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     this.logger.debug(
-      `[Password Reset Token] To: ${email}, Name: ${name}, Token: ${token.substring(0, 8)}..., Locale: ${locale}`,
-    );
+      `[Password Reset Token] To: ${email}, Name: ${name}, Token: ${token.substring(0, 8)}..., Locale: ${locale}`
+    )
   }
 
   async sendPasswordResetOtp(
     email: string,
     otp: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     this.logger.debug(
-      `[Password Reset OTP] To: ${email}, Name: ${name}, OTP: [REDACTED], Locale: ${locale}`,
-    );
+      `[Password Reset OTP] To: ${email}, Name: ${name}, OTP: [REDACTED], Locale: ${locale}`
+    )
   }
 
   async sendEmailVerificationOtp(
     email: string,
     otp: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     this.logger.debug(
-      `[Email Verification OTP] To: ${email}, Name: ${name}, OTP: [REDACTED], Locale: ${locale}`,
-    );
+      `[Email Verification OTP] To: ${email}, Name: ${name}, OTP: [REDACTED], Locale: ${locale}`
+    )
   }
 
-  async sendMfaEnabledNotification(
-    email: string,
-    name: string,
-    locale?: string,
-  ): Promise<void> {
-    this.logger.debug(
-      `[MFA Enabled] To: ${email}, Name: ${name}, Locale: ${locale}`,
-    );
+  async sendMfaEnabledNotification(email: string, name: string, locale?: string): Promise<void> {
+    this.logger.debug(`[MFA Enabled] To: ${email}, Name: ${name}, Locale: ${locale}`)
   }
 
-  async sendMfaDisabledNotification(
-    email: string,
-    name: string,
-    locale?: string,
-  ): Promise<void> {
-    this.logger.debug(
-      `[MFA Disabled] To: ${email}, Name: ${name}, Locale: ${locale}`,
-    );
+  async sendMfaDisabledNotification(email: string, name: string, locale?: string): Promise<void> {
+    this.logger.debug(`[MFA Disabled] To: ${email}, Name: ${name}, Locale: ${locale}`)
   }
 
   async sendNewSessionAlert(
     email: string,
     name: string,
     sessionInfo: { device: string; ip: string; timestamp: Date },
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     this.logger.debug(
-      `[New Session] To: ${email}, Name: ${name}, Device: ${sessionInfo.device}, IP: ${sessionInfo.ip}, Locale: ${locale}`,
-    );
+      `[New Session] To: ${email}, Name: ${name}, Device: ${sessionInfo.device}, IP: ${sessionInfo.ip}, Locale: ${locale}`
+    )
   }
 
   async sendInvitation(
     email: string,
     data: {
-      inviterName: string;
-      tenantName: string;
-      role: string;
-      token: string;
-      expiresAt: Date;
+      inviterName: string
+      tenantName: string
+      role: string
+      token: string
+      expiresAt: Date
     },
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     this.logger.debug(
-      `[Invitation] To: ${email}, From: ${data.inviterName}, Tenant: ${data.tenantName}, Role: ${data.role}, Token: ${data.token.substring(0, 8)}..., Locale: ${locale}`,
-    );
+      `[Invitation] To: ${email}, From: ${data.inviterName}, Tenant: ${data.tenantName}, Role: ${data.role}, Token: ${data.token.substring(0, 8)}..., Locale: ${locale}`
+    )
   }
 }
 ```
@@ -3448,21 +3384,21 @@ export class NoOpEmailProvider implements IEmailProvider {
 
 ```typescript
 // resend-email.provider.ts
-import { Injectable } from "@nestjs/common";
-import { IEmailProvider } from "@bymax-one/nest-auth";
-import { Resend } from "resend";
-import { ConfigService } from "@nestjs/config";
+import { Injectable } from '@nestjs/common'
+import { IEmailProvider } from '@bymax-one/nest-auth'
+import { Resend } from 'resend'
+import { ConfigService } from '@nestjs/config'
 
 @Injectable()
 export class ResendEmailProvider implements IEmailProvider {
-  private readonly resend: Resend;
-  private readonly fromEmail: string;
-  private readonly appUrl: string;
+  private readonly resend: Resend
+  private readonly fromEmail: string
+  private readonly appUrl: string
 
   constructor(private readonly config: ConfigService) {
-    this.resend = new Resend(config.getOrThrow("RESEND_API_KEY"));
-    this.fromEmail = config.getOrThrow("EMAIL_FROM");
-    this.appUrl = config.getOrThrow("APP_URL");
+    this.resend = new Resend(config.getOrThrow('RESEND_API_KEY'))
+    this.fromEmail = config.getOrThrow('EMAIL_FROM')
+    this.appUrl = config.getOrThrow('APP_URL')
   }
 
   // ⚠️ SECURITY: All dynamic values (name, role, etc.) MUST be escaped before
@@ -3476,95 +3412,92 @@ export class ResendEmailProvider implements IEmailProvider {
     email: string,
     token: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "Reset your password",
+      subject: 'Reset your password',
       html: `
         <p>Hello ${name},</p>
         <p>Click the link to reset your password:</p>
         <a href="${this.appUrl}/reset-password?token=${token}">Reset Password</a>
         <p>This link expires in 1 hour.</p>
-      `,
-    });
+      `
+    })
   }
 
   async sendPasswordResetOtp(
     email: string,
     otp: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "Password reset code",
+      subject: 'Password reset code',
       html: `
         <p>Hello ${name},</p>
         <p>Your password reset code is: <strong>${otp}</strong></p>
         <p>This code expires in 10 minutes.</p>
-      `,
-    });
+      `
+    })
   }
 
   async sendEmailVerificationOtp(
     email: string,
     otp: string,
     name: string,
-    locale?: string,
+    locale?: string
   ): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "Verify your email",
+      subject: 'Verify your email',
       html: `
         <p>Hello ${name},</p>
         <p>Your verification code is: <strong>${otp}</strong></p>
         <p>This code expires in 10 minutes.</p>
-      `,
-    });
+      `
+    })
   }
 
   async sendMfaEnabledNotification(email: string, name: string): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "Two-factor authentication enabled",
+      subject: 'Two-factor authentication enabled',
       html: `
         <p>Hello ${name},</p>
         <p>Two-factor authentication has been enabled on your account.</p>
         <p>If you did not do this, contact support immediately.</p>
-      `,
-    });
+      `
+    })
   }
 
-  async sendMfaDisabledNotification(
-    email: string,
-    name: string,
-  ): Promise<void> {
+  async sendMfaDisabledNotification(email: string, name: string): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "Two-factor authentication disabled",
+      subject: 'Two-factor authentication disabled',
       html: `
         <p>Hello ${name},</p>
         <p>Two-factor authentication has been disabled on your account.</p>
         <p>If you did not do this, contact support immediately.</p>
-      `,
-    });
+      `
+    })
   }
 
   async sendNewSessionAlert(
     email: string,
     name: string,
-    sessionInfo: { device: string; ip: string; timestamp: Date },
+    sessionInfo: { device: string; ip: string; timestamp: Date }
   ): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
       to: email,
-      subject: "New login detected",
+      subject: 'New login detected',
       html: `
         <p>Hello ${name},</p>
         <p>A new login was detected on your account:</p>
@@ -3574,19 +3507,19 @@ export class ResendEmailProvider implements IEmailProvider {
           <li>Time: ${sessionInfo.timestamp.toISOString()}</li>
         </ul>
         <p>If it was not you, change your password immediately.</p>
-      `,
-    });
+      `
+    })
   }
 
   async sendInvitation(
     email: string,
     data: {
-      inviterName: string;
-      tenantName: string;
-      role: string;
-      token: string;
-      expiresAt: Date;
-    },
+      inviterName: string
+      tenantName: string
+      role: string
+      token: string
+      expiresAt: Date
+    }
   ): Promise<void> {
     await this.resend.emails.send({
       from: this.fromEmail,
@@ -3596,9 +3529,9 @@ export class ResendEmailProvider implements IEmailProvider {
         <p>Hello!</p>
         <p>${data.inviterName} invited you to join ${data.tenantName} as ${data.role}.</p>
         <a href="${this.appUrl}/invite/accept?token=${data.token}">Accept Invitation</a>
-        <p>This invitation expires on ${data.expiresAt.toLocaleDateString("en-US")}.</p>
-      `,
-    });
+        <p>This invitation expires on ${data.expiresAt.toLocaleDateString('en-US')}.</p>
+      `
+    })
   }
 }
 ```
@@ -3660,7 +3593,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
   constructor(
     private readonly clientId: string,
     private readonly clientSecret: string,
-    private readonly scopes: string[] = ['email', 'profile'],
+    private readonly scopes: string[] = ['email', 'profile']
   ) {}
 
   authorizeUrl(state: string, redirectUri: string): string {
@@ -3671,7 +3604,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
       scope: this.scopes.join(' '),
       state,
       access_type: 'offline',
-      prompt: 'consent',
+      prompt: 'consent'
     })
     return `https://accounts.google.com/o/oauth2/v2/auth?${params}`
   }
@@ -3685,8 +3618,8 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
         client_id: this.clientId,
         client_secret: this.clientSecret,
         redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-      }),
+        grant_type: 'authorization_code'
+      })
     })
     if (!res.ok) throw new Error(`Google token exchange failed: ${res.status}`)
     return res.json()
@@ -3694,7 +3627,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
 
   async fetchProfile(accessToken: string): Promise<OAuthProfile> {
     const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` }
     })
     if (!res.ok) throw new Error(`Google profile fetch failed: ${res.status}`)
     const data = await res.json()
@@ -3704,7 +3637,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
       email: data.email,
       name: data.name,
       avatarUrl: data.picture,
-      raw: data,
+      raw: data
     }
   }
 }
@@ -3760,10 +3693,10 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
 
 For each configured OAuth provider, two routes are registered automatically:
 
-| Method | Route                                 | Description                                      |
-| ------ | ------------------------------------ | ---------------------------------------------- |
-| `GET`  | `/{routePrefix}/{provider}`          | Starts OAuth flow (redirects to provider)      |
-| `GET`  | `/{routePrefix}/{provider}/callback` | Provider callback (processes the return)       |
+| Method | Route                                | Description                               |
+| ------ | ------------------------------------ | ----------------------------------------- |
+| `GET`  | `/{routePrefix}/{provider}`          | Starts OAuth flow (redirects to provider) |
+| `GET`  | `/{routePrefix}/{provider}/callback` | Provider callback (processes the return)  |
 
 **Example for Google:**
 
@@ -3796,28 +3729,28 @@ Where `{namespace}` is the value of `redisNamespace` (default: `auth`).
 
 ### 12.3 Complete table of Redis keys
 
-| Prefix     | Key Pattern                                          | Value                                                                             | TTL                                                        | Purpose                                                                                                                                                                                                                                            |
-| ----------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rt`        | `auth:rt:{sha256(token)}`                                | JSON with session data: `{ userId, tenantId, role, device, ip, createdAt }`     | `refreshExpiresInDays` (in days, converted to seconds)     | Refresh token session. Stores the data needed to reissue the access token without querying the database.                                                                                                                                            |
-| `rv`        | `auth:rv:{jti}` ou `auth:rv:{sha256(jwt)}`               | `'1'`                                                                             | Remaining TTL of the JWT (computed from `exp`)             | Access JWT blacklist. When a token is revoked (logout), the `jti` (if present) or the SHA-256 hash of the JWT is used as the key. The `JwtAuthGuard` checks this key. Prefer `jti` when available, since it avoids the cost of hashing the full JWT. |
-| `us`        | `auth:us:{userId}`                                       | Status string (e.g.: `'ACTIVE'`, `'BANNED'`)                                      | `userStatusCacheTtlSeconds` (default: 60s)                 | User status cache. Avoids a database query on every request. Invalidated when the status changes.                                                                                                                                                   |
-| `rp`        | `auth:rp:{sha256(oldToken)}`                             | `newRawToken` (UUID of the new refresh token)                                     | `refreshGraceWindowSeconds` (default: 30s)                 | Rotation pointer (grace window). When the refresh token is rotated, the old token points to the new one for the configured time. This prevents errors in concurrent requests that use the old token.                                                |
-| `lf`        | `auth:lf:{sha256(tenantId + ":" + email)}`               | Numeric counter (string)                                                          | `windowSeconds` (default: 900s = 15 min)                   | Failed login attempts per tenant. Incremented on each failure. When it reaches `maxAttempts`, login is blocked. Scoping per tenant prevents a lockout in one tenant from affecting another.                                                          |
-| `pr`        | `auth:pr:{sha256(token)}`                                | `userId` (string)                                                                 | `tokenTtlSeconds` (default: 3600s = 1 hour)                | Password reset token. Maps the token hash to the userId. Consumed (removed) on use.                                                                                                                                                                 |
-| `otp`       | `auth:otp:{purpose}:{sha256(tenantId + ":" + email)}`    | JSON: `{ code: string, attempts: number }`                                        | `otpTtlSeconds` (varies by purpose)                        | OTP codes (one-time password) per tenant. The `attempts` field tracks failed attempts (maximum 5). Purposes: `password_reset`, `email_verification`. Scoping per tenant prevents OTP collision between tenants.                                      |
-| `mfa`       | `auth:mfa:{sha256(mfaTempToken)}`                        | `userId` (string)                                                                 | 300 seconds (5 minutes)                                    | Temporary MFA token. Issued after password login when MFA is enabled. Consumed when completing the MFA challenge.                                                                                                                                    |
-| `sess`      | `auth:sess:{userId}`                                     | SET (Redis Set) of session hashes                                                 | Equal to the max refresh TTL                               | Tracking of the user's active sessions. Each member of the SET is the sha256 of an active refresh token. Used to count and list sessions.                                                                                                            |
-| `sd`        | `auth:sd:{sessionHash}`                                  | JSON: `{ device: string, ip: string, createdAt: string, lastActivityAt: string }` | Equal to the max refresh TTL                               | Details of a specific session. The sessionHash corresponds to a member of the SET `auth:sess:{userId}`.                                                                                                                                             |
-| `inv`       | `auth:inv:{sha256(token)}`                               | JSON: `{ email: string, role: string, tenantId: string, inviterId: string }`      | `invitations.tokenTtlSeconds` (default: 604800s = 7 days)  | Pending invitations. Consumed when accepting the invitation.                                                                                                                                                                                        |
-| `os`        | `auth:os:{sha256(state)}`                                | JSON: `{ tenantId: string }`                                                      | 600s (10 min)                                              | OAuth CSRF state                                                                                                                                                                                                                                    |
-| `tu`        | `auth:tu:{userId}:{code}`                                | `'1'`                                                                             | 90 seconds (3 × TOTP window)                               | TOTP code replay prevention. After a successful verification, the used code is stored to prevent reuse within the same time window.                                                                                                                  |
-| `prt`       | `auth:prt:{sha256(token)}`                               | JSON with session data: `{ userId, role, device, ip, createdAt }`               | `refreshExpiresInDays` (in days, converted to seconds)     | Platform admin refresh token session. Same structure as `rt` but for platform tokens.                                                                                                                                                               |
-| `prp`       | `auth:prp:{sha256(oldToken)}`                            | `newRawToken` (UUID of the new platform refresh token)                            | `refreshGraceWindowSeconds` (default: 30s)                 | Rotation pointer for platform refresh token. Same logic as `rp` but for the admin flow.                                                                                                                                                             |
-| `prv`       | `auth:prv:{sha256(token)}`                               | JSON: `{ email: string, tenantId: string }`                                       | 300 seconds (5 minutes)                                    | Password reset OTP verification token. Issued after successful OTP validation in the 2-step flow. Consumed when resetting the password.                                                                                                              |
-| `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                        | JSON: `{ encryptedSecret: string, hashedCodes: string[] }`                        | 600 seconds (10 minutes)                                   | Temporary MFA setup data. Stores the encrypted secret and hashed recovery codes during the activation process. Consumed when completing the setup with `verifyAndEnable()`.                                                                          |
-| `psess`     | `auth:psess:{userId}`                                    | SET (Redis Set) of platform session hashes                                        | Equal to the max refresh TTL                               | Tracking of active sessions of platform admins. Analogous to `sess:{userId}` for the dashboard. Each member is `sha256(refreshToken)` of an active `prt`.                                                                                            |
-| `psd`       | `auth:psd:{sessionHash}`                                 | JSON: `{ device: string, ip: string, createdAt: string, lastActivityAt: string }` | Equal to the max refresh TTL                               | Details of a platform session. Analogous to `sd:{sessionHash}` for the dashboard.                                                                                                                                                                   |
-| `resend`    | `auth:resend:{purpose}:{sha256(tenantId + ":" + email)}` | `'1'`                                                                             | 60 seconds                                                 | Cooldown between OTP resends. Prevents attackers from resetting the OTP attempts counter indefinitely via repeated resends. Purposes: `password_reset`, `email_verification`.                                                                        |
+| Prefix      | Key Pattern                                              | Value                                                                             | TTL                                                       | Purpose                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rt`        | `auth:rt:{sha256(token)}`                                | JSON with session data: `{ userId, tenantId, role, device, ip, createdAt }`       | `refreshExpiresInDays` (in days, converted to seconds)    | Refresh token session. Stores the data needed to reissue the access token without querying the database.                                                                                                                                             |
+| `rv`        | `auth:rv:{jti}` ou `auth:rv:{sha256(jwt)}`               | `'1'`                                                                             | Remaining TTL of the JWT (computed from `exp`)            | Access JWT blacklist. When a token is revoked (logout), the `jti` (if present) or the SHA-256 hash of the JWT is used as the key. The `JwtAuthGuard` checks this key. Prefer `jti` when available, since it avoids the cost of hashing the full JWT. |
+| `us`        | `auth:us:{userId}`                                       | Status string (e.g.: `'ACTIVE'`, `'BANNED'`)                                      | `userStatusCacheTtlSeconds` (default: 60s)                | User status cache. Avoids a database query on every request. Invalidated when the status changes.                                                                                                                                                    |
+| `rp`        | `auth:rp:{sha256(oldToken)}`                             | `newRawToken` (UUID of the new refresh token)                                     | `refreshGraceWindowSeconds` (default: 30s)                | Rotation pointer (grace window). When the refresh token is rotated, the old token points to the new one for the configured time. This prevents errors in concurrent requests that use the old token.                                                 |
+| `lf`        | `auth:lf:{sha256(tenantId + ":" + email)}`               | Numeric counter (string)                                                          | `windowSeconds` (default: 900s = 15 min)                  | Failed login attempts per tenant. Incremented on each failure. When it reaches `maxAttempts`, login is blocked. Scoping per tenant prevents a lockout in one tenant from affecting another.                                                          |
+| `pr`        | `auth:pr:{sha256(token)}`                                | `userId` (string)                                                                 | `tokenTtlSeconds` (default: 3600s = 1 hour)               | Password reset token. Maps the token hash to the userId. Consumed (removed) on use.                                                                                                                                                                  |
+| `otp`       | `auth:otp:{purpose}:{sha256(tenantId + ":" + email)}`    | JSON: `{ code: string, attempts: number }`                                        | `otpTtlSeconds` (varies by purpose)                       | OTP codes (one-time password) per tenant. The `attempts` field tracks failed attempts (maximum 5). Purposes: `password_reset`, `email_verification`. Scoping per tenant prevents OTP collision between tenants.                                      |
+| `mfa`       | `auth:mfa:{sha256(mfaTempToken)}`                        | `userId` (string)                                                                 | 300 seconds (5 minutes)                                   | Temporary MFA token. Issued after password login when MFA is enabled. Consumed when completing the MFA challenge.                                                                                                                                    |
+| `sess`      | `auth:sess:{userId}`                                     | SET (Redis Set) of session hashes                                                 | Equal to the max refresh TTL                              | Tracking of the user's active sessions. Each member of the SET is the sha256 of an active refresh token. Used to count and list sessions.                                                                                                            |
+| `sd`        | `auth:sd:{sessionHash}`                                  | JSON: `{ device: string, ip: string, createdAt: string, lastActivityAt: string }` | Equal to the max refresh TTL                              | Details of a specific session. The sessionHash corresponds to a member of the SET `auth:sess:{userId}`.                                                                                                                                              |
+| `inv`       | `auth:inv:{sha256(token)}`                               | JSON: `{ email: string, role: string, tenantId: string, inviterId: string }`      | `invitations.tokenTtlSeconds` (default: 604800s = 7 days) | Pending invitations. Consumed when accepting the invitation.                                                                                                                                                                                         |
+| `os`        | `auth:os:{sha256(state)}`                                | JSON: `{ tenantId: string }`                                                      | 600s (10 min)                                             | OAuth CSRF state                                                                                                                                                                                                                                     |
+| `tu`        | `auth:tu:{userId}:{code}`                                | `'1'`                                                                             | 90 seconds (3 × TOTP window)                              | TOTP code replay prevention. After a successful verification, the used code is stored to prevent reuse within the same time window.                                                                                                                  |
+| `prt`       | `auth:prt:{sha256(token)}`                               | JSON with session data: `{ userId, role, device, ip, createdAt }`                 | `refreshExpiresInDays` (in days, converted to seconds)    | Platform admin refresh token session. Same structure as `rt` but for platform tokens.                                                                                                                                                                |
+| `prp`       | `auth:prp:{sha256(oldToken)}`                            | `newRawToken` (UUID of the new platform refresh token)                            | `refreshGraceWindowSeconds` (default: 30s)                | Rotation pointer for platform refresh token. Same logic as `rp` but for the admin flow.                                                                                                                                                              |
+| `prv`       | `auth:prv:{sha256(token)}`                               | JSON: `{ email: string, tenantId: string }`                                       | 300 seconds (5 minutes)                                   | Password reset OTP verification token. Issued after successful OTP validation in the 2-step flow. Consumed when resetting the password.                                                                                                              |
+| `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                        | JSON: `{ encryptedSecret: string, hashedCodes: string[] }`                        | 600 seconds (10 minutes)                                  | Temporary MFA setup data. Stores the encrypted secret and hashed recovery codes during the activation process. Consumed when completing the setup with `verifyAndEnable()`.                                                                          |
+| `psess`     | `auth:psess:{userId}`                                    | SET (Redis Set) of platform session hashes                                        | Equal to the max refresh TTL                              | Tracking of active sessions of platform admins. Analogous to `sess:{userId}` for the dashboard. Each member is `sha256(refreshToken)` of an active `prt`.                                                                                            |
+| `psd`       | `auth:psd:{sessionHash}`                                 | JSON: `{ device: string, ip: string, createdAt: string, lastActivityAt: string }` | Equal to the max refresh TTL                              | Details of a platform session. Analogous to `sd:{sessionHash}` for the dashboard.                                                                                                                                                                    |
+| `resend`    | `auth:resend:{purpose}:{sha256(tenantId + ":" + email)}` | `'1'`                                                                             | 60 seconds                                                | Cooldown between OTP resends. Prevents attackers from resetting the OTP attempts counter indefinitely via repeated resends. Purposes: `password_reset`, `email_verification`.                                                                        |
 
 ### 12.4 Redis operations by feature
 
@@ -3895,21 +3828,21 @@ The access token JWT for dashboard/tenant users contains the following claims:
 ```typescript
 export interface DashboardJwtPayload {
   /** Subject — user ID */
-  sub: string;
+  sub: string
 
-  jti: string; // Unique ID of the token (UUID v4) — used for blacklist
+  jti: string // Unique ID of the token (UUID v4) — used for blacklist
 
   /** ID of the tenant the user belongs to */
-  tenantId: string;
+  tenantId: string
 
   /** Role of the user in the tenant (e.g.: 'OWNER', 'ADMIN', 'MEMBER') */
-  role: string;
+  role: string
 
   /** Type of the token — always 'dashboard' to differentiate from platform */
-  type: "dashboard";
+  type: 'dashboard'
 
   /** Current status of the user (e.g.: 'ACTIVE', 'PENDING_APPROVAL') */
-  status: string;
+  status: string
 
   /**
    * Whether MFA was verified in this session.
@@ -3917,13 +3850,13 @@ export interface DashboardJwtPayload {
    * - false: user has MFA enabled but did not verify in this session
    * - undefined/false: user does not have MFA enabled
    */
-  mfaVerified: boolean;
+  mfaVerified: boolean
 
   /** Issued At — issuance timestamp (automatic) */
-  iat: number;
+  iat: number
 
   /** Expiration — expiration timestamp (automatic, based on accessExpiresIn) */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -3952,23 +3885,23 @@ JWT token for platform administrators:
 ```typescript
 export interface PlatformJwtPayload {
   /** Subject — admin ID */
-  sub: string;
+  sub: string
 
-  jti: string; // Unique ID of the token (UUID v4) — used for blacklist
+  jti: string // Unique ID of the token (UUID v4) — used for blacklist
 
   /** Role on the platform (e.g.: 'SUPER_ADMIN', 'ADMIN', 'SUPPORT') */
-  role: string;
+  role: string
 
   /** Type of the token — always 'platform' */
-  type: "platform";
+  type: 'platform'
 
-  mfaVerified: boolean; // MFA completed (if enabled for the admin)
+  mfaVerified: boolean // MFA completed (if enabled for the admin)
 
   /** Issued At */
-  iat: number;
+  iat: number
 
   /** Expiration */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -3993,22 +3926,22 @@ Temporary token issued during the login flow when MFA is mandatory:
 ```typescript
 export interface MfaTempPayload {
   /** Subject — ID of the user who needs to complete MFA */
-  sub: string;
+  sub: string
 
   /** JWT ID — unique identifier of the token */
-  jti: string;
+  jti: string
 
   /** Type of the token — always 'mfa_challenge' */
-  type: "mfa_challenge";
+  type: 'mfa_challenge'
 
   /** Origin context of the MFA challenge: 'dashboard' or 'platform' */
-  context: "dashboard" | "platform";
+  context: 'dashboard' | 'platform'
 
   /** Issued At */
-  iat: number;
+  iat: number
 
   /** Expiration — 5 minutes after issuance */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -4052,10 +3985,10 @@ Transport:
 
 ### 14.1 Cookie table
 
-| Cookie         | Default Name     | Path    | HttpOnly | Secure     | SameSite | Max-Age                                      | Purpose                                                                                                                                                                                                   |
-| -------------- | --------------- | ------- | -------- | ---------- | -------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Access Token   | `access_token`  | `/`     | Yes      | Yes (prod) | `Lax`    | `accessCookieMaxAgeMs` (900,000 ms = 15 min) | Transports the JWT on every HTTP request. HttpOnly prevents access via JavaScript.                                                                                                                          |
-| Refresh Token  | `refresh_token` | `/auth` | Yes      | Yes (prod) | `Strict` | `refreshExpiresInDays * 86400000` (7 days)   | Opaque token for renewal. Path restricted to `/auth` limits sending only to the refresh endpoints. `Strict` prevents CSRF.                                                                                  |
+| Cookie         | Default Name    | Path    | HttpOnly | Secure     | SameSite | Max-Age                                      | Purpose                                                                                                                                                                                                                    |
+| -------------- | --------------- | ------- | -------- | ---------- | -------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Access Token   | `access_token`  | `/`     | Yes      | Yes (prod) | `Lax`    | `accessCookieMaxAgeMs` (900,000 ms = 15 min) | Transports the JWT on every HTTP request. HttpOnly prevents access via JavaScript.                                                                                                                                         |
+| Refresh Token  | `refresh_token` | `/auth` | Yes      | Yes (prod) | `Strict` | `refreshExpiresInDays * 86400000` (7 days)   | Opaque token for renewal. Path restricted to `/auth` limits sending only to the refresh endpoints. `Strict` prevents CSRF.                                                                                                 |
 | Session Signal | `has_session`   | `/`     | No       | Yes (prod) | `Lax`    | Equal to the refresh                         | Non-HttpOnly cookie readable by JavaScript/proxy. Indicates that an active session exists. **Does not contain sensitive data** — only `"1"`. Useful for proxy middleware or frontend to decide whether to attempt refresh. |
 
 > **Note:** If `routePrefix` is changed from the default `'auth'`, the `cookies.refreshCookiePath` must be updated to match (e.g.: `routePrefix: 'api/v1/auth'` → `refreshCookiePath: '/api/v1/auth'`). Otherwise, the browser will not send the refresh cookie to the correct endpoint.
@@ -4085,17 +4018,17 @@ For multi-domain support (e.g.: `api.example.com` and `app.example.com`), the co
 ```typescript
 // If resolveDomains is configured, uses the custom function
 if (options.cookies.resolveDomains) {
-  const domains = options.cookies.resolveDomains(req.hostname);
+  const domains = options.cookies.resolveDomains(req.hostname)
   // Sets cookies on each returned domain
   for (const domain of domains) {
-    res.cookie(name, value, { ...cookieOptions, domain });
+    res.cookie(name, value, { ...cookieOptions, domain })
   }
 }
 
 // Otherwise, uses extractDomain as a fallback
 else {
-  const domain = this.extractDomain(req.hostname);
-  res.cookie(name, value, { ...cookieOptions, domain });
+  const domain = this.extractDomain(req.hostname)
+  res.cookie(name, value, { ...cookieOptions, domain })
 }
 ```
 
@@ -4193,14 +4126,14 @@ Returns { mfaRequired: true, mfaTempToken: "..." } in the body.
 
 ### 14.4 Cookie security
 
-| Measure                       | Rationale                                                                               |
-| ----------------------------- | --------------------------------------------------------------------------------------- |
-| `HttpOnly` on the tokens      | Prevents access via `document.cookie` — protects against XSS                            |
-| `Secure` in production        | Cookies are only sent over HTTPS                                                         |
-| `SameSite: Strict` on refresh | Prevents sending in cross-origin requests — protects against CSRF                       |
-| `SameSite: Lax` on access     | Allows normal navigation (links) but blocks cross-origin POST                           |
-| Restricted path on refresh    | `/auth` limits sending the refresh token only to the renewal endpoints                  |
-| Non-HttpOnly session signal   | Deliberately readable by JS to allow proxy/frontend logic without exposing tokens       |
+| Measure                       | Rationale                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `HttpOnly` on the tokens      | Prevents access via `document.cookie` — protects against XSS                      |
+| `Secure` in production        | Cookies are only sent over HTTPS                                                  |
+| `SameSite: Strict` on refresh | Prevents sending in cross-origin requests — protects against CSRF                 |
+| `SameSite: Lax` on access     | Allows normal navigation (links) but blocks cross-origin POST                     |
+| Restricted path on refresh    | `/auth` limits sending the refresh token only to the renewal endpoints            |
+| Non-HttpOnly session signal   | Deliberately readable by JS to allow proxy/frontend logic without exposing tokens |
 
 ### 14.5 Token delivery modes (`tokenDelivery`)
 
@@ -4208,12 +4141,12 @@ The `TokenDeliveryService` encapsulates all the logic for delivering and reading
 
 #### Behavior by mode
 
-| Action               | `'cookie'` (default)                     | `'bearer'`                                                            | `'both'`                             |
-| ------------------ | ---------------------------------------- | --------------------------------------------------------------------- | ------------------------------------ |
-| **Login/Register** | Sets cookies; body returns only `user`   | Does not set cookies; body returns `accessToken`, `refreshToken`, and `user` | Sets cookies AND body returns tokens |
-| **Refresh**        | Reads refresh from the cookie; sets new cookies | Reads `refreshToken` from the body `{ refreshToken }`; returns tokens in the body | Tries the cookie first, then the body |
-| **Logout**         | Clears cookies                           | Blacklist via token from the `Authorization` header                   | Clears cookies and blacklists the header |
-| **Guards**         | Extracts JWT from the `access_token` cookie | Extracts JWT from the `Authorization: Bearer` header                  | Tries the cookie first, then the header |
+| Action             | `'cookie'` (default)                            | `'bearer'`                                                                        | `'both'`                                 |
+| ------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------- |
+| **Login/Register** | Sets cookies; body returns only `user`          | Does not set cookies; body returns `accessToken`, `refreshToken`, and `user`      | Sets cookies AND body returns tokens     |
+| **Refresh**        | Reads refresh from the cookie; sets new cookies | Reads `refreshToken` from the body `{ refreshToken }`; returns tokens in the body | Tries the cookie first, then the body    |
+| **Logout**         | Clears cookies                                  | Blacklist via token from the `Authorization` header                               | Clears cookies and blacklists the header |
+| **Guards**         | Extracts JWT from the `access_token` cookie     | Extracts JWT from the `Authorization: Bearer` header                              | Tries the cookie first, then the header  |
 
 #### Response in `'bearer'` mode
 
@@ -4238,22 +4171,22 @@ In `'bearer'` mode, the mobile client is responsible for storing the tokens secu
 
 ```typescript
 // React Native — recommended storage
-import * as SecureStore from "expo-secure-store"; // Expo
+import * as SecureStore from 'expo-secure-store' // Expo
 // or
-import Keychain from "react-native-keychain"; // React Native bare
+import Keychain from 'react-native-keychain' // React Native bare
 
 // Save after login
-await SecureStore.setItemAsync("access_token", response.accessToken);
-await SecureStore.setItemAsync("refresh_token", response.refreshToken);
+await SecureStore.setItemAsync('access_token', response.accessToken)
+await SecureStore.setItemAsync('refresh_token', response.refreshToken)
 
 // Send in the requests
 headers: {
-  Authorization: `Bearer ${accessToken}`;
+  Authorization: `Bearer ${accessToken}`
 }
 
 // Refresh
-const body = { refreshToken: await SecureStore.getItemAsync("refresh_token") };
-const { accessToken, refreshToken } = await api.post("/auth/refresh", body);
+const body = { refreshToken: await SecureStore.getItemAsync('refresh_token') }
+const { accessToken, refreshToken } = await api.post('/auth/refresh', body)
 ```
 
 > `expo-secure-store` and `react-native-keychain` use the operating system's Keychain (iOS) and Keystore (Android) — equivalent in security to the `HttpOnly` cookie, since they are inaccessible by other apps.
@@ -4263,15 +4196,15 @@ const { accessToken, refreshToken } = await api.post("/auth/refresh", body);
 ```typescript
 BymaxAuthModule.registerAsync({
   useFactory: (config: ConfigService) => ({
-    tokenDelivery: "both", // web receives cookies; mobile uses tokens from the body
-    jwt: { secret: config.get("JWT_SECRET") },
+    tokenDelivery: 'both', // web receives cookies; mobile uses tokens from the body
+    jwt: { secret: config.get('JWT_SECRET') },
     // cookies are still configured normally for the web mode
     cookies: {
-      resolveDomains: (domain) => [`.${config.get("APP_DOMAIN")}`],
-    },
+      resolveDomains: (domain) => [`.${config.get('APP_DOMAIN')}`]
+    }
   }),
-  inject: [ConfigService],
-});
+  inject: [ConfigService]
+})
 ```
 
 ---
@@ -4281,7 +4214,7 @@ BymaxAuthModule.registerAsync({
 ### 15.1 `AuthException` class
 
 ```typescript
-import { HttpException, HttpStatus } from "@nestjs/common";
+import { HttpException, HttpStatus } from '@nestjs/common'
 
 /**
  * Standardized exception of the authentication module.
@@ -4291,18 +4224,18 @@ export class AuthException extends HttpException {
   constructor(
     code: string,
     statusCode: HttpStatus = HttpStatus.UNAUTHORIZED,
-    details?: Record<string, unknown>,
+    details?: Record<string, unknown>
   ) {
     super(
       {
         error: {
           code,
-          message: AUTH_ERROR_MESSAGES[code] || "Authentication error",
-          details: details || null,
-        },
+          message: AUTH_ERROR_MESSAGES[code] || 'Authentication error',
+          details: details || null
+        }
       },
-      statusCode,
-    );
+      statusCode
+    )
   }
 }
 ```
@@ -4313,42 +4246,41 @@ export class AuthException extends HttpException {
  * Used internally by AuthException.
  */
 export const AUTH_ERROR_MESSAGES: Record<string, string> = {
-  "auth.invalid_credentials": "Invalid email or password",
-  "auth.account_locked":
-    "Account temporarily locked. Please try again in a few minutes.",
-  "auth.account_inactive": "Account inactive",
-  "auth.account_suspended": "Account suspended",
-  "auth.account_banned": "Account banned",
-  "auth.token_expired": "Token expired",
-  "auth.token_revoked": "Token revoked",
-  "auth.token_invalid": "Invalid token",
-  "auth.refresh_token_invalid": "Invalid or expired refresh token",
-  "auth.session_expired": "Session expired",
-  "auth.email_already_exists": "Email already registered",
-  "auth.email_not_verified": "Email not verified",
-  "auth.invalid_invitation_token": "Invalid or expired invitation token",
-  "auth.mfa_required": "Two-factor authentication required",
-  "auth.mfa_invalid_code": "Invalid MFA code",
-  "auth.mfa_already_enabled": "MFA is already enabled",
-  "auth.mfa_not_enabled": "MFA is not enabled",
-  "auth.mfa_setup_required": "MFA setup required",
-  "auth.mfa_temp_token_invalid": "Invalid or expired temporary MFA token",
-  "auth.recovery_code_invalid": "Invalid recovery code",
-  "auth.password_too_weak": "Password too weak",
-  "auth.password_reset_token_invalid": "Invalid password reset token",
-  "auth.password_reset_token_expired": "Expired password reset token",
-  "auth.otp_invalid": "Invalid OTP code",
-  "auth.otp_expired": "Expired OTP code",
-  "auth.otp_max_attempts": "Maximum number of attempts exceeded",
-  "auth.insufficient_role": "Insufficient permission",
-  "auth.forbidden": "Access denied",
-  "auth.pending_approval": "Account pending approval",
-  "auth.session_limit_reached": "Session limit reached",
-  "auth.session_not_found": "Session not found",
-  "auth.oauth_failed": "OAuth authentication failed",
-  "auth.oauth_email_mismatch": "OAuth email does not match",
-  "auth.platform_auth_required": "Platform authentication required",
-};
+  'auth.invalid_credentials': 'Invalid email or password',
+  'auth.account_locked': 'Account temporarily locked. Please try again in a few minutes.',
+  'auth.account_inactive': 'Account inactive',
+  'auth.account_suspended': 'Account suspended',
+  'auth.account_banned': 'Account banned',
+  'auth.token_expired': 'Token expired',
+  'auth.token_revoked': 'Token revoked',
+  'auth.token_invalid': 'Invalid token',
+  'auth.refresh_token_invalid': 'Invalid or expired refresh token',
+  'auth.session_expired': 'Session expired',
+  'auth.email_already_exists': 'Email already registered',
+  'auth.email_not_verified': 'Email not verified',
+  'auth.invalid_invitation_token': 'Invalid or expired invitation token',
+  'auth.mfa_required': 'Two-factor authentication required',
+  'auth.mfa_invalid_code': 'Invalid MFA code',
+  'auth.mfa_already_enabled': 'MFA is already enabled',
+  'auth.mfa_not_enabled': 'MFA is not enabled',
+  'auth.mfa_setup_required': 'MFA setup required',
+  'auth.mfa_temp_token_invalid': 'Invalid or expired temporary MFA token',
+  'auth.recovery_code_invalid': 'Invalid recovery code',
+  'auth.password_too_weak': 'Password too weak',
+  'auth.password_reset_token_invalid': 'Invalid password reset token',
+  'auth.password_reset_token_expired': 'Expired password reset token',
+  'auth.otp_invalid': 'Invalid OTP code',
+  'auth.otp_expired': 'Expired OTP code',
+  'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
+  'auth.insufficient_role': 'Insufficient permission',
+  'auth.forbidden': 'Access denied',
+  'auth.pending_approval': 'Account pending approval',
+  'auth.session_limit_reached': 'Session limit reached',
+  'auth.session_not_found': 'Session not found',
+  'auth.oauth_failed': 'OAuth authentication failed',
+  'auth.oauth_email_mismatch': 'OAuth email does not match',
+  'auth.platform_auth_required': 'Platform authentication required'
+}
 ```
 
 ### 15.2 Error response format
@@ -4367,42 +4299,42 @@ All error responses follow this consistent format:
 
 ### 15.3 Complete table of error codes
 
-| Code                              | HTTP Status | Message                                                            | Context                                                                                                                                       |
-| ----------------------------------- | ----------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth.invalid_credentials`          | 401         | Invalid email or password                                            | Login with incorrect credentials. Deliberately generic message so as not to reveal whether the email exists.                                   |
+| Code                                | HTTP Status | Message                                                        | Context                                                                                                                                               |
+| ----------------------------------- | ----------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.invalid_credentials`          | 401         | Invalid email or password                                      | Login with incorrect credentials. Deliberately generic message so as not to reveal whether the email exists.                                          |
 | `auth.account_locked`               | 429         | Account temporarily locked. Please try again in a few minutes. | Brute-force: exceeded `maxAttempts` within the `windowSeconds`. The response includes a `Retry-After` header with the number of seconds until unlock. |
-| `auth.account_inactive`             | 403         | Account inactive                                                       | User status is INACTIVE.                                                                                                                       |
-| `auth.account_suspended`            | 403         | Account suspended                                                      | User status is SUSPENDED.                                                                                                                      |
-| `auth.account_banned`               | 403         | Account banned                                                        | User status is BANNED.                                                                                                                         |
-| `auth.token_expired`                | 401         | Token expired                                                      | Access JWT expired (after `accessExpiresIn`).                                                                                                  |
-| `auth.token_revoked`                | 401         | Token revoked                                                      | Access JWT is on the Redis blacklist (post-logout).                                                                                            |
-| `auth.token_invalid`                | 401         | Invalid token                                                      | Malformed JWT, invalid signature, or user not found.                                                                                           |
-| `auth.refresh_token_invalid`        | 401         | Invalid or expired refresh token                                  | Refresh token not found in Redis (expired or was revoked).                                                                                     |
-| `auth.session_expired`              | 401         | Session expired                                                     | The session associated with the refresh token no longer exists.                                                                               |
-| `auth.email_already_exists`         | 409         | Email already registered                                                 | Attempt to register with an email that already exists in the same tenant.                                                                      |
-| `auth.email_not_verified`           | 403         | Email not verified                                                | Login with `emailVerification.required = true` and unverified email.                                                                           |
-| `auth.invalid_invitation_token`     | 400         | Invalid or expired invitation token                               | Invitation token not found in Redis.                                                                                                           |
-| `auth.mfa_required`                 | 403         | Two-factor authentication required                             | The endpoint requires verified MFA but the JWT does not have `mfaVerified: true`.                                                              |
-| `auth.mfa_invalid_code`             | 401         | Invalid MFA code                                                 | Incorrect 6-digit TOTP code.                                                                                                                   |
-| `auth.mfa_already_enabled`          | 409         | MFA is already enabled                                              | Attempt to set up when MFA is already active.                                                                                                  |
-| `auth.mfa_not_enabled`              | 400         | MFA is not enabled                                             | Attempt to disable when MFA is not active.                                                                                                     |
-| `auth.mfa_setup_required`           | 400         | MFA setup required                                      | Attempt to verify without having done the setup.                                                                                               |
-| `auth.mfa_temp_token_invalid`       | 401         | Invalid or expired temporary MFA token                        | MFA temp token (5 min) expired or does not exist in Redis.                                                                                     |
-| `auth.recovery_code_invalid`        | 401         | Invalid recovery code                                      | Recovery code does not match any stored hash.                                                                                                  |
-| `auth.password_too_weak`            | 400         | Password too weak                                                   | Password does not meet minimum criteria (< 8 characters).                                                                                      |
-| `auth.password_reset_token_invalid` | 400         | Invalid password reset token                              | Reset token not found in Redis.                                                                                                                |
-| `auth.password_reset_token_expired` | 400         | Expired password reset token                              | Token existed but its TTL expired.                                                                                                             |
-| `auth.otp_invalid`                  | 401         | Invalid OTP code                                                 | OTP code does not match the stored one.                                                                                                        |
-| `auth.otp_expired`                  | 401         | Expired OTP code                                                 | OTP not found in Redis (TTL expired).                                                                                                          |
-| `auth.otp_max_attempts`             | 429         | Maximum number of attempts exceeded                                | Exceeded 5 failed attempts for the same OTP.                                                                                                   |
-| `auth.insufficient_role`            | 403         | Insufficient permission                                              | User role does not satisfy the hierarchy required by the endpoint.                                                                            |
-| `auth.forbidden`                    | 403         | Access denied                                                       | Generic access denied (fallback).                                                                                                             |
-| `auth.pending_approval`             | 403         | Account pending approval                                         | User status is PENDING_APPROVAL.                                                                                                              |
-| `auth.session_limit_reached`        | 409         | Session limit reached                                          | Number of active sessions exceeded the limit (informational, FIFO resolves automatically).                                                    |
-| `auth.session_not_found`            | 404         | Session not found                                               | Attempt to revoke a nonexistent session.                                                                                                      |
-| `auth.oauth_failed`                 | 401         | OAuth authentication failed                                         | Generic error in the OAuth flow (provider rejected, etc.).                                                                                     |
-| `auth.oauth_email_mismatch`         | 409         | OAuth email does not match                                      | Email from the OAuth provider does not match the expected one.                                                                                |
-| `auth.platform_auth_required`       | 401         | Platform authentication required                               | Attempt to access a platform endpoint with a dashboard JWT.                                                                                   |
+| `auth.account_inactive`             | 403         | Account inactive                                               | User status is INACTIVE.                                                                                                                              |
+| `auth.account_suspended`            | 403         | Account suspended                                              | User status is SUSPENDED.                                                                                                                             |
+| `auth.account_banned`               | 403         | Account banned                                                 | User status is BANNED.                                                                                                                                |
+| `auth.token_expired`                | 401         | Token expired                                                  | Access JWT expired (after `accessExpiresIn`).                                                                                                         |
+| `auth.token_revoked`                | 401         | Token revoked                                                  | Access JWT is on the Redis blacklist (post-logout).                                                                                                   |
+| `auth.token_invalid`                | 401         | Invalid token                                                  | Malformed JWT, invalid signature, or user not found.                                                                                                  |
+| `auth.refresh_token_invalid`        | 401         | Invalid or expired refresh token                               | Refresh token not found in Redis (expired or was revoked).                                                                                            |
+| `auth.session_expired`              | 401         | Session expired                                                | The session associated with the refresh token no longer exists.                                                                                       |
+| `auth.email_already_exists`         | 409         | Email already registered                                       | Attempt to register with an email that already exists in the same tenant.                                                                             |
+| `auth.email_not_verified`           | 403         | Email not verified                                             | Login with `emailVerification.required = true` and unverified email.                                                                                  |
+| `auth.invalid_invitation_token`     | 400         | Invalid or expired invitation token                            | Invitation token not found in Redis.                                                                                                                  |
+| `auth.mfa_required`                 | 403         | Two-factor authentication required                             | The endpoint requires verified MFA but the JWT does not have `mfaVerified: true`.                                                                     |
+| `auth.mfa_invalid_code`             | 401         | Invalid MFA code                                               | Incorrect 6-digit TOTP code.                                                                                                                          |
+| `auth.mfa_already_enabled`          | 409         | MFA is already enabled                                         | Attempt to set up when MFA is already active.                                                                                                         |
+| `auth.mfa_not_enabled`              | 400         | MFA is not enabled                                             | Attempt to disable when MFA is not active.                                                                                                            |
+| `auth.mfa_setup_required`           | 400         | MFA setup required                                             | Attempt to verify without having done the setup.                                                                                                      |
+| `auth.mfa_temp_token_invalid`       | 401         | Invalid or expired temporary MFA token                         | MFA temp token (5 min) expired or does not exist in Redis.                                                                                            |
+| `auth.recovery_code_invalid`        | 401         | Invalid recovery code                                          | Recovery code does not match any stored hash.                                                                                                         |
+| `auth.password_too_weak`            | 400         | Password too weak                                              | Password does not meet minimum criteria (< 8 characters).                                                                                             |
+| `auth.password_reset_token_invalid` | 400         | Invalid password reset token                                   | Reset token not found in Redis.                                                                                                                       |
+| `auth.password_reset_token_expired` | 400         | Expired password reset token                                   | Token existed but its TTL expired.                                                                                                                    |
+| `auth.otp_invalid`                  | 401         | Invalid OTP code                                               | OTP code does not match the stored one.                                                                                                               |
+| `auth.otp_expired`                  | 401         | Expired OTP code                                               | OTP not found in Redis (TTL expired).                                                                                                                 |
+| `auth.otp_max_attempts`             | 429         | Maximum number of attempts exceeded                            | Exceeded 5 failed attempts for the same OTP.                                                                                                          |
+| `auth.insufficient_role`            | 403         | Insufficient permission                                        | User role does not satisfy the hierarchy required by the endpoint.                                                                                    |
+| `auth.forbidden`                    | 403         | Access denied                                                  | Generic access denied (fallback).                                                                                                                     |
+| `auth.pending_approval`             | 403         | Account pending approval                                       | User status is PENDING_APPROVAL.                                                                                                                      |
+| `auth.session_limit_reached`        | 409         | Session limit reached                                          | Number of active sessions exceeded the limit (informational, FIFO resolves automatically).                                                            |
+| `auth.session_not_found`            | 404         | Session not found                                              | Attempt to revoke a nonexistent session.                                                                                                              |
+| `auth.oauth_failed`                 | 401         | OAuth authentication failed                                    | Generic error in the OAuth flow (provider rejected, etc.).                                                                                            |
+| `auth.oauth_email_mismatch`         | 409         | OAuth email does not match                                     | Email from the OAuth provider does not match the expected one.                                                                                        |
+| `auth.platform_auth_required`       | 401         | Platform authentication required                               | Attempt to access a platform endpoint with a dashboard JWT.                                                                                           |
 
 > **Exception to the non-enumeration principle:** The `POST /auth/register` endpoint necessarily reveals whether an email already exists (returning 409). This is an accepted limitation of the registration flow. To mitigate it, the host application can implement aggressive rate limiting on this endpoint and consider alternative strategies such as sending a "you already have an account" email instead of returning an error.
 
@@ -4411,41 +4343,41 @@ All error responses follow this consistent format:
 ```typescript
 // auth-error-codes.ts
 export const AUTH_ERROR_CODES = {
-  INVALID_CREDENTIALS: "auth.invalid_credentials",
-  ACCOUNT_LOCKED: "auth.account_locked",
-  ACCOUNT_INACTIVE: "auth.account_inactive",
-  ACCOUNT_SUSPENDED: "auth.account_suspended",
-  ACCOUNT_BANNED: "auth.account_banned",
-  TOKEN_EXPIRED: "auth.token_expired",
-  TOKEN_REVOKED: "auth.token_revoked",
-  TOKEN_INVALID: "auth.token_invalid",
-  REFRESH_TOKEN_INVALID: "auth.refresh_token_invalid",
-  SESSION_EXPIRED: "auth.session_expired",
-  EMAIL_ALREADY_EXISTS: "auth.email_already_exists",
-  EMAIL_NOT_VERIFIED: "auth.email_not_verified",
-  INVALID_INVITATION_TOKEN: "auth.invalid_invitation_token",
-  MFA_REQUIRED: "auth.mfa_required",
-  MFA_INVALID_CODE: "auth.mfa_invalid_code",
-  MFA_ALREADY_ENABLED: "auth.mfa_already_enabled",
-  MFA_NOT_ENABLED: "auth.mfa_not_enabled",
-  MFA_SETUP_REQUIRED: "auth.mfa_setup_required",
-  MFA_TEMP_TOKEN_INVALID: "auth.mfa_temp_token_invalid",
-  RECOVERY_CODE_INVALID: "auth.recovery_code_invalid",
-  PASSWORD_TOO_WEAK: "auth.password_too_weak",
-  PASSWORD_RESET_TOKEN_INVALID: "auth.password_reset_token_invalid",
-  PASSWORD_RESET_TOKEN_EXPIRED: "auth.password_reset_token_expired",
-  OTP_INVALID: "auth.otp_invalid",
-  OTP_EXPIRED: "auth.otp_expired",
-  OTP_MAX_ATTEMPTS: "auth.otp_max_attempts",
-  INSUFFICIENT_ROLE: "auth.insufficient_role",
-  FORBIDDEN: "auth.forbidden",
-  PENDING_APPROVAL: "auth.pending_approval",
-  SESSION_LIMIT_REACHED: "auth.session_limit_reached",
-  SESSION_NOT_FOUND: "auth.session_not_found",
-  OAUTH_FAILED: "auth.oauth_failed",
-  OAUTH_EMAIL_MISMATCH: "auth.oauth_email_mismatch",
-  PLATFORM_AUTH_REQUIRED: "auth.platform_auth_required",
-} as const;
+  INVALID_CREDENTIALS: 'auth.invalid_credentials',
+  ACCOUNT_LOCKED: 'auth.account_locked',
+  ACCOUNT_INACTIVE: 'auth.account_inactive',
+  ACCOUNT_SUSPENDED: 'auth.account_suspended',
+  ACCOUNT_BANNED: 'auth.account_banned',
+  TOKEN_EXPIRED: 'auth.token_expired',
+  TOKEN_REVOKED: 'auth.token_revoked',
+  TOKEN_INVALID: 'auth.token_invalid',
+  REFRESH_TOKEN_INVALID: 'auth.refresh_token_invalid',
+  SESSION_EXPIRED: 'auth.session_expired',
+  EMAIL_ALREADY_EXISTS: 'auth.email_already_exists',
+  EMAIL_NOT_VERIFIED: 'auth.email_not_verified',
+  INVALID_INVITATION_TOKEN: 'auth.invalid_invitation_token',
+  MFA_REQUIRED: 'auth.mfa_required',
+  MFA_INVALID_CODE: 'auth.mfa_invalid_code',
+  MFA_ALREADY_ENABLED: 'auth.mfa_already_enabled',
+  MFA_NOT_ENABLED: 'auth.mfa_not_enabled',
+  MFA_SETUP_REQUIRED: 'auth.mfa_setup_required',
+  MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
+  RECOVERY_CODE_INVALID: 'auth.recovery_code_invalid',
+  PASSWORD_TOO_WEAK: 'auth.password_too_weak',
+  PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
+  PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
+  OTP_INVALID: 'auth.otp_invalid',
+  OTP_EXPIRED: 'auth.otp_expired',
+  OTP_MAX_ATTEMPTS: 'auth.otp_max_attempts',
+  INSUFFICIENT_ROLE: 'auth.insufficient_role',
+  FORBIDDEN: 'auth.forbidden',
+  PENDING_APPROVAL: 'auth.pending_approval',
+  SESSION_LIMIT_REACHED: 'auth.session_limit_reached',
+  SESSION_NOT_FOUND: 'auth.session_not_found',
+  OAUTH_FAILED: 'auth.oauth_failed',
+  OAUTH_EMAIL_MISMATCH: 'auth.oauth_email_mismatch',
+  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required'
+} as const
 ```
 
 ### 15.5 Security principles in errors
@@ -4518,28 +4450,28 @@ export const AUTH_THROTTLE_CONFIGS = {
   resendPasswordOtp: { default: { limit: 3, ttl: 300_000 } },
 
   /** POST /auth/invitations/accept — 5 requests per minute */
-  invitationAccept: { default: { limit: 5, ttl: 60_000 } },
-} as const;
+  invitationAccept: { default: { limit: 5, ttl: 60_000 } }
+} as const
 ```
 
 ### 16.3 Rate limiting summary table
 
-| Endpoint                              | Limit | Window    | Description                                                                    |
-| ------------------------------------- | ------ | --------- | ---------------------------------------------------------------------------- |
-| `POST /auth/login`                    | 5 req  | 1 minute  | Protects against brute-force per IP                                          |
-| `POST /auth/register`                 | 10 req | 1 hour    | Protects against mass account creation                                       |
-| `POST /auth/refresh`                  | 10 req | 1 minute  | Limits refresh requests                                                      |
-| `POST /auth/password/forgot-password` | 3 req  | 5 minutes | Prevents spam of reset emails                                                |
-| `POST /auth/password/reset-password`  | 3 req  | 5 minutes | Protects the reset endpoint                                                  |
+| Endpoint                              | Limit  | Window    | Description                                                                      |
+| ------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- |
+| `POST /auth/login`                    | 5 req  | 1 minute  | Protects against brute-force per IP                                              |
+| `POST /auth/register`                 | 10 req | 1 hour    | Protects against mass account creation                                           |
+| `POST /auth/refresh`                  | 10 req | 1 minute  | Limits refresh requests                                                          |
+| `POST /auth/password/forgot-password` | 3 req  | 5 minutes | Prevents spam of reset emails                                                    |
+| `POST /auth/password/reset-password`  | 3 req  | 5 minutes | Protects the reset endpoint                                                      |
 | `POST /auth/password/verify-otp`      | 3 req  | 5 minutes | Protects OTP verification (aligned with the internal max. of 5 attempts per OTP) |
-| `POST /auth/mfa/setup`                | 5 req  | 1 minute  | Limits setup attempts                                                        |
-| `POST /auth/mfa/challenge`            | 10 req | 1 minute  | Limits MFA attempts                                                          |
-| `POST /auth/mfa/disable`              | 3 req  | 5 minutes | Protects MFA deactivation                                                    |
-| `POST /auth/platform/login`           | 5 req  | 1 minute  | Protects admin login                                                         |
-| `POST /auth/verify-email`             | 5 req  | 1 minute  | Limits email verification                                                    |
-| `POST /auth/resend-verification`      | 3 req  | 5 minutes | Prevents spam of verification emails                                         |
-| `POST /auth/password/resend-otp`      | 3 req  | 5 minutes | Prevents spam of password reset OTPs                                         |
-| `POST /auth/invitations/accept`       | 5 req  | 1 minute  | Protects invitation acceptance                                              |
+| `POST /auth/mfa/setup`                | 5 req  | 1 minute  | Limits setup attempts                                                            |
+| `POST /auth/mfa/challenge`            | 10 req | 1 minute  | Limits MFA attempts                                                              |
+| `POST /auth/mfa/disable`              | 3 req  | 5 minutes | Protects MFA deactivation                                                        |
+| `POST /auth/platform/login`           | 5 req  | 1 minute  | Protects admin login                                                             |
+| `POST /auth/verify-email`             | 5 req  | 1 minute  | Limits email verification                                                        |
+| `POST /auth/resend-verification`      | 3 req  | 5 minutes | Prevents spam of verification emails                                             |
+| `POST /auth/password/resend-otp`      | 3 req  | 5 minutes | Prevents spam of password reset OTPs                                             |
+| `POST /auth/invitations/accept`       | 5 req  | 1 minute  | Protects invitation acceptance                                                   |
 
 ### 16.4 Usage in controllers
 
@@ -4547,32 +4479,28 @@ The controllers apply the throttle configs via the `@Throttle()` decorator:
 
 ```typescript
 // auth.controller.ts
-@Controller("auth")
+@Controller('auth')
 export class AuthController {
-  @Post("login")
+  @Post('login')
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.login)
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response, // passthrough: true preserves NestJS interceptors
-    @Req() req: Request,
+    @Req() req: Request
   ) {
-    const result = await this.authService.login(
-      dto,
-      req.ip,
-      req.headers["user-agent"],
-    );
+    const result = await this.authService.login(dto, req.ip, req.headers['user-agent'])
     // deliverAuthResponse sets cookies (if cookie/both) and returns the body
-    return this.tokenDeliveryService.deliverAuthResponse(res, req, result);
+    return this.tokenDeliveryService.deliverAuthResponse(res, req, result)
   }
 
-  @Post("register")
+  @Post('register')
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.register)
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response, // passthrough: true preserves NestJS interceptors
-    @Req() req: Request,
+    @Req() req: Request
   ) {
     // ...
   }
@@ -4585,24 +4513,24 @@ The host application **must** configure the `ThrottlerModule` for the `@Throttle
 
 ```typescript
 // app.module.ts
-import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
-import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
+import { APP_GUARD } from '@nestjs/core'
 
 @Module({
   imports: [
     ThrottlerModule.forRoot([
       {
         ttl: 60_000, // Global default: 100 req/min
-        limit: 100,
-      },
-    ]),
+        limit: 100
+      }
+    ])
   ],
   providers: [
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
-  ],
+      useClass: ThrottlerGuard
+    }
+  ]
 })
 export class AppModule {}
 ```
@@ -4613,24 +4541,24 @@ export class AppModule {}
 
 The `@bymax-one/nest-auth` was designed with clear boundaries. The following items are the **responsibility of the host application** and are not included in the package:
 
-| Item                                    | Reason                                                                                              | Where to implement                                                   |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| **Prisma schemas / database migrations** | The package is database-agnostic. It works with any ORM via interfaces.                            | In the host application, in the Prisma/TypeORM/etc. schemas.         |
-| **Email templates**                     | The package is template-agnostic. It defines what to send, not how to render.                      | In the host application's `IEmailProvider` implementation.           |
-| **Tenant creation**                     | Business logic specific to the platform (plans, billing, onboarding).                              | The host application's tenants module.                               |
-| **Billing, plans, and subscriptions**   | Scope of `@bymax/stripe` or a billing module.                                                       | The host application's billing module.                               |
-| **API key authentication**              | A different scope — for M2M integration, not for users.                                            | A separate module or middleware of the host application.             |
-| **Portal sessions (Stripe)**            | Stripe-specific, not related to authentication.                                                     | Billing module.                                                      |
-| **Audit logging**                       | The package provides hooks (`afterLogin`, `afterRegister`, etc.) for the host application to record. | Via `IAuthHooks` hooks and an audit module.                          |
-| **CORS / Helmet / CSP**                 | Infrastructure configuration, not authentication.                                                   | `main.ts` or global middleware of the host application.              |
-| **Database connections**                | The package receives already-connected repositories via dependency injection.                       | The host application's database module.                              |
-| **Additional profile fields**           | Beyond the `AuthUser` fields, profiles are the responsibility of the application.                   | The host application's profiles table.                               |
-| **Tenant resolution middleware**        | How to determine the request's tenant (subdomain, header, path) is application-specific.            | Middleware or interceptor of the host application.                   |
-| **Custom password validation**          | The package checks only the minimum length (8 chars). Additional rules live in the application.    | Via the `beforeRegister` hook or DTO validation in the application.  |
-| **Additional frontend components**      | The package provides the `./client`, `./react`, and `./nextjs` subpaths (see section 21). Specific UI components (forms, modals) live in the application. | The UI library of choice (Chakra, Material, etc.).                   |
-| **OAuth state management**              | The OAuth `state` parameter (CSRF protection) is managed by the package via Redis (see section 11.5). | Automatic in the package's OAuth flow.                               |
-| **Email change flow**                   | Requires re-verification of the new email, notification on the old email — a complex, specific flow | Implement in the host application using `IEmailProvider` and `OtpService` |
-| **Account deletion (GDPR erasure)**     | The right to be forgotten requires anonymization of financial data — business logic                | Implement in the host application; use hooks for auth cleanup        |
+| Item                                     | Reason                                                                                                                                                    | Where to implement                                                        |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Prisma schemas / database migrations** | The package is database-agnostic. It works with any ORM via interfaces.                                                                                   | In the host application, in the Prisma/TypeORM/etc. schemas.              |
+| **Email templates**                      | The package is template-agnostic. It defines what to send, not how to render.                                                                             | In the host application's `IEmailProvider` implementation.                |
+| **Tenant creation**                      | Business logic specific to the platform (plans, billing, onboarding).                                                                                     | The host application's tenants module.                                    |
+| **Billing, plans, and subscriptions**    | Scope of `@bymax/stripe` or a billing module.                                                                                                             | The host application's billing module.                                    |
+| **API key authentication**               | A different scope — for M2M integration, not for users.                                                                                                   | A separate module or middleware of the host application.                  |
+| **Portal sessions (Stripe)**             | Stripe-specific, not related to authentication.                                                                                                           | Billing module.                                                           |
+| **Audit logging**                        | The package provides hooks (`afterLogin`, `afterRegister`, etc.) for the host application to record.                                                      | Via `IAuthHooks` hooks and an audit module.                               |
+| **CORS / Helmet / CSP**                  | Infrastructure configuration, not authentication.                                                                                                         | `main.ts` or global middleware of the host application.                   |
+| **Database connections**                 | The package receives already-connected repositories via dependency injection.                                                                             | The host application's database module.                                   |
+| **Additional profile fields**            | Beyond the `AuthUser` fields, profiles are the responsibility of the application.                                                                         | The host application's profiles table.                                    |
+| **Tenant resolution middleware**         | How to determine the request's tenant (subdomain, header, path) is application-specific.                                                                  | Middleware or interceptor of the host application.                        |
+| **Custom password validation**           | The package checks only the minimum length (8 chars). Additional rules live in the application.                                                           | Via the `beforeRegister` hook or DTO validation in the application.       |
+| **Additional frontend components**       | The package provides the `./client`, `./react`, and `./nextjs` subpaths (see section 21). Specific UI components (forms, modals) live in the application. | The UI library of choice (Chakra, Material, etc.).                        |
+| **OAuth state management**               | The OAuth `state` parameter (CSRF protection) is managed by the package via Redis (see section 11.5).                                                     | Automatic in the package's OAuth flow.                                    |
+| **Email change flow**                    | Requires re-verification of the new email, notification on the old email — a complex, specific flow                                                       | Implement in the host application using `IEmailProvider` and `OtpService` |
+| **Account deletion (GDPR erasure)**      | The right to be forgotten requires anonymization of financial data — business logic                                                                       | Implement in the host application; use hooks for auth cleanup             |
 
 ---
 
@@ -4640,16 +4568,16 @@ The `@bymax-one/nest-auth` was designed with clear boundaries. The following ite
 
 These dependencies must be installed in the host application that uses the server subpath. The package does not include them — it expects them to already exist.
 
-| Package               | Version    | Reason                                                                       |
-| -------------------- | --------- | ---------------------------------------------------------------------------- |
-| `@nestjs/common`     | `^11.0.0` | Framework core — decorators, exceptions, providers                           |
-| `@nestjs/core`       | `^11.0.0` | Framework core — module system, DI container                                 |
-| `@nestjs/jwt`        | `^11.0.0` | Issuance and verification of JWTs                                            |
-| `@nestjs/throttler`  | `^6.0.0`  | Rate limiting via decorators                                                 |
-| `class-transformer`  | `^0.5.0`  | DTO transformation                                                          |
-| `class-validator`    | `^0.14.0` | DTO validation                                                              |
-| `ioredis`            | `^5.0.0`  | Redis client                                                                |
-| `reflect-metadata`   | `^0.2.0`  | Metadata reflection for decorators                                          |
+| Package             | Version   | Reason                                             |
+| ------------------- | --------- | -------------------------------------------------- |
+| `@nestjs/common`    | `^11.0.0` | Framework core — decorators, exceptions, providers |
+| `@nestjs/core`      | `^11.0.0` | Framework core — module system, DI container       |
+| `@nestjs/jwt`       | `^11.0.0` | Issuance and verification of JWTs                  |
+| `@nestjs/throttler` | `^6.0.0`  | Rate limiting via decorators                       |
+| `class-transformer` | `^0.5.0`  | DTO transformation                                 |
+| `class-validator`   | `^0.14.0` | DTO validation                                     |
+| `ioredis`           | `^5.0.0`  | Redis client                                       |
+| `reflect-metadata`  | `^0.2.0`  | Metadata reflection for decorators                 |
 
 ### 18.2 Dependencies
 
@@ -4657,19 +4585,19 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 
 ### 18.3 Optional Peer Dependencies
 
-| Package               | Version    | When needed                                                    |
-| -------------------- | --------- | -------------------------------------------------------------------- |
-| `@nestjs/websockets` | `^11.0.0` | Only if you use `WsJwtGuard` for WebSocket authentication            |
+| Package              | Version   | When needed                                               |
+| -------------------- | --------- | --------------------------------------------------------- |
+| `@nestjs/websockets` | `^11.0.0` | Only if you use `WsJwtGuard` for WebSocket authentication |
 
 ### 18.4 Peer Dependencies by Subpath
 
-| Subpath | Peer Dependencies |
-|---------|-------------------|
+| Subpath      | Peer Dependencies                                                                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.` (server) | `@nestjs/common ^11`, `@nestjs/core ^11`, `@nestjs/jwt ^11`, `@nestjs/throttler ^6`, `ioredis ^5`, `class-transformer ^0.5`, `class-validator ^0.14`, `reflect-metadata ^0.2` |
-| `./shared` | None |
-| `./client` | None |
-| `./react` | `react ^19` |
-| `./nextjs` | `next ^16`, `react ^19` |
+| `./shared`   | None                                                                                                                                                                          |
+| `./client`   | None                                                                                                                                                                          |
+| `./react`    | `react ^19`                                                                                                                                                                   |
+| `./nextjs`   | `next ^16`, `react ^19`                                                                                                                                                       |
 
 ### 18.5 Example `package.json`
 
@@ -4739,8 +4667,17 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "typescript": "^5.5.0"
   },
   "keywords": [
-    "nestjs", "auth", "authentication", "jwt", "mfa", "totp",
-    "oauth", "saas", "multi-tenant", "nextjs", "react"
+    "nestjs",
+    "auth",
+    "authentication",
+    "jwt",
+    "mfa",
+    "totp",
+    "oauth",
+    "saas",
+    "multi-tenant",
+    "nextjs",
+    "react"
   ],
   "license": "MIT",
   "repository": {
@@ -4756,21 +4693,21 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 
 ## 19. Implementation Phases
 
-> **Testing strategy:** Unit tests must be written **together with each phase** (TDD), not accumulated in Phase 6. Phase 6 focuses on integration tests, E2E, and polish. Each phase must reach 80%+ unit coverage on the implemented services.
+> **Testing strategy:** Unit tests must be written **together with each phase** (TDD), not accumulated in Phase 6. Phase 6 focuses on integration tests, E2E, and polish. Each phase must reach 100%+ unit coverage on the implemented services.
 
 ### 19.1 Schedule overview
 
-| Phase | Week     | Duration  | Focus                              | Deliverables                                                                                                                  |
-| ---- | ---------- | -------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Week 1     | 1 week   | Core Foundation                   | Scaffold, interfaces, config, Redis, password, token manager, cookie, brute-force + unit tests                               |
-| 2    | Week 2     | 1 week   | Core Authentication               | JWT strategy, auth service/controller, roles guard, user status guard, decorators, DTOs, module wiring + unit tests          |
-| 3    | Week 3     | 1 week   | MFA                               | Crypto AES-256-GCM, MFA service/controller, guard, decorator + unit tests                                                    |
-| 4    | Week 3-4   | 1 week   | Sessions + Password Reset         | Session service/controller, password reset service/controller, OTP, email verification + unit tests                          |
-| 5    | Week 4-5   | 1 week   | Platform Admin + OAuth + Invitations | PlatformAuth, OAuth module, Google plugin, Invitation service/controller + unit tests                                    |
-| 6    | Week 5-6   | 1 week   | Integration + Polish              | WsJwtGuard, E2E integration tests, complete error codes, JSDoc, README                                                       |
-| 7    | Week 6-7   | 1 week   | Shared + Client Subpath           | Extract shared types/constants, implement createAuthClient with native fetch, tests                                          |
-| 8    | Week 7     | 0.5 week | React Subpath                     | AuthProvider, useSession, useAuth, useAuthStatus, tests with React Testing Library                                           |
-| 9    | Week 7-8   | 1 week   | Next.js Subpath                   | createAuthProxy, route handlers, JWT helpers, cookie utils, proxy and redirect loop tests                                    |
+| Phase | Week     | Duration | Focus                                | Deliverables                                                                                                        |
+| ----- | -------- | -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| 1     | Week 1   | 1 week   | Core Foundation                      | Scaffold, interfaces, config, Redis, password, token manager, cookie, brute-force + unit tests                      |
+| 2     | Week 2   | 1 week   | Core Authentication                  | JWT strategy, auth service/controller, roles guard, user status guard, decorators, DTOs, module wiring + unit tests |
+| 3     | Week 3   | 1 week   | MFA                                  | Crypto AES-256-GCM, MFA service/controller, guard, decorator + unit tests                                           |
+| 4     | Week 3-4 | 1 week   | Sessions + Password Reset            | Session service/controller, password reset service/controller, OTP, email verification + unit tests                 |
+| 5     | Week 4-5 | 1 week   | Platform Admin + OAuth + Invitations | PlatformAuth, OAuth module, Google plugin, Invitation service/controller + unit tests                               |
+| 6     | Week 5-6 | 1 week   | Integration + Polish                 | WsJwtGuard, E2E integration tests, complete error codes, JSDoc, README                                              |
+| 7     | Week 6-7 | 1 week   | Shared + Client Subpath              | Extract shared types/constants, implement createAuthClient with native fetch, tests                                 |
+| 8     | Week 7   | 0.5 week | React Subpath                        | AuthProvider, useSession, useAuth, useAuthStatus, tests with React Testing Library                                  |
+| 9     | Week 7-8 | 1 week   | Next.js Subpath                      | createAuthProxy, route handlers, JWT helpers, cookie utils, proxy and redirect loop tests                           |
 
 > **Estimate:** ~8-9 weeks for 1 developer + an AI agent (6 weeks server + 3 weeks frontend). With rigorous human review, add a 20% buffer (~11 weeks total).
 
@@ -4821,7 +4758,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 8. **Unit tests**
    - Tests for `PasswordService`, `TokenManagerService`, `TokenDeliveryService`, `BruteForceService`
    - Tests for `AuthRedisService` (mock Redis)
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 ### 19.3 Phase 2 — Core Authentication (Week 2)
 
@@ -4857,7 +4794,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 7. **Unit tests**
    - Tests for `AuthService` (register, login, logout, refresh)
    - Tests for guards (JwtAuthGuard, RolesGuard, UserStatusGuard)
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 ### 19.4 Phase 3 — Multi-Factor Authentication (MFA) (Week 3)
 
@@ -4890,7 +4827,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
    - Tests for `MfaService` (setup, verify, challenge, disable, recovery codes)
    - Tests for `AES-256-GCM` (encrypt/decrypt round-trip)
    - Tests for `MfaRequiredGuard`
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 ### 19.5 Phase 4 — Sessions and Password Reset (Week 3-4)
 
@@ -4921,7 +4858,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
    - Tests for `SessionService` (create, list, revoke, FIFO eviction)
    - Tests for `PasswordResetService` (token and OTP methods)
    - Tests for `OtpService` (moved to Phase 2)
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 ### 19.6 Phase 5 — Platform, OAuth, and Invitations (Week 4-5)
 
@@ -4954,7 +4891,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
    - Tests for `PlatformAuthService`
    - Tests for `InvitationService`
    - Tests for `OAuthService` and the Google plugin (mock fetch for OAuth)
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 ### 19.7 Phase 6 — Integration, Polish, and Publishing (Week 5-6)
 
@@ -4984,7 +4921,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
    - Integration tests for complete flows (register → login → refresh → logout)
    - Tests for MFA (setup → verify → challenge → disable)
    - Tests for brute-force, sessions, password reset
-   - Minimum coverage: 80%
+   - Minimum coverage: 100%
 
 6. **Polish**
    - Review of barrel exports (`index.ts`)
@@ -4997,6 +4934,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 **Objective:** Extract shared types and constants into `src/shared/` and implement a framework-agnostic authentication client with native `fetch`.
 
 **Deliverables:**
+
 1. `./shared` subpath — types (`AuthUserClient`, `AuthClientResponse`, `AuthErrorResponse`, JWT payloads) and constants (cookie names, error codes, auth routes)
 2. `./client` subpath — `createAuthClient` factory, `createAuthFetch` wrapper with single-flight refresh dedup and `shouldSkipRefreshOnUrl`
 3. Zero external dependencies in both subpaths
@@ -5007,6 +4945,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 **Objective:** Implement React hooks and a context provider for managing authentication state.
 
 **Deliverables:**
+
 1. `AuthProvider`, `useSession`, `useAuth`, `useAuthStatus`
 2. Tests with React Testing Library
 3. Peer dependency: `react ^19`
@@ -5016,11 +4955,12 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 **Objective:** Implement complete integration with Next.js 16 including proxy, route handlers, and JWT helpers.
 
 **Deliverables:**
+
 1. `createAuthProxy` with redirect loop protection (`_r` counter + `reason=expired`), background request detection, RBAC, and status-based blocking
 2. `createSilentRefreshHandler`, `createClientRefreshHandler`, `createLogoutHandler`
 3. JWT helpers with HS256 verification via Web Crypto API
 4. Cookie utilities with `dedupeSetCookieHeaders`
-5. Tests with 90%+ coverage on the critical paths of the proxy
+5. Tests with 100%+ coverage on the critical paths of the proxy
 6. Peer dependencies: `next ^16`, `react ^19`
 
 ---
@@ -5031,48 +4971,48 @@ This section documents technical and architectural limitations of the package th
 
 ### 20.1 Framework
 
-| Limitation          | Impact                                                                | Alternative                                             |
-| ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------- |
-| **NestJS only**    | Does not work with plain Express, standalone Fastify, or other frameworks | Extract services into an agnostic package in a future version |
-| **Node.js only**   | No support for Deno, Bun, or other runtimes                            | No support plan                                         |
+| Limitation       | Impact                                                                    | Alternative                                                   |
+| ---------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **NestJS only**  | Does not work with plain Express, standalone Fastify, or other frameworks | Extract services into an agnostic package in a future version |
+| **Node.js only** | No support for Deno, Bun, or other runtimes                               | No support plan                                               |
 
 ### 20.2 Authentication
 
-| Limitation                                  | Impact                                                                      | Alternative                                             |
-| ------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **HS256 only (symmetric)**                 | Does not support RS256/ES256 for distributed verification without sharing the secret | Planned for a future version                            |
-| **No WebAuthn/passkeys**                   | Does not support authentication via biometrics or security keys              | Out of scope for v1                                     |
-| **No magic links/passwordless**            | Does not support login via a link sent by email                              | Out of scope for v1                                     |
-| **scrypt is not the strongest**            | Argon2id is more resistant to GPU attacks but requires a native package      | scrypt is native in Node.js — an acceptable trade-off for zero deps         |
-| **React 19+ only**                         | The `./react` subpath requires React 19 with hooks                          | No plan for earlier versions                                                |
-| **Next.js 16+ only**                       | The `./nextjs` subpath uses the Proxy API (renamed from Middleware in Next.js 16) | No support for Next.js 15 or earlier                                    |
+| Limitation                      | Impact                                                                               | Alternative                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| **HS256 only (symmetric)**      | Does not support RS256/ES256 for distributed verification without sharing the secret | Planned for a future version                                        |
+| **No WebAuthn/passkeys**        | Does not support authentication via biometrics or security keys                      | Out of scope for v1                                                 |
+| **No magic links/passwordless** | Does not support login via a link sent by email                                      | Out of scope for v1                                                 |
+| **scrypt is not the strongest** | Argon2id is more resistant to GPU attacks but requires a native package              | scrypt is native in Node.js — an acceptable trade-off for zero deps |
+| **React 19+ only**              | The `./react` subpath requires React 19 with hooks                                   | No plan for earlier versions                                        |
+| **Next.js 16+ only**            | The `./nextjs` subpath uses the Proxy API (renamed from Middleware in Next.js 16)    | No support for Next.js 15 or earlier                                |
 
 ### 20.3 Infrastructure
 
-| Limitation                                    | Impact                                                                          | Alternative                                                     |
-| -------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **Redis is a single point of failure**       | If Redis goes down, refresh, logout, brute-force, MFA, and sessions fail         | Use Redis with replication (Sentinel/Cluster)                   |
-| **Single-region**                            | No discussion of multi-region Redis replication or JWT validation across regions | The host application must configure a multi-region Redis Cluster |
-| **No key rotation for the JWT secret**       | If the secret is compromised, all tokens are compromised                         | Resetting the secret invalidates all tokens; no dual-key support |
-| **No key rotation for the MFA encryption key** | If the AES key is compromised, all TOTP secrets are exposed                    | No automatic re-encryption mechanism                            |
+| Limitation                                     | Impact                                                                           | Alternative                                                      |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Redis is a single point of failure**         | If Redis goes down, refresh, logout, brute-force, MFA, and sessions fail         | Use Redis with replication (Sentinel/Cluster)                    |
+| **Single-region**                              | No discussion of multi-region Redis replication or JWT validation across regions | The host application must configure a multi-region Redis Cluster |
+| **No key rotation for the JWT secret**         | If the secret is compromised, all tokens are compromised                         | Resetting the secret invalidates all tokens; no dual-key support |
+| **No key rotation for the MFA encryption key** | If the AES key is compromised, all TOTP secrets are exposed                      | No automatic re-encryption mechanism                             |
 
 ### 20.4 Multi-tenancy
 
-| Limitation                 | Impact                                                               | Alternative                                              |
-| ------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Single-tenant JWT**     | A user who belongs to multiple tenants needs separate sessions        | The host application manages tenant switching            |
-| **No tenant resolution**  | The package does not resolve the tenant from subdomain, header, or body | The host application must resolve the tenant before calling auth |
+| Limitation               | Impact                                                                  | Alternative                                                      |
+| ------------------------ | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Single-tenant JWT**    | A user who belongs to multiple tenants needs separate sessions          | The host application manages tenant switching                    |
+| **No tenant resolution** | The package does not resolve the tenant from subdomain, header, or body | The host application must resolve the tenant before calling auth |
 
 ### 20.5 Missing features
 
-| Feature                     | Status       | Forecast                                |
-| ---------------------------------- | ------------ | --------------------------------------- |
-| Login via API key (Bearer header)  | Not included | Responsibility of each SaaS             |
-| Portal sessions (temporary token)  | Not included | Responsibility of each SaaS             |
-| Email change flow                  | Not included | Future version                          |
-| Account deletion (GDPR erasure)    | Not included | Responsibility of each SaaS via hooks   |
-| Recovery code regeneration         | Not included | Future version                          |
-| OAuth account unlinking            | Not included | Future version                          |
+| Feature                           | Status       | Forecast                              |
+| --------------------------------- | ------------ | ------------------------------------- |
+| Login via API key (Bearer header) | Not included | Responsibility of each SaaS           |
+| Portal sessions (temporary token) | Not included | Responsibility of each SaaS           |
+| Email change flow                 | Not included | Future version                        |
+| Account deletion (GDPR erasure)   | Not included | Responsibility of each SaaS via hooks |
+| Recovery code regeneration        | Not included | Future version                        |
+| OAuth account unlinking           | Not included | Future version                        |
 
 ---
 
@@ -5250,29 +5190,29 @@ User             Controller        AuthService         TokenDeliveryService  Red
 
 ## Appendix B: Security Checklist
 
-| Item                                     | Implementation                                                           |
-| ---------------------------------------- | ----------------------------------------------------------------------- |
-| Passwords hashed with scrypt (N=2^15, r=8, p=1) | `PasswordService.hash()` via `node:crypto`                       |
-| Constant-time comparison of passwords    | `crypto.timingSafeEqual()` to prevent timing attacks                    |
-| TOTP secrets encrypted at rest           | AES-256-GCM in `MfaService.encryptSecret()`                             |
-| Recovery codes hashed individually       | scrypt hash of each code via `PasswordService`                          |
-| Opaque refresh tokens (not JWT)          | UUID v4, stored in Redis                                                |
-| Refresh token rotation                   | New token on each refresh, old one invalidated                          |
-| Grace window for rotation                | 30s `rp:` pointer for concurrent requests                               |
-| Access token blacklist                   | Redis key `rv:{sha256(jwt)}` on logout                                  |
-| HttpOnly cookies (cookie/both mode)      | Access and refresh tokens never accessible via JS                       |
-| Secure storage (bearer mode)             | Mobile uses the OS `SecureStore`/`Keychain` — inaccessible by other apps |
-| SameSite Strict on refresh (cookie mode) | Prevents CSRF on the refresh endpoint                                   |
-| Restricted path on the refresh cookie    | `/auth` — not sent on other routes (cookie/both mode)                   |
-| Brute-force protection                   | Lockout per email after N attempts                                      |
-| Rate limiting per IP                     | `@Throttle()` on all sensitive endpoints                                |
-| Does not reveal the existence of a user  | Generic message in login and forgot-password                            |
-| PII masked in logs                       | `sha256(email).substring(0, 8)` for reference                           |
-| Status cache with TTL                    | Redis cache of 60s avoids excessive queries                             |
-| Tokens with SHA-256 as the Redis key     | Tokens never stored in plain text in Redis                              |
-| MFA temp token with short TTL            | 5 minutes validity                                                      |
-| OTP with attempt limit                   | Maximum 5 attempts per OTP                                              |
-| Invitations with TTL                     | 7 days validity by default                                              |
+| Item                                            | Implementation                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------ |
+| Passwords hashed with scrypt (N=2^15, r=8, p=1) | `PasswordService.hash()` via `node:crypto`                               |
+| Constant-time comparison of passwords           | `crypto.timingSafeEqual()` to prevent timing attacks                     |
+| TOTP secrets encrypted at rest                  | AES-256-GCM in `MfaService.encryptSecret()`                              |
+| Recovery codes hashed individually              | scrypt hash of each code via `PasswordService`                           |
+| Opaque refresh tokens (not JWT)                 | UUID v4, stored in Redis                                                 |
+| Refresh token rotation                          | New token on each refresh, old one invalidated                           |
+| Grace window for rotation                       | 30s `rp:` pointer for concurrent requests                                |
+| Access token blacklist                          | Redis key `rv:{sha256(jwt)}` on logout                                   |
+| HttpOnly cookies (cookie/both mode)             | Access and refresh tokens never accessible via JS                        |
+| Secure storage (bearer mode)                    | Mobile uses the OS `SecureStore`/`Keychain` — inaccessible by other apps |
+| SameSite Strict on refresh (cookie mode)        | Prevents CSRF on the refresh endpoint                                    |
+| Restricted path on the refresh cookie           | `/auth` — not sent on other routes (cookie/both mode)                    |
+| Brute-force protection                          | Lockout per email after N attempts                                       |
+| Rate limiting per IP                            | `@Throttle()` on all sensitive endpoints                                 |
+| Does not reveal the existence of a user         | Generic message in login and forgot-password                             |
+| PII masked in logs                              | `sha256(email).substring(0, 8)` for reference                            |
+| Status cache with TTL                           | Redis cache of 60s avoids excessive queries                              |
+| Tokens with SHA-256 as the Redis key            | Tokens never stored in plain text in Redis                               |
+| MFA temp token with short TTL                   | 5 minutes validity                                                       |
+| OTP with attempt limit                          | Maximum 5 attempts per OTP                                               |
+| Invitations with TTL                            | 7 days validity by default                                               |
 
 ---
 
@@ -5289,8 +5229,8 @@ Types and constants shared between server and client with **zero external depend
 ```typescript
 // JWT types (shared with server)
 export interface DashboardJwtPayload {
-  sub: string        // User ID
-  jti: string        // Token ID (for blacklist)
+  sub: string // User ID
+  jti: string // Token ID (for blacklist)
   tenantId: string
   role: string
   type: 'dashboard'
@@ -5303,7 +5243,7 @@ export interface DashboardJwtPayload {
 export interface PlatformJwtPayload {
   sub: string
   jti: string
-  role: string       // SUPER_ADMIN | ADMIN | SUPPORT
+  role: string // SUPER_ADMIN | ADMIN | SUPPORT
   type: 'platform'
   mfaVerified: boolean
   iat: number
@@ -5325,8 +5265,8 @@ export interface AuthUserClient {
 // Response shapes
 export interface AuthClientResponse {
   user: AuthUserClient
-  accessToken?: string   // Present only in bearer/both mode
-  refreshToken?: string  // Present only in bearer/both mode
+  accessToken?: string // Present only in bearer/both mode
+  refreshToken?: string // Present only in bearer/both mode
 }
 
 export interface MfaChallengeResult {
@@ -5339,7 +5279,7 @@ export interface AuthErrorResponse {
   message: string
   error: string
   statusCode: number
-  code?: string  // AUTH_ERROR_CODES key
+  code?: string // AUTH_ERROR_CODES key
 }
 
 // Cookie constants
@@ -5349,7 +5289,9 @@ export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'
 export const AUTH_REFRESH_COOKIE_PATH = '/auth'
 
 // Error codes (same object as the server)
-export const AUTH_ERROR_CODES = { /* ... */ } as const
+export const AUTH_ERROR_CODES = {
+  /* ... */
+} as const
 
 // Paths of the auth endpoints
 export const AUTH_ROUTES = {
@@ -5361,7 +5303,7 @@ export const AUTH_ROUTES = {
   FORGOT_PASSWORD: '/auth/forgot-password',
   RESET_PASSWORD: '/auth/reset-password',
   VERIFY_EMAIL: '/auth/verify-email',
-  MFA_CHALLENGE: '/auth/mfa/challenge',
+  MFA_CHALLENGE: '/auth/mfa/challenge'
 } as const
 ```
 
@@ -5394,7 +5336,11 @@ interface AuthClientConfig {
 
 ```typescript
 interface AuthClient {
-  login(email: string, password: string, options?: { tenantId?: string }): Promise<AuthClientResponse>
+  login(
+    email: string,
+    password: string,
+    options?: { tenantId?: string }
+  ): Promise<AuthClientResponse>
   register(data: RegisterData): Promise<AuthClientResponse>
   logout(): Promise<void>
   refresh(): Promise<boolean>
@@ -5418,32 +5364,40 @@ function createAuthFetch(config: AuthClientConfig) {
 
   /** URLs of auth endpoints that should NOT trigger a refresh on 401 */
   const AUTH_PATHS = [
-    '/auth/sign-in', '/auth/sign-up', '/auth/refresh',
-    '/api/auth/client-refresh', '/api/auth/silent-refresh',
-    '/auth/forgot-password', '/auth/verify', '/auth/reset-password',
+    '/auth/sign-in',
+    '/auth/sign-up',
+    '/auth/refresh',
+    '/api/auth/client-refresh',
+    '/api/auth/silent-refresh',
+    '/auth/forgot-password',
+    '/auth/verify',
+    '/auth/reset-password'
   ]
 
   function shouldSkipRefreshOnUrl(url: string): boolean {
-    return AUTH_PATHS.some(path => url.includes(path))
+    return AUTH_PATHS.some((path) => url.includes(path))
   }
 
   async function refreshSession(): Promise<boolean> {
     const res = await fetch(config.refreshEndpoint ?? '/api/auth/client-refresh', {
       method: 'POST',
-      credentials: 'include',
+      credentials: 'include'
     })
     return res.ok
   }
 
   async function authFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-    const url = typeof input === 'string'
-      ? (input.startsWith('http') ? input : `${config.baseUrl}${input}`)
-      : input.toString()
+    const url =
+      typeof input === 'string'
+        ? input.startsWith('http')
+          ? input
+          : `${config.baseUrl}${input}`
+        : input.toString()
 
     const response = await fetch(url, {
       ...init,
       credentials: config.credentials ?? 'include',
-      headers: { ...config.defaultHeaders, ...init?.headers },
+      headers: { ...config.defaultHeaders, ...init?.headers }
     })
 
     // Not a 401, or it is an auth endpoint — return as is
@@ -5453,7 +5407,9 @@ function createAuthFetch(config: AuthClientConfig) {
 
     // 401 on a non-auth endpoint — try refresh (single-flight)
     if (!refreshPromise) {
-      refreshPromise = refreshSession().finally(() => { refreshPromise = null })
+      refreshPromise = refreshSession().finally(() => {
+        refreshPromise = null
+      })
     }
     const refreshed = await refreshPromise
 
@@ -5462,7 +5418,7 @@ function createAuthFetch(config: AuthClientConfig) {
       return fetch(url, {
         ...init,
         credentials: config.credentials ?? 'include',
-        headers: { ...config.defaultHeaders, ...init?.headers },
+        headers: { ...config.defaultHeaders, ...init?.headers }
       })
     }
 
@@ -5473,21 +5429,27 @@ function createAuthFetch(config: AuthClientConfig) {
 
   // Convenience methods that delegate to authFetch with method/headers pre-configured
   const get = (url: string, init?: RequestInit) => authFetch(url, { ...init, method: 'GET' })
-  const post = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
-    ...init, method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    body: body ? JSON.stringify(body) : undefined
-  })
-  const put = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
-    ...init, method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    body: body ? JSON.stringify(body) : undefined
-  })
-  const patch = (url: string, body?: unknown, init?: RequestInit) => authFetch(url, {
-    ...init, method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    body: body ? JSON.stringify(body) : undefined
-  })
+  const post = (url: string, body?: unknown, init?: RequestInit) =>
+    authFetch(url, {
+      ...init,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      body: body ? JSON.stringify(body) : undefined
+    })
+  const put = (url: string, body?: unknown, init?: RequestInit) =>
+    authFetch(url, {
+      ...init,
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      body: body ? JSON.stringify(body) : undefined
+    })
+  const patch = (url: string, body?: unknown, init?: RequestInit) =>
+    authFetch(url, {
+      ...init,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      body: body ? JSON.stringify(body) : undefined
+    })
   const del = (url: string, init?: RequestInit) => authFetch(url, { ...init, method: 'DELETE' })
 
   return { fetch: authFetch, get, post, put, patch, delete: del }
@@ -5504,7 +5466,7 @@ const auth = createAuthClient({
   baseUrl: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000',
   onSessionExpired: () => {
     window.location.href = '/auth/login'
-  },
+  }
 })
 
 // Login
@@ -5512,7 +5474,7 @@ const result = await auth.login('user@example.com', 'password123')
 
 // Authenticated calls (automatic refresh on 401)
 const me = await auth.getMe()
-const users = await auth.fetch('/api/users').then(r => r.json())
+const users = await auth.fetch('/api/users').then((r) => r.json())
 ```
 
 ---
@@ -5551,7 +5513,11 @@ function useSession(): {
 
 ```typescript
 function useAuth(): {
-  login: (email: string, password: string, options?: { tenantId?: string }) => Promise<AuthClientResponse>
+  login: (
+    email: string,
+    password: string,
+    options?: { tenantId?: string }
+  ) => Promise<AuthClientResponse>
   register: (data: RegisterData) => Promise<AuthClientResponse>
   logout: () => Promise<void>
   forgotPassword: (email: string) => Promise<void>
@@ -5637,9 +5603,9 @@ interface AuthProxyConfig {
   }
   /** Names of the headers propagated to server components */
   userHeaders?: {
-    userId?: string      // default: 'x-user-id'
-    userRole?: string    // default: 'x-user-role'
-    tenantId?: string    // default: 'x-tenant-id'
+    userId?: string // default: 'x-user-id'
+    userRole?: string // default: 'x-user-role'
+    tenantId?: string // default: 'x-tenant-id'
     tenantDomain?: string // default: 'x-tenant-domain'
   }
   /** User statuses blocked in the proxy. Default: ['BANNED', 'INACTIVE', 'EXPIRED'] */
@@ -5654,6 +5620,7 @@ interface AuthProxyConfig {
 **1. `isBackgroundRequest(request)` — Detection of parallel Next.js requests:**
 
 Detects RSC payload fetches, prefetches, and router state updates via headers:
+
 - `RSC: 1` — RSC payload request
 - `Next-Router-Prefetch: 1` — link prefetch
 - `Next-Router-State-Tree` — client-side navigation RSC fetch
@@ -5702,14 +5669,19 @@ import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 const { proxy, config } = createAuthProxy({
   publicRoutes: ['/', '/welcome', '/auth/*', '/privacy'],
   publicRoutesRedirectIfAuthenticated: [
-    '/', '/welcome', '/auth/login', '/auth/register',
-    '/auth/forgot-password', '/auth/reset-password', '/auth/verify-otp',
+    '/',
+    '/welcome',
+    '/auth/login',
+    '/auth/register',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+    '/auth/verify-otp'
   ],
   protectedRoutes: [
     { pattern: /^\/admin\/.*/, allowedRoles: ['ADMIN'], redirectPath: '/app/dashboard' },
-    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' },
+    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' }
   ],
-  getDefaultDashboard: (role) => role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard',
+  getDefaultDashboard: (role) => (role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard')
 })
 
 export { proxy, config }
@@ -5722,6 +5694,7 @@ export { proxy, config }
 Called by the proxy via redirect when the access token has expired but `has_session` indicates that a refresh token may exist.
 
 Flow:
+
 1. Forwards cookies to the backend `POST /auth/refresh` with the `Cookie`, `X-Tenant-Domain`, `Content-Type` headers
 2. **Success:** Redirect to the destination (`redirect` param) with Set-Cookie headers propagated via `dedupeSetCookieHeaders()`
 3. **Failure:** Redirect to `/auth/login?reason=expired` with explicit clearing of the 3 cookies (access, refresh, has_session) with the correct paths
@@ -5736,6 +5709,7 @@ export const GET = createSilentRefreshHandler()
 **`createClientRefreshHandler(config?)`** — POST handler for `/api/auth/client-refresh`
 
 A same-origin bridge for client-side refresh. Necessary because:
+
 1. The `refresh_token` cookie has `Path=/api/auth` — the browser only sends it for requests on this path
 2. The backend may be on another domain (cross-origin)
 3. Cross-origin HTTP-only cookies may be blocked by ITP (Safari) or ETP (Firefox)

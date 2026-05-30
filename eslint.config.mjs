@@ -137,6 +137,22 @@ export default [
     }
   },
 
+  // Scripts (scripts/*.mjs) — plain JS, Node.js globals
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.node
+      }
+    },
+    rules: {
+      'no-eval': 'error',
+      'no-new-func': 'error'
+    }
+  },
+
   // Config files (tsup.config.ts, jest.config.ts, etc.) — with TS parser, no type-aware project
   {
     files: ['*.config.ts', '*.config.mjs', '*.config.js'],
