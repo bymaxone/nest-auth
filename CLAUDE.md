@@ -82,8 +82,13 @@ pnpm mutation             # full run (~10 min); writes reports/mutation/mutation
 pnpm mutation:incremental # faster re-run using reports/stryker-incremental.json
 ```
 
-Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`.
-Full setup, config rationale, and the iteration workflow live in
+Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`
+— acceptable **only** for genuinely equivalent mutants (no test can kill them), each carrying a
+reason. Minimize them, and **never** disable a mutant a test could kill. (They ship in the
+unminified `.mjs` as cosmetic noise — negligible in size. Documenting equivalents in
+`docs/mutation_testing_results.md` instead is the alternative, but only fits when there are few;
+nest-auth's 184 legitimate equivalents make inline the pragmatic choice — moving them to docs would
+drop the score below the 95 gate.) Full setup, config rationale, and the iteration workflow live in
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Do **not** add
 mutation testing to `prepublishOnly` or the per-PR CI — it is a manual/release gate.
 

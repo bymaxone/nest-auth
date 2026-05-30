@@ -10,7 +10,7 @@ import globals from 'globals'
 export default [
   // Global ignores — only build artifacts and coverage, NOT config files
   {
-    ignores: ['node_modules/**', 'dist/**', 'coverage/**']
+    ignores: ['node_modules/**', 'dist/**', 'coverage/**', 'reports/**', '.stryker-tmp/**']
   },
 
   // Base recommended config

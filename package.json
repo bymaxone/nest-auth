@@ -64,7 +64,17 @@
     "size": "node scripts/check-size.mjs",
     "clean": "rm -rf dist coverage",
     "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build",
-    "release": "pnpm publish --provenance"
+    "release": "pnpm publish --provenance",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "peerDependencies": {
     "@nestjs/common": "^11.0.0",
@@ -123,6 +133,8 @@
     }
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
     "@eslint/js": "^9.39.4",
     "@nestjs/common": "^11.1.20",
     "@nestjs/core": "^11.1.20",
@@ -131,15 +143,13 @@
     "@nestjs/testing": "^11.1.20",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.20",
-    "@size-limit/preset-small-lib": "12.1.0",
     "@stryker-mutator/core": "^9",
     "@stryker-mutator/jest-runner": "^9",
     "@stryker-mutator/typescript-checker": "^9",
-    "@swc/core": "^1.15.33",
     "@testing-library/react": "^16.3.2",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.7.0",
+    "@types/node": "^24",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/supertest": "^7.2.0",
@@ -154,17 +164,17 @@
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-security": "^4.0.0",
     "globals": "^17.6.0",
+    "husky": "^9.1.7",
     "ioredis": "^5.10.1",
     "ioredis-mock": "^8.13.1",
     "jest": "^30.4.2",
     "jest-environment-jsdom": "^30.4.1",
-    "jscpd": "4.2.3",
+    "lint-staged": "^15.2.10",
     "next": "^16.2.6",
     "prettier": "^3.8.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "reflect-metadata": "^0.2.2",
-    "size-limit": "12.1.0",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
