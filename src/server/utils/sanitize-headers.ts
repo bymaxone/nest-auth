@@ -1,5 +1,5 @@
 /**
- * HTTP header sanitization utility for @bymax-one/nest-auth.
+ * @fileoverview HTTP header sanitization utility for @bymax-one/nest-auth.
  *
  * Removes sensitive headers before they are included in a HookContext
  * or any audit/log output. Two complementary strategies are applied:

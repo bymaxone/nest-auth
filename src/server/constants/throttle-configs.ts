@@ -1,5 +1,5 @@
 /**
- * Rate limiting configurations for @bymax-one/nest-auth endpoints.
+ * @fileoverview Rate limiting configurations for @bymax-one/nest-auth endpoints.
  *
  * Exported as named throttler configurations compatible with the
  * `@Throttle()` decorator from `@nestjs/throttler` >= 6.0.0.
