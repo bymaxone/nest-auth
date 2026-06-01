@@ -1,4 +1,2 @@
 #!/usr/bin/env sh
-# Delegates to the global pre-push hook.
-# The global hook blocks commits containing "Co-Authored-By:" in the message.
-~/.git-hooks/pre-push
+# Global hooks run via ~/.config/husky/init.sh
