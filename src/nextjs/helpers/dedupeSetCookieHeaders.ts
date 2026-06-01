@@ -335,7 +335,7 @@ export function getSetCookieHeaders(headers: HeadersLike): string[] {
 }
 
 /**
- * Builds a string key used to deduplicate `Set-Cookie` headers by name, path, and domain.
+ * Builds a string key used to deduplicate `Set-Cookie` headers by name and domain.
  *
  * Uses `domain ?? ''` as the domain sentinel so that host-only cookies (no explicit Domain
  * attribute) and cookies with `Domain=""` are treated as the same bucket during deduplication.

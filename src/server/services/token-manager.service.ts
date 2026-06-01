@@ -753,7 +753,8 @@ export class TokenManagerService {
    *   `jti` to {@link consumeMfaTempToken} after TOTP validation succeeds.
    * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` if the
    *   Redis entry is missing (already consumed, expired, or never issued).
-   * @throws {@link AuthException} When JWT signature or expiry validation fails.
+   * @throws {Error} When JWT signature or expiry validation fails (propagated
+   *   directly from `JwtService.verify()` — not wrapped in {@link AuthException}).
    */
   async verifyMfaTempToken(
     token: string

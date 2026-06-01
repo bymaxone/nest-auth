@@ -362,7 +362,7 @@ export class TokenDeliveryService {
     }
   }
 
-  /** Reads the access token from the configured cookie name in the request. */
+  /** Reads the value of the cookie identified by `name` from the request. */
   private readCookie(req: Request, name: string): string | undefined {
     // eslint-disable-next-line security/detect-object-injection
     const value = (req.cookies as Record<string, unknown> | undefined)?.[name]

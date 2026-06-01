@@ -426,7 +426,8 @@ export class SessionService {
    *
    * @param userId - Internal user ID whose other sessions are being revoked.
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
-   * @throws {@link AuthException} When an underlying `revokeSession` call throws an unexpected error.
+   * @throws {unknown} Propagates any error thrown by `revokeSession` — including
+   *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
    */
   async revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void> {
     this.assertValidSessionHash(currentSessionHash)
