@@ -54,6 +54,8 @@ const SALT_BYTES = 16
  * **Thread safety:** scrypt is CPU-intensive. In production, calls will block
  * the Node.js event loop for ~100–200 ms. Consider running behind a worker
  * thread or rate-limiting authentication endpoints.
+ *
+ * @layer Service
  */
 @Injectable()
 export class PasswordService {

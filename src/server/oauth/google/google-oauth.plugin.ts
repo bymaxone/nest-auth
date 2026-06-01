@@ -12,6 +12,8 @@
  *
  * Scopes default to `['openid', 'email', 'profile']`, providing email,
  * display name, and picture from Google's UserInfo endpoint.
+ *
+ * @layer Plugin
  */
 
 import type { OAuthProfile, OAuthProviderPlugin } from '../../interfaces/oauth-provider.interface'

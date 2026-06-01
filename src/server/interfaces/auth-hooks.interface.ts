@@ -14,6 +14,8 @@
  * - Never access raw HTTP headers inside hooks — use `context.sanitizedHeaders`
  *   which has been pre-processed by the `sanitizeHeaders` utility to remove
  *   authorization tokens, cookies, and other sensitive values.
+ *
+ * @layer Interface
  */
 
 import type { SessionInfo } from './email-provider.interface'

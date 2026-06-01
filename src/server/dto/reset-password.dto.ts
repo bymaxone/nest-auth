@@ -21,6 +21,8 @@ import {
  * `verifiedToken` uses `@Length(64, 64)`. Without these guards, an empty string would
  * pass `@IsOptional()` and produce a valid (but incorrect) `sha256("")` key in Redis,
  * potentially allowing a crafted request to bypass token validation.
+ *
+ * @layer DTO
  */
 export class ResetPasswordDto {
   /**

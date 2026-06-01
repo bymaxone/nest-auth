@@ -94,6 +94,12 @@ export function handlePublicRoute(
  * That exception prevents the blocked-user ping-pong between
  * `/dashboard` (blocked → redirected to /login?reason=banned) and
  * `/login` (authenticated → redirected to /dashboard).
+ *
+ * @param request - The incoming Next.js request.
+ * @param pathname - Normalised pathname of the request.
+ * @param tokenState - Resolved authentication state for the current request.
+ * @param config - Resolved proxy configuration.
+ * @param sanitizedHeaders - Request headers with all identity headers stripped.
  */
 function handleAuthenticatedOnPublic(
   request: NextRequest,
@@ -183,6 +189,11 @@ export function handleProtectedRoute(
  * unauthenticated. Chooses between straight-to-login and
  * silent-refresh based on the `has_session` cookie and the two
  * anti-loop guards.
+ *
+ * @param request - The incoming Next.js request.
+ * @param pathname - Normalised pathname of the request.
+ * @param tokenState - Resolved authentication state for the current request.
+ * @param config - Resolved proxy configuration.
  */
 function handleUnauthenticatedOnProtected(
   request: NextRequest,

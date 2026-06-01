@@ -4,6 +4,8 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-valid
  * Data Transfer Object for the user login endpoint.
  *
  * Validated via NestJS `ValidationPipe` before reaching the service layer.
+ *
+ * @layer DTO
  */
 export class LoginDto {
   /**

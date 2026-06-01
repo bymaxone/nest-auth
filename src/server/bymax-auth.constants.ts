@@ -13,6 +13,8 @@
  *   useClass: PrismaUserRepository,
  * }
  * ```
+ *
+ * @layer Constants
  */
 
 /**

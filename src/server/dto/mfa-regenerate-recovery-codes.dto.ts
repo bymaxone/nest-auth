@@ -16,6 +16,8 @@ import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
  * re-enrol (which forces a fresh secret AND a fresh recovery code set),
  * not to silently rotate recovery codes using one of the codes the user
  * may already have leaked.
+ *
+ * @layer DTO
  */
 export class MfaRegenerateRecoveryCodesDto {
   /**

@@ -5,6 +5,8 @@
  * All values here are secure production defaults — changing them requires understanding
  * the security implications documented in the JSDoc of each field in
  * `BymaxAuthModuleOptions`.
+ *
+ * @layer Config
  */
 
 /**

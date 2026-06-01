@@ -193,6 +193,8 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
  * This service is responsible only for session creation and enforcement.
  * Session listing, individual revocation, and bulk-revocation are handled
  * by dedicated session-management services.
+ *
+ * @layer Service
  */
 @Injectable()
 export class SessionService {
@@ -424,6 +426,8 @@ export class SessionService {
    *
    * @param userId - Internal user ID whose other sessions are being revoked.
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
+   * @throws {unknown} Propagates any error thrown by `revokeSession` — including
+   *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
    */
   async revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void> {
     this.assertValidSessionHash(currentSessionHash)

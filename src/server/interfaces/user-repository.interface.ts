@@ -4,6 +4,8 @@
  * Defines the canonical shape of a dashboard/tenant user and the repository
  * contract that must be implemented by the consuming application. The library
  * never imports a concrete ORM model — only this interface.
+ *
+ * @layer Interface
  */
 
 /**

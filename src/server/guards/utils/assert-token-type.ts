@@ -1,3 +1,8 @@
+/**
+ * @fileoverview JWT token-type assertion utilities for NestJS authentication guards.
+ *
+ * @layer Guard
+ */
 import { AUTH_ERROR_CODES } from '../../errors/auth-error-codes'
 import { AuthException } from '../../errors/auth-exception'
 

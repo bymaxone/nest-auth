@@ -51,6 +51,8 @@ type WsClient = {
  * @SubscribeMessage('message')
  * handleMessage(@ConnectedSocket() client: Socket) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class WsJwtGuard implements CanActivate, OnModuleInit {
@@ -60,6 +62,10 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 
+  /**
+   * Verifies that `@nestjs/websockets` is installed and throws a descriptive
+   * error at application startup if the package is absent.
+   */
   async onModuleInit(): Promise<void> {
     try {
       await import('@nestjs/websockets')

@@ -23,6 +23,8 @@
  * `OAuthModule.register()` is provided for standalone usage and testing — in that
  * case the consumer must supply all external dependencies (`AuthRedisService`,
  * `TokenManagerService`, `SessionService`, and the injection tokens) as providers.
+ *
+ * @layer Module
  */
 
 import { Module, type DynamicModule, type Provider } from '@nestjs/common'

@@ -45,8 +45,8 @@ const MFA_SETUP_TTL_SECONDS = 600
 /**
  * TTL in seconds for the TOTP anti-replay key.
  *
- * A code accepted at step −1 (the first step of the ±1 window) remains valid
- * in `verifyTotp` until the end of step +1 — a span of up to 60 s. Adding a
+ * A code accepted at period −1 (the first period of the ±1 window) remains valid
+ * in `verifyTotp` until the end of period +1 — a span of up to 60 s. Adding a
  * 30-second buffer gives a 90-second TTL, ensuring the anti-replay key outlives
  * every code that `verifyTotp` would accept: (2 × window + 1) × 30 = 90 s for
  * window=1. Adjust proportionally if `totpWindow` is increased.
@@ -79,7 +79,7 @@ export interface MfaSetupResult {
 }
 
 /**
- * Shape stored in Redis during the MFA setup pending phase.
+ * Shape stored in Redis during a pending MFA setup.
  *
  * `encryptedSecret` and `encryptedPlainCodes` are both AES-256-GCM encrypted so
  * that a Redis compromise during the 10-minute setup window does not expose the
@@ -115,6 +115,8 @@ interface MfaSetupData {
  * @remarks
  * This service is only registered when `options.mfa` is configured in
  * `BymaxAuthModule.registerAsync()`. All crypto operations use `node:crypto` only.
+ *
+ * @layer Service
  */
 @Injectable()
 export class MfaService {
@@ -140,7 +142,7 @@ export class MfaService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Convenience accessor for the resolved MFA options.
+   * Returns the resolved MFA configuration. `options.mfa` is always present when `MfaService` is registered.
    *
    * `options.mfa` is always present when `MfaService` is registered — the module
    * only registers the service when `mfa` is configured. The single suppression
@@ -420,6 +422,7 @@ export class MfaService {
    * @param ip - Client IP address (forwarded to hooks).
    * @param userAgent - User-Agent header (forwarded to hooks).
    * @param context - Which repository to use: `'dashboard'` (default) or `'platform'`.
+   * @throws {@link AuthException} MFA_ALREADY_ENABLED when MFA is already active on the account.
    * @throws `MFA_SETUP_REQUIRED` if no pending setup data is found in Redis.
    * @throws `MFA_INVALID_CODE` if the submitted TOTP code is invalid.
    * @throws `MFA_NOT_ENABLED` if `context === 'platform'` and the platform user
@@ -449,7 +452,7 @@ export class MfaService {
     const secretBase32 = this.decryptSecret(data.encryptedSecret)
 
     const totpWindow = this.mfaOptions.totpWindow
-    // Use anti-replay even for the enable step to prevent a racing/intercepted code
+    // Use anti-replay even on MFA enable to prevent a racing/intercepted code
     // from being reused via the challenge endpoint within the acceptance window.
     const codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
     if (!codeValid) {

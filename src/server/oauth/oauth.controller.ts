@@ -12,6 +12,8 @@
  * Both endpoints are `@Public()` — the OAuth flow is unauthenticated by design.
  * `@SkipMfa()` prevents `MfaRequiredGuard` from blocking the callback route when
  * it is applied globally.
+ *
+ * @layer Controller
  */
 
 import {

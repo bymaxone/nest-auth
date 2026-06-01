@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Domain exception class for all authentication-layer errors.
+ *
+ * @layer Error
+ */
 import { HttpException, HttpStatus } from '@nestjs/common'
 
 import type { AuthErrorCode } from './auth-error-codes'
@@ -29,6 +34,11 @@ import { AUTH_ERROR_MESSAGES } from './auth-error-codes'
  * ```
  */
 export class AuthException extends HttpException {
+  /**
+   * @param code - Stable machine-readable error code from `AUTH_ERROR_CODES`.
+   * @param statusCode - HTTP status code for the response. Defaults to `401 UNAUTHORIZED`.
+   * @param details - Optional structured payload attached to the error body under `error.details`.
+   */
   constructor(
     code: AuthErrorCode,
     statusCode: number = HttpStatus.UNAUTHORIZED,

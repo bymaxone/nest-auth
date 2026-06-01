@@ -3,7 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 /**
  * TOTP (Time-based One-Time Password) implementation per RFC 6238 / HOTP per RFC 4226.
  *
- * Uses HMAC-SHA1 with 30-second time steps and 6-digit codes, matching the
+ * Uses HMAC-SHA1 with 30-second periods and 6-digit codes, matching the
  * configuration expected by Google Authenticator, Authy, and compatible apps.
  *
  * All operations are pure functions — no I/O, no side effects. The caller is
@@ -15,7 +15,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
  * - Never store secrets in plaintext — always encrypt before persistence using
  *   `src/server/crypto/aes-gcm.ts`.
  * - Anti-replay: the caller must track used codes in Redis with a TTL equal to
- *   the validation window to prevent reuse within the same time step.
+ *   the validation window to prevent reuse within the same time window.
  * - Verification window of 1 (default) accepts the previous, current, and next
  *   30-second periods (±30 s drift). Do not increase beyond 2.
  *
@@ -23,13 +23,15 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
  * interoperability with authenticator apps. SHA-1 collision weaknesses do not
  * apply to HMAC-SHA1 constructions (NIST SP 800-107). Do not replace with
  * HMAC-SHA256 — it would break compatibility with all standard TOTP apps.
+ *
+ * @layer Crypto
  */
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** TOTP time step in seconds (RFC 6238 §5.2 recommends 30 s). */
+/** TOTP period in seconds (RFC 6238 §5.2 recommends 30 s). */
 const TOTP_STEP_SECONDS = 30
 
 /** Number of digits in a generated TOTP code (RFC 4226 §5.3 allows 6–8). */
@@ -266,7 +268,7 @@ export function generateHotp(secretBase32: string, counter: number): string {
 /**
  * Generates the current TOTP code for a secret.
  *
- * Uses the current system clock and a 30-second time step.
+ * Uses the current system clock and a 30-second period.
  *
  * @param secretBase32 - Base32-encoded TOTP secret.
  * @returns The 6-digit TOTP code for the current 30-second window.
@@ -284,7 +286,7 @@ export function generateTotp(secretBase32: string): string {
 /**
  * Verifies a submitted TOTP code against a secret within an acceptable time window.
  *
- * Checks `window` steps before and after the current time step to tolerate
+ * Checks `window` periods before and after the current time period to tolerate
  * clock drift between the server and the user's authenticator device.
  *
  * Uses constant-time comparison via `crypto.timingSafeEqual` to prevent
@@ -295,7 +297,7 @@ export function generateTotp(secretBase32: string): string {
  * @param window - Number of 30-second periods to check on each side of now.
  *   Default: `1` (accepts codes ±30 s from current time).
  *   Maximum recommended: `2` (±60 s).
- * @returns `true` if the code matches any step within the window, `false` otherwise.
+ * @returns `true` if the code matches any period within the window, `false` otherwise.
  *
  * @remarks
  * Anti-replay is the caller's responsibility: a valid code should be stored in
@@ -315,7 +317,7 @@ export function verifyTotp(secretBase32: string, code: string, window = 1): bool
   const currentStep = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS)
 
   for (let delta = -window; delta <= window; delta++) {
-    // Stryker disable next-line ArithmeticOperator: the window is symmetric (delta ∈ [-window, +window]); currentStep + delta and currentStep - delta enumerate the same set of time steps, so the result is identical
+    // Stryker disable next-line ArithmeticOperator: the window is symmetric (delta ∈ [-window, +window]); currentStep + delta and currentStep - delta enumerate the same set of time periods, so the result is identical
     const expected = generateHotp(secretBase32, currentStep + delta)
     // Use constant-time comparison to prevent timing attacks.
     // Both strings are always exactly TOTP_DIGITS characters, so the length

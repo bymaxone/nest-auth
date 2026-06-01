@@ -47,6 +47,8 @@ import { hasRole } from '../utils/roles.util'
  * @Delete('/sessions/:id')
  * revokeSession(@Param('id') sessionHash: string) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class SelfOrAdminGuard implements CanActivate {

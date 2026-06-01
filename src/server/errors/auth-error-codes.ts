@@ -16,6 +16,8 @@
  * - Anti-enumeration endpoints (verify-email, forgot-password) return 200 regardless
  *   of whether the email exists; a code/token error is returned only when the code
  *   itself is submitted.
+ *
+ * @layer Error
  */
 
 /**

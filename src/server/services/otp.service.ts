@@ -44,6 +44,8 @@ interface OtpRecord {
  * when the buffer sizes differ. This short-circuit does NOT leak timing
  * information about the correct code length beyond what the OTP digit count
  * already implies.
+ *
+ * @layer Service
  */
 @Injectable()
 export class OtpService {

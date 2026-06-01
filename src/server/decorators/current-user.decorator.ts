@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Parameter decorator that injects the authenticated user's JWT payload.
+ *
+ * @layer Decorator
+ */
 import { createParamDecorator } from '@nestjs/common'
 import type { ExecutionContext } from '@nestjs/common'
 
@@ -25,6 +30,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
  *
  * @param property - Optional key to extract from the payload. When omitted the
  *   entire payload object is returned.
+ * @returns The full {@link DashboardJwtPayload} when `property` is omitted, or the value of the requested field.
  */
 export const CurrentUser = createParamDecorator(
   (property: keyof DashboardJwtPayload | undefined, ctx: ExecutionContext) => {

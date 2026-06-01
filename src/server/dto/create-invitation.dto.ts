@@ -15,6 +15,8 @@ import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-vali
  * Role validation against the configured hierarchy is performed in
  * `InvitationService.invite()` — not here — because `class-validator`
  * decorators have no access to the NestJS DI container at validation time.
+ *
+ * @layer DTO
  */
 export class CreateInvitationDto {
   /**

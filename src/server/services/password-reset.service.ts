@@ -83,6 +83,8 @@ interface ResetContext {
  * same result regardless of whether the email exists or the user is eligible.
  * Error codes and error shapes are intentionally identical for "not found" and
  * "wrong input" to avoid leaking the existence of an account.
+ *
+ * @layer Service
  */
 @Injectable()
 export class PasswordResetService {

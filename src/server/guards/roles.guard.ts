@@ -34,6 +34,8 @@ import { hasRole } from '../utils/roles.util'
  * @Delete('/users/:id')
  * deleteUser(@Param('id') id: string) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class RolesGuard implements CanActivate {

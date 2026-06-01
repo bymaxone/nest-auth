@@ -84,6 +84,18 @@ export function buildSilentRefreshUrl(request: RequestWithUrl, redirectTo?: stri
   return silentRefreshUrl.toString()
 }
 
+/**
+ * Resolves and validates the post-refresh destination URL.
+ *
+ * Guards against prototype-pollution by using `Object.prototype.hasOwnProperty`
+ * to check query parameter presence rather than direct property access.
+ *
+ * @param request - The incoming request, used to read `nextUrl` when available.
+ * @param requestUrl - Parsed `URL` derived from `request.url`, used as fallback.
+ * @param redirectTo - Explicit destination path; when absent or empty, falls back
+ *                     to the current pathname (plus search).
+ * @returns A safe, validated destination path string.
+ */
 function resolveDestination(
   request: RequestWithUrl,
   requestUrl: URL,

@@ -8,6 +8,8 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator'
  * Subject to a 60-second atomic cooldown enforced via a Redis NX key to
  * prevent OTP flooding. Always returns success regardless of user existence
  * to prevent enumeration.
+ *
+ * @layer DTO
  */
 export class ResendOtpDto {
   /**

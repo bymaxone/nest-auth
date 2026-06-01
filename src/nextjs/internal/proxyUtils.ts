@@ -127,6 +127,10 @@ export function buildSanitizedRequestHeaders(
  *
  * The value is passed through {@link sanitizeHeaderValue} so a
  * crafted claim cannot smuggle an extra header via CR/LF injection.
+ *
+ * @param headers - The `Headers` object to mutate.
+ * @param name - Header field name.
+ * @param value - Value to set, or `undefined` to delete the header.
  */
 export function setOrDeleteHeader(headers: Headers, name: string, value: string | undefined): void {
   if (value === undefined || value.length === 0) {
@@ -141,6 +145,9 @@ export function setOrDeleteHeader(headers: Headers, name: string, value: string 
  * The Edge Runtime's `Headers` implementation rejects these via the
  * Fetch spec, but we sanitise proactively so a compliant throw does
  * not surface as an uncaught error in the middleware hot path.
+ *
+ * @param value - Raw header value to sanitize.
+ * @returns The sanitized header value string.
  */
 export function sanitizeHeaderValue(value: string): string {
   return value.replace(/[\r\n\0]/g, '')
@@ -149,6 +156,9 @@ export function sanitizeHeaderValue(value: string): string {
 /**
  * Pull a string claim from a JWT payload, returning `undefined`
  * when the field is absent or non-string.
+ *
+ * @param value - Value to coerce to string.
+ * @returns The string value, or `undefined` for non-string inputs.
  */
 export function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined

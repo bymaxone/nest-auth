@@ -7,6 +7,8 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator'
  * Initiates the password reset flow by sending a token or OTP to the user's
  * email. Always returns success regardless of whether the email exists to
  * prevent user enumeration.
+ *
+ * @layer DTO
  */
 export class ForgotPasswordDto {
   /**

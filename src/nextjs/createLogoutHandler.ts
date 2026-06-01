@@ -202,6 +202,15 @@ function buildLogoutResponse(
   return response
 }
 
+/**
+ * Appends `Set-Cookie: Max-Age=0` directives for all configured auth cookies to the response.
+ *
+ * Cookie names are pre-validated at factory time — this function trusts them as safe.
+ *
+ * @param response - The `Response` to mutate.
+ * @param config - Proxy configuration containing the cookie names and paths to clear.
+ * @param refreshCookiePath - The validated path attribute for the refresh-token cookie.
+ */
 function attachClearCookies(
   response: Response,
   config: LogoutCookieConfig,

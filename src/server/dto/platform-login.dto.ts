@@ -6,6 +6,8 @@ import { IsEmail, IsNotEmpty, IsString, Matches, MaxLength, MinLength } from 'cl
  *
  * Platform users are not tenant-scoped, so no `tenantId` field is required.
  * Validated via NestJS `ValidationPipe` before reaching the service layer.
+ *
+ * @layer DTO
  */
 export class PlatformLoginDto {
   /**

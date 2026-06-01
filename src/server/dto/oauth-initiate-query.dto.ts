@@ -6,6 +6,8 @@ import { IsNotEmpty, IsString, MaxLength } from 'class-validator'
  * The `tenantId` is stored in the Redis CSRF state and recovered on the callback
  * to associate the incoming user with the correct tenant. Validated here so that
  * an empty or oversized value cannot be stored in Redis or reach the database.
+ *
+ * @layer DTO
  */
 export class OAuthInitiateQueryDto {
   /**

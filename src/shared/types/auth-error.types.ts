@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Shared error-related type definitions for `@bymax-one/nest-auth`.
+ *
+ * @layer Types
+ */
 import type { AuthErrorCode } from '../constants/error-codes'
 
 /**

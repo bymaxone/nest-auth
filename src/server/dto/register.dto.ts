@@ -5,6 +5,8 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-valid
  *
  * Validated via NestJS `ValidationPipe` before reaching the service layer.
  * All validation rules are enforced at the HTTP boundary.
+ *
+ * @layer DTO
  */
 export class RegisterDto {
   /**

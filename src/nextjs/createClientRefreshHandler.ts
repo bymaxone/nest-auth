@@ -148,6 +148,7 @@ export function createClientRefreshHandler(
   }
 }
 
+/** Constructs a 401 Unauthorized response used when token refresh fails due to missing or invalid credentials. */
 function buildUnauthorisedResponse(): Response {
   return new Response(null, {
     status: 401,

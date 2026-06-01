@@ -13,6 +13,8 @@
  * is the appropriate validation point. Without an `onOAuthLogin` implementation,
  * any caller triggers `OAUTH_FAILED` — OAuth sign-in is fully disabled by default.
  * Implement `onOAuthLogin` to enable it and enforce tenant membership.
+ *
+ * @layer Service
  */
 
 import { createHash } from 'node:crypto'
@@ -92,7 +94,7 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
  *
  * Each OAuth provider is abstracted by an {@link OAuthProviderPlugin}. The
  * service resolves the correct plugin by name and delegates the provider-specific
- * steps (authorize URL, code exchange, profile fetch) to the plugin.
+ * operations (authorize URL, code exchange, profile fetch) to the plugin.
  */
 @Injectable()
 export class OAuthService {
@@ -118,7 +120,7 @@ export class OAuthService {
   /**
    * Initiates the OAuth 2.0 Authorization Code flow.
    *
-   * Steps:
+   * Sequence:
    * 1. Validates the `provider` format and resolves the named plugin.
    * 2. Generates a 32-byte (64 hex char) cryptographically random state nonce.
    * 3. Stores `os:{sha256(state)} → { tenantId }` in Redis with a 10-minute TTL.
@@ -160,7 +162,7 @@ export class OAuthService {
   /**
    * Processes the OAuth provider callback and issues auth tokens.
    *
-   * Steps:
+   * Sequence:
    * 1. Validates the `provider` format before touching Redis.
    * 2. Validates the `state` nonce — atomically reads and deletes `os:{sha256(state)}`.
    *    Missing key → `OAUTH_FAILED` (expired, forged, or already consumed).

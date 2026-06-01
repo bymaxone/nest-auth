@@ -85,7 +85,7 @@ export interface PlatformJwtPayload {
 }
 
 /**
- * Short-lived JWT payload issued during an MFA challenge step.
+ * Short-lived JWT payload issued during an MFA challenge.
  *
  * Grants no resource access on its own — exchanged for a full
  * {@link DashboardJwtPayload} or {@link PlatformJwtPayload} token after the

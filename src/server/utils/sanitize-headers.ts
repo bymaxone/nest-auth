@@ -1,5 +1,5 @@
 /**
- * HTTP header sanitization utility for @bymax-one/nest-auth.
+ * @fileoverview HTTP header sanitization utility for @bymax-one/nest-auth.
  *
  * Removes sensitive headers before they are included in a HookContext
  * or any audit/log output. Two complementary strategies are applied:
@@ -7,6 +7,8 @@
  *  2. Pattern match   — regex catch-all for custom secret-bearing headers.
  *
  * All output keys are normalized to lowercase for consistent downstream handling.
+ *
+ * @layer Utility
  */
 
 import type { HookContext } from '../interfaces/auth-hooks.interface'
@@ -105,6 +107,7 @@ export function sanitizeHeaders(
  * email-verification confirmations). Consumers reading `context.ip` in a hook
  * implementation receive `''` rather than `undefined` — a documented contract
  * rather than a runtime surprise.
+ * @returns A {@link HookContext} with all fields set to empty defaults.
  */
 export function createEmptyHookContext(): HookContext {
   return { ip: '', userAgent: '', sanitizedHeaders: {} }

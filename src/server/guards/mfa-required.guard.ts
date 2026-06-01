@@ -46,6 +46,8 @@ import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-
  * @Post('/mfa/challenge')
  * challenge(@Body() dto: MfaChallengeDto) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class MfaRequiredGuard implements CanActivate {

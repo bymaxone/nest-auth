@@ -30,6 +30,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
  * const ciphertext = encrypt('JBSWY3DPEHPK3PXP', key)
  * const plaintext  = decrypt(ciphertext, key)
  * ```
+ *
+ * @layer Crypto
  */
 
 // ---------------------------------------------------------------------------

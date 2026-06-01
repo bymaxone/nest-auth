@@ -143,9 +143,10 @@ export function warnOnInsecureConfiguration(config: ResolvedAuthProxyConfig): vo
 }
 
 /**
- * Returns `true` when the current process is running in a production
- * environment. Read once per call rather than captured at module load
- * so tests can toggle `process.env['NODE_ENV']` per case.
+ * Returns `true` when `NODE_ENV` equals `'production'`.
+ *
+ * Reads `process.env` on every call (rather than caching at module load time) so
+ * that tests can override the environment variable without module re-evaluation.
  */
 function isProductionEnv(): boolean {
   return process.env['NODE_ENV'] === 'production'

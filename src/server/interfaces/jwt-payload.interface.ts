@@ -14,6 +14,8 @@
  * These interfaces represent the shape of a **decoded and verified** token.
  * When signing tokens, `iat` and `exp` are populated automatically by
  * `@nestjs/jwt` — do not include them in the signing payload.
+ *
+ * @layer Interface
  */
 
 /**
@@ -88,7 +90,7 @@ export interface PlatformJwtPayload {
 }
 
 /**
- * Short-lived JWT payload issued during an MFA challenge step.
+ * Short-lived JWT payload issued during an MFA challenge.
  *
  * This token grants no resource access on its own. It is exchanged for a full
  * {@link DashboardJwtPayload} or {@link PlatformJwtPayload} token once the user

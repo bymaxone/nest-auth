@@ -4,6 +4,7 @@ import type { Request } from 'express'
 
 import { JwtAuthGuard } from './jwt-auth.guard'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+
 /**
  * Authentication guard that allows unauthenticated access while still
  * validating the token when one is present.
@@ -23,6 +24,8 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
  * @Get('/feed')
  * feed(@CurrentUser() user: DashboardJwtPayload | null) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class OptionalAuthGuard extends JwtAuthGuard {

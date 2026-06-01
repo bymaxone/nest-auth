@@ -39,6 +39,8 @@ const MAX_IDENTIFIER_LENGTH = 512
  *
  * **Lockout check order:** Always call `isLockedOut` before `recordFailure` to
  * prevent an extra increment on an already-locked account.
+ *
+ * @layer Service
  */
 @Injectable()
 export class BruteForceService {

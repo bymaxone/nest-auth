@@ -16,6 +16,8 @@ import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator'
  *   - OAuth 2.0 Issuer Identification (RFC 9207) for `iss`
  *   - https://accounts.google.com docs for `authuser`, `prompt`, `hd`
  *   - https://datatracker.ietf.org/doc/html/rfc6749#section-3.3 for `scope`
+ *
+ * @layer DTO
  */
 export class OAuthCallbackQueryDto {
   /**

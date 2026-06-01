@@ -37,6 +37,8 @@ import { PasswordResetService } from '../services/password-reset.service'
  *
  * Route prefix (`/password`) is relative — the consuming application applies a global
  * prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
+ *
+ * @layer Controller
  */
 @Public()
 @Controller('password')

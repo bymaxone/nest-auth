@@ -34,6 +34,8 @@ import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-
  * @Get('/profile')
  * profile(@CurrentUser() user: DashboardJwtPayload) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {

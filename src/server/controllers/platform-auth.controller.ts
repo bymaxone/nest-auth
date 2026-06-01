@@ -95,6 +95,8 @@ function isMfaChallenge(
  * their own schedule (default 15 minutes). Note that the `DELETE /platform/sessions`
  * endpoint can be used as an out-of-band revocation path if the admin's access token
  * is still valid at the time of suspension.
+ *
+ * @layer Controller
  */
 @Controller('platform')
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
@@ -255,6 +257,7 @@ export class PlatformAuthController {
    * `req.body.refreshToken` regardless of the module-level `tokenDelivery` setting.
    *
    * @param req - Incoming request (used to extract the refresh token, IP, and User-Agent).
+   * @returns New platform bearer auth response with rotated tokens.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)

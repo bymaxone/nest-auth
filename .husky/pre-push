@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Intentional placeholder — Husky's internal runner sources ~/.config/husky/init.sh
+# before executing any hook file. The global pre-push check lives there.

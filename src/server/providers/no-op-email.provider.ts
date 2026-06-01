@@ -1,3 +1,11 @@
+/**
+ * @fileoverview No-operation default implementation of {@link IEmailProvider}.
+ *
+ * All send methods resolve immediately without dispatching any email. Used as the
+ * fallback when the consuming application does not register a custom email provider.
+ *
+ * @layer Provider
+ */
 import { Injectable, Logger } from '@nestjs/common'
 
 import type {
