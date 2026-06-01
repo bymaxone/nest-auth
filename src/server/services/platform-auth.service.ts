@@ -36,6 +36,8 @@ import { maskEmail } from '../utils/mask-email'
  * Platform refresh tokens are stored under `prt:{sha256(token)}` in Redis.
  * The `sess:{userId}` SET tracks all active session keys for a given admin,
  * enabling full-session revocation via {@link revokeAllPlatformSessions}.
+ *
+ * @layer Service
  */
 @Injectable()
 export class PlatformAuthService {

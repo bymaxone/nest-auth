@@ -31,7 +31,7 @@ import { MfaService } from '../services/mfa.service'
  * regeneration flows mirrored from the dashboard `MfaController` but bound to
  * the platform user repository and protected by {@link JwtPlatformGuard}.
  *
- * The dashboard `MfaController` already handles the MFA challenge step for
+ * The dashboard `MfaController` already handles the MFA challenge flow for
  * both contexts (the temp token carries the discriminant). Only enrolment,
  * disable, and recovery-code rotation needed a dedicated platform surface —
  * those routes operate against a known authenticated identity rather than
@@ -48,8 +48,10 @@ import { MfaService } from '../services/mfa.service'
  *
  * @remarks
  * The challenge endpoint `POST /platform/mfa/challenge` lives on
- * {@link PlatformAuthController} (it is the post-login exchange step, not an
+ * {@link PlatformAuthController} (it is the post-login exchange endpoint, not an
  * authenticated MFA management action).
+ *
+ * @layer Controller
  */
 @Controller('platform/mfa')
 @UsePipes(

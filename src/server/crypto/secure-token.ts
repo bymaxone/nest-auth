@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Secure token generation, SHA-256 hashing, HMAC-SHA-256, and
+ * timing-safe comparison utilities.
+ *
+ * @layer Crypto
+ */
+
 import {
   createHash,
   createHmac,

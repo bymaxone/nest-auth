@@ -1,4 +1,10 @@
 /**
+ * @fileoverview Timing normalization utility for anti-enumeration endpoints.
+ *
+ * @layer Utility
+ */
+
+/**
  * Maximum duration that `sleep` will wait, regardless of the `ms` argument.
  *
  * Prevents accidental event-loop starvation if a computed value is unexpectedly large.
@@ -29,11 +35,6 @@ const MAX_SLEEP_MS = 10_000
  * ```
  *
  * @param ms - Desired duration in milliseconds (clamped to 0–10 000).
- *
- * @public
- * Exported from `@bymax-one/nest-auth` for use in consumer-implemented auth
- * controllers that need to apply the same constant-time anti-enumeration
- * pattern to their own endpoints.
  */
 export function sleep(ms: number): Promise<void> {
   const clamped = Math.min(Math.max(0, ms), MAX_SLEEP_MS)

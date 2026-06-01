@@ -1,3 +1,11 @@
+/**
+ * @fileoverview Root NestJS dynamic module for `@bymax-one/nest-auth`.
+ *
+ * Exposes `BymaxAuthModule.forRoot()` and `BymaxAuthModule.registerAsync()`
+ * as the sole entry points for library configuration.
+ *
+ * @layer Module
+ */
 import { DynamicModule, Module, type Provider } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 

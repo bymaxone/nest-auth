@@ -79,6 +79,8 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
  * // Accepting an invitation
  * await invitationService.acceptInvitation(dto, ip, userAgent, headers)
  * ```
+ *
+ * @layer Service
  */
 @Injectable()
 export class InvitationService {
@@ -102,7 +104,7 @@ export class InvitationService {
   /**
    * Creates an invitation for `email` to join `tenantId` with `role`.
    *
-   * Authorization steps:
+   * Authorization sequence:
    * 1. Validates that `role` exists in `roles.hierarchy`.
    * 2. Fetches the inviter and verifies that `inviter.role >= role` via `hasRole()`.
    * 3. Generates a 32-byte (64 hex char) secure token, stores `inv:{sha256(token)}`

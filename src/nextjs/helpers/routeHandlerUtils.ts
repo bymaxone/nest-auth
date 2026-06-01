@@ -23,6 +23,10 @@
  * {@link assertSafeCookieName} / {@link assertSafeCookiePath} at
  * factory construction time. This helper performs no sanitisation
  * of its own.
+ *
+ * @param name - Cookie name (pre-validated by {@link assertSafeCookieName}).
+ * @param path - Cookie path scope.
+ * @returns A `Set-Cookie` header value that clears the named cookie.
  */
 export function serializeClearCookie(name: string, path: string): string {
   return `${name}=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
@@ -37,6 +41,9 @@ export function serializeClearCookie(name: string, path: string): string {
  *   - does NOT start with `//` (protocol-relative URL),
  *   - does NOT contain CR / LF / NUL / backslash (header-smuggling
  *     and Windows-path normalisation traps).
+ *
+ * @param candidate - The path string to validate.
+ * @returns `true` when `candidate` is a safe, same-origin relative path.
  */
 export function isSafeSameOriginPath(candidate: string): boolean {
   return (
@@ -57,6 +64,9 @@ export function isSafeSameOriginPath(candidate: string): boolean {
  * the URL's meaning (`?`, `#`, backslash, CR/LF/NUL) or dot-segment
  * sequences that could redirect the request to a different upstream
  * route.
+ *
+ * @param candidate - The upstream path string to validate.
+ * @returns `true` when `candidate` is a safe upstream-relative path.
  */
 export function isSafeUpstreamPath(candidate: string): boolean {
   if (typeof candidate !== 'string') return false
@@ -68,6 +78,11 @@ export function isSafeUpstreamPath(candidate: string): boolean {
 /**
  * Throw when `value` is not a safe cookie name (RFC 6265 token:
  * printable ASCII excluding space, `=`, and separators).
+ *
+ * @param value - The cookie name string to validate.
+ * @param factoryName - Name of the factory function, used in error messages.
+ * @param label - Human-readable label for the field, used in error messages.
+ * @throws {Error} When `value` contains characters that would make the Set-Cookie header unsafe.
  */
 export function assertSafeCookieName(value: string, factoryName: string, label: string): void {
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)) {
@@ -79,6 +94,11 @@ export function assertSafeCookieName(value: string, factoryName: string, label: 
  * Throw when `value` is not a safe cookie path: starts with `/`, no
  * CR/LF/NUL/backslash, no `;` (which would terminate the `Path`
  * attribute and allow attribute smuggling).
+ *
+ * @param value - The cookie path string to validate.
+ * @param factoryName - Name of the factory function, used in error messages.
+ * @param label - Human-readable label for the field, used in error messages.
+ * @throws {Error} When `value` contains characters that would make the Set-Cookie header unsafe.
  */
 export function assertSafeCookiePath(value: string, factoryName: string, label: string): void {
   if (!/^\/[\x20-\x3A\x3C-\x7E]*$/.test(value)) {
@@ -86,7 +106,12 @@ export function assertSafeCookiePath(value: string, factoryName: string, label: 
   }
 }
 
-/** Remove a single trailing `/` from `value`, if present. */
+/**
+ * Remove a single trailing `/` from `value`, if present.
+ *
+ * @param value - The string from which to remove a trailing slash.
+ * @returns The input string with a single trailing `'/'` removed, if present.
+ */
 export function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }

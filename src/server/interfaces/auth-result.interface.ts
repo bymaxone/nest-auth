@@ -3,7 +3,9 @@
  *
  * Describes the data structures returned by authentication operations across
  * the three authentication flows: dashboard users, platform administrators,
- * and the MFA challenge step.
+ * and the MFA challenge flow.
+ *
+ * @layer Interface
  */
 
 import type { SafeAuthPlatformUser } from './platform-user-repository.interface'

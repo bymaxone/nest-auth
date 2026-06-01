@@ -57,6 +57,8 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
  *
  * Route prefix is applied by the consuming application's `RouterModule` or
  * NestJS global prefix — this controller uses no explicit path prefix.
+ *
+ * @layer Controller
  */
 @Controller()
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
@@ -72,6 +74,7 @@ export class AuthController {
    * @param dto - Registration payload.
    * @param req - Incoming request (used for tenantId resolution and hooks).
    * @param res - Response object (passthrough — used to set cookies).
+   * @returns Auth response with tokens delivered per the configured token-delivery mode.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.register)
@@ -93,6 +96,7 @@ export class AuthController {
    * @param dto - Login credentials.
    * @param req - Incoming request.
    * @param res - Response object (passthrough — used to set cookies).
+   * @returns Auth response, or a {@link MfaChallengeResult} when MFA verification is required.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.login)
@@ -142,6 +146,7 @@ export class AuthController {
    *
    * @param req - Incoming request (used to extract the refresh token and IP).
    * @param res - Response object (passthrough — used to set cookies).
+   * @returns New auth response with rotated tokens.
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)

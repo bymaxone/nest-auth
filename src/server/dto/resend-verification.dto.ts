@@ -7,6 +7,8 @@ import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator'
  * Requests a new email verification OTP to be sent to the user's address.
  * Subject to IP-level throttling configured in `AUTH_THROTTLE_CONFIGS.resendVerification`.
  * Always returns success regardless of user existence to prevent enumeration.
+ *
+ * @layer DTO
  */
 export class ResendVerificationDto {
   /**

@@ -1,3 +1,11 @@
+/**
+ * @fileoverview Main configuration contract for {@link BymaxAuthModule}.
+ *
+ * Defines `BymaxAuthModuleOptions` and all nested option groups consumed by
+ * `resolveOptions()` at module initialisation time.
+ *
+ * @layer Interface
+ */
 import type {
   InjectionToken,
   ModuleMetadata,
@@ -48,6 +56,8 @@ export interface BymaxAuthModuleOptions {
      *
      * `resolveOptions()` validates this at module startup and throws if requirements are not met.
      * The secret value is never logged — only its length and entropy are reported in error messages.
+     *
+     * @throws {Error} When the value fails validation at module initialisation.
      */
     secret: string
 
@@ -96,6 +106,8 @@ export interface BymaxAuthModuleOptions {
      * scrypt CPU/memory cost factor (N). Must be a power of 2.
      * Default: `32768` (2^15). Minimum enforced by `resolveOptions()`: `16384` (2^14).
      * Values below `16384` are rejected at startup — do not lower this for production workloads.
+     *
+     * @throws {Error} When the value fails validation at module initialisation.
      */
     costFactor?: number
 
@@ -184,6 +196,8 @@ export interface BymaxAuthModuleOptions {
      * Must start with `/` and exactly match the directory portion of the
      * real `/mfa/*` route path. Validated at startup.
      *
+     * @throws {Error} When the value fails validation at module initialisation.
+     *
      * @example
      * ```ts
      * // App calls `app.setGlobalPrefix('api')` and uses default routePrefix:
@@ -235,6 +249,8 @@ export interface BymaxAuthModuleOptions {
      * Generate with: `crypto.randomBytes(32).toString('base64')` (44 chars).
      *
      * `resolveOptions()` validates this at startup and throws if the decoded length is wrong.
+     *
+     * @throws {Error} When the value fails validation at module initialisation.
      */
     encryptionKey: string
 
@@ -346,6 +362,8 @@ export interface BymaxAuthModuleOptions {
      * for `crypto.randomInt`. Values outside this range are rejected by `resolveOptions()`
      * at startup with a descriptive error.
      * Default: `6`
+     *
+     * @throws {Error} When the value fails validation at module initialisation.
      */
     otpLength?: number
   }
@@ -467,6 +485,8 @@ export interface BymaxAuthModuleOptions {
      * In production (`NODE_ENV === 'production'`), the URL must use HTTPS or
      * be a relative path (starts with `/`) — same posture as `callbackUrl`.
      *
+     * @throws {Error} When the value fails validation at module initialisation.
+     *
      * @example
      * ```typescript
      * successRedirectUrl: 'https://app.example.com/dashboard'
@@ -585,6 +605,8 @@ export interface BymaxAuthModuleOptions {
    *
    * @param req - The Express request object
    * @returns The tenant ID string, or a Promise resolving to it
+   *
+   * @throws {Error} When the resolver returns an empty string or throws.
    *
    * @remarks
    * The resolver must return a non-empty string or throw — returning `undefined`,

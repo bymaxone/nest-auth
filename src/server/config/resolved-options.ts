@@ -4,6 +4,8 @@
  * Called once at module startup (inside the async factory). Throws descriptive errors
  * if security-critical invariants are violated so that misconfigured deployments fail
  * fast rather than silently using weak settings.
+ *
+ * @layer Config
  */
 
 import { createHash } from 'node:crypto'
@@ -295,10 +297,14 @@ function validateJwtAlgorithm(algorithm: BymaxAuthModuleOptions['jwt']['algorith
   }
 }
 
-/** Valid standard base64 characters: A-Z, a-z, 0-9, +, /, and up to two = padding characters. */
+/**
+ * Valid standard base64 characters: A-Z, a-z, 0-9, +, /, and up to two = padding characters.
+ */
 const BASE64_STANDARD_RE = /^[A-Za-z0-9+/]+={0,2}$/
 
-/** Valid base64url characters: A-Z, a-z, 0-9, -, _, padding optional. */
+/**
+ * Valid base64url characters: A-Z, a-z, 0-9, -, _, padding optional.
+ */
 const BASE64_URL_RE = /^[A-Za-z0-9_-]+={0,2}$/
 
 function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {

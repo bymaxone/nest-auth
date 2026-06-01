@@ -1,10 +1,12 @@
 import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
 
 /**
- * Data Transfer Object for the MFA TOTP verification step during setup.
+ * Data Transfer Object for the MFA TOTP verification during setup.
  *
  * Submitted after `POST /mfa/setup` to confirm that the user has successfully
  * enrolled their authenticator app by providing a valid code.
+ *
+ * @layer DTO
  */
 export class MfaVerifyDto {
   /**

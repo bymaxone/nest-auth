@@ -5,6 +5,8 @@
  * The library never imports a concrete mailer — consumers provide their own
  * adapter (e.g. Resend, SendGrid, Nodemailer) that implements `IEmailProvider`
  * and inject it via the NestJS DI token.
+ *
+ * @layer Interface
  */
 
 /**

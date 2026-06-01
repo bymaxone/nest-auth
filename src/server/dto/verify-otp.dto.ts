@@ -7,6 +7,8 @@ import { IsEmail, IsNotEmpty, IsString, Length, MaxLength } from 'class-validato
  * Validates a password-reset OTP and exchanges it for a short-lived
  * `verifiedToken` (5-minute TTL) that can then be used with `ResetPasswordDto`
  * to complete the reset without re-submitting the OTP.
+ *
+ * @layer DTO
  */
 export class VerifyOtpDto {
   /**

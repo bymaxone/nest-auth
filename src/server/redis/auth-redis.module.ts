@@ -8,6 +8,8 @@ import { AuthRedisService } from './auth-redis.service'
  * Imported by `BymaxAuthModule` to make `AuthRedisService` available for
  * injection into the library's services (BruteForceService, TokenManagerService,
  * etc.). This module is **not** exported from the public barrel.
+ *
+ * @layer Module
  */
 @Module({
   providers: [AuthRedisService],

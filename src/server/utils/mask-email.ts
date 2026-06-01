@@ -1,4 +1,10 @@
 /**
+ * @fileoverview Email address masking utility.
+ *
+ * @layer Utility
+ */
+
+/**
  * Masks an email address for safe inclusion in log messages.
  *
  * Preserves the first character of the local part and the full domain so that

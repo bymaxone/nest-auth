@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Thin Redis wrapper for authentication state (tokens, sessions, brute-force counters).
+ *
+ * @layer Service
+ */
 import { Inject, Injectable } from '@nestjs/common'
 import type { Redis } from 'ioredis'
 
@@ -35,6 +40,7 @@ export class AuthRedisService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  /** Returns the fully-qualified Redis key by prepending the configured namespace prefix. */
   private prefix(key: string): string {
     return `${this.namespace}:${key}`
   }

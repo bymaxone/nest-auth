@@ -14,6 +14,8 @@ import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
  * should not be able to silently disable MFA (which would leave the account
  * unprotected). Recovery without a TOTP device requires administrative
  * intervention via a support channel.
+ *
+ * @layer DTO
  */
 export class MfaDisableDto {
   /**

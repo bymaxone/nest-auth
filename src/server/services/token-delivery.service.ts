@@ -59,6 +59,8 @@ export interface PlatformBearerAuthResponse {
  *
  * Cookie security: HttpOnly, Secure (production), SameSite=Strict.
  * Refresh cookies use the configured `cookies.refreshCookiePath`.
+ *
+ * @layer Service
  */
 @Injectable()
 export class TokenDeliveryService {
@@ -349,13 +351,7 @@ export class TokenDeliveryService {
     })
   }
 
-  /**
-   * Returns the shared cookie attributes applied to every cookie issued by
-   * this service. `sameSite` comes from the resolved options (defaults to
-   * `'lax'`); the `domain` is folded in only when the consumer supplies a
-   * resolver. Other per-cookie attributes (`httpOnly`, `secure`, `path`,
-   * `maxAge`) are spread on top of this base by the callers.
-   */
+  /** Returns base Set-Cookie options for auth cookies, optionally scoped to a domain. */
   private baseCookieOptions(domain: string | undefined): {
     sameSite: 'lax' | 'strict' | 'none'
     domain?: string
@@ -366,12 +362,14 @@ export class TokenDeliveryService {
     }
   }
 
+  /** Reads the access token from the configured cookie name in the request. */
   private readCookie(req: Request, name: string): string | undefined {
     // eslint-disable-next-line security/detect-object-injection
     const value = (req.cookies as Record<string, unknown> | undefined)?.[name]
     return typeof value === 'string' ? value : undefined
   }
 
+  /** Reads the access token from the Authorization Bearer header. */
   private readBearerHeader(req: Request): string | undefined {
     const auth = req.headers['authorization']
     if (typeof auth !== 'string') return undefined
@@ -382,6 +380,7 @@ export class TokenDeliveryService {
     return parts[1]
   }
 
+  /** Reads the refresh token from the request body field. */
   private readBodyRefresh(req: Request): string | undefined {
     const body = req.body as Record<string, unknown> | undefined
     const value = body?.['refreshToken']

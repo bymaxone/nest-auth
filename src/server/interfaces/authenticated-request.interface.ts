@@ -5,6 +5,8 @@
  * successful token verification. Controllers and downstream decorators should
  * use these types instead of the plain `Request` to get typed access to the
  * authenticated identity.
+ *
+ * @layer Interface
  */
 
 import type { Request } from 'express'

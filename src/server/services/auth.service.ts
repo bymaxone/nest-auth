@@ -48,6 +48,8 @@ const ANTI_ENUM_MIN_MS = 300
  * @remarks
  * Hook errors from `after*` and `on*` hooks are caught and logged — they must
  * never propagate to the caller. Only `beforeRegister` can block the flow.
+ *
+ * @layer Service
  */
 @Injectable()
 export class AuthService {

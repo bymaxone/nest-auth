@@ -110,6 +110,8 @@ function isTokenInvalidException(err: unknown): boolean {
  *
  * Route prefix (`/mfa`) is relative — the consuming application applies
  * a global prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
+ *
+ * @layer Controller
  */
 @Controller('mfa')
 @UsePipes(

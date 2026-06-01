@@ -46,6 +46,8 @@ const STATUS_ERROR_MAP: Record<string, AuthErrorCode> = {
  * @Get('/dashboard')
  * dashboard() { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class UserStatusGuard implements CanActivate {

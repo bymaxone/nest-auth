@@ -1,3 +1,11 @@
+/**
+ * @fileoverview No-operation default implementation of {@link IAuthHooks}.
+ *
+ * All methods resolve immediately without performing any action. Used as the
+ * fallback when the consuming application does not register a custom hooks provider.
+ *
+ * @layer Hooks
+ */
 import { Injectable } from '@nestjs/common'
 
 import type {
@@ -30,6 +38,8 @@ export class NoOpAuthHooks implements IAuthHooks {
   /**
    * Permits all registration attempts unconditionally.
    *
+   * @param _data - Registration payload containing `email`, `name`, and `tenantId`.
+   * @param _context - Hook execution context carrying request metadata.
    * @returns `{ allowed: true }` — never blocks registration.
    */
   beforeRegister(
@@ -45,6 +55,7 @@ export class NoOpAuthHooks implements IAuthHooks {
    *
    * @param profile - Normalized OAuth profile from the provider.
    * @param existingUser - Existing user found by the profile email, or `null`.
+   * @param _context - Hook execution context carrying request metadata.
    * @returns An {@link OAuthLoginResult} controlling the account resolution strategy.
    */
   onOAuthLogin(

@@ -41,7 +41,7 @@
  *     *most-recent-writer-wins* invariant users rely on. If that
  *     upstream behaviour ever changes, widen the key.
  *   - `parseSetCookieHeader` intentionally does NOT trim the cookie
- *     *value* — RFC 6265 §5.2 step 2 says the value is everything
+ *     *value* — RFC 6265 §5.2, item 2 says the value is everything
  *     after the first `=` up to the first `;`. Attribute *values*
  *     (e.g., `Path=/x `) are trimmed because the spec explicitly
  *     permits surrounding OWS there.
@@ -124,11 +124,11 @@ export interface HeadersLike {
  * with attribute semantics (`SameSite`, `Domain`) are lowercased to
  * keep the dedup key stable. The `name` and `value` of the cookie
  * itself are preserved as-is — including any internal whitespace, per
- * RFC 6265 §5.2 step 2.
+ * RFC 6265 §5.2, item 2.
  *
  * Rejects inputs containing CR or LF characters (header smuggling
  * defence): the returned record has an empty `name`, which the dedup
- * step filters out.
+ * filter discards.
  *
  * Malformed input (no `=` in the first segment) similarly returns an
  * empty parsed record.
@@ -151,7 +151,7 @@ export function parseSetCookieHeader(raw: string): ParsedSetCookie {
   const firstEquals = nameValueSegment.indexOf('=')
   // Stryker disable next-line EqualityOperator: differs only at firstEquals === 0, where the name is '' under both `>= 0` and `> 0`
   const name = firstEquals >= 0 ? nameValueSegment.slice(0, firstEquals).trim() : ''
-  // Intentional: the cookie VALUE is NOT trimmed. RFC 6265 §5.2 step 2
+  // Intentional: the cookie VALUE is NOT trimmed. RFC 6265 §5.2, item 2
   // treats everything between the first `=` and the first `;` as the
   // value verbatim.
   const value = firstEquals >= 0 ? nameValueSegment.slice(firstEquals + 1) : ''
@@ -334,6 +334,16 @@ export function getSetCookieHeaders(headers: HeadersLike): string[] {
   return splitLegacySetCookie(combined)
 }
 
+/**
+ * Builds a string key used to deduplicate `Set-Cookie` headers by name, path, and domain.
+ *
+ * Uses `domain ?? ''` as the domain sentinel so that host-only cookies (no explicit Domain
+ * attribute) and cookies with `Domain=""` are treated as the same bucket during deduplication.
+ *
+ * @param name - Cookie name component of the key.
+ * @param domain - Lowercased domain attribute value, or `undefined` for host-only cookies.
+ * @returns A composite string key in the form `<name>|<domain>`.
+ */
 function buildDedupKey(name: string, domain: string | undefined): string {
   // Domain-less cookies (no Domain attribute) use '' as their domain
   // component. This keeps them distinct from cookies that carry an

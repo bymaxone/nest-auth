@@ -213,7 +213,7 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
 }
 
 /**
- * Execute the HS256 verification step against the Web Crypto API.
+ * Execute the HS256 verification against the Web Crypto API.
  *
  * Extracted from {@link verifyJwtToken} so the top-level function
  * stays focused on structural validation and algorithm pinning.

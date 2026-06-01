@@ -92,7 +92,7 @@ export interface MfaChallengeResult {
  * Discriminated union of all possible login responses.
  *
  * Use this type as the return type of any login method that may either
- * complete the auth flow or escalate to an MFA challenge step.
+ * complete the auth flow or escalate to an MFA challenge.
  */
 export type LoginResult = AuthResult | MfaChallengeResult
 

@@ -81,10 +81,12 @@ interface RefreshSession {
  * - Access tokens: short-lived JWTs signed with HS256
  * - Refresh tokens: opaque UUID v4 stored as `rt:{sha256(token)}` in Redis
  * - Rotation: atomic Lua script prevents race conditions during token reuse
- * - MFA temp tokens: short-lived JWTs for the MFA challenge step, consumed on use
+ * - MFA temp tokens: short-lived JWTs for the MFA challenge flow, consumed on use
  *
  * All Redis keys are prefixed by {@link AuthRedisService} — this service uses
  * application-level key names without the namespace prefix.
+ *
+ * @layer Service
  */
 @Injectable()
 export class TokenManagerService {
@@ -351,7 +353,7 @@ export class TokenManagerService {
    * Handles the grace-window rotation path: old session gone but grace pointer found.
    *
    * Issues a new session but **does NOT** create another grace pointer. A grace
-   * rotation is the terminal step of one rotation cycle — chaining grace pointers
+   * rotation is the terminal operation of one rotation cycle — chaining grace pointers
    * would allow an attacker who captured a refresh token to indefinitely keep a
    * session alive by consuming consecutive grace windows, each one producing a
    * fresh grace pointer.
@@ -419,7 +421,16 @@ export class TokenManagerService {
     return { ...(parsed as RefreshSession), mfaEnabled }
   }
 
-  /** Constructs a session record from identity fields and request metadata. */
+  /**
+   * Constructs a session record from identity fields and request metadata.
+   *
+   * @param userId - Internal user ID for whom the session is being created.
+   * @param tenantId - Tenant ID scoping the session. Empty string for platform admin sessions.
+   * @param role - Role claim to persist in the session record.
+   * @param ip - Client IP address for session audit metadata.
+   * @param device - Human-readable device description (parsed from User-Agent).
+   * @param mfaEnabled - Whether MFA is enabled on the account at session creation time.
+   */
   private buildSession(
     userId: string,
     tenantId: string,
@@ -742,7 +753,7 @@ export class TokenManagerService {
    *   `jti` to {@link consumeMfaTempToken} after TOTP validation succeeds.
    * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` if the
    *   Redis entry is missing (already consumed, expired, or never issued).
-   * @throws If the JWT signature or expiry is invalid (propagated from JwtService).
+   * @throws {@link AuthException} When JWT signature or expiry validation fails.
    */
   async verifyMfaTempToken(
     token: string

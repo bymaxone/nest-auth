@@ -6,6 +6,8 @@ import { IsEmail, IsNotEmpty, IsString, Length, MaxLength } from 'class-validato
  *
  * Verifies the user's email address by submitting the OTP that was sent
  * after registration (when `emailVerification.required` is enabled).
+ *
+ * @layer DTO
  */
 export class VerifyEmailDto {
   /**

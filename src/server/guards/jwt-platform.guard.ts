@@ -39,6 +39,8 @@ import { assertValidJti, assertValidSub } from './utils/assert-token-type'
  * @Get('/platform/tenants')
  * listTenants(@CurrentUser() admin: PlatformJwtPayload) { ... }
  * ```
+ *
+ * @layer Guard
  */
 @Injectable()
 export class JwtPlatformGuard implements CanActivate {

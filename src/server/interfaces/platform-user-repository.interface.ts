@@ -5,6 +5,8 @@
  * contract that must be implemented by the consuming application. Platform
  * admins are scoped to the operator layer — above tenants — and always have
  * a local password credential.
+ *
+ * @layer Interface
  */
 
 /**

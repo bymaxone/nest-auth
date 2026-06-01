@@ -23,6 +23,8 @@
  * @Post('login')
  * async login(@Body() dto: LoginDto) { ... }
  * ```
+ *
+ * @layer Constants
  */
 export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/login — 5 requests per minute per IP. Protects against brute-force by IP. */

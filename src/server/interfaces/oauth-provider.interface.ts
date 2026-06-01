@@ -9,6 +9,8 @@
  * The plugin pattern allows new providers (Google, GitHub, GitLab, etc.) to be
  * registered without modifying the core auth module. Each plugin is responsible
  * for its own authorize URL construction, code exchange, and profile normalization.
+ *
+ * @layer Interface
  */
 
 /**
@@ -46,7 +48,7 @@ export interface OAuthProfile {
  * Contract for OAuth 2.0 Authorization Code flow plugins.
  *
  * Implement this interface to add a new OAuth provider. The plugin is
- * responsible for all three steps of the flow:
+ * responsible for all three operations in the flow:
  *  1. Constructing the provider's authorization URL (with a CSRF-protection state value).
  *  2. Exchanging the authorization code for an access token.
  *  3. Fetching and normalizing the user profile.

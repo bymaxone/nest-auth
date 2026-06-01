@@ -4,6 +4,8 @@ import { IsNotEmpty, IsString, Length } from 'class-validator'
  * Data Transfer Object for the accept invitation endpoint.
  *
  * Validated via NestJS `ValidationPipe` before reaching the service layer.
+ *
+ * @layer DTO
  */
 export class AcceptInvitationDto {
   /**

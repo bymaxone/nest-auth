@@ -48,6 +48,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * @remarks
  * Route prefix (`/invitations`) is relative — the consuming application applies
  * a global prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
+ *
+ * @layer Controller
  */
 @Controller('invitations')
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

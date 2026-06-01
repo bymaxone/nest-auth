@@ -50,6 +50,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * segments higher than parametric ones, so `all` is matched before `:id`
  * regardless of declaration order. The explicit ordering still communicates
  * intent to future maintainers.
+ *
+ * @layer Controller
  */
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, UserStatusGuard)
@@ -139,12 +141,11 @@ export class SessionController {
    * Ownership is enforced inside `SessionService.revokeSession` — a user cannot
    * revoke another user's session.
    *
-   * Returns `204 No Content` on success.
-   *
    * @param user - Verified JWT payload from the access token.
    * @param id - Full SHA-256 session hash from the `sessionHash` field of `SessionInfo`.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session does not belong
    *   to the user or the hash format is invalid.
+   * @returns 204 No Content on success.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeSession)
   @HttpCode(HttpStatus.NO_CONTENT)

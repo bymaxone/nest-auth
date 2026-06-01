@@ -6,6 +6,8 @@ import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-vali
  * Submitted during the login flow when the user has MFA enabled.
  * Contains the short-lived MFA temp token issued at login alongside
  * either a 6-digit TOTP code or a recovery code.
+ *
+ * @layer DTO
  */
 export class MfaChallengeDto {
   /**

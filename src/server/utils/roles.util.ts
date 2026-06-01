@@ -1,4 +1,10 @@
 /**
+ * @fileoverview Role-hierarchy utility for @bymax-one/nest-auth.
+ *
+ * @layer Utility
+ */
+
+/**
  * Checks whether a user role satisfies a required role in a denormalized hierarchy.
  *
  * @param userRole - The role currently held by the user (e.g. `'ADMIN'`).
