@@ -1,8 +1,11 @@
+# CI — thin caller of the org-wide reusable pipeline (bymaxone/.github).
+#
+# The generic library jobs (lint, typecheck, unit+coverage, mutation) run via
+# node-lib-ci.yml. This library's build-output integrity across its five subpaths
+# and the bundle-size budget stay here. Mutation runs only on a push to main /
+# manual dispatch, never on PRs.
 name: CI
 
-# Runs on every push to `main` and on every PR targeting `main`. The
-# `workflow_dispatch` trigger is kept so the same job can be re-run manually
-# from the Actions tab when needed.
 on:
   workflow_dispatch:
   push:
@@ -10,80 +13,36 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel in-progress runs for the same ref when a new commit is pushed.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege: CI only reads the repository. No write scopes are granted so a
-# compromised dependency in a workflow step cannot mutate the repo or its releases.
 permissions:
   contents: read
 
 jobs:
+  ci:
+    uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@v1
+    with:
+      run-format-check: false # no format:check script; prettier runs via lint/pre-commit
+      run-build: false # build + integrity + size verified in the `verify` job below
+      unit-command: pnpm test:cov:all
+      run-mutation: true
+      mutation-source-globs: '^(src/)'
+
+  # Library-specific verification: full build, output integrity across every
+  # subpath, and the brotli bundle-size budget.
   verify:
-    name: Verify (typecheck · lint · test · build)
+    name: Verify build + size
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [24.x]
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      # Blocks PRs that introduce dependencies with known vulnerabilities or
-      # license violations. PR-only — on push to main there is no base ref to
-      # diff against. Free on public repos.
-      - name: Dependency review
-        if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 10.8.1
-          run_install: false
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Unit + E2E tests with coverage (100% enforced)
-        run: pnpm test:cov:all
-
-      - name: Upload coverage artifact
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-node-${{ matrix.node-version }}
-          path: coverage/
-          retention-days: 14
-
+      - uses: actions/checkout@v6
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
       - name: Build all subpaths
         run: pnpm build
-
       - name: Verify build output integrity
-        # Confirms every declared subpath produced both ESM and CJS bundles
-        # plus type declarations. A missing artifact here indicates a tsup
-        # misconfiguration that would ship a broken package to npm.
         run: |
           for subpath in server shared client react nextjs; do
             for ext in mjs cjs d.ts d.cts; do
@@ -94,8 +53,11 @@ jobs:
             done
           done
           echo "All 5 subpaths produced ESM + CJS + .d.ts + .d.cts"
-
       - name: Bundle size budget
-        # Zero-dependency brotli-size gate over the built .mjs subpaths.
-        # See scripts/check-size.mjs for budgets and rationale.
         run: pnpm size
+
+  security:
+    if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
+    uses: bymaxone/.github/.github/workflows/security.yml@v1
+    with:
+      fail-on-severity: high

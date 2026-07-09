@@ -90,7 +90,7 @@ unminified `.mjs` as cosmetic noise — negligible in size. Documenting equivale
 nest-auth's 184 legitimate equivalents make inline the pragmatic choice — moving them to docs would
 drop the score below the 95 gate.) Full setup, config rationale, and the iteration workflow live in
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Do **not** add
-mutation testing to `prepublishOnly` or the per-PR CI — it is a manual/release gate.
+mutation testing to `prepublishOnly` or the per-PR CI — it runs automatically post-merge on `main` via the shared reusable (`bymaxone/.github` → node-lib-ci) and can also be run on demand (`pnpm mutation`).
 
 ---
 
