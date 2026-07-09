@@ -213,7 +213,7 @@ tests.
 
 ### Mutation Testing (Stryker)
 
-Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. Run `pnpm mutation` (Node 24) before tagging a release. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>`). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation testing is a manual/release gate — not wired into per-PR CI or `prepublishOnly`.
+Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. Run `pnpm mutation` (Node 24) before tagging a release. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>`). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation runs automatically post-merge on `main` via the shared reusable CI (`bymaxone/.github` → node-lib-ci); it is not per-PR and not in `prepublishOnly`, and can also be run on demand with `pnpm mutation`.
 
 ---
 
