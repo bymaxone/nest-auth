@@ -111,8 +111,12 @@ describe('TokenManagerService', () => {
     mockRedis.get.mockResolvedValue(null)
     // Reset getdel between tests: some reuse tests install a keyed mockImplementation
     // (grace vs rused: key) that clearAllMocks does not clear, so wipe it here to stop
-    // it leaking into later tests. Each test that needs getdel sets its own return.
+    // it leaking into later tests. Re-seed the default to `null` (not the reset default
+    // of `undefined`) so the double matches the real getdel contract of
+    // `Promise<string | null>` — an `undefined` would fail the `=== null` guard in
+    // handleReusedToken and spuriously enter the reuse branch. Tests override as needed.
     mockRedis.getdel.mockReset()
+    mockRedis.getdel.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
