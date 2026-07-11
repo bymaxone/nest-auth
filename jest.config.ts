@@ -48,6 +48,14 @@ const config: Config = {
     }
   },
   coverageReporters: ['text', 'lcov', 'clover'],
+  // Bound peak memory: cap the worker pool at half the cores and recycle any
+  // worker that grows past ~1GB. ts-jest reloads the whole module graph per
+  // worker, so an unbounded pool multiplies memory (workers × module graph);
+  // recycling also stops slow heap growth from accumulating across many files.
+  // Under Stryker the jest-runner sets its own worker model, so these are inert
+  // there — Stryker's own `concurrency` / `maxTestRunnerReuse` bound that path.
+  maxWorkers: '50%',
+  workerIdleMemoryLimit: '1GB',
   clearMocks: true,
   restoreMocks: true,
   // Only skip "no tests" error in local dev — CI must always have tests
