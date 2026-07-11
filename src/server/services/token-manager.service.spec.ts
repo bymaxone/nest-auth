@@ -109,6 +109,10 @@ describe('TokenManagerService', () => {
     // Default: no reuse sentinel exists, so the terminal reissue path treats an
     // unknown token as a plain invalid string. Reuse-detection tests override this.
     mockRedis.get.mockResolvedValue(null)
+    // Reset getdel between tests: some reuse tests install a keyed mockImplementation
+    // (grace vs rused: key) that clearAllMocks does not clear, so wipe it here to stop
+    // it leaking into later tests. Each test that needs getdel sets its own return.
+    mockRedis.getdel.mockReset()
 
     const module = await Test.createTestingModule({
       providers: [
@@ -447,14 +451,17 @@ describe('TokenManagerService', () => {
     // then the request still fails as REFRESH_TOKEN_INVALID.
     it('should revoke the whole family when a superseded token is reused', async () => {
       mockRedis.eval.mockResolvedValue(null) // no live session
-      mockRedis.getdel.mockResolvedValue(null) // grace window already consumed
-      mockRedis.get.mockResolvedValue('victim-user-id') // reuse sentinel present
+      // grace pointer getdel → null; reuse-sentinel getdel → the victim's id (consumed).
+      mockRedis.getdel.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('rused:') ? 'victim-user-id' : null)
+      )
 
       await expect(service.reissueTokens('stolen-token', '9.9.9.9', 'Attacker')).rejects.toThrow(
         AuthException
       )
 
-      expect(mockRedis.get).toHaveBeenCalledWith(expect.stringMatching(/^rused:/))
+      // Sentinel is read-and-cleared with GETDEL so a replay cannot re-trigger revocation.
+      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rused:/))
       // Full-family revocation: sessions deleted AND access-token cutoff recorded in one call.
       expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith(
         'victim-user-id',
@@ -462,12 +469,34 @@ describe('TokenManagerService', () => {
       )
     })
 
+    // The theft reaction fires exactly once: because the sentinel is consumed (GETDEL),
+    // replaying the same stolen token a second time finds no sentinel and fails as a
+    // plain invalid token — an attacker cannot loop it to repeatedly log the victim out.
+    it('should react only once — a second replay does not re-revoke', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      let sentinelConsumed = false
+      mockRedis.getdel.mockImplementation((key: string) => {
+        if (!key.startsWith('rused:')) return Promise.resolve(null)
+        if (sentinelConsumed) return Promise.resolve(null)
+        sentinelConsumed = true
+        return Promise.resolve('victim-user-id')
+      })
+
+      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
+        AuthException
+      )
+      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledTimes(1)
+    })
+
     // Without a sentinel the token is just an unknown/expired string — no family is
     // touched; only the invalid error is raised.
     it('should NOT revoke anything when no reuse sentinel exists', async () => {
       mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null)
-      mockRedis.get.mockResolvedValue(null) // no sentinel
+      mockRedis.getdel.mockResolvedValue(null) // grace + sentinel both absent
 
       await expect(service.reissueTokens('garbage-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException

@@ -321,10 +321,15 @@ export class TokenManagerService {
    * sentinel the token is just an invalid/expired string and nothing is revoked. The
    * caller always throws `REFRESH_TOKEN_INVALID` afterwards — this never resurrects it.
    *
+   * The sentinel is CONSUMED (GETDEL) on the first reaction: a second replay of the same
+   * stolen token then finds no sentinel and fails as a plain invalid token, so an attacker
+   * cannot loop the same token to re-revoke the account and repeatedly log the victim out
+   * (an availability/DoS vector). One replay = one revocation.
+   *
    * @param oldHash - SHA-256 of the presented refresh token; the reuse-sentinel key.
    */
   private async handleReusedToken(oldHash: string): Promise<void> {
-    const reusedUserId = await this.redis.get(`rused:${oldHash}`)
+    const reusedUserId = await this.redis.getdel(`rused:${oldHash}`)
     if (reusedUserId === null) {
       this.logger.warn(
         'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
