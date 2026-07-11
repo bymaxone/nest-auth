@@ -353,7 +353,11 @@ export class AuthRedisService {
   async revokeAllUserTokens(userId: string, accessTokenMaxAgeMs: number): Promise<void> {
     await this.invalidateUserSessions(userId)
     const cutoffEpochSeconds = Math.floor(Date.now() / 1000)
-    const ttlSeconds = Math.ceil(accessTokenMaxAgeMs / 1000)
+    // Clamp the TTL to a minimum of 1 second. A misconfigured `accessCookieMaxAgeMs`
+    // (0, negative, or NaN) would otherwise make `SET ... EX` fail or expire the cutoff
+    // immediately — letting pre-cutoff access tokens become valid again. `|| 1` maps a
+    // falsy/NaN ceil to 1; `Math.max` catches a truthy-negative ceil.
+    const ttlSeconds = Math.max(1, Math.ceil(accessTokenMaxAgeMs / 1000) || 1)
     await this.setUserTokenCutoff(userId, cutoffEpochSeconds, ttlSeconds)
   }
 }

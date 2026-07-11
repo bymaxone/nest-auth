@@ -455,5 +455,30 @@ describe('AuthRedisService', () => {
       const ttl = (mockRedis.set.mock.calls[0] as unknown[])[3]
       expect(ttl).toBe(2)
     })
+
+    // Verifies a misconfigured zero/NaN max age clamps to a 1s TTL rather than emitting
+    // an invalid `EX 0`, which would make SET fail or expire the cutoff immediately and
+    // let pre-cutoff access tokens become valid again.
+    it('should clamp a zero or NaN max age to a 1s ttl', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.set.mockResolvedValue('OK')
+
+      await service.revokeAllUserTokens('user-9', 0)
+      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
+
+      mockRedis.set.mockClear()
+      await service.revokeAllUserTokens('user-9', Number.NaN)
+      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
+    })
+
+    // Verifies a negative max age also clamps to 1s — a truthy-negative ceil must not
+    // slip past the `|| 1` guard, which is why Math.max is applied.
+    it('should clamp a negative max age to a 1s ttl', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.set.mockResolvedValue('OK')
+
+      await service.revokeAllUserTokens('user-9', -5_000)
+      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
+    })
   })
 })

@@ -29,9 +29,10 @@ describe('normalizeEmail', () => {
     expect(normalizeEmail('user@example.com')).toBe('user@example.com')
   })
 
-  // Verifies inner-tab / internal whitespace is preserved (only the ends are trimmed),
-  // pinning that trim() — not a broader whitespace strip — is the contract.
-  it('trims only the ends, not internal characters', () => {
-    expect(normalizeEmail('\tUser@Example.com\n')).toBe('user@example.com')
+  // Verifies only the ends are trimmed: leading/trailing tab and newline are removed
+  // while an INTERNAL space is preserved. This pins that the contract is trim() (edges
+  // only), not a broader whitespace strip that would also delete inner characters.
+  it('trims the ends but preserves internal whitespace', () => {
+    expect(normalizeEmail('\t  A B@Example.com \n')).toBe('a b@example.com')
   })
 })

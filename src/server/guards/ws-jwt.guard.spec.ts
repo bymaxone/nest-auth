@@ -46,7 +46,8 @@ const mockJwtService = {
 }
 
 const mockRedis = {
-  get: jest.fn()
+  get: jest.fn(),
+  getUserTokenCutoff: jest.fn()
 }
 
 const mockOptions = {
@@ -98,6 +99,9 @@ describe('WsJwtGuard', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // Default: no per-user cutoff, so the bulk-revocation check is a no-op for the
+    // existing tests. Cutoff-specific tests override this.
+    mockRedis.getUserTokenCutoff.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -276,6 +280,44 @@ describe('WsJwtGuard', () => {
       // Pin the revocation key shape: the guard must look up `rv:${jti}`, not an
       // empty or differently-prefixed key, or revoked tokens would slip through.
       expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_PAYLOAD.jti}`)
+    })
+  })
+
+  // ----------------- Access-token cutoff (bulk revocation) -----------------
+
+  describe('access-token cutoff', () => {
+    // A token issued before the user's cutoff (set on password reset / refresh-token
+    // reuse) must be rejected on the WS surface too, mirroring JwtAuthGuard — otherwise
+    // a dashboard revocation would not kill already-issued WebSocket access tokens.
+    it('should reject a token issued before the user cutoff', async () => {
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat + 1)
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+      expect(mockRedis.getUserTokenCutoff).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
+    })
+
+    // A token issued exactly at the cutoff is still valid — the cutoff must not lock
+    // out sessions established at or after the revocation event.
+    it('should allow a token issued at or after the cutoff', async () => {
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat)
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
+    })
+
+    // With no cutoff recorded the check is a pure no-op and the token passes.
+    it('should allow when no cutoff is set', async () => {
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(null)
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
     })
   })
 

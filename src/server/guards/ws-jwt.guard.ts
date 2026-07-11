@@ -106,6 +106,15 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_REVOKED)
     }
 
+    // Bulk revocation: reject any access token issued before the user's cutoff (set on
+    // password reset or refresh-token-reuse detection). Mirrors JwtAuthGuard so a
+    // dashboard revocation event kills WebSocket access tokens too, not just HTTP ones.
+    // Surfaced as TOKEN_INVALID for the same no-oracle reason as the jti check above.
+    const cutoff = await this.redis.getUserTokenCutoff(payload.sub)
+    if (cutoff !== null && payload.iat < cutoff) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
     client.data.user = payload
     return true
   }
