@@ -37,16 +37,16 @@ Every Data Transfer Object (DTO) in this project is a **plain TypeScript class**
 ### 1.2 Basic DTO Template
 
 ```typescript
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator'
 
 export class RegisterDto {
   @IsEmail({}, { message: 'A valid email address is required.' })
-  email: string;
+  email: string
 
   @IsString({ message: 'Password must be a string.' })
   @IsNotEmpty({ message: 'Password is required.' })
   @MinLength(8, { message: 'Password must be at least 8 characters.' })
-  password: string;
+  password: string
 }
 ```
 
@@ -55,7 +55,7 @@ export class RegisterDto {
 The global `ValidationPipe` MUST be configured in the NestJS application bootstrap or as a module-level provider exported by this library. The canonical configuration is:
 
 ```typescript
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common'
 
 app.useGlobalPipes(
   new ValidationPipe({
@@ -63,44 +63,44 @@ app.useGlobalPipes(
     forbidNonWhitelisted: true,
     transform: true,
     transformOptions: {
-      enableImplicitConversion: false,
+      enableImplicitConversion: false
     },
     stopAtFirstError: false,
     validationError: {
       target: false,
-      value: false,
-    },
-  }),
-);
+      value: false
+    }
+  })
+)
 ```
 
 **Key settings explained:**
 
-| Option | Value | Purpose |
-|---|---|---|
-| `whitelist` | `true` | Strips properties without decorators |
-| `forbidNonWhitelisted` | `true` | Throws 400 if extra properties are sent |
-| `transform` | `true` | Runs class-transformer to convert plain objects to class instances |
+| Option                     | Value   | Purpose                                                            |
+| -------------------------- | ------- | ------------------------------------------------------------------ |
+| `whitelist`                | `true`  | Strips properties without decorators                               |
+| `forbidNonWhitelisted`     | `true`  | Throws 400 if extra properties are sent                            |
+| `transform`                | `true`  | Runs class-transformer to convert plain objects to class instances |
 | `enableImplicitConversion` | `false` | Prevents automatic type coercion; all conversions must be explicit |
-| `target` | `false` | Hides the DTO class instance from error responses |
-| `value` | `false` | Hides the offending value from error responses |
+| `target`                   | `false` | Hides the DTO class instance from error responses                  |
+| `value`                    | `false` | Hides the offending value from error responses                     |
 
 ### 1.4 DTOs in This Project
 
 The following DTOs are defined or planned for `@bymax-one/nest-auth`:
 
-| DTO | Purpose |
-|---|---|
-| `RegisterDto` | New user registration (email, password, optional display name) |
-| `LoginDto` | Email + password authentication |
-| `ForgotPasswordDto` | Initiate password-reset flow (email only) |
-| `ResetPasswordDto` | Complete password reset (token + new password) |
-| `MfaVerifyDto` | Verify a TOTP/backup code during MFA challenge |
-| `MfaChallengeDto` | Request an MFA challenge (session token) |
-| `MfaDisableDto` | Disable MFA on an account (password or TOTP confirmation) |
-| `PlatformLoginDto` | OAuth/social login callback data |
-| `AcceptInvitationDto` | Accept a tenant/org invitation (token + optional password) |
-| `CreateInvitationDto` | Create a new invitation (email, role, tenant) |
+| DTO                   | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `RegisterDto`         | New user registration (email, password, optional display name) |
+| `LoginDto`            | Email + password authentication                                |
+| `ForgotPasswordDto`   | Initiate password-reset flow (email only)                      |
+| `ResetPasswordDto`    | Complete password reset (token + new password)                 |
+| `MfaVerifyDto`        | Verify a TOTP/backup code during MFA challenge                 |
+| `MfaChallengeDto`     | Request an MFA challenge (session token)                       |
+| `MfaDisableDto`       | Disable MFA on an account (password or TOTP confirmation)      |
+| `PlatformLoginDto`    | OAuth/social login callback data                               |
+| `AcceptInvitationDto` | Accept a tenant/org invitation (token + optional password)     |
+| `CreateInvitationDto` | Create a new invitation (email, role, tenant)                  |
 
 ---
 
@@ -246,19 +246,15 @@ Create a reusable decorator that reads strength requirements from the library's 
 ```typescript
 // src/server/decorators/is-valid-password.decorator.ts
 
-import {
-  registerDecorator,
-  ValidationOptions,
-  ValidationArguments,
-} from 'class-validator';
+import { registerDecorator, ValidationOptions, ValidationArguments } from 'class-validator'
 
 export interface PasswordPolicy {
-  minLength: number;
-  maxLength: number;
-  requireUppercase: boolean;
-  requireLowercase: boolean;
-  requireDigit: boolean;
-  requireSymbol: boolean;
+  minLength: number
+  maxLength: number
+  requireUppercase: boolean
+  requireLowercase: boolean
+  requireDigit: boolean
+  requireSymbol: boolean
 }
 
 export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
@@ -267,14 +263,14 @@ export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
   requireUppercase: true,
   requireLowercase: true,
   requireDigit: true,
-  requireSymbol: true,
-};
+  requireSymbol: true
+}
 
 export function IsValidPassword(
   policy: Partial<PasswordPolicy> = {},
-  validationOptions?: ValidationOptions,
+  validationOptions?: ValidationOptions
 ) {
-  const merged = { ...DEFAULT_PASSWORD_POLICY, ...policy };
+  const merged = { ...DEFAULT_PASSWORD_POLICY, ...policy }
 
   return function (object: object, propertyName: string) {
     registerDecorator({
@@ -284,40 +280,40 @@ export function IsValidPassword(
       options: validationOptions,
       validator: {
         validate(value: unknown): boolean {
-          if (typeof value !== 'string') return false;
-          if (value.length < merged.minLength) return false;
-          if (value.length > merged.maxLength) return false;
-          if (merged.requireUppercase && !/[A-Z]/.test(value)) return false;
-          if (merged.requireLowercase && !/[a-z]/.test(value)) return false;
-          if (merged.requireDigit && !/\d/.test(value)) return false;
-          if (merged.requireSymbol && !/[^A-Za-z0-9]/.test(value)) return false;
-          return true;
+          if (typeof value !== 'string') return false
+          if (value.length < merged.minLength) return false
+          if (value.length > merged.maxLength) return false
+          if (merged.requireUppercase && !/[A-Z]/.test(value)) return false
+          if (merged.requireLowercase && !/[a-z]/.test(value)) return false
+          if (merged.requireDigit && !/\d/.test(value)) return false
+          if (merged.requireSymbol && !/[^A-Za-z0-9]/.test(value)) return false
+          return true
         },
         defaultMessage(args: ValidationArguments): string {
-          return `${args.property} does not meet the password policy requirements.`;
-        },
-      },
-    });
-  };
+          return `${args.property} does not meet the password policy requirements.`
+        }
+      }
+    })
+  }
 }
 ```
 
 #### Usage in DTOs
 
 ```typescript
-import { IsValidPassword } from '../decorators/is-valid-password.decorator';
+import { IsValidPassword } from '../decorators/is-valid-password.decorator'
 
 export class RegisterDto {
   @IsValidPassword()
-  password: string;
+  password: string
 }
 
 export class ResetPasswordDto {
   @IsUUID('4')
-  token: string;
+  token: string
 
   @IsValidPassword()
-  newPassword: string;
+  newPassword: string
 }
 ```
 
@@ -326,16 +322,9 @@ export class ResetPasswordDto {
 When a DTO includes both `password` and `confirmPassword`, use a custom decorator that compares the two:
 
 ```typescript
-import {
-  registerDecorator,
-  ValidationOptions,
-  ValidationArguments,
-} from 'class-validator';
+import { registerDecorator, ValidationOptions, ValidationArguments } from 'class-validator'
 
-export function Match(
-  relatedProperty: string,
-  validationOptions?: ValidationOptions,
-) {
+export function Match(relatedProperty: string, validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {
     registerDecorator({
       name: 'match',
@@ -345,27 +334,25 @@ export function Match(
       options: validationOptions,
       validator: {
         validate(value: unknown, args: ValidationArguments): boolean {
-          const related = (args.object as Record<string, unknown>)[
-            args.constraints[0]
-          ];
-          return value === related;
+          const related = (args.object as Record<string, unknown>)[args.constraints[0]]
+          return value === related
         },
         defaultMessage(args: ValidationArguments): string {
-          return `${args.property} must match ${args.constraints[0]}.`;
-        },
-      },
-    });
-  };
+          return `${args.property} must match ${args.constraints[0]}.`
+        }
+      }
+    })
+  }
 }
 ```
 
 ```typescript
 export class ResetPasswordDto {
   @IsValidPassword()
-  newPassword: string;
+  newPassword: string
 
   @Match('newPassword', { message: 'Passwords do not match.' })
-  confirmPassword: string;
+  confirmPassword: string
 }
 ```
 
@@ -420,52 +407,52 @@ expiresAt: Date;
 Use these for **response serialization**, not for input DTOs. They control which properties appear in the serialized output when using `ClassSerializerInterceptor` or `instanceToPlain`.
 
 ```typescript
-import { Exclude, Expose } from 'class-transformer';
+import { Exclude, Expose } from 'class-transformer'
 
 export class UserResponseDto {
   @Expose()
-  id: string;
+  id: string
 
   @Expose()
-  email: string;
+  email: string
 
   @Expose()
-  displayName: string;
+  displayName: string
 
   @Exclude()
-  passwordHash: string;
+  passwordHash: string
 
   @Exclude()
-  totpSecret: string;
+  totpSecret: string
 }
 ```
 
 ### 4.5 `plainToInstance` and `instanceToPlain`
 
 ```typescript
-import { plainToInstance, instanceToPlain } from 'class-transformer';
+import { plainToInstance, instanceToPlain } from 'class-transformer'
 
 // Convert plain object to class instance (for manual validation outside pipes)
 const dto = plainToInstance(RegisterDto, requestBody, {
-  excludeExtraneousValues: false,
-});
+  excludeExtraneousValues: false
+})
 
 // Convert class instance to plain object (for responses)
 const response = instanceToPlain(user, {
-  excludePrefixes: ['_'],
-});
+  excludePrefixes: ['_']
+})
 ```
 
 ### 4.6 Transformation Options Reference
 
-| Option | Type | Default | Purpose |
-|---|---|---|---|
-| `excludeExtraneousValues` | `boolean` | `false` | Only keep `@Expose()`-decorated properties |
-| `enableImplicitConversion` | `boolean` | `false` | Auto-convert types based on TS metadata |
-| `exposeDefaultValues` | `boolean` | `false` | Include properties with default values in output |
-| `groups` | `string[]` | `[]` | Only include properties matching these groups |
-| `excludePrefixes` | `string[]` | `[]` | Exclude properties whose names start with these prefixes |
-| `enableCircularCheck` | `boolean` | `false` | Prevent infinite loops with circular references |
+| Option                     | Type       | Default | Purpose                                                  |
+| -------------------------- | ---------- | ------- | -------------------------------------------------------- |
+| `excludeExtraneousValues`  | `boolean`  | `false` | Only keep `@Expose()`-decorated properties               |
+| `enableImplicitConversion` | `boolean`  | `false` | Auto-convert types based on TS metadata                  |
+| `exposeDefaultValues`      | `boolean`  | `false` | Include properties with default values in output         |
+| `groups`                   | `string[]` | `[]`    | Only include properties matching these groups            |
+| `excludePrefixes`          | `string[]` | `[]`    | Exclude properties whose names start with these prefixes |
+| `enableCircularCheck`      | `boolean`  | `false` | Prevent infinite loops with circular references          |
 
 ### 4.7 Email Normalization Pattern (Project Standard)
 
@@ -488,11 +475,7 @@ This ensures consistent email comparison and storage. Apply this pattern in: `Re
 The simplest way to create a custom validator for a single-property check:
 
 ```typescript
-import {
-  registerDecorator,
-  ValidationOptions,
-  ValidationArguments,
-} from 'class-validator';
+import { registerDecorator, ValidationOptions, ValidationArguments } from 'class-validator'
 
 export function IsNotDisposableEmail(validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -502,18 +485,18 @@ export function IsNotDisposableEmail(validationOptions?: ValidationOptions) {
       propertyName,
       options: {
         message: 'Disposable email addresses are not allowed.',
-        ...validationOptions,
+        ...validationOptions
       },
       validator: {
         validate(value: unknown): boolean {
-          if (typeof value !== 'string') return false;
-          const domain = value.split('@')[1]?.toLowerCase();
-          const disposableDomains = ['tempmail.com', 'throwaway.email', 'mailinator.com'];
-          return !disposableDomains.includes(domain);
-        },
-      },
-    });
-  };
+          if (typeof value !== 'string') return false
+          const domain = value.split('@')[1]?.toLowerCase()
+          const disposableDomains = ['tempmail.com', 'throwaway.email', 'mailinator.com']
+          return !disposableDomains.includes(domain)
+        }
+      }
+    })
+  }
 }
 ```
 
@@ -526,18 +509,18 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
   ValidationArguments,
-  Validate,
-} from 'class-validator';
+  Validate
+} from 'class-validator'
 
 @ValidatorConstraint({ name: 'isTotpCode', async: false })
 export class IsTotpCodeConstraint implements ValidatorConstraintInterface {
   validate(value: unknown, _args: ValidationArguments): boolean {
-    if (typeof value !== 'string') return false;
-    return /^\d{6}$/.test(value);
+    if (typeof value !== 'string') return false
+    return /^\d{6}$/.test(value)
   }
 
   defaultMessage(_args: ValidationArguments): string {
-    return 'TOTP code must be exactly 6 digits.';
+    return 'TOTP code must be exactly 6 digits.'
   }
 }
 ```
@@ -545,19 +528,19 @@ export class IsTotpCodeConstraint implements ValidatorConstraintInterface {
 Apply it with `@Validate`:
 
 ```typescript
-import { Validate } from 'class-validator';
+import { Validate } from 'class-validator'
 
 export class MfaVerifyDto {
   @Validate(IsTotpCodeConstraint)
-  code: string;
+  code: string
 }
 ```
 
 Or wrap it into a decorator for ergonomic reuse:
 
 ```typescript
-import { registerDecorator, ValidationOptions } from 'class-validator';
-import { IsTotpCodeConstraint } from './is-totp-code.constraint';
+import { registerDecorator, ValidationOptions } from 'class-validator'
+import { IsTotpCodeConstraint } from './is-totp-code.constraint'
 
 export function IsTotpCode(validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -566,9 +549,9 @@ export function IsTotpCode(validationOptions?: ValidationOptions) {
       propertyName,
       options: validationOptions,
       constraints: [],
-      validator: IsTotpCodeConstraint,
-    });
-  };
+      validator: IsTotpCodeConstraint
+    })
+  }
 }
 ```
 
@@ -585,12 +568,12 @@ export class IsEmailUniqueConstraint implements ValidatorConstraintInterface {
   constructor(private readonly userService: UserService) {}
 
   async validate(email: string): Promise<boolean> {
-    const user = await this.userService.findByEmail(email);
-    return !user;
+    const user = await this.userService.findByEmail(email)
+    return !user
   }
 
   defaultMessage(): string {
-    return 'Email is already registered.';
+    return 'Email is already registered.'
   }
 }
 ```
@@ -601,18 +584,18 @@ By default, class-validator instantiates constraint classes with `new`. To enabl
 
 ```typescript
 // In your main.ts or module setup
-import { useContainer } from 'class-validator';
-import { AppModule } from './app.module';
+import { useContainer } from 'class-validator'
+import { AppModule } from './app.module'
 
-const app = await NestFactory.create(AppModule);
-useContainer(app.select(AppModule), { fallbackOnErrors: true });
+const app = await NestFactory.create(AppModule)
+useContainer(app.select(AppModule), { fallbackOnErrors: true })
 ```
 
 Then register the constraint as a provider in the module:
 
 ```typescript
 @Module({
-  providers: [IsEmailUniqueConstraint],
+  providers: [IsEmailUniqueConstraint]
 })
 export class AuthModule {}
 ```
@@ -655,30 +638,30 @@ export const ValidationGroup = {
   CREATE: 'create',
   UPDATE: 'update',
   ADMIN: 'admin',
-  SELF: 'self',
-} as const;
+  SELF: 'self'
+} as const
 
-export type ValidationGroup = (typeof ValidationGroup)[keyof typeof ValidationGroup];
+export type ValidationGroup = (typeof ValidationGroup)[keyof typeof ValidationGroup]
 ```
 
 ### 6.3 Applying Groups to Decorators
 
 ```typescript
-import { IsNotEmpty, IsOptional, IsEmail, IsString } from 'class-validator';
-import { ValidationGroup } from '../constants/validation-groups';
+import { IsNotEmpty, IsOptional, IsEmail, IsString } from 'class-validator'
+import { ValidationGroup } from '../constants/validation-groups'
 
 export class UserDto {
   @IsEmail({}, { groups: [ValidationGroup.CREATE], message: 'Email is required.' })
-  email: string;
+  email: string
 
   @IsNotEmpty({ groups: [ValidationGroup.CREATE] })
   @IsOptional({ groups: [ValidationGroup.UPDATE] })
   @IsString()
-  password: string;
+  password: string
 
   @IsOptional({ groups: [ValidationGroup.CREATE, ValidationGroup.UPDATE] })
   @IsString()
-  displayName?: string;
+  displayName?: string
 }
 ```
 
@@ -701,14 +684,14 @@ class-transformer also supports groups for `@Expose`/`@Exclude`:
 ```typescript
 export class UserResponseDto {
   @Expose({ groups: ['admin'] })
-  internalId: string;
+  internalId: string
 
   @Expose()
-  email: string;
+  email: string
 }
 
 // Serialization with groups
-const result = instanceToPlain(user, { groups: ['admin'] });
+const result = instanceToPlain(user, { groups: ['admin'] })
 ```
 
 ### 6.6 When to Use Groups in @bymax-one/nest-auth
@@ -728,35 +711,35 @@ const result = instanceToPlain(user, { groups: ['admin'] });
 Use `@ValidateNested()` combined with `@Type()` to validate nested objects:
 
 ```typescript
-import { ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { ValidateNested } from 'class-validator'
+import { Type } from 'class-transformer'
 
 export class OAuthProfileDto {
   @IsString()
   @IsNotEmpty()
-  providerId: string;
+  providerId: string
 
   @IsString()
   @IsNotEmpty()
-  providerUserId: string;
+  providerUserId: string
 
   @IsOptional()
   @IsEmail()
-  email?: string;
+  email?: string
 }
 
 export class PlatformLoginDto {
   @IsString()
   @IsNotEmpty()
-  provider: string;
+  provider: string
 
   @IsString()
   @IsNotEmpty()
-  accessToken: string;
+  accessToken: string
 
   @ValidateNested()
   @Type(() => OAuthProfileDto)
-  profile: OAuthProfileDto;
+  profile: OAuthProfileDto
 }
 ```
 
@@ -797,16 +780,16 @@ These settings are **non-negotiable** for an authentication library:
 
 ```typescript
 new ValidationPipe({
-  whitelist: true,               // REQUIRED: strip undecorated properties
-  forbidNonWhitelisted: true,    // REQUIRED: reject requests with extra properties
-  transform: true,               // REQUIRED: enable class-transformer
+  whitelist: true, // REQUIRED: strip undecorated properties
+  forbidNonWhitelisted: true, // REQUIRED: reject requests with extra properties
+  transform: true, // REQUIRED: enable class-transformer
   transformOptions: {
-    enableImplicitConversion: false,  // REQUIRED: prevent type coercion attacks
+    enableImplicitConversion: false // REQUIRED: prevent type coercion attacks
   },
   validationError: {
-    target: false,   // REQUIRED: never expose DTO class in error responses
-    value: false,    // REQUIRED: never expose submitted values in error responses
-  },
+    target: false, // REQUIRED: never expose DTO class in error responses
+    value: false // REQUIRED: never expose submitted values in error responses
+  }
 })
 ```
 
@@ -828,13 +811,13 @@ class-transformer's `plainToInstance` does NOT spread the source object's protot
 
 ```typescript
 // DANGEROUS -- prototype pollution risk
-const dto = Object.assign(new RegisterDto(), req.body);
+const dto = Object.assign(new RegisterDto(), req.body)
 ```
 
 **Always rely on the ValidationPipe or use:**
 
 ```typescript
-const dto = plainToInstance(RegisterDto, req.body);
+const dto = plainToInstance(RegisterDto, req.body)
 ```
 
 ### 8.4 Rate Limiting and Validation
@@ -847,10 +830,10 @@ Never log or expose validated DTO instances that contain passwords or tokens:
 
 ```typescript
 // WRONG -- leaks password to logs
-this.logger.log('Registration attempt', dto);
+this.logger.log('Registration attempt', dto)
 
 // CORRECT -- omit sensitive fields
-this.logger.log('Registration attempt', { email: dto.email });
+this.logger.log('Registration attempt', { email: dto.email })
 ```
 
 ### 8.6 Input Length Limits
@@ -875,16 +858,16 @@ token: string;
 
 Recommended upper bounds for this project:
 
-| Field Type | Max Length |
-|---|---|
-| Email | 255 |
-| Password | 128 |
-| Display name | 200 |
-| UUID token | 36 |
-| JWT / opaque token | 2048 |
-| TOTP code | 6 |
-| Backup code | 20 |
-| URL / redirect URI | 2048 |
+| Field Type         | Max Length |
+| ------------------ | ---------- |
+| Email              | 255        |
+| Password           | 128        |
+| Display name       | 200        |
+| UUID token         | 36         |
+| JWT / opaque token | 2048       |
+| TOTP code          | 6          |
+| Backup code        | 20         |
+| URL / redirect URI | 2048       |
 
 ---
 
@@ -910,13 +893,13 @@ class-validator supports `$property`, `$value`, `$target`, and `$constraint1`/`$
 
 Available placeholders:
 
-| Placeholder | Description |
-|---|---|
-| `$property` | The property name being validated |
-| `$value` | The current value being validated |
-| `$target` | The class name of the DTO |
-| `$constraint1` | The first constraint parameter |
-| `$constraint2` | The second constraint parameter |
+| Placeholder    | Description                       |
+| -------------- | --------------------------------- |
+| `$property`    | The property name being validated |
+| `$value`       | The current value being validated |
+| `$target`      | The class name of the DTO         |
+| `$constraint1` | The first constraint parameter    |
+| `$constraint2` | The second constraint parameter   |
 
 **Security warning:** Do not use `$value` in messages for sensitive fields (passwords, tokens). The value would appear in the API error response.
 
@@ -956,10 +939,7 @@ NestJS's `ValidationPipe` formats errors as:
 ```json
 {
   "statusCode": 400,
-  "message": [
-    "A valid email address is required.",
-    "Password must be at least 8 characters."
-  ],
+  "message": ["A valid email address is required.", "Password must be at least 8 characters."],
   "error": "Bad Request"
 }
 ```
@@ -974,16 +954,16 @@ With `validationError.target: false` and `validationError.value: false`, no inte
 
 ```typescript
 // WRONG -- allows arbitrary property injection
-app.useGlobalPipes(new ValidationPipe({ transform: true }));
+app.useGlobalPipes(new ValidationPipe({ transform: true }))
 
 // CORRECT
 app.useGlobalPipes(
   new ValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: true,
-    transform: true,
-  }),
-);
+    transform: true
+  })
+)
 ```
 
 ### 10.2 Using Interfaces Instead of Classes
@@ -1050,18 +1030,18 @@ profile: OAuthProfileDto;
 ```typescript
 // WRONG -- property passes through without any validation
 export class LoginDto {
-  email: string;    // No decorators! Stripped by whitelist
-  password: string; // No decorators! Stripped by whitelist
+  email: string // No decorators! Stripped by whitelist
+  password: string // No decorators! Stripped by whitelist
 }
 
 // CORRECT -- every property has at least one validator
 export class LoginDto {
   @IsEmail({}, { message: 'A valid email address is required.' })
-  email: string;
+  email: string
 
   @IsString()
   @IsNotEmpty({ message: 'Password is required.' })
-  password: string;
+  password: string
 }
 ```
 
@@ -1081,10 +1061,10 @@ password: string;
 
 ```typescript
 // WRONG -- bypasses class-transformer; prototype pollution risk
-const dto = Object.assign(new RegisterDto(), rawBody);
+const dto = Object.assign(new RegisterDto(), rawBody)
 
 // CORRECT -- safe transformation
-const dto = plainToInstance(RegisterDto, rawBody);
+const dto = plainToInstance(RegisterDto, rawBody)
 ```
 
 ### 10.8 Unguarded `@Transform` Functions
@@ -1121,32 +1101,32 @@ displayName: string;
 export class AuthDto {
   @IsOptional()
   @IsEmail()
-  email?: string;
+  email?: string
 
   @IsOptional()
   @IsString()
-  password?: string;
+  password?: string
 
   @IsOptional()
   @IsString()
-  token?: string;
+  token?: string
 }
 
 // CORRECT -- separate DTOs with precise shapes
 export class RegisterDto {
   @IsEmail()
-  email: string;
+  email: string
 
   @IsValidPassword()
-  password: string;
+  password: string
 }
 
 export class ResetPasswordDto {
   @IsUUID('4')
-  token: string;
+  token: string
 
   @IsValidPassword()
-  newPassword: string;
+  newPassword: string
 }
 ```
 

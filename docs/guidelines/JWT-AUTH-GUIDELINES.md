@@ -28,18 +28,19 @@
 
 The `@bymax-one/nest-auth` package uses a multi-token architecture to serve different authentication contexts. Every token has a strict purpose, a defined lifetime, and a typed payload. Understanding which token does what is essential before writing any JWT-related code.
 
-| Token Type | Format | Lifetime | Transport | Purpose |
-|---|---|---|---|---|
-| **Access Token (Dashboard)** | JWT (signed) | 15 minutes (default) | Cookie or `Authorization: Bearer` header | Authenticates dashboard/tenant users on every request |
-| **Access Token (Platform)** | JWT (signed) | 15 minutes (default) | Cookie or `Authorization: Bearer` header | Authenticates platform administrators |
-| **Refresh Token** | Opaque UUID v4 | 7 days (default) | HttpOnly cookie (path-scoped) or request body | Reissues access tokens without re-authentication |
-| **MFA Temp Token** | JWT (signed) | 5 minutes (fixed) | Response body only | Short-lived token for the MFA challenge window |
+| Token Type                   | Format         | Lifetime             | Transport                                     | Purpose                                               |
+| ---------------------------- | -------------- | -------------------- | --------------------------------------------- | ----------------------------------------------------- |
+| **Access Token (Dashboard)** | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header      | Authenticates dashboard/tenant users on every request |
+| **Access Token (Platform)**  | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header      | Authenticates platform administrators                 |
+| **Refresh Token**            | Opaque UUID v4 | 7 days (default)     | HttpOnly cookie (path-scoped) or request body | Reissues access tokens without re-authentication      |
+| **MFA Temp Token**           | JWT (signed)   | 5 minutes (fixed)    | Response body only                            | Short-lived token for the MFA challenge window        |
 
 ### 1.2 Access Tokens
 
 Access tokens are standard JWTs signed with HS256. They carry authorization claims (role, tenant, status, MFA state) and are verified on every authenticated request by the guards. Access tokens are **stateless** — the guard does not query a database to validate them. The only server-side check is the blacklist lookup in Redis (for revoked tokens).
 
 Key properties:
+
 - Short-lived (default 15 minutes, configurable via `jwt.accessExpiresIn`).
 - Contain a `jti` claim (UUID v4) used for blacklisting on logout.
 - Contain a `type` claim (`"dashboard"` or `"platform"`) to prevent cross-context token reuse.
@@ -62,6 +63,7 @@ The raw token is never stored in Redis. Only its SHA-256 hash is used as the key
 When a user with MFA enabled provides correct credentials at login, the server does **not** issue access/refresh tokens. Instead, it returns an MFA temp token — a short-lived JWT with `type: "mfa_challenge"`. The client must present this token along with the TOTP code at the `/auth/mfa/challenge` endpoint to complete authentication.
 
 Key properties:
+
 - Expires in exactly 5 minutes.
 - Contains a `context` claim (`"dashboard"` or `"platform"`) so the MFA service knows which repository and token-issuing path to use.
 - Stored in Redis (`auth:mfa:{sha256(token)}`) and consumed (deleted) after successful verification — single-use.
@@ -101,11 +103,12 @@ When signing a token, always provide the secret and algorithm explicitly at call
 const accessToken = this.jwtService.sign(payload, {
   secret: this.options.jwt.secret,
   algorithm: 'HS256',
-  expiresIn: this.options.jwt.accessExpiresIn, // default: '15m'
-});
+  expiresIn: this.options.jwt.accessExpiresIn // default: '15m'
+})
 ```
 
 The payload passed to `sign()` must be a plain object. The `jti`, `iat`, and `exp` claims are managed as follows:
+
 - `jti`: Generated as UUID v4 by `TokenManagerService` before signing. Always include it.
 - `iat`: Automatically set by `@nestjs/jwt` (do not set manually).
 - `exp`: Controlled by the `expiresIn` option (do not set the `exp` claim in the payload manually).
@@ -120,9 +123,9 @@ const mfaTempToken = this.jwtService.sign(
   {
     secret: this.options.jwt.secret,
     algorithm: 'HS256',
-    expiresIn: '5m', // fixed, not configurable
-  },
-);
+    expiresIn: '5m' // fixed, not configurable
+  }
+)
 ```
 
 ### 2.4 Verifying Tokens
@@ -133,8 +136,8 @@ const mfaTempToken = this.jwtService.sign(
 // CORRECT — algorithm pinned at verification time
 const payload = this.jwtService.verify<DashboardJwtPayload>(token, {
   secret: this.options.jwt.secret,
-  algorithms: ['HS256'],  // MANDATORY — never omit this
-});
+  algorithms: ['HS256'] // MANDATORY — never omit this
+})
 ```
 
 **Never call `verify()` without the `algorithms` array.** The `@nestjs/jwt` library passes options through to `jsonwebtoken`, which by default accepts whatever algorithm the token header specifies. Pinning the algorithm closes this attack vector.
@@ -145,23 +148,24 @@ For specific internal operations (such as extracting the `jti` from an expired t
 
 ```typescript
 // decode() does NOT verify the signature or expiration
-const payload = this.jwtService.decode(token);
+const payload = this.jwtService.decode(token)
 ```
 
 **Rules for `decode()`:**
+
 - Never use the output of `decode()` for authorization decisions.
 - Only use it when you need claims from a token you know is expired or when you need the `jti` to perform a blacklist operation.
 - Mark any method that uses `decode()` as `@internal` to signal it should not be used in authorization paths.
 
 ### 2.6 Sign and Verify Options Reference
 
-| Option | Sign | Verify | Required | Description |
-|---|---|---|---|---|
-| `secret` | Yes | Yes | Always | The HMAC secret. Minimum 32 characters, validated at startup. |
-| `algorithm` | Yes | No | Always at sign | Must be `'HS256'`. The only supported algorithm. |
-| `algorithms` | No | Yes | Always at verify | Must be `['HS256']`. Pins the accepted algorithm. |
-| `expiresIn` | Yes | No | Always at sign | String like `'15m'`, `'5m'`, `'7d'`. Controls `exp` claim. |
-| `ignoreExpiration` | No | Yes | Never | Do not use. If you need claims from expired tokens, use `decode()`. |
+| Option             | Sign | Verify | Required         | Description                                                         |
+| ------------------ | ---- | ------ | ---------------- | ------------------------------------------------------------------- |
+| `secret`           | Yes  | Yes    | Always           | The HMAC secret. Minimum 32 characters, validated at startup.       |
+| `algorithm`        | Yes  | No     | Always at sign   | Must be `'HS256'`. The only supported algorithm.                    |
+| `algorithms`       | No   | Yes    | Always at verify | Must be `['HS256']`. Pins the accepted algorithm.                   |
+| `expiresIn`        | Yes  | No     | Always at sign   | String like `'15m'`, `'5m'`, `'7d'`. Controls `exp` claim.          |
+| `ignoreExpiration` | No   | Yes    | Never            | Do not use. If you need claims from expired tokens, use `decode()`. |
 
 ### 2.7 JwtModule Registration
 
@@ -173,9 +177,9 @@ JwtModule.register({
   secret: options.jwt.secret,
   signOptions: {
     algorithm: 'HS256',
-    expiresIn: options.jwt.accessExpiresIn ?? '15m',
-  },
-});
+    expiresIn: options.jwt.accessExpiresIn ?? '15m'
+  }
+})
 ```
 
 Even though module-level defaults are set, all guards and services pass `secret` and `algorithms`/`algorithm` explicitly at call-site as defense in depth.
@@ -198,6 +202,7 @@ tokenDelivery?: 'cookie' | 'bearer' | 'both';
 **When to use:** Web applications and SPAs served from the same domain as the API.
 
 Behavior:
+
 - **Login/Register:** Sets `access_token` and `refresh_token` as HttpOnly cookies. Response body contains only `{ user }`.
 - **Refresh:** Clears old cookies, sets new ones. Response body is empty `{}`.
 - **Logout:** Clears all auth cookies.
@@ -218,6 +223,7 @@ Behavior:
 **When to use:** React Native, mobile apps, desktop clients, or any client that does not support cookies natively.
 
 Behavior:
+
 - **Login/Register:** No cookies are set. Response body contains `{ user, accessToken, refreshToken }`.
 - **Refresh:** Response body contains `{ accessToken, refreshToken }`. Client sends refresh token in `req.body.refreshToken`.
 - **Logout:** Server-side revocation only (blacklist + Redis cleanup). No cookies to clear.
@@ -235,6 +241,7 @@ Behavior:
 ```
 
 **Client responsibilities in bearer mode:**
+
 - Store the access token in memory (not localStorage — see Anti-Patterns).
 - Store the refresh token in a secure platform-specific store (iOS Keychain, Android Keystore, Electron safeStorage).
 - Attach `Authorization: Bearer <accessToken>` to every authenticated request.
@@ -245,6 +252,7 @@ Behavior:
 **When to use:** When the same backend serves both web (cookie-based) and mobile (bearer-based) clients.
 
 Behavior:
+
 - **Login/Register:** Sets cookies AND returns tokens in the body.
 - **Refresh:** Sets new cookies AND returns new tokens in the body.
 - **Guards:** Try cookie first, then fall back to `Authorization: Bearer` header.
@@ -270,13 +278,13 @@ extractAccessToken(req: Request): string | null {
 
 All token delivery logic is encapsulated in `TokenDeliveryService`. Controllers and guards never read cookies or headers directly — they delegate to this service.
 
-| Method | Purpose |
-|---|---|
-| `deliverAuthResponse(res, req, authResult)` | Delivers tokens after login/register |
-| `deliverRefreshResponse(res, req, authResult)` | Delivers tokens after refresh |
-| `extractAccessToken(req)` | Extracts access token from cookie or header |
-| `extractRefreshToken(req)` | Extracts refresh token from cookie or body |
-| `clearAuthSession(res, req)` | Clears cookies (no-op in bearer mode) |
+| Method                                         | Purpose                                     |
+| ---------------------------------------------- | ------------------------------------------- |
+| `deliverAuthResponse(res, req, authResult)`    | Delivers tokens after login/register        |
+| `deliverRefreshResponse(res, req, authResult)` | Delivers tokens after refresh               |
+| `extractAccessToken(req)`                      | Extracts access token from cookie or header |
+| `extractRefreshToken(req)`                     | Extracts refresh token from cookie or body  |
+| `clearAuthSession(res, req)`                   | Clears cookies (no-op in bearer mode)       |
 
 **Rule:** Never access `req.cookies` or `req.headers.authorization` directly in controllers or guards. Always go through `TokenDeliveryService`.
 
@@ -286,11 +294,11 @@ All token delivery logic is encapsulated in `TokenDeliveryService`. Controllers 
 
 ### 4.1 Cookie Configuration Table
 
-| Cookie | Default Name | Path | HttpOnly | Secure | SameSite | Max-Age | Purpose |
-|---|---|---|---|---|---|---|---|
-| Access Token | `access_token` | `/` | Yes | Yes (prod) | `Lax` | 900,000 ms (15 min) | Carries the JWT on every HTTP request |
-| Refresh Token | `refresh_token` | `/auth` | Yes | Yes (prod) | `Strict` | 7 days (604,800,000 ms) | Token rotation at the refresh endpoint only |
-| Session Signal | `has_session` | `/` | **No** | Yes (prod) | `Lax` | Same as refresh | Non-sensitive flag (`"1"`) readable by JavaScript/proxy |
+| Cookie         | Default Name    | Path    | HttpOnly | Secure     | SameSite | Max-Age                 | Purpose                                                 |
+| -------------- | --------------- | ------- | -------- | ---------- | -------- | ----------------------- | ------------------------------------------------------- |
+| Access Token   | `access_token`  | `/`     | Yes      | Yes (prod) | `Lax`    | 900,000 ms (15 min)     | Carries the JWT on every HTTP request                   |
+| Refresh Token  | `refresh_token` | `/auth` | Yes      | Yes (prod) | `Strict` | 7 days (604,800,000 ms) | Token rotation at the refresh endpoint only             |
+| Session Signal | `has_session`   | `/`     | **No**   | Yes (prod) | `Lax`    | Same as refresh         | Non-sensitive flag (`"1"`) readable by JavaScript/proxy |
 
 ### 4.2 HttpOnly
 
@@ -320,10 +328,10 @@ The refresh token cookie is scoped to `path=/auth` (or whatever `cookies.refresh
 BymaxAuthModule.register({
   routePrefix: 'api/v1/auth',
   cookies: {
-    refreshCookiePath: '/api/v1/auth', // MUST match routePrefix
-  },
+    refreshCookiePath: '/api/v1/auth' // MUST match routePrefix
+  }
   // ...
-});
+})
 ```
 
 ### 4.6 Domain Resolution
@@ -358,10 +366,10 @@ Cookie names and paths are exported from `@bymax-one/nest-auth/shared` to ensure
 
 ```typescript
 // @bymax-one/nest-auth/shared
-export const AUTH_ACCESS_COOKIE_NAME = 'access_token';
-export const AUTH_REFRESH_COOKIE_NAME = 'refresh_token';
-export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session';
-export const AUTH_REFRESH_COOKIE_PATH = '/auth';
+export const AUTH_ACCESS_COOKIE_NAME = 'access_token'
+export const AUTH_REFRESH_COOKIE_NAME = 'refresh_token'
+export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'
+export const AUTH_REFRESH_COOKIE_PATH = '/auth'
 ```
 
 The `./client`, `./react`, and `./nextjs` subpath exports import these constants internally, eliminating manual synchronization between backend and frontend.
@@ -375,6 +383,7 @@ The `./client`, `./react`, and `./nextjs` subpath exports import these constants
 This package implements **refresh token rotation**: every time a refresh token is used, it is invalidated and a new one is issued. This limits the damage window if a refresh token is compromised — the attacker can use it at most once before it becomes invalid.
 
 Flow:
+
 1. Client sends the current refresh token to `POST /auth/refresh`.
 2. `TokenManagerService.reissueTokens()` looks up `auth:rt:{sha256(oldToken)}` in Redis.
 3. If found, the old key is deleted atomically and a new refresh token (UUID v4) is generated.
@@ -431,12 +440,12 @@ return nil
 
 ### 5.4 Redis Storage for Refresh Tokens
 
-| Key Pattern | Value | TTL |
-|---|---|---|
-| `auth:rt:{sha256(token)}` | JSON: `{ userId, tenantId, role, device, ip, createdAt }` | `refreshExpiresInDays` in seconds |
-| `auth:rp:{sha256(oldToken)}` | New raw token string | `refreshGraceWindowSeconds` (default: 30s) |
-| `auth:prt:{sha256(token)}` | JSON: `{ userId, role, device, ip, createdAt }` (platform) | `refreshExpiresInDays` in seconds |
-| `auth:prp:{sha256(oldToken)}` | New raw token string (platform) | `refreshGraceWindowSeconds` (default: 30s) |
+| Key Pattern                   | Value                                                      | TTL                                        |
+| ----------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
+| `auth:rt:{sha256(token)}`     | JSON: `{ userId, tenantId, role, device, ip, createdAt }`  | `refreshExpiresInDays` in seconds          |
+| `auth:rp:{sha256(oldToken)}`  | New raw token string                                       | `refreshGraceWindowSeconds` (default: 30s) |
+| `auth:prt:{sha256(token)}`    | JSON: `{ userId, role, device, ip, createdAt }` (platform) | `refreshExpiresInDays` in seconds          |
+| `auth:prp:{sha256(oldToken)}` | New raw token string (platform)                            | `refreshGraceWindowSeconds` (default: 30s) |
 
 ### 5.5 Refresh Token Security Rules
 
@@ -457,11 +466,13 @@ Access tokens are stateless JWTs — once signed, they are valid until they expi
 ### 6.2 How It Works
 
 On logout:
+
 1. Extract the `jti` claim from the access token (via `decode()`, since the token may already be expired).
 2. Store the `jti` in Redis: `SET auth:rv:{jti} "1" EX {remaining_seconds}`.
 3. The TTL is calculated as `token.exp - now()` — the blacklist entry only needs to live as long as the token would have been valid.
 
 On every authenticated request:
+
 1. The guard verifies the JWT signature and expiration.
 2. If verification succeeds, the guard checks `auth:rv:{payload.jti}` in Redis.
 3. If the key exists, the token has been revoked — throw `UnauthorizedException` with `AUTH_ERROR_CODES.TOKEN_REVOKED`.
@@ -482,16 +493,11 @@ The blacklist entry TTL must match the remaining lifetime of the token, not the 
 
 ```typescript
 // Calculate remaining TTL for blacklist
-const now = Math.floor(Date.now() / 1000);
-const remainingSeconds = payload.exp - now;
+const now = Math.floor(Date.now() / 1000)
+const remainingSeconds = payload.exp - now
 
 if (remainingSeconds > 0) {
-  await this.redis.set(
-    `${this.namespace}:rv:${payload.jti}`,
-    '1',
-    'EX',
-    remainingSeconds,
-  );
+  await this.redis.set(`${this.namespace}:rv:${payload.jti}`, '1', 'EX', remainingSeconds)
 }
 ```
 
@@ -501,8 +507,8 @@ If the token is already expired (`remainingSeconds <= 0`), there is no need to b
 
 ```typescript
 // Inside JwtAuthGuard.canActivate()
-if (payload.jti && await this.authRedis.isBlacklisted(payload.jti)) {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED);
+if (payload.jti && (await this.authRedis.isBlacklisted(payload.jti))) {
+  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
 }
 ```
 
@@ -510,12 +516,12 @@ The `isBlacklisted()` method performs a single `GET` operation on Redis — O(1)
 
 ### 6.6 When to Blacklist
 
-| Event | Action |
-|---|---|
-| User logout | Blacklist the current access token's `jti` |
-| Password change | Blacklist current token + revoke all refresh sessions |
+| Event                  | Action                                                                             |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| User logout            | Blacklist the current access token's `jti`                                         |
+| Password change        | Blacklist current token + revoke all refresh sessions                              |
 | Account ban/suspension | Blacklist current token (if available) + user status check catches future requests |
-| Admin force-logout | Blacklist the target user's token + revoke refresh sessions |
+| Admin force-logout     | Blacklist the target user's token + revoke refresh sessions                        |
 
 ---
 
@@ -528,35 +534,35 @@ The access token for dashboard/tenant users contains the following claims:
 ```typescript
 export interface DashboardJwtPayload {
   /** Subject — user ID */
-  sub: string;
+  sub: string
 
   /** JWT ID — unique token identifier (UUID v4), used for blacklisting */
-  jti: string;
+  jti: string
 
   /** Tenant ID the user belongs to */
-  tenantId: string;
+  tenantId: string
 
   /** User's role within the tenant (e.g., 'OWNER', 'ADMIN', 'MEMBER') */
-  role: string;
+  role: string
 
   /** Token type — always 'dashboard' to differentiate from platform tokens */
-  type: 'dashboard';
+  type: 'dashboard'
 
   /** Current user status (e.g., 'ACTIVE', 'PENDING_APPROVAL') */
-  status: string;
+  status: string
 
   /**
    * Whether MFA has been verified in this session.
    * - true: user completed the MFA challenge
    * - false: user has MFA enabled but did not verify in this session
    */
-  mfaVerified: boolean;
+  mfaVerified: boolean
 
   /** Issued At — automatically set by @nestjs/jwt */
-  iat: number;
+  iat: number
 
   /** Expiration — automatically set based on accessExpiresIn */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -583,25 +589,25 @@ The access token for platform administrators:
 ```typescript
 export interface PlatformJwtPayload {
   /** Subject — admin ID */
-  sub: string;
+  sub: string
 
   /** JWT ID — unique token identifier (UUID v4), used for blacklisting */
-  jti: string;
+  jti: string
 
   /** Platform role (e.g., 'SUPER_ADMIN', 'ADMIN', 'SUPPORT') */
-  role: string;
+  role: string
 
   /** Token type — always 'platform' */
-  type: 'platform';
+  type: 'platform'
 
   /** Whether MFA has been verified (if enabled for this admin) */
-  mfaVerified: boolean;
+  mfaVerified: boolean
 
   /** Issued At */
-  iat: number;
+  iat: number
 
   /** Expiration */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -614,22 +620,22 @@ The temporary token issued during the MFA challenge window:
 ```typescript
 export interface MfaTempPayload {
   /** Subject — user ID who needs to complete MFA */
-  sub: string;
+  sub: string
 
   /** JWT ID — unique token identifier */
-  jti: string;
+  jti: string
 
   /** Token type — always 'mfa_challenge' */
-  type: 'mfa_challenge';
+  type: 'mfa_challenge'
 
   /** Origin context: 'dashboard' for tenant users, 'platform' for admins */
-  context: 'dashboard' | 'platform';
+  context: 'dashboard' | 'platform'
 
   /** Issued At */
-  iat: number;
+  iat: number
 
   /** Expiration — 5 minutes after issuance */
-  exp: number;
+  exp: number
 }
 ```
 
@@ -651,12 +657,12 @@ Guards use the `type` claim as the first validation step after signature verific
 ```typescript
 // JwtAuthGuard — accepts only dashboard tokens
 if (payload.type !== 'dashboard') {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 
 // JwtPlatformGuard — accepts only platform tokens
 if (payload.type !== 'platform') {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED);
+  throw new UnauthorizedException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
 }
 ```
 
@@ -682,48 +688,48 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     private readonly authRedis: AuthRedisService,
-    private readonly tokenDelivery: TokenDeliveryService,
+    private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // Step 1: Check @Public() decorator
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
-      context.getClass(),
-    ]);
-    if (isPublic) return true;
+      context.getClass()
+    ])
+    if (isPublic) return true
 
     // Step 2: Extract token via TokenDeliveryService
-    const request = context.switchToHttp().getRequest();
-    const token = this.tokenDelivery.extractAccessToken(request);
+    const request = context.switchToHttp().getRequest()
+    const token = this.tokenDelivery.extractAccessToken(request)
     if (!token) {
-      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_MISSING);
+      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_MISSING)
     }
 
     try {
       // Step 3: Verify signature with pinned algorithm
       const payload = this.jwtService.verify<DashboardJwtPayload>(token, {
         secret: this.options.jwt.secret,
-        algorithms: ['HS256'],  // MANDATORY — prevents algorithm confusion
-      });
+        algorithms: ['HS256'] // MANDATORY — prevents algorithm confusion
+      })
 
       // Step 4: Validate token type
       if (payload.type !== 'dashboard') {
-        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
 
       // Step 5: Check blacklist
-      if (payload.jti && await this.authRedis.isBlacklisted(payload.jti)) {
-        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED);
+      if (payload.jti && (await this.authRedis.isBlacklisted(payload.jti))) {
+        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
       }
 
       // Step 6: Populate request.user
-      request.user = payload;
-      return true;
+      request.user = payload
+      return true
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
+      if (error instanceof UnauthorizedException) throw error
       // Any other error (expired, malformed, bad signature) → generic invalid
-      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
   }
 }
@@ -756,25 +762,25 @@ export class UsersController {
 
 The guard delegates token extraction to `TokenDeliveryService`, which behaves differently based on the configured `tokenDelivery` mode:
 
-| Mode | Access Token Source | Refresh Token Source |
-|---|---|---|
-| `'cookie'` | `req.cookies[accessTokenName]` | `req.cookies[refreshTokenName]` |
-| `'bearer'` | `Authorization: Bearer <token>` header | `req.body.refreshToken` |
-| `'both'` | Cookie first, then `Authorization` header | Cookie first, then `req.body` |
+| Mode       | Access Token Source                       | Refresh Token Source            |
+| ---------- | ----------------------------------------- | ------------------------------- |
+| `'cookie'` | `req.cookies[accessTokenName]`            | `req.cookies[refreshTokenName]` |
+| `'bearer'` | `Authorization: Bearer <token>` header    | `req.body.refreshToken`         |
+| `'both'`   | Cookie first, then `Authorization` header | Cookie first, then `req.body`   |
 
 ### 8.5 All Guards Reference
 
-| Guard | Validates | Rejects With | Notes |
-|---|---|---|---|
-| `JwtAuthGuard` | Dashboard JWT (`type: "dashboard"`) | `TOKEN_MISSING`, `TOKEN_INVALID`, `TOKEN_REVOKED` | Respects `@Public()` |
-| `JwtPlatformGuard` | Platform JWT (`type: "platform"`) | `TOKEN_MISSING`, `PLATFORM_AUTH_REQUIRED`, `TOKEN_REVOKED` | Same logic, different type check |
-| `UserStatusGuard` | User status not in `blockedStatuses` | `ACCOUNT_BANNED`, `ACCOUNT_INACTIVE`, `ACCOUNT_SUSPENDED` | Checks Redis cache, then DB |
-| `MfaRequiredGuard` | `mfaVerified === true` | `MFA_REQUIRED` | Respects `@SkipMfa()` |
-| `RolesGuard` | Role hierarchy via `@Roles()` metadata | `FORBIDDEN` | Hierarchical: OWNER > ADMIN > MEMBER |
-| `PlatformRolesGuard` | Platform role hierarchy | `FORBIDDEN` | Uses `platformHierarchy` config |
-| `SelfOrAdminGuard` | `params.userId === user.sub` OR admin role | `FORBIDDEN` | Prevents IDOR attacks |
-| `OptionalAuthGuard` | JWT if present, null if absent | Never throws | For public endpoints with optional auth |
-| `WsJwtGuard` | JWT from WebSocket handshake `Authorization` header | Disconnects client | Never uses query params (security) |
+| Guard                | Validates                                           | Rejects With                                               | Notes                                   |
+| -------------------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------- |
+| `JwtAuthGuard`       | Dashboard JWT (`type: "dashboard"`)                 | `TOKEN_MISSING`, `TOKEN_INVALID`, `TOKEN_REVOKED`          | Respects `@Public()`                    |
+| `JwtPlatformGuard`   | Platform JWT (`type: "platform"`)                   | `TOKEN_MISSING`, `PLATFORM_AUTH_REQUIRED`, `TOKEN_REVOKED` | Same logic, different type check        |
+| `UserStatusGuard`    | User status not in `blockedStatuses`                | `ACCOUNT_BANNED`, `ACCOUNT_INACTIVE`, `ACCOUNT_SUSPENDED`  | Checks Redis cache, then DB             |
+| `MfaRequiredGuard`   | `mfaVerified === true`                              | `MFA_REQUIRED`                                             | Respects `@SkipMfa()`                   |
+| `RolesGuard`         | Role hierarchy via `@Roles()` metadata              | `FORBIDDEN`                                                | Hierarchical: OWNER > ADMIN > MEMBER    |
+| `PlatformRolesGuard` | Platform role hierarchy                             | `FORBIDDEN`                                                | Uses `platformHierarchy` config         |
+| `SelfOrAdminGuard`   | `params.userId === user.sub` OR admin role          | `FORBIDDEN`                                                | Prevents IDOR attacks                   |
+| `OptionalAuthGuard`  | JWT if present, null if absent                      | Never throws                                               | For public endpoints with optional auth |
+| `WsJwtGuard`         | JWT from WebSocket handshake `Authorization` header | Disconnects client                                         | Never uses query params (security)      |
 
 ### 8.6 WebSocket Guard
 
@@ -782,22 +788,22 @@ The `WsJwtGuard` extracts the JWT from the WebSocket handshake `Authorization` h
 
 ```typescript
 // WsJwtGuard extraction
-const authHeader = client.handshake?.headers?.authorization;
+const authHeader = client.handshake?.headers?.authorization
 if (!authHeader?.startsWith('Bearer ')) {
-  throw new WsException('Unauthorized');
+  throw new WsException('Unauthorized')
 }
-const token = authHeader.slice(7);
+const token = authHeader.slice(7)
 ```
 
 ### 8.7 Decorators for Guard Integration
 
-| Decorator | Target | Description |
-|---|---|---|
-| `@CurrentUser()` | Method parameter | Extracts `request.user`. Supports property access: `@CurrentUser('sub')` |
-| `@Roles(...roles)` | Method or class | Sets required roles for `RolesGuard` |
-| `@PlatformRoles(...roles)` | Method or class | Sets required platform roles for `PlatformRolesGuard` |
-| `@Public()` | Method or class | Marks endpoint as public — `JwtAuthGuard` skips validation |
-| `@SkipMfa()` | Method or class | Allows access without MFA verification (e.g., MFA setup endpoint) |
+| Decorator                  | Target           | Description                                                              |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `@CurrentUser()`           | Method parameter | Extracts `request.user`. Supports property access: `@CurrentUser('sub')` |
+| `@Roles(...roles)`         | Method or class  | Sets required roles for `RolesGuard`                                     |
+| `@PlatformRoles(...roles)` | Method or class  | Sets required platform roles for `PlatformRolesGuard`                    |
+| `@Public()`                | Method or class  | Marks endpoint as public — `JwtAuthGuard` skips validation               |
+| `@SkipMfa()`               | Method or class  | Allows access without MFA verification (e.g., MFA setup endpoint)        |
 
 ### 8.8 Error Handling in Guards
 
@@ -808,19 +814,19 @@ Guards must distinguish between specific error conditions:
 try {
   const payload = this.jwtService.verify(token, {
     secret: this.options.jwt.secret,
-    algorithms: ['HS256'],
-  });
+    algorithms: ['HS256']
+  })
   // ... type check, blacklist check ...
 } catch (error) {
   // Re-throw our own UnauthorizedExceptions (specific error codes)
-  if (error instanceof UnauthorizedException) throw error;
+  if (error instanceof UnauthorizedException) throw error
 
   // Catch-all for jsonwebtoken errors:
   // - TokenExpiredError → token has expired
   // - JsonWebTokenError → malformed token, bad signature
   // - NotBeforeError → token not yet valid
   // Map all to TOKEN_INVALID — do not leak internal error details
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 ```
 
@@ -841,9 +847,9 @@ The JWT secret is validated at module startup. The package rejects weak secrets 
 
 ```typescript
 // Generating a strong JWT secret
-import { randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto'
 
-const secret = randomBytes(32).toString('base64');
+const secret = randomBytes(32).toString('base64')
 // Example: "K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
 // Length: 44 chars, Entropy: ~5.9 bits/char
 ```
@@ -855,6 +861,7 @@ The same validation criteria apply to `mfa.encryptionKey`.
 This package exclusively uses **HS256** (HMAC-SHA256). No other algorithms are supported or should be added.
 
 Why HS256 only:
+
 - Single shared secret simplifies key management.
 - No need for RSA/ECDSA key pairs (this is a library consumed by a single backend, not a distributed system with multiple verifiers).
 - Algorithm confusion attacks are prevented by pinning `algorithms: ['HS256']` at verification time.
@@ -865,11 +872,11 @@ Why HS256 only:
 When comparing token values (e.g., verifying that a refresh token matches a stored value), always use constant-time comparison to prevent timing attacks:
 
 ```typescript
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto'
 
 function safeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (a.length !== b.length) return false
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b))
 }
 ```
 
@@ -891,15 +898,15 @@ The payload should contain only the minimum claims needed for authorization deci
 
 ### 9.5 Token Storage on the Client
 
-| Storage Location | Acceptable For | Security Notes |
-|---|---|---|
-| HttpOnly cookie (automatic) | Access token, refresh token | Best option for web. JavaScript cannot access. |
-| In-memory variable | Access token (bearer mode) | Lost on page refresh. Acceptable for SPAs that refresh from the refresh token. |
-| iOS Keychain | Refresh token (bearer mode) | Platform-secured storage. Appropriate for native iOS apps. |
-| Android Keystore | Refresh token (bearer mode) | Platform-secured storage. Appropriate for native Android apps. |
-| `localStorage` | **NEVER** | Accessible to any JavaScript on the page. XSS leads to token theft. |
-| `sessionStorage` | **NEVER** | Same XSS risk as localStorage. |
-| URL query parameters | **NEVER** | Logged by servers, proxies, CDNs. Visible in browser history. |
+| Storage Location            | Acceptable For              | Security Notes                                                                 |
+| --------------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| HttpOnly cookie (automatic) | Access token, refresh token | Best option for web. JavaScript cannot access.                                 |
+| In-memory variable          | Access token (bearer mode)  | Lost on page refresh. Acceptable for SPAs that refresh from the refresh token. |
+| iOS Keychain                | Refresh token (bearer mode) | Platform-secured storage. Appropriate for native iOS apps.                     |
+| Android Keystore            | Refresh token (bearer mode) | Platform-secured storage. Appropriate for native Android apps.                 |
+| `localStorage`              | **NEVER**                   | Accessible to any JavaScript on the page. XSS leads to token theft.            |
+| `sessionStorage`            | **NEVER**                   | Same XSS risk as localStorage.                                                 |
+| URL query parameters        | **NEVER**                   | Logged by servers, proxies, CDNs. Visible in browser history.                  |
 
 ### 9.6 HTTPS Requirement
 
@@ -910,9 +917,9 @@ All JWT-based authentication must be served over HTTPS in production. The `Secur
 The `jti` claim must be a UUID v4 generated using a cryptographically secure random number generator:
 
 ```typescript
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'
 
-const jti = randomUUID();
+const jti = randomUUID()
 ```
 
 Do not use incrementing counters, timestamps, or non-random values for `jti`. The `jti` serves as the blacklist key and must be unpredictable.
@@ -922,10 +929,10 @@ Do not use incrementing counters, timestamps, or non-random values for `jti`. Th
 All tokens stored in Redis are identified by their SHA-256 hash, never the raw token value:
 
 ```typescript
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'
 
 function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash('sha256').update(token).digest('hex')
 }
 
 // Storage key: auth:rt:{hashToken(refreshToken)}
@@ -936,6 +943,7 @@ This ensures that if the Redis store is compromised, the raw token values remain
 ### 9.9 Multi-Tenant Security
 
 In multi-tenant environments with subdomain-based routing:
+
 - The `JwtAuthGuard` should validate that the `tenantId` in the JWT matches the tenant of the current request.
 - Using `domain='.example.com'` for cookies sends them to all subdomains, which could enable cross-subdomain token leakage.
 - Prefer specific subdomain cookie domains when possible.
@@ -949,13 +957,13 @@ In multi-tenant environments with subdomain-based routing:
 
 ```typescript
 // WRONG — XSS vulnerability, token accessible to any script on the page
-localStorage.setItem('accessToken', token);
-const token = localStorage.getItem('accessToken');
+localStorage.setItem('accessToken', token)
+const token = localStorage.getItem('accessToken')
 
 // CORRECT — Use HttpOnly cookies (automatic in cookie/both mode)
 // Or in-memory storage for bearer mode:
-let accessToken: string | null = null; // module-scoped variable
-accessToken = response.accessToken;
+let accessToken: string | null = null // module-scoped variable
+accessToken = response.accessToken
 ```
 
 ### 10.2 Omitting Algorithm Pinning at Verification
@@ -963,15 +971,15 @@ accessToken = response.accessToken;
 ```typescript
 // WRONG — Accepts whatever algorithm the token header specifies
 const payload = this.jwtService.verify(token, {
-  secret: this.options.jwt.secret,
+  secret: this.options.jwt.secret
   // Missing algorithms: ['HS256'] ← VULNERABLE to algorithm confusion
-});
+})
 
 // CORRECT — Algorithm pinned explicitly
 const payload = this.jwtService.verify(token, {
   secret: this.options.jwt.secret,
-  algorithms: ['HS256'],
-});
+  algorithms: ['HS256']
+})
 ```
 
 ### 10.3 Using ignoreExpiration
@@ -981,11 +989,11 @@ const payload = this.jwtService.verify(token, {
 const payload = this.jwtService.verify(token, {
   secret: this.options.jwt.secret,
   algorithms: ['HS256'],
-  ignoreExpiration: true, // NEVER do this
-});
+  ignoreExpiration: true // NEVER do this
+})
 
 // CORRECT — Use decode() when you need claims from expired tokens
-const payload = this.jwtService.decode(token);
+const payload = this.jwtService.decode(token)
 // But NEVER use decoded payload for authorization decisions
 ```
 
@@ -1047,12 +1055,12 @@ const token = this.jwtService.sign(
 
 ```typescript
 // WRONG — Bypasses delivery mode logic, breaks when mode changes
-const token = req.cookies?.['access_token'];
+const token = req.cookies?.['access_token']
 // or
-const token = req.headers.authorization?.split(' ')[1];
+const token = req.headers.authorization?.split(' ')[1]
 
 // CORRECT — Use TokenDeliveryService
-const token = this.tokenDelivery.extractAccessToken(req);
+const token = this.tokenDelivery.extractAccessToken(req)
 ```
 
 ### 10.8 Returning JWT Error Details to Client
@@ -1075,36 +1083,36 @@ catch (error) {
 
 ```typescript
 // WRONG — If Redis is compromised, raw tokens are exposed
-await this.redis.set(`auth:rt:${refreshToken}`, sessionData);
+await this.redis.set(`auth:rt:${refreshToken}`, sessionData)
 
 // CORRECT — Hash the token before using as key
-const hash = createHash('sha256').update(refreshToken).digest('hex');
-await this.redis.set(`auth:rt:${hash}`, sessionData);
+const hash = createHash('sha256').update(refreshToken).digest('hex')
+await this.redis.set(`auth:rt:${hash}`, sessionData)
 ```
 
 ### 10.10 Sending Tokens in WebSocket Query Parameters
 
 ```typescript
 // WRONG — Query params are logged by proxies, CDNs, and access logs
-const socket = io('wss://api.example.com?token=eyJhbG...');
+const socket = io('wss://api.example.com?token=eyJhbG...')
 
 // CORRECT — Use Authorization header in handshake
 const socket = io('wss://api.example.com', {
   extraHeaders: {
-    Authorization: `Bearer ${accessToken}`,
-  },
-});
+    Authorization: `Bearer ${accessToken}`
+  }
+})
 ```
 
 ### 10.11 Creating Refresh Tokens Without TTL
 
 ```typescript
 // WRONG — Key lives forever in Redis, never cleaned up
-await this.redis.set(`auth:rt:${hash}`, sessionData);
+await this.redis.set(`auth:rt:${hash}`, sessionData)
 
 // CORRECT — Always set TTL
-const ttlSeconds = this.options.jwt.refreshExpiresInDays * 86400;
-await this.redis.set(`auth:rt:${hash}`, sessionData, 'EX', ttlSeconds);
+const ttlSeconds = this.options.jwt.refreshExpiresInDays * 86400
+await this.redis.set(`auth:rt:${hash}`, sessionData, 'EX', ttlSeconds)
 ```
 
 ### 10.12 Using a Weak JWT Secret
@@ -1215,18 +1223,18 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 
 ### Redis Key Patterns
 
-| Prefix | Key Pattern | Purpose |
-|---|---|---|
-| `rt` | `auth:rt:{sha256(token)}` | Dashboard refresh session |
-| `rv` | `auth:rv:{jti}` | Access token blacklist |
-| `rp` | `auth:rp:{sha256(oldToken)}` | Refresh rotation grace pointer |
-| `prt` | `auth:prt:{sha256(token)}` | Platform refresh session |
-| `prp` | `auth:prp:{sha256(oldToken)}` | Platform rotation grace pointer |
-| `mfa` | `auth:mfa:{sha256(token)}` | MFA temp token (single-use) |
-| `us` | `auth:us:{userId}` | User status cache |
-| `sess` | `auth:sess:{userId}` | Session SET (all active sessions) |
-| `sd` | `auth:sd:{sessionHash}` | Session details |
+| Prefix | Key Pattern                   | Purpose                           |
+| ------ | ----------------------------- | --------------------------------- |
+| `rt`   | `auth:rt:{sha256(token)}`     | Dashboard refresh session         |
+| `rv`   | `auth:rv:{jti}`               | Access token blacklist            |
+| `rp`   | `auth:rp:{sha256(oldToken)}`  | Refresh rotation grace pointer    |
+| `prt`  | `auth:prt:{sha256(token)}`    | Platform refresh session          |
+| `prp`  | `auth:prp:{sha256(oldToken)}` | Platform rotation grace pointer   |
+| `mfa`  | `auth:mfa:{sha256(token)}`    | MFA temp token (single-use)       |
+| `us`   | `auth:us:{userId}`            | User status cache                 |
+| `sess` | `auth:sess:{userId}`          | Session SET (all active sessions) |
+| `sd`   | `auth:sd:{sessionHash}`       | Session details                   |
 
 ---
 
-*This document is the authoritative reference for JWT authentication in `@bymax-one/nest-auth`. When in doubt, consult this file. When this file and code diverge, update the code to match these guidelines.*
+_This document is the authoritative reference for JWT authentication in `@bymax-one/nest-auth`. When in doubt, consult this file. When this file and code diverge, update the code to match these guidelines._

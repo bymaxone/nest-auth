@@ -1,0 +1,15 @@
+# Generated & tool-managed output — never formatted by Prettier.
+# Prettier's CLI does not read .gitignore, so generated dirs are mirrored here to
+# keep `prettier --check .` (the format:check CI gate) fast and false-positive free.
+node_modules/
+dist/
+build/
+coverage/
+coverage.json
+.nyc_output/
+.stryker-tmp/
+reports/
+*.tsbuildinfo
+
+# Tool-managed lockfile — pnpm owns its formatting.
+pnpm-lock.yaml

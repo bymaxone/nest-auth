@@ -33,7 +33,7 @@
 The library defines a Symbol-based injection token:
 
 ```typescript
-export const BYMAX_AUTH_REDIS_CLIENT = Symbol("BYMAX_AUTH_REDIS_CLIENT");
+export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
 ```
 
 This Symbol guarantees zero collision with any other providers in the host application's DI container.
@@ -43,8 +43,8 @@ This Symbol guarantees zero collision with any other providers in the host appli
 The host application registers the Redis client when calling `BymaxAuthModule.registerAsync()`:
 
 ```typescript
-import { BYMAX_AUTH_REDIS_CLIENT } from "@bymax-one/nest-auth";
-import { RedisService } from "./redis/redis.service"; // Host's own Redis wrapper
+import { BYMAX_AUTH_REDIS_CLIENT } from '@bymax-one/nest-auth'
+import { RedisService } from './redis/redis.service' // Host's own Redis wrapper
 
 @Module({
   imports: [
@@ -58,11 +58,11 @@ import { RedisService } from "./redis/redis.service"; // Host's own Redis wrappe
         {
           provide: BYMAX_AUTH_REDIS_CLIENT,
           useFactory: (redisService: RedisService) => redisService.getClient(),
-          inject: [RedisService],
-        },
-      ],
-    }),
-  ],
+          inject: [RedisService]
+        }
+      ]
+    })
+  ]
 })
 export class AppModule {}
 ```
@@ -72,15 +72,13 @@ export class AppModule {}
 Within the library, services inject the client via the Symbol token:
 
 ```typescript
-import { Inject, Injectable } from "@nestjs/common";
-import { Redis } from "ioredis";
-import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-auth.constants";
+import { Inject, Injectable } from '@nestjs/common'
+import { Redis } from 'ioredis'
+import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 
 @Injectable()
 export class AuthRedisService {
-  constructor(
-    @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis,
-  ) {}
+  constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis) {}
 
   // All Redis operations go through this.redis
 }
@@ -88,21 +86,21 @@ export class AuthRedisService {
 
 ### 1.5 Rules for Library Code
 
-| Rule | Rationale |
-|------|-----------|
+| Rule                                                                  | Rationale                                |
+| --------------------------------------------------------------------- | ---------------------------------------- |
 | Never call `new Redis(...)` or `new Cluster(...)` inside library code | Connection lifecycle belongs to the host |
-| Never call `redis.quit()` or `redis.disconnect()` inside library code | The host manages shutdown |
-| Never modify connection settings (e.g., `redis.options`) | Respect the host's configuration |
-| Always type the injected client as `Redis` from `ioredis` | Ensures full type safety with ioredis ^5 |
-| Never store the Redis client in a static/global variable | Breaks testability and DI isolation |
+| Never call `redis.quit()` or `redis.disconnect()` inside library code | The host manages shutdown                |
+| Never modify connection settings (e.g., `redis.options`)              | Respect the host's configuration         |
+| Always type the injected client as `Redis` from `ioredis`             | Ensures full type safety with ioredis ^5 |
+| Never store the Redis client in a static/global variable              | Breaks testability and DI isolation      |
 
 ### 1.6 Testing with the Injection Token
 
 In unit tests, provide a mock Redis instance through the same token:
 
 ```typescript
-import { Test } from "@nestjs/testing";
-import { BYMAX_AUTH_REDIS_CLIENT } from "../bymax-auth.constants";
+import { Test } from '@nestjs/testing'
+import { BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 
 const mockRedis = {
   get: jest.fn(),
@@ -116,16 +114,13 @@ const mockRedis = {
   sismember: jest.fn(),
   eval: jest.fn(),
   pipeline: jest.fn().mockReturnValue({
-    exec: jest.fn().mockResolvedValue([]),
-  }),
-};
+    exec: jest.fn().mockResolvedValue([])
+  })
+}
 
 const module = await Test.createTestingModule({
-  providers: [
-    AuthRedisService,
-    { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedis },
-  ],
-}).compile();
+  providers: [AuthRedisService, { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedis }]
+}).compile()
 ```
 
 ---
@@ -153,41 +148,41 @@ All identifiers that derive from sensitive data (tokens, emails, user-scoped loo
 - **Deterministic lookups:** The same input always produces the same hash, so lookups remain O(1).
 
 ```typescript
-import { createHash } from "node:crypto";
+import { createHash } from 'node:crypto'
 
 function sha256(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
+  return createHash('sha256').update(input).digest('hex')
 }
 
 // Key construction examples:
-const refreshKey = `${namespace}:rt:${sha256(refreshToken)}`;
-const bruteForceKey = `${namespace}:lf:${sha256(tenantId + ":" + email)}`;
+const refreshKey = `${namespace}:rt:${sha256(refreshToken)}`
+const bruteForceKey = `${namespace}:lf:${sha256(tenantId + ':' + email)}`
 ```
 
 ### 2.3 Complete Key Reference Table
 
-| Prefix | Key Pattern | Value | TTL | Purpose |
-|--------|------------|-------|-----|---------|
-| `rt` | `auth:rt:{sha256(token)}` | JSON: `{ userId, tenantId, role, device, ip, createdAt }` | `refreshExpiresInDays` (converted to seconds) | Refresh token session data |
-| `rv` | `auth:rv:{jti \|\| sha256(jwt)}` | `'1'` | Remaining TTL of the JWT | Access JWT blacklist (revocation) |
-| `us` | `auth:us:{userId}` | Status string (e.g., `'ACTIVE'`, `'BANNED'`) | `userStatusCacheTtlSeconds` (default: 60s) | User status cache |
-| `rp` | `auth:rp:{sha256(oldToken)}` | New raw refresh token (UUID) | `refreshGraceWindowSeconds` (default: 30s) | Rotation pointer (grace window) |
-| `lf` | `auth:lf:{sha256(tenantId + ":" + email)}` | Numeric counter (string) | `windowSeconds` (default: 900s) | Login failure counter (brute-force) |
-| `pr` | `auth:pr:{sha256(token)}` | `userId` (string) | `tokenTtlSeconds` (default: 3600s) | Password reset token |
-| `otp` | `auth:otp:{purpose}:{sha256(tenantId + ":" + email)}` | JSON: `{ code, attempts }` | `otpTtlSeconds` (varies by purpose) | OTP codes with attempt tracking |
-| `mfa` | `auth:mfa:{sha256(mfaTempToken)}` | `userId` (string) | 300s (5 minutes) | MFA temporary challenge token |
-| `mfa_setup` | `auth:mfa_setup:{sha256(userId)}` | JSON: `{ encryptedSecret, hashedCodes }` | 600s (10 minutes) | Temporary MFA setup data |
-| `sess` | `auth:sess:{userId}` | Redis SET of session hashes | Max refresh TTL | Active session tracking per user |
-| `sd` | `auth:sd:{sessionHash}` | JSON: `{ device, ip, createdAt, lastActivityAt }` | Max refresh TTL | Session detail metadata |
-| `inv` | `auth:inv:{sha256(token)}` | JSON: `{ email, role, tenantId, inviterId }` | `invitations.tokenTtlSeconds` (default: 7 days) | Pending invitations |
-| `os` | `auth:os:{sha256(state)}` | JSON: `{ tenantId }` | 600s (10 minutes) | OAuth CSRF state |
-| `tu` | `auth:tu:{userId}:{code}` | `'1'` | 90s (3 x TOTP window) | TOTP replay prevention |
-| `prt` | `auth:prt:{sha256(token)}` | JSON: `{ userId, role, device, ip, createdAt }` | `refreshExpiresInDays` (converted to seconds) | Platform admin refresh token |
-| `prp` | `auth:prp:{sha256(oldToken)}` | New raw platform refresh token | `refreshGraceWindowSeconds` (default: 30s) | Platform rotation pointer |
-| `prv` | `auth:prv:{sha256(token)}` | JSON: `{ email, tenantId }` | 300s (5 minutes) | Password reset OTP verification token |
-| `psess` | `auth:psess:{userId}` | Redis SET of platform session hashes | Max refresh TTL | Platform admin session tracking |
-| `psd` | `auth:psd:{sessionHash}` | JSON: `{ device, ip, createdAt, lastActivityAt }` | Max refresh TTL | Platform session detail metadata |
-| `resend` | `auth:resend:{purpose}:{sha256(tenantId + ":" + email)}` | `'1'` | 60s | OTP resend cooldown |
+| Prefix      | Key Pattern                                              | Value                                                     | TTL                                             | Purpose                               |
+| ----------- | -------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
+| `rt`        | `auth:rt:{sha256(token)}`                                | JSON: `{ userId, tenantId, role, device, ip, createdAt }` | `refreshExpiresInDays` (converted to seconds)   | Refresh token session data            |
+| `rv`        | `auth:rv:{jti \|\| sha256(jwt)}`                         | `'1'`                                                     | Remaining TTL of the JWT                        | Access JWT blacklist (revocation)     |
+| `us`        | `auth:us:{userId}`                                       | Status string (e.g., `'ACTIVE'`, `'BANNED'`)              | `userStatusCacheTtlSeconds` (default: 60s)      | User status cache                     |
+| `rp`        | `auth:rp:{sha256(oldToken)}`                             | New raw refresh token (UUID)                              | `refreshGraceWindowSeconds` (default: 30s)      | Rotation pointer (grace window)       |
+| `lf`        | `auth:lf:{sha256(tenantId + ":" + email)}`               | Numeric counter (string)                                  | `windowSeconds` (default: 900s)                 | Login failure counter (brute-force)   |
+| `pr`        | `auth:pr:{sha256(token)}`                                | `userId` (string)                                         | `tokenTtlSeconds` (default: 3600s)              | Password reset token                  |
+| `otp`       | `auth:otp:{purpose}:{sha256(tenantId + ":" + email)}`    | JSON: `{ code, attempts }`                                | `otpTtlSeconds` (varies by purpose)             | OTP codes with attempt tracking       |
+| `mfa`       | `auth:mfa:{sha256(mfaTempToken)}`                        | `userId` (string)                                         | 300s (5 minutes)                                | MFA temporary challenge token         |
+| `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                        | JSON: `{ encryptedSecret, hashedCodes }`                  | 600s (10 minutes)                               | Temporary MFA setup data              |
+| `sess`      | `auth:sess:{userId}`                                     | Redis SET of session hashes                               | Max refresh TTL                                 | Active session tracking per user      |
+| `sd`        | `auth:sd:{sessionHash}`                                  | JSON: `{ device, ip, createdAt, lastActivityAt }`         | Max refresh TTL                                 | Session detail metadata               |
+| `inv`       | `auth:inv:{sha256(token)}`                               | JSON: `{ email, role, tenantId, inviterId }`              | `invitations.tokenTtlSeconds` (default: 7 days) | Pending invitations                   |
+| `os`        | `auth:os:{sha256(state)}`                                | JSON: `{ tenantId }`                                      | 600s (10 minutes)                               | OAuth CSRF state                      |
+| `tu`        | `auth:tu:{userId}:{code}`                                | `'1'`                                                     | 90s (3 x TOTP window)                           | TOTP replay prevention                |
+| `prt`       | `auth:prt:{sha256(token)}`                               | JSON: `{ userId, role, device, ip, createdAt }`           | `refreshExpiresInDays` (converted to seconds)   | Platform admin refresh token          |
+| `prp`       | `auth:prp:{sha256(oldToken)}`                            | New raw platform refresh token                            | `refreshGraceWindowSeconds` (default: 30s)      | Platform rotation pointer             |
+| `prv`       | `auth:prv:{sha256(token)}`                               | JSON: `{ email, tenantId }`                               | 300s (5 minutes)                                | Password reset OTP verification token |
+| `psess`     | `auth:psess:{userId}`                                    | Redis SET of platform session hashes                      | Max refresh TTL                                 | Platform admin session tracking       |
+| `psd`       | `auth:psd:{sessionHash}`                                 | JSON: `{ device, ip, createdAt, lastActivityAt }`         | Max refresh TTL                                 | Platform session detail metadata      |
+| `resend`    | `auth:resend:{purpose}:{sha256(tenantId + ":" + email)}` | `'1'`                                                     | 60s                                             | OTP resend cooldown                   |
 
 ### 2.4 Key Expiration Strategy
 
@@ -206,17 +201,17 @@ Centralize key construction in the `AuthRedisService` to prevent typos and ensur
 ```typescript
 @Injectable()
 export class AuthRedisService {
-  private readonly ns: string;
+  private readonly ns: string
 
   constructor(
     @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {
-    this.ns = options.redisNamespace ?? "auth";
+    this.ns = options.redisNamespace ?? 'auth'
   }
 
   private key(prefix: string, id: string): string {
-    return `${this.ns}:${prefix}:${id}`;
+    return `${this.ns}:${prefix}:${id}`
   }
 
   // Usage:
@@ -289,13 +284,13 @@ async canActivate(context: ExecutionContext): Promise<boolean> {
 
 ### 3.5 Blacklisting Rules
 
-| Rule | Detail |
-|------|--------|
-| TTL must equal the remaining token lifetime | Never use a fixed TTL — it wastes memory if too long, or misses the window if too short |
-| Skip blacklisting if `exp` has passed | Saves a write for already-expired tokens |
-| Use `EXISTS` not `GET` for checking | `EXISTS` returns 0 or 1 and avoids transferring the value |
-| Do not use `SETNX` | Blacklisting the same token twice is idempotent and harmless |
-| Blacklist on logout, password change, account suspension, forced revocation | Cover all invalidation scenarios |
+| Rule                                                                        | Detail                                                                                  |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| TTL must equal the remaining token lifetime                                 | Never use a fixed TTL — it wastes memory if too long, or misses the window if too short |
+| Skip blacklisting if `exp` has passed                                       | Saves a write for already-expired tokens                                                |
+| Use `EXISTS` not `GET` for checking                                         | `EXISTS` returns 0 or 1 and avoids transferring the value                               |
+| Do not use `SETNX`                                                          | Blacklisting the same token twice is idempotent and harmless                            |
+| Blacklist on logout, password change, account suspension, forced revocation | Cover all invalidation scenarios                                                        |
 
 ### 3.6 Bulk Revocation
 
@@ -326,12 +321,12 @@ TTL:           refreshExpiresInDays converted to seconds
 
 ```typescript
 interface RefreshSessionData {
-  userId: string;
-  tenantId: string;
-  role: string;
-  device: string;     // User-Agent or device identifier
-  ip: string;         // Client IP address
-  createdAt: string;  // ISO 8601 timestamp
+  userId: string
+  tenantId: string
+  role: string
+  device: string // User-Agent or device identifier
+  ip: string // Client IP address
+  createdAt: string // ISO 8601 timestamp
 }
 ```
 
@@ -432,8 +427,8 @@ async rotateRefreshToken(
 
 Platform admin tokens follow the same pattern but use distinct prefixes (`prt`, `prp`) to maintain complete namespace isolation between tenant users and platform administrators:
 
-| Tenant User | Platform Admin |
-|------------|----------------|
+| Tenant User      | Platform Admin    |
+| ---------------- | ----------------- |
 | `auth:rt:{hash}` | `auth:prt:{hash}` |
 | `auth:rp:{hash}` | `auth:prp:{hash}` |
 
@@ -710,11 +705,11 @@ async revokeAllSessions(userId: string): Promise<void> {
 
 Platform admin sessions use the same architecture with distinct prefixes:
 
-| Entity | Tenant User | Platform Admin |
-|--------|------------|----------------|
-| Session set | `auth:sess:{userId}` | `auth:psess:{userId}` |
-| Session details | `auth:sd:{hash}` | `auth:psd:{hash}` |
-| Refresh token | `auth:rt:{hash}` | `auth:prt:{hash}` |
+| Entity          | Tenant User          | Platform Admin        |
+| --------------- | -------------------- | --------------------- |
+| Session set     | `auth:sess:{userId}` | `auth:psess:{userId}` |
+| Session details | `auth:sd:{hash}`     | `auth:psd:{hash}`     |
+| Refresh token   | `auth:rt:{hash}`     | `auth:prt:{hash}`     |
 
 This separation ensures that a tenant-level session revocation operation never accidentally affects platform admin sessions, and vice versa.
 
@@ -846,20 +841,20 @@ A **pipeline** batches multiple commands into a single network round-trip. Comma
 
 ```typescript
 // Listing sessions: fetch multiple keys in one round-trip
-const pipeline = this.redis.pipeline();
+const pipeline = this.redis.pipeline()
 for (const hash of sessionHashes) {
-  pipeline.get(this.key("sd", hash));
+  pipeline.get(this.key('sd', hash))
 }
-const results = await pipeline.exec();
+const results = await pipeline.exec()
 
 // Revoking all sessions: delete multiple keys in one round-trip
-const pipeline = this.redis.pipeline();
+const pipeline = this.redis.pipeline()
 for (const hash of sessionHashes) {
-  pipeline.del(this.key("rt", hash));
-  pipeline.del(this.key("sd", hash));
+  pipeline.del(this.key('rt', hash))
+  pipeline.del(this.key('sd', hash))
 }
-pipeline.del(sessionsSetKey);
-await pipeline.exec();
+pipeline.del(sessionsSetKey)
+await pipeline.exec()
 ```
 
 ### 8.2 When to Use MULTI/EXEC (Transactions)
@@ -872,12 +867,12 @@ A **transaction** (`MULTI`/`EXEC`) guarantees that all commands execute atomical
 
 ```typescript
 // Atomic session cleanup during logout
-const multi = this.redis.multi();
-multi.set(this.key("rv", jti), "1", "EX", remainingSeconds);
-multi.del(this.key("rt", sha256(refreshToken)));
-multi.srem(this.key("sess", userId), sessionHash);
-multi.del(this.key("sd", sessionHash));
-await multi.exec();
+const multi = this.redis.multi()
+multi.set(this.key('rv', jti), '1', 'EX', remainingSeconds)
+multi.del(this.key('rt', sha256(refreshToken)))
+multi.srem(this.key('sess', userId), sessionHash)
+multi.del(this.key('sd', sessionHash))
+await multi.exec()
 ```
 
 ### 8.3 When to Use Lua Scripts
@@ -886,26 +881,26 @@ Use **Lua scripts** when you need atomicity AND need intermediate results to det
 
 **Decision matrix:**
 
-| Need | Tool |
-|------|------|
-| Batch independent reads/writes to reduce latency | Pipeline |
+| Need                                             | Tool       |
+| ------------------------------------------------ | ---------- |
+| Batch independent reads/writes to reduce latency | Pipeline   |
 | All-or-nothing writes without intermediate reads | MULTI/EXEC |
-| Atomic read-then-write (conditional logic) | Lua script |
+| Atomic read-then-write (conditional logic)       | Lua script |
 
 ### 8.4 Pipeline Error Handling
 
 `pipeline.exec()` returns an array of `[error, result]` tuples. Always check for errors:
 
 ```typescript
-const results = await pipeline.exec();
+const results = await pipeline.exec()
 if (!results) {
-  throw new Error("Pipeline execution returned null");
+  throw new Error('Pipeline execution returned null')
 }
 
 for (const [err, result] of results) {
   if (err) {
     // Log the error but continue — pipeline errors are per-command
-    this.logger.error(`Redis pipeline command failed: ${err.message}`);
+    this.logger.error(`Redis pipeline command failed: ${err.message}`)
   }
 }
 ```
@@ -913,17 +908,17 @@ for (const [err, result] of results) {
 ### 8.5 MULTI/EXEC Error Handling
 
 ```typescript
-const results = await multi.exec();
+const results = await multi.exec()
 if (!results) {
   // Transaction was aborted (e.g., WATCH detected a modification)
-  throw new Error("Redis transaction aborted");
+  throw new Error('Redis transaction aborted')
 }
 
 // Check for per-command errors
 for (const [err, result] of results) {
   if (err) {
     // Unlike pipeline, a MULTI error is more serious
-    throw new Error(`Redis transaction command failed: ${err.message}`);
+    throw new Error(`Redis transaction command failed: ${err.message}`)
   }
 }
 ```
@@ -934,25 +929,26 @@ For frequently used Lua scripts, register them with ioredis `defineCommand` to e
 
 ```typescript
 // Register during service initialization
-this.redis.defineCommand("rotateRefreshToken", {
+this.redis.defineCommand('rotateRefreshToken', {
   numberOfKeys: 3,
-  lua: ROTATE_REFRESH_TOKEN_SCRIPT,
-});
+  lua: ROTATE_REFRESH_TOKEN_SCRIPT
+})
 
 // Call using the defined command name
 // TypeScript: extend the Redis interface or use type assertion
 const result = await (this.redis as any).rotateRefreshToken(
-  this.key("rt", sha256(oldToken)),
-  this.key("rt", sha256(newToken)),
-  this.key("rp", sha256(oldToken)),
+  this.key('rt', sha256(oldToken)),
+  this.key('rt', sha256(newToken)),
+  this.key('rp', sha256(oldToken)),
   JSON.stringify(sessionData),
   newToken,
   refreshTtlSeconds.toString(),
-  graceWindowSeconds.toString(),
-);
+  graceWindowSeconds.toString()
+)
 ```
 
 Benefits of `defineCommand`:
+
 - ioredis automatically uses `EVALSHA` (sends just the script hash) and falls back to `EVAL` (sends full script) only if the script is not cached on the Redis server.
 - Reduces bandwidth for large or frequently called scripts.
 - Provides a named method on the Redis client for clarity.
@@ -975,25 +971,25 @@ The retry strategy is configured by the host application when creating the Redis
 ```typescript
 // This code lives in the HOST APPLICATION, not in the library.
 // Shown here for reference and to document expectations.
-import Redis from "ioredis";
+import Redis from 'ioredis'
 
 const redis = new Redis({
   host: process.env.REDIS_HOST,
-  port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+  port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
   password: process.env.REDIS_PASSWORD,
   db: 0,
   maxRetriesPerRequest: 3,
   retryStrategy(times: number): number | null {
     if (times > 10) {
       // Stop retrying after 10 attempts
-      return null;
+      return null
     }
     // Exponential backoff: 50ms, 100ms, 200ms, ..., capped at 2000ms
-    return Math.min(times * 50, 2000);
+    return Math.min(times * 50, 2000)
   },
   enableReadyCheck: true,
-  lazyConnect: false,
-});
+  lazyConnect: false
+})
 ```
 
 ### 9.3 Handling Redis Errors in Library Code
@@ -1015,14 +1011,14 @@ async safeGet(key: string): Promise<string | null> {
 
 Different features have different criticality levels when Redis is unavailable:
 
-| Feature | Degradation Strategy |
-|---------|---------------------|
-| JWT blacklist check | **Fail open with logging.** If Redis is unreachable, allow the request but log a security warning. The token is still signature-verified and will expire naturally. |
-| Refresh token rotation | **Fail closed.** Refuse the refresh. The user must re-authenticate. |
-| Brute-force check | **Fail open.** Allow the login attempt but log a warning. No counter increment. |
-| User status cache | **Fail through to database.** Query the database directly if cache is unavailable. |
-| Session management | **Fail closed for writes, fail gracefully for reads.** Session listing may return partial data; session creation must succeed or fail the operation. |
-| OTP verification | **Fail closed.** Refuse verification if Redis is unreachable. |
+| Feature                | Degradation Strategy                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JWT blacklist check    | **Fail open with logging.** If Redis is unreachable, allow the request but log a security warning. The token is still signature-verified and will expire naturally. |
+| Refresh token rotation | **Fail closed.** Refuse the refresh. The user must re-authenticate.                                                                                                 |
+| Brute-force check      | **Fail open.** Allow the login attempt but log a warning. No counter increment.                                                                                     |
+| User status cache      | **Fail through to database.** Query the database directly if cache is unavailable.                                                                                  |
+| Session management     | **Fail closed for writes, fail gracefully for reads.** Session listing may return partial data; session creation must succeed or fail the operation.                |
+| OTP verification       | **Fail closed.** Refuse verification if Redis is unreachable.                                                                                                       |
 
 ### 9.5 Implementing Graceful Degradation
 
@@ -1052,10 +1048,10 @@ The host application should configure appropriate timeouts. The library does not
 ```typescript
 // Host application configuration (reference)
 const redis = new Redis({
-  connectTimeout: 5000,      // 5s to establish connection
-  commandTimeout: 3000,      // 3s per command
-  enableOfflineQueue: true,   // Queue commands while reconnecting
-});
+  connectTimeout: 5000, // 5s to establish connection
+  commandTimeout: 3000, // 3s per command
+  enableOfflineQueue: true // Queue commands while reconnecting
+})
 ```
 
 ### 9.7 Health Check
@@ -1090,21 +1086,21 @@ private readonly logger = new Logger(AuthRedisService.name);
 ### 10.1 Connection Management
 
 **WRONG: Creating Redis connections inside the library**
+
 ```typescript
 // NEVER do this in library code
 @Injectable()
 export class AuthRedisService {
-  private redis = new Redis({ host: "localhost", port: 6379 });
+  private redis = new Redis({ host: 'localhost', port: 6379 })
 }
 ```
 
 **CORRECT: Injecting the Redis client provided by the host**
+
 ```typescript
 @Injectable()
 export class AuthRedisService {
-  constructor(
-    @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis,
-  ) {}
+  constructor(@Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis) {}
 }
 ```
 
@@ -1113,14 +1109,16 @@ export class AuthRedisService {
 ### 10.2 Keys Without TTL
 
 **WRONG: Setting keys without expiration**
+
 ```typescript
-await this.redis.set(key, value);
+await this.redis.set(key, value)
 // This key will persist forever, causing memory leaks
 ```
 
 **CORRECT: Always include a TTL**
+
 ```typescript
-await this.redis.set(key, value, "EX", ttlSeconds);
+await this.redis.set(key, value, 'EX', ttlSeconds)
 ```
 
 ---
@@ -1128,14 +1126,16 @@ await this.redis.set(key, value, "EX", ttlSeconds);
 ### 10.3 Raw Tokens in Key Names
 
 **WRONG: Using raw tokens directly as Redis keys**
+
 ```typescript
-const key = `auth:rt:${refreshToken}`;
+const key = `auth:rt:${refreshToken}`
 // Exposes the actual token in Redis key space
 ```
 
 **CORRECT: Hash sensitive identifiers**
+
 ```typescript
-const key = `auth:rt:${sha256(refreshToken)}`;
+const key = `auth:rt:${sha256(refreshToken)}`
 // Token value is never visible in Redis
 ```
 
@@ -1144,16 +1144,18 @@ const key = `auth:rt:${sha256(refreshToken)}`;
 ### 10.4 Non-Atomic Token Rotation
 
 **WRONG: Using separate GET/DEL/SET for token rotation**
+
 ```typescript
-const session = await this.redis.get(oldKey);
-await this.redis.del(oldKey);      // Race condition window here
-await this.redis.set(newKey, session, "EX", ttl);
+const session = await this.redis.get(oldKey)
+await this.redis.del(oldKey) // Race condition window here
+await this.redis.set(newKey, session, 'EX', ttl)
 // Two concurrent requests can both read the old token before either deletes it
 ```
 
 **CORRECT: Using a Lua script for atomic rotation**
+
 ```typescript
-const result = await this.redis.eval(ROTATE_SCRIPT, 3, oldKey, newKey, pointerKey, ...args);
+const result = await this.redis.eval(ROTATE_SCRIPT, 3, oldKey, newKey, pointerKey, ...args)
 // Atomic: no other client can interleave between read and delete
 ```
 
@@ -1162,17 +1164,19 @@ const result = await this.redis.eval(ROTATE_SCRIPT, 3, oldKey, newKey, pointerKe
 ### 10.5 Resetting Brute-Force Window on Each Failure
 
 **WRONG: Using SET with EX for counters (resets the window)**
+
 ```typescript
-const current = parseInt(await this.redis.get(key) ?? "0", 10);
-await this.redis.set(key, (current + 1).toString(), "EX", 900);
+const current = parseInt((await this.redis.get(key)) ?? '0', 10)
+await this.redis.set(key, (current + 1).toString(), 'EX', 900)
 // Every failure resets the 15-minute window — attacker gets unlimited attempts
 ```
 
 **CORRECT: Using INCR with conditional EXPIRE**
+
 ```typescript
-const attempts = await this.redis.incr(key);
+const attempts = await this.redis.incr(key)
 if (attempts === 1) {
-  await this.redis.expire(key, 900);  // Window starts on first failure only
+  await this.redis.expire(key, 900) // Window starts on first failure only
 }
 ```
 
@@ -1181,9 +1185,10 @@ if (attempts === 1) {
 ### 10.6 Blocking Commands
 
 **WRONG: Using blocking commands (BLPOP, BRPOP, SUBSCRIBE) on the shared client**
+
 ```typescript
 // Blocks the shared Redis connection for all other operations
-await this.redis.blpop("some-queue", 0);
+await this.redis.blpop('some-queue', 0)
 ```
 
 **CORRECT: Never use blocking or pub/sub commands on the injected client.** The injected client is shared across all authentication operations. Blocking or subscribing on it would stall all other Redis calls. If the host application needs pub/sub or blocking queues, it should provide a separate dedicated connection.
@@ -1193,25 +1198,25 @@ await this.redis.blpop("some-queue", 0);
 ### 10.7 Using KEYS Command
 
 **WRONG: Using KEYS for pattern matching in production**
+
 ```typescript
-const keys = await this.redis.keys(`auth:rt:*`);
+const keys = await this.redis.keys(`auth:rt:*`)
 // KEYS scans the entire keyspace — O(N) and blocks Redis for all clients
 ```
 
 **CORRECT: Use SCAN for iterating, or design data structures that avoid pattern matching**
+
 ```typescript
 // Preferred: use a SET to track related keys
-const sessions = await this.redis.smembers(this.key("sess", userId));
+const sessions = await this.redis.smembers(this.key('sess', userId))
 
 // If SCAN is truly needed (rare in this library):
-let cursor = "0";
+let cursor = '0'
 do {
-  const [newCursor, keys] = await this.redis.scan(
-    cursor, "MATCH", `${this.ns}:rt:*`, "COUNT", 100,
-  );
-  cursor = newCursor;
+  const [newCursor, keys] = await this.redis.scan(cursor, 'MATCH', `${this.ns}:rt:*`, 'COUNT', 100)
+  cursor = newCursor
   // Process keys...
-} while (cursor !== "0");
+} while (cursor !== '0')
 ```
 
 ---
@@ -1219,17 +1224,29 @@ do {
 ### 10.8 Large JSON Values
 
 **WRONG: Storing large objects or entire user profiles in Redis**
+
 ```typescript
-await this.redis.set(key, JSON.stringify(entireUserRecord), "EX", ttl);
+await this.redis.set(key, JSON.stringify(entireUserRecord), 'EX', ttl)
 // Wastes memory and increases serialization cost
 ```
 
 **CORRECT: Store only the minimum data needed**
+
 ```typescript
 // Refresh session: only what's needed to reissue tokens
-await this.redis.set(key, JSON.stringify({
-  userId, tenantId, role, device, ip, createdAt,
-}), "EX", ttl);
+await this.redis.set(
+  key,
+  JSON.stringify({
+    userId,
+    tenantId,
+    role,
+    device,
+    ip,
+    createdAt
+  }),
+  'EX',
+  ttl
+)
 ```
 
 ---
@@ -1237,17 +1254,19 @@ await this.redis.set(key, JSON.stringify({
 ### 10.9 Ignoring Pipeline/Transaction Errors
 
 **WRONG: Not checking `exec()` results**
+
 ```typescript
-const results = await pipeline.exec();
+const results = await pipeline.exec()
 // Assuming everything worked — silent data loss if commands failed
 ```
 
 **CORRECT: Always check results**
+
 ```typescript
-const results = await pipeline.exec();
-if (!results) throw new Error("Pipeline returned null");
+const results = await pipeline.exec()
+if (!results) throw new Error('Pipeline returned null')
 for (const [err] of results) {
-  if (err) this.logger.error("Pipeline command failed", err);
+  if (err) this.logger.error('Pipeline command failed', err)
 }
 ```
 
@@ -1256,14 +1275,16 @@ for (const [err] of results) {
 ### 10.10 Hardcoded Namespace
 
 **WRONG: Hardcoding the namespace string throughout the code**
+
 ```typescript
-const key = `auth:rt:${hash}`;
+const key = `auth:rt:${hash}`
 // Cannot be configured; breaks if host uses a different namespace
 ```
 
 **CORRECT: Using the configurable namespace from options**
+
 ```typescript
-const key = `${this.ns}:rt:${hash}`;
+const key = `${this.ns}:rt:${hash}`
 // this.ns is set from options.redisNamespace in the constructor
 ```
 
@@ -1274,34 +1295,40 @@ const key = `${this.ns}:rt:${hash}`;
 Use this checklist when writing or reviewing any Redis operation in the library:
 
 ### Key Design
+
 - [ ] Key follows `{namespace}:{prefix}:{identifier}` format
 - [ ] Sensitive identifiers (tokens, emails) are SHA-256 hashed before use in keys
 - [ ] Namespace is read from `options.redisNamespace`, not hardcoded
 - [ ] Key prefix is documented in the key reference table (Section 2.3)
 
 ### TTL
+
 - [ ] Every `SET` includes `EX` or `PX`
 - [ ] TTL value matches the logical lifetime of the data (e.g., remaining JWT TTL for blacklist)
 - [ ] No persistent keys are created (every key must expire)
 
 ### Atomicity
+
 - [ ] Operations that read-then-write on the same key use Lua scripts
 - [ ] Independent bulk operations use pipelines
 - [ ] All-or-nothing writes use MULTI/EXEC
 - [ ] Brute-force counters use `INCR` + conditional `EXPIRE`, not `SET` with `EX`
 
 ### Security
+
 - [ ] Raw tokens never appear in key names or log messages
 - [ ] SISMEMBER is used to verify ownership before session operations (prevents BOLA/IDOR)
 - [ ] OTP verification checks and increments attempt counter
 - [ ] TOTP replay prevention key is set after successful verification
 
 ### Error Handling
+
 - [ ] Redis errors are caught and logged with context (but without sensitive values)
 - [ ] Degradation strategy matches the feature's criticality (fail-open vs fail-closed)
 - [ ] Pipeline/transaction `exec()` results are checked for per-command errors
 
 ### Connection
+
 - [ ] No `new Redis()` or `new Cluster()` calls in library code
 - [ ] No `redis.quit()` or `redis.disconnect()` calls in library code
 - [ ] No blocking commands (`BLPOP`, `BRPOP`, `SUBSCRIBE`) on the injected client
@@ -1309,11 +1336,13 @@ Use this checklist when writing or reviewing any Redis operation in the library:
 - [ ] Redis client is obtained only through `@Inject(BYMAX_AUTH_REDIS_CLIENT)`
 
 ### Testing
+
 - [ ] Redis is mocked via the DI token, not by monkey-patching
 - [ ] Lua scripts are tested with `eval` mock that returns expected values
 - [ ] Pipeline mocks return `[null, value]` tuple arrays matching ioredis format
 
 ### Code Organization
+
 - [ ] All key construction goes through a centralized `key()` helper method
 - [ ] Lua scripts are stored as constants, not inline strings
 - [ ] `defineCommand` is used for frequently called Lua scripts

@@ -270,7 +270,8 @@ import type { IEmailProvider, InviteData, SessionInfo } from '@bymax-one/nest-au
 import { Resend } from 'resend'
 
 const escapeHtml = (s: string): string =>
-  s.replace(/&/g, '&amp;')
+  s
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
@@ -348,11 +349,7 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendInvitation(
-    email: string,
-    inviteData: InviteData,
-    _locale?: string
-  ): Promise<void> {
+  async sendInvitation(email: string, inviteData: InviteData, _locale?: string): Promise<void> {
     const url = `${this.appUrl}/accept-invite?token=${encodeURIComponent(inviteData.inviteToken)}`
     await this.client.emails.send({
       from: this.from,
@@ -374,9 +371,7 @@ Wire it via `extraProviders` alongside the user repository:
 ```typescript
 import { BYMAX_AUTH_EMAIL_PROVIDER } from '@bymax-one/nest-auth'
 
-extraProviders: [
-  { provide: BYMAX_AUTH_EMAIL_PROVIDER, useClass: ResendEmailProvider }
-]
+extraProviders: [{ provide: BYMAX_AUTH_EMAIL_PROVIDER, useClass: ResendEmailProvider }]
 ```
 
 ### 4. Register the Module
@@ -591,21 +586,21 @@ export const POST = createLogoutHandler({
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group             | Key Options                                                                 | Default                   |
-| ----------------- | --------------------------------------------------------------------------- | ------------------------- |
-| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `algorithm` | `15m`, `7d`, `HS256`      |
-| **password**      | `costFactor`, `blockSize`, `parallelization`                                | scrypt N=2¹⁵, r=8, p=1    |
-| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                        | `'cookie'`                |
-| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `resolveDomains` | — (see cookie section)   |
-| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                | —                         |
-| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`  | `false`, `5`, —, `'fifo'` |
-| **bruteForce**    | `maxAttempts`, `windowSeconds`                                              | `5`, `900`                |
-| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`               | `'token'`                 |
-| **platform**      | `enabled`                                                                   | `false`                   |
-| **invitations**   | `enabled`, `tokenTtlSeconds`                                                | `false`                   |
-| **roles**         | `hierarchy` (required), `platformHierarchy`                                 | —                         |
-| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                           | —                         |
-| **controllers**   | Toggle individual controllers on/off                                        | All enabled               |
+| Group             | Key Options                                                                                       | Default                   |
+| ----------------- | ------------------------------------------------------------------------------------------------- | ------------------------- |
+| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `algorithm`                       | `15m`, `7d`, `HS256`      |
+| **password**      | `costFactor`, `blockSize`, `parallelization`                                                      | scrypt N=2¹⁵, r=8, p=1    |
+| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                              | `'cookie'`                |
+| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `resolveDomains` | — (see cookie section)    |
+| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                      | —                         |
+| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                        | `false`, `5`, —, `'fifo'` |
+| **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                    | `5`, `900`                |
+| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                     | `'token'`                 |
+| **platform**      | `enabled`                                                                                         | `false`                   |
+| **invitations**   | `enabled`, `tokenTtlSeconds`                                                                      | `false`                   |
+| **roles**         | `hierarchy` (required), `platformHierarchy`                                                       | —                         |
+| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                                                 | —                         |
+| **controllers**   | Toggle individual controllers on/off                                                              | All enabled               |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
@@ -638,13 +633,13 @@ The package runs **inside** your NestJS application as a dynamic module — not 
 
 ### Design Principles
 
-| Principle                  | Description                                                                                             |
-| -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **🔌 Interface-Driven**    | Define contracts, inject implementations — works with Prisma, TypeORM, Drizzle, or any SQL ORM          |
-| **🔒 Secure by Default**   | scrypt hashing, HttpOnly cookies, JWT blacklisting, brute-force protection — all enabled out of the box |
+| Principle                  | Description                                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **🔌 Interface-Driven**    | Define contracts, inject implementations — works with Prisma, TypeORM, Drizzle, or any SQL ORM                                               |
+| **🔒 Secure by Default**   | scrypt hashing, HttpOnly cookies, JWT blacklisting, brute-force protection — all enabled out of the box                                      |
 | **🪶 Zero Runtime Deps**   | `"dependencies": {}` — adds no runtime deps of its own; crypto is native `node:crypto`. Required peers (NestJS, ioredis…) come from your app |
-| **🌳 Tree-Shakeable**      | `sideEffects: false`, subpath exports, ESM + CJS dual output                                            |
-| **⚡ Conditional Loading** | Unconfigured features don't register — no wasted memory or startup time                                 |
+| **🌳 Tree-Shakeable**      | `sideEffects: false`, subpath exports, ESM + CJS dual output                                                                                 |
+| **⚡ Conditional Loading** | Unconfigured features don't register — no wasted memory or startup time                                                                      |
 
 ---
 
@@ -756,36 +751,36 @@ pnpm mutation      # Stryker mutation testing
 
 Conditionally registered controllers (mfa, sessions, platform, invitations, oauth, password-reset) only mount their endpoints when the corresponding feature is enabled in `BymaxAuthModule.registerAsync()`.
 
-| Method | Path                          | Auth / Guard                                | Description                                                |
-| ------ | ----------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
-| POST   | `/register`                   | Public                                      | Register a new dashboard user and issue tokens             |
-| POST   | `/login`                      | Public                                      | Authenticate with email/password (may return MFA challenge) |
-| POST   | `/logout`                     | `JwtAuthGuard`                              | Revoke tokens and clear session                            |
-| POST   | `/refresh`                    | Public (refresh cookie)                     | Rotate refresh token, issue new access token               |
-| GET    | `/me`                         | `JwtAuthGuard`                              | Current dashboard user payload                             |
-| POST   | `/verify-email`               | Public                                      | Verify email with OTP                                      |
-| POST   | `/resend-verification`        | Public                                      | Resend email-verification OTP                              |
-| POST   | `/password/forgot-password`   | Public                                      | Request password reset (token or OTP)                      |
-| POST   | `/password/reset-password`    | Public                                      | Submit new password with reset token                       |
-| POST   | `/password/verify-otp`        | Public                                      | Verify password-reset OTP                                  |
-| POST   | `/password/resend-otp`        | Public                                      | Resend password-reset OTP                                  |
-| POST   | `/mfa/setup`                  | `JwtAuthGuard`                              | Generate TOTP secret and recovery codes                    |
-| POST   | `/mfa/verify-enable`          | `JwtAuthGuard`                              | Confirm setup and enable MFA                               |
-| POST   | `/mfa/challenge`              | Public + `@SkipMfa()`                       | Submit TOTP/recovery code after login                      |
-| POST   | `/mfa/disable`                | `JwtAuthGuard`                              | Disable MFA for the current user                           |
-| GET    | `/sessions`                   | `JwtAuthGuard`, `UserStatusGuard`           | List active sessions for the current user                  |
-| DELETE | `/sessions/all`               | `JwtAuthGuard`, `UserStatusGuard`           | Revoke all sessions                                        |
-| DELETE | `/sessions/:id`               | `JwtAuthGuard`, `UserStatusGuard`           | Revoke a specific session                                  |
-| POST   | `/invitations`                | `JwtAuthGuard`                              | Create a tenant invitation                                 |
-| POST   | `/invitations/accept`         | Public                                      | Accept an invitation and create the user                   |
-| POST   | `/platform/login`             | Public                                      | Platform admin login (separate token context)              |
-| POST   | `/platform/mfa/challenge`     | Public                                      | Platform admin MFA challenge                               |
-| GET    | `/platform/me`                | `JwtPlatformGuard`                          | Current platform admin payload                             |
-| POST   | `/platform/logout`            | `JwtPlatformGuard`                          | Revoke platform tokens                                     |
-| POST   | `/platform/refresh`           | Public (platform refresh cookie)            | Rotate platform refresh token                              |
-| DELETE | `/platform/sessions`          | `JwtPlatformGuard`                          | Revoke all platform sessions                               |
-| GET    | `/oauth/:provider`            | Public + `@SkipMfa()`                       | Initiate OAuth authorization redirect                      |
-| GET    | `/oauth/:provider/callback`   | Public + `@SkipMfa()`                       | Handle OAuth callback, exchange code, issue tokens         |
+| Method | Path                        | Auth / Guard                      | Description                                                 |
+| ------ | --------------------------- | --------------------------------- | ----------------------------------------------------------- |
+| POST   | `/register`                 | Public                            | Register a new dashboard user and issue tokens              |
+| POST   | `/login`                    | Public                            | Authenticate with email/password (may return MFA challenge) |
+| POST   | `/logout`                   | `JwtAuthGuard`                    | Revoke tokens and clear session                             |
+| POST   | `/refresh`                  | Public (refresh cookie)           | Rotate refresh token, issue new access token                |
+| GET    | `/me`                       | `JwtAuthGuard`                    | Current dashboard user payload                              |
+| POST   | `/verify-email`             | Public                            | Verify email with OTP                                       |
+| POST   | `/resend-verification`      | Public                            | Resend email-verification OTP                               |
+| POST   | `/password/forgot-password` | Public                            | Request password reset (token or OTP)                       |
+| POST   | `/password/reset-password`  | Public                            | Submit new password with reset token                        |
+| POST   | `/password/verify-otp`      | Public                            | Verify password-reset OTP                                   |
+| POST   | `/password/resend-otp`      | Public                            | Resend password-reset OTP                                   |
+| POST   | `/mfa/setup`                | `JwtAuthGuard`                    | Generate TOTP secret and recovery codes                     |
+| POST   | `/mfa/verify-enable`        | `JwtAuthGuard`                    | Confirm setup and enable MFA                                |
+| POST   | `/mfa/challenge`            | Public + `@SkipMfa()`             | Submit TOTP/recovery code after login                       |
+| POST   | `/mfa/disable`              | `JwtAuthGuard`                    | Disable MFA for the current user                            |
+| GET    | `/sessions`                 | `JwtAuthGuard`, `UserStatusGuard` | List active sessions for the current user                   |
+| DELETE | `/sessions/all`             | `JwtAuthGuard`, `UserStatusGuard` | Revoke all sessions                                         |
+| DELETE | `/sessions/:id`             | `JwtAuthGuard`, `UserStatusGuard` | Revoke a specific session                                   |
+| POST   | `/invitations`              | `JwtAuthGuard`                    | Create a tenant invitation                                  |
+| POST   | `/invitations/accept`       | Public                            | Accept an invitation and create the user                    |
+| POST   | `/platform/login`           | Public                            | Platform admin login (separate token context)               |
+| POST   | `/platform/mfa/challenge`   | Public                            | Platform admin MFA challenge                                |
+| GET    | `/platform/me`              | `JwtPlatformGuard`                | Current platform admin payload                              |
+| POST   | `/platform/logout`          | `JwtPlatformGuard`                | Revoke platform tokens                                      |
+| POST   | `/platform/refresh`         | Public (platform refresh cookie)  | Rotate platform refresh token                               |
+| DELETE | `/platform/sessions`        | `JwtPlatformGuard`                | Revoke all platform sessions                                |
+| GET    | `/oauth/:provider`          | Public + `@SkipMfa()`             | Initiate OAuth authorization redirect                       |
+| GET    | `/oauth/:provider/callback` | Public + `@SkipMfa()`             | Handle OAuth callback, exchange code, issue tokens          |
 
 ### Server Guards
 

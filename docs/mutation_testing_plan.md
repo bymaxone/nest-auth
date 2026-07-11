@@ -64,22 +64,22 @@ If anything in this snapshot is below 100%, **do not start Stryker**. Fix the ga
 
 ## 3. Project Context an Executor Must Internalise
 
-| Topic | Reality | Implication for Stryker |
-|---|---|---|
-| Package type | Public npm lib, NOT an app | Stryker goes in `devDependencies` only. Never in `dependencies` / `peerDependencies`. |
-| Package manager | `pnpm@10.8.1` | Use `pnpm add -D`, set `"packageManager": "pnpm"` in stryker config. |
-| Node version | `>=24.0.0` | Stryker 8.x supports Node 24 natively. |
-| Module system | `"type": "module"` (ESM) | Confirmed compatible with Stryker 8 + `@stryker-mutator/jest-runner`. |
-| Test runner | Jest 29 + ts-jest | Use `@stryker-mutator/jest-runner` with `projectType: "custom"` pointing at `jest.config.ts`. |
-| TS strictness | `strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess + noImplicitOverride + noFallthroughCasesInSwitch` | `disableTypeChecks: "src/**/*.{ts,tsx}"` is **mandatory** — Stryker injects mutated code that intentionally violates types. |
-| Build system | tsup, 5 entries (server/shared/client/react/nextjs) | Stryker only runs the **test** suite — `tsup` is irrelevant to mutation testing. Never call `tsup` from Stryker config. |
-| Subpath aliases | `@bymax-one/nest-auth{,/shared,/client,/react,/nextjs}` mapped via Jest `moduleNameMapper` | Stryker copies the entire project to `.stryker-tmp` and re-runs Jest — aliases work because `jest.config.ts` carries them. **Do not** duplicate the mapping in `stryker.config.json`. |
-| Dependency injection | NestJS with `Symbol()`-based tokens (never strings) | `StringLiteral` mutator may mutate the symbol description (`Symbol("X")` → `Symbol("")`), which **does not break** behaviour because Symbols are referentially unique — these can be left alone or disabled with `// Stryker disable next-line StringLiteral`. |
-| Validation | `class-validator` decorators on DTOs (e.g., `@IsEmail()`, `@IsString()`) | Decorator metadata is built at module load. With `ignoreStatic: true`, Stryker skips mutants that only execute at load time, avoiding noise on DTOs. |
-| Error messages | `AUTH_ERROR_MESSAGES` in **Portuguese** (intentional product design — see `CLAUDE.md`) | String literal mutants on these messages are usually equivalent (no consumer tests message text). Document the exception. |
-| Cryptography | `node:crypto` only — `timingSafeEqual`, `randomBytes`, `createHmac` | These are the **most important** files to score well. `EqualityOperator` mutants (`===` → `!==`) and `BooleanLiteral` (`true` → `false`) must all be killed. If they survive, tests are weak. |
-| E2E tests | Live under `test/e2e/`, executed by `jest.e2e.config.ts` (30 s timeout each) | **Do not** include e2e in the Stryker run. Adding them multiplies runtime by ~5x with marginal score gain. The unit suite already drives 100% line coverage on its own. |
-| CI workflows | `ci.yml` and `release.yml` currently `manual-only` (recent commit `8844410`) | Mutation testing will follow the same manual / release-only pattern. **Do not** add it as a blocking job on every PR. |
+| Topic                | Reality                                                                                                            | Implication for Stryker                                                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package type         | Public npm lib, NOT an app                                                                                         | Stryker goes in `devDependencies` only. Never in `dependencies` / `peerDependencies`.                                                                                                                                                                          |
+| Package manager      | `pnpm@10.8.1`                                                                                                      | Use `pnpm add -D`, set `"packageManager": "pnpm"` in stryker config.                                                                                                                                                                                           |
+| Node version         | `>=24.0.0`                                                                                                         | Stryker 8.x supports Node 24 natively.                                                                                                                                                                                                                         |
+| Module system        | `"type": "module"` (ESM)                                                                                           | Confirmed compatible with Stryker 8 + `@stryker-mutator/jest-runner`.                                                                                                                                                                                          |
+| Test runner          | Jest 29 + ts-jest                                                                                                  | Use `@stryker-mutator/jest-runner` with `projectType: "custom"` pointing at `jest.config.ts`.                                                                                                                                                                  |
+| TS strictness        | `strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess + noImplicitOverride + noFallthroughCasesInSwitch` | `disableTypeChecks: "src/**/*.{ts,tsx}"` is **mandatory** — Stryker injects mutated code that intentionally violates types.                                                                                                                                    |
+| Build system         | tsup, 5 entries (server/shared/client/react/nextjs)                                                                | Stryker only runs the **test** suite — `tsup` is irrelevant to mutation testing. Never call `tsup` from Stryker config.                                                                                                                                        |
+| Subpath aliases      | `@bymax-one/nest-auth{,/shared,/client,/react,/nextjs}` mapped via Jest `moduleNameMapper`                         | Stryker copies the entire project to `.stryker-tmp` and re-runs Jest — aliases work because `jest.config.ts` carries them. **Do not** duplicate the mapping in `stryker.config.json`.                                                                          |
+| Dependency injection | NestJS with `Symbol()`-based tokens (never strings)                                                                | `StringLiteral` mutator may mutate the symbol description (`Symbol("X")` → `Symbol("")`), which **does not break** behaviour because Symbols are referentially unique — these can be left alone or disabled with `// Stryker disable next-line StringLiteral`. |
+| Validation           | `class-validator` decorators on DTOs (e.g., `@IsEmail()`, `@IsString()`)                                           | Decorator metadata is built at module load. With `ignoreStatic: true`, Stryker skips mutants that only execute at load time, avoiding noise on DTOs.                                                                                                           |
+| Error messages       | `AUTH_ERROR_MESSAGES` in **Portuguese** (intentional product design — see `CLAUDE.md`)                             | String literal mutants on these messages are usually equivalent (no consumer tests message text). Document the exception.                                                                                                                                      |
+| Cryptography         | `node:crypto` only — `timingSafeEqual`, `randomBytes`, `createHmac`                                                | These are the **most important** files to score well. `EqualityOperator` mutants (`===` → `!==`) and `BooleanLiteral` (`true` → `false`) must all be killed. If they survive, tests are weak.                                                                  |
+| E2E tests            | Live under `test/e2e/`, executed by `jest.e2e.config.ts` (30 s timeout each)                                       | **Do not** include e2e in the Stryker run. Adding them multiplies runtime by ~5x with marginal score gain. The unit suite already drives 100% line coverage on its own.                                                                                        |
+| CI workflows         | `ci.yml` and `release.yml` currently `manual-only` (recent commit `8844410`)                                       | Mutation testing will follow the same manual / release-only pattern. **Do not** add it as a blocking job on every PR.                                                                                                                                          |
 
 ---
 
@@ -213,13 +213,13 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
 ### 5.1 Why we did not set certain options
 
-| Option | Value | Reason for not setting |
-|---|---|---|
-| `ignorePatterns` | (default) | `mutate` already restricts scope. Stryker's default ignores `node_modules`, `dist`, etc., which is correct here. |
-| `mutator.excludedMutations` | (none initially) | We want to see the full picture in the baseline. Excluded only in Phase 4 with documented reasons. |
-| `dryRunOnly` | `false` | We want real results, not just dry runs. |
-| `dashboard.*` | (omitted) | Requires deciding on public sharing — see §11. |
-| `dryRunTimeoutMinutes` | (default 5) | Baseline measurement; if dry run exceeds 5 min we have a deeper problem to debug. |
+| Option                      | Value            | Reason for not setting                                                                                           |
+| --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `ignorePatterns`            | (default)        | `mutate` already restricts scope. Stryker's default ignores `node_modules`, `dist`, etc., which is correct here. |
+| `mutator.excludedMutations` | (none initially) | We want to see the full picture in the baseline. Excluded only in Phase 4 with documented reasons.               |
+| `dryRunOnly`                | `false`          | We want real results, not just dry runs.                                                                         |
+| `dashboard.*`               | (omitted)        | Requires deciding on public sharing — see §11.                                                                   |
+| `dryRunTimeoutMinutes`      | (default 5)      | Baseline measurement; if dry run exceeds 5 min we have a deeper problem to debug.                                |
 
 ### 5.2 Setup corrections discovered during execution (REQUIRED)
 
@@ -361,7 +361,9 @@ Use the existing `tester` workflow (`docs/guidelines/JEST-TESTING-GUIDELINES.md`
 
 ```ts
 // Source line:
-if (user.mfaEnabled === true) { /* ... */ }
+if (user.mfaEnabled === true) {
+  /* ... */
+}
 //                      ^^^^ mutant: replaces `true` with `false`
 ```
 
@@ -377,14 +379,14 @@ Add to `mfa.service.spec.ts`:
  */
 it('rejects challenge when user.mfaEnabled is undefined', async () => {
   // Arrange
-  const user = buildUser({ mfaEnabled: undefined });
+  const user = buildUser({ mfaEnabled: undefined })
 
   // Act
-  const result = await service.challenge(user, 'totp');
+  const result = await service.challenge(user, 'totp')
 
   // Assert
-  expect(result.isError()).toBe(true);
-});
+  expect(result.isError()).toBe(true)
+})
 ```
 
 ### 8.3 EQUIVALENT — mutant is semantically identical to the original
@@ -401,7 +403,7 @@ Common cases:
 ```ts
 // Stryker disable next-line StringLiteral: DI token description — Symbols
 // are referentially unique, mutation does not alter behaviour.
-export const BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS');
+export const BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS')
 ```
 
 For a whole block (e.g., a Portuguese error-messages map):
@@ -412,7 +414,7 @@ For a whole block (e.g., a Portuguese error-messages map):
 // is irrelevant to the lib's behaviour.
 export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   // ... pt-BR strings ...
-} as const;
+} as const
 // Stryker restore all
 ```
 
@@ -515,7 +517,7 @@ Append a new entry under **Verification — Run Before Completing Any Task**:
 For release validation, also run:
 
 \`\`\`bash
-pnpm mutation             # full mutation testing (~15-25 min)
+pnpm mutation # full mutation testing (~15-25 min)
 pnpm mutation:incremental # incremental (uses reports/stryker-incremental.json)
 \`\`\`
 
@@ -563,16 +565,16 @@ Add a "Mutation testing" subsection that:
 
 ## 12. Risk Register
 
-| ID | Severity | Risk | Mitigation |
-|---|---|---|---|
-| R1 | 🔴 HIGH | Wall-clock runtime balloons past 30 min, making local iteration impractical. | Tune `concurrency`. Enable `incremental: true` after baseline. If still slow, split config per-subpath into `stryker.server.config.json`, `stryker.client.config.json`, etc., and run separately. |
-| R2 | 🔴 HIGH | NestJS DI `Symbol()` token mutations cause cascade failures with unclear root cause. | Identify in baseline. Add `// Stryker disable StringLiteral` blocks to `*.constants.ts` files holding DI tokens, with the reason from §8.3. |
-| R3 | 🟡 MED | ESM + ts-jest + Stryker sandbox mismatch on first run. | Run `pnpm mutation:dry-run` first (cheap). If it fails, see §7's failure modes. Fallback: temporary `jest.config.cjs` shim used **only** by Stryker. |
-| R4 | 🟡 MED | `class-validator` decorators lose metadata in the sandbox. | `disableTypeChecks` + `ignoreStatic: true` cover the common cases. If specific DTOs still misbehave, target them with `// Stryker disable BlockStatement: decorator metadata, tested at integration level`. |
-| R5 | 🟡 MED | Mutation score caps at ~90% due to unavoidable equivalent mutants in localised strings and DI tokens. | Set `thresholds.break: 90` (not 95) for the long-term gate. Document the equivalent-mutant inventory in §13 as the project's "definition of done". |
-| R6 | 🟢 LOW | `reports/` directory bloats the working tree. | `.gitignore` entry in §6.2. |
-| R7 | 🟢 LOW | Stryker version drift breaks the config in the future. | Pin all three Stryker packages to the same major. Use `@^8` initially, bump together. |
-| R8 | 🟢 LOW | Devs run `pnpm mutation` accidentally in CI by including it in `prepublishOnly`. | Explicitly do NOT add it to `prepublishOnly`. Document in §9.4. |
+| ID  | Severity | Risk                                                                                                  | Mitigation                                                                                                                                                                                                  |
+| --- | -------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | 🔴 HIGH  | Wall-clock runtime balloons past 30 min, making local iteration impractical.                          | Tune `concurrency`. Enable `incremental: true` after baseline. If still slow, split config per-subpath into `stryker.server.config.json`, `stryker.client.config.json`, etc., and run separately.           |
+| R2  | 🔴 HIGH  | NestJS DI `Symbol()` token mutations cause cascade failures with unclear root cause.                  | Identify in baseline. Add `// Stryker disable StringLiteral` blocks to `*.constants.ts` files holding DI tokens, with the reason from §8.3.                                                                 |
+| R3  | 🟡 MED   | ESM + ts-jest + Stryker sandbox mismatch on first run.                                                | Run `pnpm mutation:dry-run` first (cheap). If it fails, see §7's failure modes. Fallback: temporary `jest.config.cjs` shim used **only** by Stryker.                                                        |
+| R4  | 🟡 MED   | `class-validator` decorators lose metadata in the sandbox.                                            | `disableTypeChecks` + `ignoreStatic: true` cover the common cases. If specific DTOs still misbehave, target them with `// Stryker disable BlockStatement: decorator metadata, tested at integration level`. |
+| R5  | 🟡 MED   | Mutation score caps at ~90% due to unavoidable equivalent mutants in localised strings and DI tokens. | Set `thresholds.break: 90` (not 95) for the long-term gate. Document the equivalent-mutant inventory in §13 as the project's "definition of done".                                                          |
+| R6  | 🟢 LOW   | `reports/` directory bloats the working tree.                                                         | `.gitignore` entry in §6.2.                                                                                                                                                                                 |
+| R7  | 🟢 LOW   | Stryker version drift breaks the config in the future.                                                | Pin all three Stryker packages to the same major. Use `@^8` initially, bump together.                                                                                                                       |
+| R8  | 🟢 LOW   | Devs run `pnpm mutation` accidentally in CI by including it in `prepublishOnly`.                      | Explicitly do NOT add it to `prepublishOnly`. Document in §9.4.                                                                                                                                             |
 
 ---
 
@@ -632,7 +634,7 @@ If criterion 6 cannot be met (e.g., mutation score plateaus at 88%), **stop and 
 - **Per hot-path:** crypto 100%, guards 100%, services 99.45%, oauth 99.12%, nextjs 98.49%, client 97.47%. (`react` dir 93.65% — see below.)
 - **`thresholds.break`** raised `80 → 95` to lock the floor.
 - **92 documented equivalent-mutant disables** (`// Stryker disable next-line <Mutator>: <reason>`), every one carrying a reason.
-- **10 documented equivalents remain reported as "survived"** — a Stryker limitation: `disable next-line` does not attach when the comment is the *trailing* comment of a block body (before `}, [dep])` in a `useEffect`/`useCallback`, before `} catch {`, or between `if (` and a multi-line condition's operands). They are: 4 `ArrayDeclaration` dep-array mutants in `react/AuthProvider.tsx` (stable refs), 5 `BlockStatement` `catch {}` mutants (createAuthFetch, oauth.service, invitation.service, password-reset.service, session.service), and 1 `ConditionalExpression` in a multi-line `if` (session.service). All carry inline reasons; suppressing them would require region `disable`/`restore` pairs that risk also masking legitimately-killed sibling mutants, so they were left as documented equivalents. This is why `react` reads 93.65% rather than ~100%.
+- **10 documented equivalents remain reported as "survived"** — a Stryker limitation: `disable next-line` does not attach when the comment is the _trailing_ comment of a block body (before `}, [dep])` in a `useEffect`/`useCallback`, before `} catch {`, or between `if (` and a multi-line condition's operands). They are: 4 `ArrayDeclaration` dep-array mutants in `react/AuthProvider.tsx` (stable refs), 5 `BlockStatement` `catch {}` mutants (createAuthFetch, oauth.service, invitation.service, password-reset.service, session.service), and 1 `ConditionalExpression` in a multi-line `if` (session.service). All carry inline reasons; suppressing them would require region `disable`/`restore` pairs that risk also masking legitimately-killed sibling mutants, so they were left as documented equivalents. This is why `react` reads 93.65% rather than ~100%.
 
 ## 16. Execution Checklist (for the agent picking this up)
 

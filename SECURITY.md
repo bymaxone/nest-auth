@@ -35,12 +35,12 @@ A useful report contains:
 
 ### Response timeline
 
-| Phase                                       | Target                            |
-| ------------------------------------------- | --------------------------------- |
-| Acknowledgement of receipt                  | within **72 hours**               |
-| Initial assessment and severity rating      | within **7 days**                 |
-| Coordinated fix for **Critical / High**     | within **90 days** of acknowledgement |
-| Coordinated fix for **Medium / Low**        | best effort, tracked in advisory  |
+| Phase                                   | Target                                |
+| --------------------------------------- | ------------------------------------- |
+| Acknowledgement of receipt              | within **72 hours**                   |
+| Initial assessment and severity rating  | within **7 days**                     |
+| Coordinated fix for **Critical / High** | within **90 days** of acknowledgement |
+| Coordinated fix for **Medium / Low**    | best effort, tracked in advisory      |
 
 We follow [coordinated vulnerability disclosure](https://en.wikipedia.org/wiki/Coordinated_vulnerability_disclosure) and publish the advisory only after a fixed version is on npm, unless active exploitation forces an earlier publication.
 
