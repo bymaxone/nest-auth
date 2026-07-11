@@ -207,6 +207,18 @@ describe('AuthService', () => {
       expect(mockUserRepo.create).toHaveBeenCalled()
     })
 
+    // Verifies the email is canonicalized at the service boundary (not only via the DTO
+    // @Transform, which the non-transforming ValidationPipe discards): a mixed-case,
+    // padded email is looked up and stored lowercased/trimmed, so the stored identity
+    // matches every email-keyed control.
+    it('should normalize the email before lookup and persistence', async () => {
+      await service.register({ ...dto, email: '  New.USER@Example.COM  ' }, mockReq)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('new.user@example.com', 'tenant-1')
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'new.user@example.com' })
+      )
+    })
+
     // Scenario: register with a populated request. Expected: issueTokens receives the request's
     // ip and the 'user-agent' header value. Why: pins the 'user-agent' header name (line 91:42),
     // the ?? coalescing (line 91:30) and the ip pass-through so swaps to '' / wrong header die.
@@ -551,6 +563,18 @@ describe('AuthService', () => {
       await service.login(dto, mockReq)
       const expectedIdentifier = hmacSha256(`tenant-1:${dto.email}`, HMAC_KEY)
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedIdentifier)
+    })
+
+    // Verifies the case-rotation lockout bypass is closed at the service layer: a
+    // mixed-case, padded email yields the SAME brute-force HMAC and user lookup as the
+    // canonical lowercase form, so an attacker cannot rotate casing to get a fresh
+    // lockout bucket. This holds independently of the DTO @Transform (which the
+    // non-transforming ValidationPipe discards).
+    it('should derive the brute-force key and lookup from the normalized email', async () => {
+      await service.login({ ...dto, email: '  USER@Example.COM  ' }, mockReq)
+      const canonicalIdentifier = hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
     })
 
     // Verifies that a wrong password records a brute-force failure and throws INVALID_CREDENTIALS.
