@@ -69,8 +69,12 @@ Graph: `shared` → `client` → `react` → `nextjs` (each depends on previous 
 ## Verification — Run Before Completing Any Task
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test && pnpm build
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build
 ```
+
+`format:check` (`prettier --check .`) is a hard CI gate — the reusable pipeline runs it on
+every PR and push to `main`. Run `pnpm format` to auto-fix. The pre-commit hook only formats
+_staged_ files, so untouched files can still drift; this gate catches that.
 
 ### Mutation testing (before tagging a release)
 
@@ -80,7 +84,18 @@ Run under Node 24:
 ```bash
 pnpm mutation             # full run (~10 min); writes reports/mutation/mutation.html
 pnpm mutation:incremental # faster re-run using reports/stryker-incremental.json
+pnpm mutation:dry-run     # fast sandbox/config smoke test (no mutants); use to verify config health
 ```
+
+**Config invariants (Node 24 + pnpm — do not regress).** Stryker loads `jest.stryker.config.ts`
+via native ESM `import()` in a child process, so relative imports MUST carry an explicit
+extension (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess extensions
+and an extensionless specifier throws `ERR_MODULE_NOT_FOUND` in the sandbox. The jest test
+environments (`jest-environment-node`, `jest-environment-jsdom`) MUST stay **direct
+devDependencies**: the `@stryker-mutator/jest-runner` env wrapper does `require('jest-environment-*')`
+from its own package, which pnpm's strict layout only resolves when the project declares them
+directly. After touching Stryker/Jest config or bumping either major, run `pnpm mutation:dry-run`
+to confirm the sandbox still boots before the full run.
 
 Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`
 — acceptable **only** for genuinely equivalent mutants (no test can kill them), each carrying a
