@@ -51,6 +51,8 @@
     "build": "pnpm clean && tsup",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "jest",
     "test:cov": "jest --coverage",
     "test:watch": "jest --watch",

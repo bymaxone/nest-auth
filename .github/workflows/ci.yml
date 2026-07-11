@@ -24,7 +24,7 @@ jobs:
   ci:
     uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@v1
     with:
-      run-format-check: false # no format:check script; prettier runs via lint/pre-commit
+      run-format-check: true # runs `pnpm format:check` (prettier --check .) as a hard gate
       run-build: false # build + integrity + size verified in the `verify` job below
       unit-command: pnpm test:cov:all
       run-mutation: true

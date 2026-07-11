@@ -30,7 +30,7 @@ The build is configured in `tsup.config.ts` at the project root. Always use the 
 
 ```ts
 // tsup.config.ts
-import { defineConfig } from 'tsup';
+import { defineConfig } from 'tsup'
 
 export default defineConfig([
   // Server entry (main)
@@ -40,7 +40,7 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     outExtension: ({ format }) => ({
-      js: format === 'esm' ? '.mjs' : '.cjs',
+      js: format === 'esm' ? '.mjs' : '.cjs'
     }),
     external: [
       /^@nestjs\//,
@@ -48,13 +48,13 @@ export default defineConfig([
       'class-transformer',
       'class-validator',
       'ioredis',
-      'express',
+      'express'
     ],
     target: 'node24',
     clean: true,
     splitting: false,
     treeshake: true,
-    sourcemap: false,
+    sourcemap: false
   },
   // Shared entry
   {
@@ -63,17 +63,14 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     outExtension: ({ format }) => ({
-      js: format === 'esm' ? '.mjs' : '.cjs',
+      js: format === 'esm' ? '.mjs' : '.cjs'
     }),
-    external: [
-      'class-transformer',
-      'class-validator',
-    ],
+    external: ['class-transformer', 'class-validator'],
     target: 'node24',
     clean: false,
     splitting: false,
     treeshake: true,
-    sourcemap: false,
+    sourcemap: false
   },
   // Client entry
   {
@@ -82,14 +79,14 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     outExtension: ({ format }) => ({
-      js: format === 'esm' ? '.mjs' : '.cjs',
+      js: format === 'esm' ? '.mjs' : '.cjs'
     }),
     external: [],
     target: 'es2022',
     clean: false,
     splitting: false,
     treeshake: true,
-    sourcemap: false,
+    sourcemap: false
   },
   // React entry (has JSX)
   {
@@ -98,7 +95,7 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     outExtension: ({ format }) => ({
-      js: format === 'esm' ? '.mjs' : '.cjs',
+      js: format === 'esm' ? '.mjs' : '.cjs'
     }),
     external: ['react', 'react-dom'],
     target: 'es2022',
@@ -107,8 +104,8 @@ export default defineConfig([
     treeshake: true,
     sourcemap: false,
     esbuildOptions(options) {
-      options.jsx = 'automatic';
-    },
+      options.jsx = 'automatic'
+    }
   },
   // Next.js entry
   {
@@ -117,7 +114,7 @@ export default defineConfig([
     dts: true,
     outDir: 'dist',
     outExtension: ({ format }) => ({
-      js: format === 'esm' ? '.mjs' : '.cjs',
+      js: format === 'esm' ? '.mjs' : '.cjs'
     }),
     external: ['react', 'react-dom', 'next'],
     target: 'es2022',
@@ -126,25 +123,25 @@ export default defineConfig([
     treeshake: true,
     sourcemap: false,
     esbuildOptions(options) {
-      options.jsx = 'automatic';
-    },
-  },
-]);
+      options.jsx = 'automatic'
+    }
+  }
+])
 ```
 
 ### 1.2 Key Configuration Fields
 
-| Field | Value | Purpose |
-|---|---|---|
-| `format` | `['esm', 'cjs']` | Dual-format output for maximum compatibility |
-| `dts` | `true` | Generate `.d.ts` declaration files |
-| `outDir` | `'dist'` | All output goes to `dist/` |
-| `outExtension` | `.mjs` / `.cjs` | Explicit extensions avoid ambiguity |
-| `target` | `'node24'` or `'es2022'` | Match the runtime environment of each entry |
-| `clean` | `true` on first entry only | Wipe `dist/` before building, but not between entries |
-| `splitting` | `false` | Not needed for library builds (see section 2.4) |
-| `treeshake` | `true` | Remove dead code from output bundles |
-| `sourcemap` | `false` | Not shipped in the npm package |
+| Field          | Value                      | Purpose                                               |
+| -------------- | -------------------------- | ----------------------------------------------------- |
+| `format`       | `['esm', 'cjs']`           | Dual-format output for maximum compatibility          |
+| `dts`          | `true`                     | Generate `.d.ts` declaration files                    |
+| `outDir`       | `'dist'`                   | All output goes to `dist/`                            |
+| `outExtension` | `.mjs` / `.cjs`            | Explicit extensions avoid ambiguity                   |
+| `target`       | `'node24'` or `'es2022'`   | Match the runtime environment of each entry           |
+| `clean`        | `true` on first entry only | Wipe `dist/` before building, but not between entries |
+| `splitting`    | `false`                    | Not needed for library builds (see section 2.4)       |
+| `treeshake`    | `true`                     | Remove dead code from output bundles                  |
+| `sourcemap`    | `false`                    | Not shipped in the npm package                        |
 
 ### 1.3 Why `defineConfig` Takes an Array
 
@@ -158,13 +155,13 @@ tsup supports passing an array of configuration objects to `defineConfig`. Each 
 
 This package exposes five subpath entry points, each targeting a distinct runtime or consumer:
 
-| Subpath | Entry Source | Target | Description |
-|---|---|---|---|
-| `.` (root) | `src/server/index.ts` | `node24` | NestJS guards, decorators, modules |
+| Subpath    | Entry Source          | Target   | Description                                            |
+| ---------- | --------------------- | -------- | ------------------------------------------------------ |
+| `.` (root) | `src/server/index.ts` | `node24` | NestJS guards, decorators, modules                     |
 | `./shared` | `src/shared/index.ts` | `node24` | DTOs, types, constants shared across server and client |
-| `./client` | `src/client/index.ts` | `es2022` | Framework-agnostic browser auth client |
-| `./react` | `src/react/index.ts` | `es2022` | React hooks and AuthProvider (JSX) |
-| `./nextjs` | `src/nextjs/index.ts` | `es2022` | Next.js middleware, server actions, RSC utilities |
+| `./client` | `src/client/index.ts` | `es2022` | Framework-agnostic browser auth client                 |
+| `./react`  | `src/react/index.ts`  | `es2022` | React hooks and AuthProvider (JSX)                     |
+| `./nextjs` | `src/nextjs/index.ts` | `es2022` | Next.js middleware, server actions, RSC utilities      |
 
 ### 2.2 Separate Build Passes per Entry
 
@@ -349,17 +346,17 @@ tsup uses your project's `tsconfig.json` for type-checking during DTS generation
 ```jsonc
 {
   "compilerOptions": {
-    "declaration": true,           // Required for tsup dts
-    "declarationMap": false,       // Not needed; tsup handles mapping
-    "emitDeclarationOnly": false,  // tsup handles emit
-    "strict": true,                // Recommended for library correctness
+    "declaration": true, // Required for tsup dts
+    "declarationMap": false, // Not needed; tsup handles mapping
+    "emitDeclarationOnly": false, // tsup handles emit
+    "strict": true, // Recommended for library correctness
     "moduleResolution": "bundler", // Works best with tsup
-    "module": "ESNext",            // Source is ESM
-    "target": "ES2022",            // Base target; tsup overrides per entry
-    "jsx": "react-jsx",            // For .tsx files (react/nextjs entries)
-    "esModuleInterop": true,       // CJS interop
-    "skipLibCheck": true,          // Faster builds; peer deps may conflict
-    "isolatedModules": true,       // Required for esbuild compatibility
+    "module": "ESNext", // Source is ESM
+    "target": "ES2022", // Base target; tsup overrides per entry
+    "jsx": "react-jsx", // For .tsx files (react/nextjs entries)
+    "esModuleInterop": true, // CJS interop
+    "skipLibCheck": true, // Faster builds; peer deps may conflict
+    "isolatedModules": true // Required for esbuild compatibility
   }
 }
 ```
@@ -374,13 +371,13 @@ tsup uses your project's `tsconfig.json` for type-checking during DTS generation
 
 ### 5.2 External Map by Entry Point
 
-| Entry | External Packages | Reason |
-|---|---|---|
+| Entry    | External Packages                                                                             | Reason                                                            |
+| -------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `server` | `@nestjs/*`, `reflect-metadata`, `class-transformer`, `class-validator`, `ioredis`, `express` | All are peer deps or their transitive deps for the server runtime |
-| `shared` | `class-transformer`, `class-validator` | DTOs may use decorators from these packages |
-| `client` | (none or minimal) | Browser client should be self-contained |
-| `react` | `react`, `react-dom` | React is always a peer dependency |
-| `nextjs` | `react`, `react-dom`, `next` | Next.js and React are peer dependencies |
+| `shared` | `class-transformer`, `class-validator`                                                        | DTOs may use decorators from these packages                       |
+| `client` | (none or minimal)                                                                             | Browser client should be self-contained                           |
+| `react`  | `react`, `react-dom`                                                                          | React is always a peer dependency                                 |
+| `nextjs` | `react`, `react-dom`, `next`                                                                  | Next.js and React are peer dependencies                           |
 
 ### 5.3 Using Regex Patterns for Externals
 
@@ -388,9 +385,9 @@ For packages with many subpath imports (like `@nestjs/*`), use a regex pattern i
 
 ```ts
 external: [
-  /^@nestjs\//,   // Matches @nestjs/common, @nestjs/core, @nestjs/jwt, etc.
+  /^@nestjs\//, // Matches @nestjs/common, @nestjs/core, @nestjs/jwt, etc.
   'reflect-metadata',
-  'ioredis',
+  'ioredis'
 ]
 ```
 
@@ -447,6 +444,7 @@ Use esbuild's automatic JSX transform (React 17+ / React 19 compatible) via `esb
 ```
 
 The `'automatic'` transform:
+
 - Does NOT require `import React from 'react'` at the top of every `.tsx` file.
 - Generates `import { jsx as _jsx } from 'react/jsx-runtime'` calls.
 - Is the standard for React 19 and Next.js 16.
@@ -560,6 +558,7 @@ The `"typesVersions"` field is a fallback for older TypeScript versions (< 4.7) 
 ```
 
 Notes:
+
 - The root entry (`.`) does not need a `typesVersions` entry because it is resolved via the top-level `"types"` field (if present) or the `"exports"` map.
 - The `"*"` key means "all TypeScript versions." This is the standard pattern.
 - This field is only for TypeScript IDE resolution. It does not affect runtime module resolution.
@@ -622,18 +621,18 @@ Each `src/<subpath>/index.ts` is a barrel file that re-exports from internal mod
 
    ```ts
    // PREFERRED - explicit named re-exports
-   export { AuthGuard } from './guards/auth.guard';
-   export { JwtStrategy } from './strategies/jwt.strategy';
-   export type { AuthConfig } from './interfaces/auth-config';
+   export { AuthGuard } from './guards/auth.guard'
+   export { JwtStrategy } from './strategies/jwt.strategy'
+   export type { AuthConfig } from './interfaces/auth-config'
 
    // ACCEPTABLE but less tree-shakeable
-   export * from './guards/auth.guard';
+   export * from './guards/auth.guard'
    ```
 
 2. **Type-only exports should use `export type`.** This ensures they are completely erased from JavaScript output and never interfere with tree-shaking:
 
    ```ts
-   export type { AuthConfig, JwtPayload, UserSession } from './interfaces';
+   export type { AuthConfig, JwtPayload, UserSession } from './interfaces'
    ```
 
 ### 8.4 tsup's `treeshake` Option
@@ -658,6 +657,7 @@ To verify that downstream tree-shaking works correctly for your package:
 4. Check the output bundle size --- it should include only the imported export and its dependencies, not the entire subpath.
 
 If the entire subpath is included, check for:
+
 - Side effects in module-level code
 - Circular imports
 - `export *` chains that the bundler cannot statically analyze
@@ -779,6 +779,7 @@ du -sh dist/react/index.mjs dist/react/index.cjs
 ```
 
 Expected sizes for a library like this:
+
 - Server entry: 10-100 KB (decorators, guards, modules --- no bundled dependencies)
 - Shared entry: 5-50 KB (DTOs, types, constants)
 - Client entry: 5-30 KB (HTTP client, token handling)
@@ -801,11 +802,11 @@ export default defineConfig({
     'src/shared/index.ts',
     'src/client/index.ts',
     'src/react/index.ts',
-    'src/nextjs/index.ts',
+    'src/nextjs/index.ts'
   ],
   format: ['esm', 'cjs'],
-  external: [/^@nestjs\//, 'react', 'react-dom', 'next'],
-});
+  external: [/^@nestjs\//, 'react', 'react-dom', 'next']
+})
 ```
 
 **Why it is wrong:** All entries share the same `external` list and `target`. Server code gets `react` externalized (unnecessary), and React code gets `@nestjs/*` externalized (unnecessary). The `target` must be a compromise between `node24` and `es2022`.
@@ -824,9 +825,9 @@ export default defineConfig([
 ```ts
 // WRONG - outputs .js for both formats
 export default defineConfig({
-  format: ['esm', 'cjs'],
+  format: ['esm', 'cjs']
   // No outExtension
-});
+})
 ```
 
 **Why it is wrong:** With `"type": "module"`, the CJS `.js` files are treated as ESM by Node.js, causing runtime errors. Always use explicit `.mjs` / `.cjs` extensions.
@@ -837,8 +838,8 @@ export default defineConfig({
 // WRONG for a library
 export default defineConfig({
   splitting: true,
-  format: ['esm', 'cjs'],
-});
+  format: ['esm', 'cjs']
+})
 ```
 
 **Why it is wrong:** Splitting creates shared chunks (e.g., `chunk-XXXX.mjs`) that break the expected `dist/<subpath>/index.mjs` structure. Consumers cannot import chunks directly, and it complicates the exports map. Additionally, splitting only works with ESM format --- enabling it alongside CJS causes a build error.

@@ -38,6 +38,7 @@ Key architectural points:
 ### 1.2 Server Components vs Client Components
 
 **Server Components** (default):
+
 - Render on the server, ship zero client-side JavaScript.
 - Can access server-side resources: environment variables, secrets, databases.
 - Can use `async/await` directly at the component level.
@@ -45,6 +46,7 @@ Key architectural points:
 - Cannot use event handlers (`onClick`, `onChange`).
 
 **Client Components** (`'use client'`):
+
 - Render on the server (prerender), then hydrate on the client.
 - Can use state, effects, event handlers, and browser APIs (`localStorage`, `window`).
 - Must receive serializable props from Server Components.
@@ -52,24 +54,26 @@ Key architectural points:
 
 **Decision matrix for this library:**
 
-| Need | Component Type |
-|------|---------------|
-| Display auth state from headers | Server Component |
-| Login/register form with validation | Client Component |
+| Need                                  | Component Type   |
+| ------------------------------------- | ---------------- |
+| Display auth state from headers       | Server Component |
+| Login/register form with validation   | Client Component |
 | Conditional UI based on role (static) | Server Component |
-| Toggle visibility, modals, dropdowns | Client Component |
-| Reading cookies for display | Server Component |
+| Toggle visibility, modals, dropdowns  | Client Component |
+| Reading cookies for display           | Server Component |
 | Calling `useSession()` or `useAuth()` | Client Component |
 
 ### 1.3 Rendering Model
 
 On initial page load:
+
 1. Server Components render into RSC Payload (compact binary format).
 2. Client Components prerender HTML alongside the RSC Payload.
 3. Browser receives HTML for fast non-interactive preview.
 4. React hydrates Client Components to make the page interactive.
 
 On subsequent navigations:
+
 1. RSC Payload is prefetched and cached for instant navigation.
 2. Client Components render entirely on the client.
 
@@ -187,7 +191,7 @@ response.cookies.set('access_token', newAccessToken, {
   secure: true,
   sameSite: 'lax',
   path: '/',
-  maxAge: 900, // 15 minutes
+  maxAge: 900 // 15 minutes
 })
 return response
 
@@ -195,10 +199,7 @@ return response
 return new NextResponse(null, { status: 204 })
 
 // Error response
-return Response.json(
-  { error: 'Unauthorized' },
-  { status: 401 }
-)
+return Response.json({ error: 'Unauthorized' }, { status: 401 })
 ```
 
 ### 2.5 Caching Behavior
@@ -206,6 +207,7 @@ return Response.json(
 Route Handlers are **not cached by default**. This is correct for all auth-related endpoints. Never add `export const dynamic = 'force-static'` to auth route handlers.
 
 Auth route handlers must always be dynamic because they:
+
 - Read cookies from the incoming request.
 - Forward credentials to the backend.
 - Return `Set-Cookie` headers in responses.
@@ -287,14 +289,19 @@ import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 const { proxy, config } = createAuthProxy({
   publicRoutes: ['/', '/welcome', '/auth/*', '/privacy'],
   publicRoutesRedirectIfAuthenticated: [
-    '/', '/welcome', '/auth/login', '/auth/register',
-    '/auth/forgot-password', '/auth/reset-password', '/auth/verify-otp',
+    '/',
+    '/welcome',
+    '/auth/login',
+    '/auth/register',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+    '/auth/verify-otp'
   ],
   protectedRoutes: [
     { pattern: /^\/admin\/.*/, allowedRoles: ['ADMIN'], redirectPath: '/app/dashboard' },
-    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' },
+    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' }
   ],
-  getDefaultDashboard: (role) => role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard',
+  getDefaultDashboard: (role) => (role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard')
 })
 
 export { proxy, config }
@@ -334,16 +341,16 @@ interface AuthProxyConfig {
 
   /** Cookie name overrides. Defaults from @bymax-one/nest-auth/shared */
   cookieNames?: {
-    access?: string    // default: 'access_token'
-    refresh?: string   // default: 'refresh_token'
+    access?: string // default: 'access_token'
+    refresh?: string // default: 'refresh_token'
     hasSession?: string // default: 'has_session'
   }
 
   /** Header names propagated to server components after verification */
   userHeaders?: {
-    userId?: string       // default: 'x-user-id'
-    userRole?: string     // default: 'x-user-role'
-    tenantId?: string     // default: 'x-tenant-id'
+    userId?: string // default: 'x-user-id'
+    userRole?: string // default: 'x-user-role'
+    tenantId?: string // default: 'x-tenant-id'
     tenantDomain?: string // default: 'x-tenant-domain'
   }
 
@@ -372,6 +379,7 @@ The proxy runs **before** every matched route renders. Its execution follows thi
 Next.js sends parallel requests during navigation (RSC payload fetches, prefetches, router state updates). These must be handled differently from main navigation requests.
 
 Detection headers:
+
 - `RSC: 1` -- RSC payload request
 - `Next-Router-Prefetch: 1` -- Link prefetch
 - `Next-Router-State-Tree` -- Client-side navigation RSC fetch
@@ -389,6 +397,7 @@ A query parameter `_r` is incremented on each silent-refresh attempt. When `_r >
 This exists because browsers may not process `Set-Cookie` headers from a redirect before following the redirect. The `has_session` cookie might not be cleared in time, causing the proxy to attempt another refresh.
 
 Known Next.js issues that motivate this pattern:
+
 - [vercel/next.js#49442](https://github.com/vercel/next.js/issues/49442)
 - [vercel/next.js#72170](https://github.com/vercel/next.js/discussions/72170)
 
@@ -424,9 +433,7 @@ The proxy `config` object includes a matcher that excludes static assets and API
 
 ```typescript
 export const config = {
-  matcher: [
-    '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)',
-  ],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)']
 }
 ```
 
@@ -440,11 +447,11 @@ The `createAuthProxy` function generates this matcher automatically. API routes 
 
 This library uses three cookies for session management:
 
-| Cookie | Default Name | HttpOnly | Path | Purpose |
-|--------|-------------|----------|------|---------|
-| Access Token | `access_token` | Yes | `/` | Short-lived JWT for authentication |
-| Refresh Token | `refresh_token` | Yes | `/api/auth` | Long-lived token for session renewal |
-| Session Signal | `has_session` | No | `/` | Non-sensitive flag (`"1"`) indicating an active session |
+| Cookie         | Default Name    | HttpOnly | Path        | Purpose                                                 |
+| -------------- | --------------- | -------- | ----------- | ------------------------------------------------------- |
+| Access Token   | `access_token`  | Yes      | `/`         | Short-lived JWT for authentication                      |
+| Refresh Token  | `refresh_token` | Yes      | `/api/auth` | Long-lived token for session renewal                    |
+| Session Signal | `has_session`   | No       | `/`         | Non-sensitive flag (`"1"`) indicating an active session |
 
 The refresh token cookie has a restricted path (`/api/auth`) so the browser only sends it to the silent-refresh and client-refresh endpoints. This limits exposure of the refresh token.
 
@@ -495,7 +502,7 @@ export async function POST(request: Request) {
     secure: true,
     sameSite: 'lax',
     path: '/',
-    maxAge: 900,
+    maxAge: 900
   })
 
   // Delete
@@ -523,7 +530,7 @@ response.cookies.set('access_token', token, {
   httpOnly: true,
   secure: true,
   sameSite: 'lax',
-  path: '/',
+  path: '/'
 })
 
 // Deleting cookies on the response
@@ -543,8 +550,8 @@ const backendResponse = await fetch(`${apiBase}/auth/refresh`, {
   headers: {
     Cookie: cookieHeader,
     'Content-Type': 'application/json',
-    'X-Tenant-Domain': request.headers.get('x-tenant-domain') ?? '',
-  },
+    'X-Tenant-Domain': request.headers.get('x-tenant-domain') ?? ''
+  }
 })
 ```
 
@@ -649,11 +656,13 @@ const payload = decodeJwtToken(accessToken)
 ```
 
 **When to use:**
+
 - Displaying user name or role in the UI.
 - Checking token expiry on the client side.
 - Pre-filling forms with user data.
 
 **When NOT to use:**
+
 - Any authorization decision.
 - Any server-side access control.
 
@@ -681,6 +690,7 @@ if (!payload) {
 **Fallback behavior:** If `JWT_SECRET` is not available in the environment, falls back to `decodeJwtToken` (decode without verification). This allows development environments without the secret to function, but logs a warning.
 
 **When to use:**
+
 - In the proxy for authentication and RBAC decisions.
 - In route handlers that need to validate the caller.
 - In server components that need trusted user data.
@@ -700,13 +710,13 @@ The JWT tokens issued by the NestJS backend follow this claims structure:
 
 ```typescript
 interface JwtPayload {
-  sub: string       // User ID
-  role: string      // User role (e.g., 'USER', 'ADMIN')
-  tenantId: string  // Tenant ID for multi-tenant isolation
-  status: string    // User status (e.g., 'ACTIVE', 'BANNED')
-  email: string     // User email
-  iat: number       // Issued at (Unix timestamp)
-  exp: number       // Expiration (Unix timestamp)
+  sub: string // User ID
+  role: string // User role (e.g., 'USER', 'ADMIN')
+  tenantId: string // Tenant ID for multi-tenant isolation
+  status: string // User status (e.g., 'ACTIVE', 'BANNED')
+  email: string // User email
+  iat: number // Issued at (Unix timestamp)
+  exp: number // Expiration (Unix timestamp)
 }
 ```
 
@@ -884,7 +894,9 @@ The `createAuthProxy` factory already uses the new naming convention. When consu
 ```typescript
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({ /* ... */ })
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 
@@ -893,6 +905,7 @@ export { proxy, config }
 Next.js 16 proxy defaults to the **Node.js runtime**. The Edge runtime is no longer the default. The `runtime` config option is not available in proxy files and setting it will throw an error.
 
 This is beneficial for this library because:
+
 - Full Node.js API availability.
 - No restrictions from Edge runtime limitations.
 - `crypto.subtle` (Web Crypto API) is still available in Node.js for JWT verification.
@@ -917,9 +930,7 @@ The `config.matcher` controls which routes the proxy intercepts:
 ```typescript
 // Generated by createAuthProxy — typical pattern
 export const config = {
-  matcher: [
-    '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)',
-  ],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)']
 }
 ```
 
@@ -934,10 +945,10 @@ export const config = {
       source: '/((?!api|_next/static|_next/image|favicon.ico).*)',
       missing: [
         { type: 'header', key: 'next-router-prefetch' },
-        { type: 'header', key: 'purpose', value: 'prefetch' },
-      ],
-    },
-  ],
+        { type: 'header', key: 'purpose', value: 'prefetch' }
+      ]
+    }
+  ]
 }
 ```
 
@@ -953,8 +964,8 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({
     request: {
-      headers: requestHeaders,
-    },
+      headers: requestHeaders
+    }
   })
 
   return response
@@ -962,6 +973,7 @@ export function proxy(request: NextRequest) {
 ```
 
 Note the distinction:
+
 - `NextResponse.next({ request: { headers } })` -- makes headers available **upstream** (to server components, route handlers).
 - `NextResponse.next({ headers })` -- makes headers available to **clients** (in the response).
 
@@ -1213,7 +1225,7 @@ export async function GET(
 
 // POST handler with body
 export async function POST(request: NextRequest): Promise<Response> {
-  const body = await request.json() as { email: string; password: string }
+  const body = (await request.json()) as { email: string; password: string }
   return Response.json({ ok: true })
 }
 ```
@@ -1493,8 +1505,8 @@ export async function deleteUser(userId: string) {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/users/${userId}`, {
     method: 'DELETE',
     headers: {
-      Cookie: cookieStore.toString(),
-    },
+      Cookie: cookieStore.toString()
+    }
   })
   // The backend validates the JWT and checks permissions
   return response.json()
@@ -1522,7 +1534,7 @@ export async function GET(request: NextRequest) {
   const cookieHeader = request.headers.get('cookie') ?? ''
   const response = await fetch(`${API_URL}/auth/refresh`, {
     method: 'POST',
-    headers: { Cookie: cookieHeader },
+    headers: { Cookie: cookieHeader }
   })
   // Missing: deduplication, open redirect protection, cookie clearing on failure, etc.
 }
@@ -1539,14 +1551,18 @@ export const GET = createSilentRefreshHandler()
 ```typescript
 // WRONG -- deprecated convention in Next.js 16
 // middleware.ts
-export function middleware(request: NextRequest) { /* ... */ }
+export function middleware(request: NextRequest) {
+  /* ... */
+}
 ```
 
 ```typescript
 // CORRECT -- use the proxy convention
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({ /* ... */ })
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 
@@ -1619,7 +1635,9 @@ export function proxy(request: NextRequest) {
 ```typescript
 // CORRECT -- use createAuthProxy which implements _r counter and reason=expired guard
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({ /* ... */ })
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 

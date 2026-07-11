@@ -24,18 +24,20 @@ const mockOptions = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeUser(overrides: Partial<{
-  sub: string
-  role: string
-  jti: string
-  tenantId: string
-  type: 'dashboard'
-  status: string
-  mfaEnabled: boolean
-  mfaVerified: boolean
-  iat: number
-  exp: number
-}> = {}) {
+function makeUser(
+  overrides: Partial<{
+    sub: string
+    role: string
+    jti: string
+    tenantId: string
+    type: 'dashboard'
+    status: string
+    mfaEnabled: boolean
+    mfaVerified: boolean
+    iat: number
+    exp: number
+  }> = {}
+) {
   return {
     jti: 'some-jti',
     sub: 'user-1',
@@ -82,10 +84,7 @@ describe('SelfOrAdminGuard', () => {
     jest.clearAllMocks()
 
     const module = await Test.createTestingModule({
-      providers: [
-        SelfOrAdminGuard,
-        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
-      ]
+      providers: [SelfOrAdminGuard, { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }]
     }).compile()
 
     guard = module.get(SelfOrAdminGuard)
@@ -258,7 +257,9 @@ describe('SelfOrAdminGuard', () => {
   describe('admin override', () => {
     // Verifies that a user with the admin role can access another user's resource even when sub does not match.
     it('should accept admin override even when sub does not match', () => {
-      const ctx = makeContext(makeUser({ sub: 'admin-user', role: 'admin' }), { userId: 'other-user' })
+      const ctx = makeContext(makeUser({ sub: 'admin-user', role: 'admin' }), {
+        userId: 'other-user'
+      })
 
       expect(guard.canActivate(ctx as never)).toBe(true)
     })
