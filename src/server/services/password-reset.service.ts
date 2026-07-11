@@ -407,9 +407,13 @@ export class PasswordResetService {
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
-    // Invalidate all refresh sessions atomically via Lua script — no race
-    // between a concurrent login adding a new session and the SET deletion.
-    await this.redis.invalidateUserSessions(userId)
+    // Revoke every session AND cut off already-issued access tokens atomically.
+    // Deleting the refresh sessions alone would leave stateless access tokens valid
+    // until their exp (they are not tracked per-jti), so a stolen access token would
+    // survive a reset-after-compromise for the full access-token TTL. The Lua-backed
+    // session deletion also avoids the race where a concurrent login adds a new
+    // session between the SMEMBERS read and the final DEL.
+    await this.redis.revokeAllUserTokens(userId, this.options.jwt.accessCookieMaxAgeMs)
 
     // afterPasswordReset — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterPasswordReset) {

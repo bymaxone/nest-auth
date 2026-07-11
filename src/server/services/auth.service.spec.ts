@@ -94,7 +94,8 @@ const mockHooks = {
 
 const mockPasswordService = {
   hash: jest.fn(),
-  compare: jest.fn()
+  compare: jest.fn(),
+  compareDummy: jest.fn().mockResolvedValue(false)
 }
 
 const mockTokenManager = {
@@ -584,6 +585,17 @@ describe('AuthService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
       await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+    })
+
+    // Verifies the timing-oracle defense: the "user not found" branch runs a decoy
+    // scrypt derivation so an unknown e-mail takes the same time as a wrong password,
+    // preventing account enumeration by response latency.
+    it('should run a dummy password compare when user not found (timing defense)', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      expect(mockPasswordService.compareDummy).toHaveBeenCalledWith(dto.password)
+      // The real compare must NOT run — there is no stored hash to compare against.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Verifies that an account locked by brute-force protection throws ACCOUNT_LOCKED.

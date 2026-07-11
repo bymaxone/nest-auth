@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer'
 import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator'
 
 /**
@@ -14,7 +15,14 @@ export class RegisterDto {
    * Must be a valid RFC 5321 email format. Bounded to 255 characters — the
    * RFC-recommended practical maximum for addr-spec — matching the limit on
    * every other email-accepting DTO in the library.
+   *
+   * Normalized to lowercase and trimmed so the stored identity matches the
+   * canonical form used by the case-insensitive login lookup and every other
+   * e-mail-keyed control (brute-force counter, reset tokens, verification OTP).
    */
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value
+  )
   @IsEmail()
   @MaxLength(255)
   email!: string

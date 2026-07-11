@@ -389,4 +389,71 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe('300')
     })
   })
+
+  describe('user token cutoff', () => {
+    // Verifies the cutoff is written under utc:{userId} as a string with the given TTL.
+    it('should store the cutoff under utc:{userId} with EX ttl', async () => {
+      mockRedis.set.mockResolvedValue('OK')
+      await service.setUserTokenCutoff('user-1', 1_700_000_000, 900)
+      expect(mockRedis.set).toHaveBeenCalledWith(prefixed('utc:user-1'), '1700000000', 'EX', 900)
+    })
+
+    // Verifies a stored cutoff is read back and parsed to a number.
+    it('should return the parsed cutoff when present', async () => {
+      mockRedis.get.mockResolvedValue('1700000000')
+      expect(await service.getUserTokenCutoff('user-1')).toBe(1_700_000_000)
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('utc:user-1'))
+    })
+
+    // Verifies a missing cutoff key resolves to null (no bulk revocation in effect).
+    it('should return null when no cutoff is set', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      expect(await service.getUserTokenCutoff('user-1')).toBeNull()
+    })
+
+    // Verifies a corrupt (unparseable) stored value is treated as absent rather than NaN,
+    // so a garbage key can never spuriously reject every token.
+    it('should return null when the stored cutoff is unparseable', async () => {
+      mockRedis.get.mockResolvedValue('not-a-number')
+      expect(await service.getUserTokenCutoff('user-1')).toBeNull()
+    })
+  })
+
+  describe('revokeAllUserTokens', () => {
+    // Verifies the combined revocation deletes all sessions (eval) AND writes an
+    // access-token cutoff (set) under utc:{userId} — the two halves of a full-account
+    // revocation must both fire from one call.
+    it('should invalidate sessions and record a cutoff with ttl derived from the max age', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.set.mockResolvedValue('OK')
+
+      await service.revokeAllUserTokens('user-9', 900_000)
+
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('SMEMBERS'),
+        1,
+        prefixed('sess:user-9'),
+        NAMESPACE
+      )
+      // 900_000 ms → 900 s TTL; the cutoff value is a finite epoch-seconds string.
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        prefixed('utc:user-9'),
+        expect.stringMatching(/^\d+$/),
+        'EX',
+        900
+      )
+    })
+
+    // Verifies the ms→s TTL conversion rounds UP (Math.ceil), so a sub-second remainder
+    // never truncates the key lifetime below the access-token max age.
+    it('should round the ttl up to the next whole second', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.set.mockResolvedValue('OK')
+
+      await service.revokeAllUserTokens('user-9', 1_499)
+
+      const ttl = (mockRedis.set.mock.calls[0] as unknown[])[3]
+      expect(ttl).toBe(2)
+    })
+  })
 })

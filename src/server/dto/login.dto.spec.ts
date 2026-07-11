@@ -1,3 +1,4 @@
+import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
 
 import { LoginDto } from './login.dto'
@@ -48,5 +49,23 @@ describe('LoginDto', () => {
   it('should fail when tenantId is empty', async () => {
     const errors = await validate(buildDto({ tenantId: '' }))
     expect(errors.some((e) => e.property === 'tenantId')).toBe(true)
+  })
+
+  // Verifies the @Transform normalizes the email so the case-insensitive user lookup
+  // and the raw-email-keyed brute-force lockout resolve to the same canonical value —
+  // closing the case-rotation lockout bypass.
+  it('should normalize email to lowercase and trimmed via @Transform', () => {
+    const dto = plainToInstance(LoginDto, {
+      email: '  USER@EXAMPLE.COM  ',
+      password: 'anypassword',
+      tenantId: 'tenant-1'
+    })
+    expect(dto.email).toBe('user@example.com')
+  })
+
+  // Verifies that a non-string email value passes through the @Transform unchanged (false branch).
+  it('should pass non-string email through @Transform unchanged', () => {
+    const dto = plainToInstance(LoginDto, { email: 42, password: 'x', tenantId: 'tenant-1' })
+    expect((dto as unknown as Record<string, unknown>)['email']).toBe(42)
   })
 })

@@ -204,12 +204,14 @@ export class AuthService {
 
     const user = await this.userRepo.findByEmail(dto.email, tenantId)
 
-    // User-not-found path: we do NOT attempt a dummy scrypt compare. The brute-force
-    // counter lockout is the primary protection against credential probing — a constant-time
-    // dummy compare would add CPU amplification to every unknown-email request. The timing
-    // difference is intentionally bounded by `recordFailure` latency (a single Redis op) and
-    // masked by the brute-force lockout threshold.
+    // User-not-found path: run a dummy scrypt derivation before failing so that an
+    // unknown e-mail takes the same wall-clock time as a known e-mail with a wrong
+    // password. Skipping this leaks a timing oracle (~single-digit ms vs. tens of ms)
+    // that enumerates which accounts exist despite the identical error message. The
+    // cost matches one normal failed login — no new amplification — and route-level
+    // rate limiting bounds it further.
     if (!user || !user.passwordHash) {
+      await this.passwordService.compareDummy(dto.password)
       await this.bruteForce.recordFailure(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }

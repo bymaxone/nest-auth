@@ -22,7 +22,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
  * higher-level services (BruteForceService, TokenManagerService, etc.).
  *
  * The namespace is taken from `ResolvedOptions.redisNamespace` (defaults to
- * `'bymaxauth'`). Example key with namespace `'auth'` and key `'rt:abc'`:
+ * `'auth'`). Example key with namespace `'auth'` and key `'rt:abc'`:
  * → `'auth:rt:abc'`
  */
 @Injectable()
@@ -294,5 +294,66 @@ export class AuthRedisService {
       [String(ttl)]
     )
     return typeof result === 'number' ? result : 0
+  }
+
+  // ---------------------------------------------------------------------------
+  // Access-token cutoff (bulk revocation of stateless access tokens)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Records a per-user access-token cutoff timestamp under `utc:{userId}`.
+   *
+   * Access tokens are stateless JWTs, so the server does not track their
+   * individual `jti`s and cannot add them to the per-`jti` revocation list on a
+   * bulk event (password reset, refresh-token-reuse detection). Instead the guard
+   * rejects any access token whose `iat` predates this cutoff, invalidating every
+   * token issued before it in one write — without enumerating them.
+   *
+   * @param userId - Internal user ID whose pre-cutoff access tokens are revoked.
+   * @param cutoffEpochSeconds - Unix time (seconds); tokens with `iat < cutoff` are rejected.
+   * @param ttlSeconds - Key lifetime — set to the access-token max age so the key
+   *   auto-expires exactly when no pre-cutoff token can still be unexpired.
+   */
+  async setUserTokenCutoff(
+    userId: string,
+    cutoffEpochSeconds: number,
+    ttlSeconds: number
+  ): Promise<void> {
+    await this.set(`utc:${userId}`, String(cutoffEpochSeconds), ttlSeconds)
+  }
+
+  /**
+   * Reads the per-user access-token cutoff timestamp, or `null` when none is set.
+   *
+   * @param userId - Internal user ID to look up.
+   * @returns The cutoff Unix time in seconds, or `null` if absent or unparseable.
+   */
+  async getUserTokenCutoff(userId: string): Promise<number | null> {
+    const raw = await this.get(`utc:${userId}`)
+    if (raw === null) return null
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  /**
+   * Revokes every outstanding token for a user in a single call: deletes all
+   * refresh sessions AND records an access-token cutoff at the current time.
+   *
+   * Combines the two halves of a full-account revocation. Deleting the refresh
+   * sessions stops rotation, but stateless access tokens are not tracked per-`jti`
+   * and would stay valid until their natural `exp`; the cutoff makes the guard
+   * reject every access token issued before now. Invoke on any event that must
+   * terminate all of a user's sessions at once — password reset, or refresh-token
+   * reuse detection. The cutoff key lifetime equals the access-token max age, after
+   * which no pre-cutoff token can still be unexpired.
+   *
+   * @param userId - Internal user ID whose sessions and access tokens are revoked.
+   * @param accessTokenMaxAgeMs - Access-token max age in ms; sets the cutoff key TTL.
+   */
+  async revokeAllUserTokens(userId: string, accessTokenMaxAgeMs: number): Promise<void> {
+    await this.invalidateUserSessions(userId)
+    const cutoffEpochSeconds = Math.floor(Date.now() / 1000)
+    const ttlSeconds = Math.ceil(accessTokenMaxAgeMs / 1000)
+    await this.setUserTokenCutoff(userId, cutoffEpochSeconds, ttlSeconds)
   }
 }

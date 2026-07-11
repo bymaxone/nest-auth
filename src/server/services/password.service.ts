@@ -32,6 +32,21 @@ const SCRYPT_KEY_LEN = 64
 const SALT_BYTES = 16
 
 /**
+ * A fixed, well-formed decoy hash in the canonical `scrypt:{salt}:{derived}` wire
+ * format. Used only by {@link PasswordService.compareDummy} to run a real scrypt
+ * derivation (with the module's configured cost parameters) on the "user not
+ * found" login branch, so that an unknown e-mail is indistinguishable by response
+ * time from a known e-mail with a wrong password. The `timingSafeEqual` inside
+ * `compare` always fails against this constant, so `compareDummy` always resolves
+ * `false`. The value corresponds to no real password — it is a random 64-byte
+ * derived key over a random 16-byte salt.
+ */
+const DUMMY_PASSWORD_HASH =
+  'scrypt:d6732149f98b3938274691d8c2f3ee63:' +
+  'a369f696467efdf018a1e7a83da79abfae7b1f8258eb9855ed0dffdce47d5940' +
+  '517c4aeff18824bdfdfb3f32303c519634da4756657915f3cb1c948e11ae2564'
+
+/**
  * Password hashing and verification service using `node:crypto` scrypt.
  *
  * Uses scrypt (RFC 7914) — a memory-hard key derivation function designed to
@@ -135,5 +150,27 @@ export class PasswordService {
     })
 
     return cryptoTimingSafeEqual(candidate, storedDerived)
+  }
+
+  /**
+   * Runs a full scrypt derivation against a fixed decoy hash and always returns
+   * `false`.
+   *
+   * @returns Always `false`.
+   *
+   * @remarks
+   * Call this on the login "user not found" (or "no local password") branch,
+   * where there is no stored hash to compare against, so the request spends the
+   * same CPU time as a real wrong-password comparison before failing. Without it,
+   * an unknown e-mail returns before any hashing (~single-digit ms) while a known
+   * e-mail runs scrypt (~tens of ms) — a reliable timing oracle an attacker uses
+   * to enumerate which accounts exist despite an identical error message.
+   *
+   * The cost is bounded to a single scrypt derivation (identical to a normal
+   * failed login), so it adds no amplification beyond what a valid-e-mail wrong-
+   * password request already costs; pair it with route-level rate limiting.
+   */
+  async compareDummy(plain: string): Promise<boolean> {
+    return this.compare(plain, DUMMY_PASSWORD_HASH)
   }
 }
