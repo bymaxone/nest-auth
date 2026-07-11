@@ -67,7 +67,7 @@ const mockOptions = {
     otpTtlSeconds: 300
   },
   blockedStatuses: ['banned', 'suspended'],
-  jwt: { secret: JWT_SECRET },
+  jwt: { secret: JWT_SECRET, accessCookieMaxAgeMs: 900_000 },
   hmacKey: HMAC_KEY
 }
 
@@ -102,7 +102,7 @@ const mockRedis = {
   del: jest.fn(),
   getdel: jest.fn(),
   setnx: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  revokeAllUserTokens: jest.fn()
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ describe('PasswordResetService', () => {
     mockRedis.del.mockResolvedValue(undefined)
     mockRedis.getdel.mockResolvedValue(null)
     mockRedis.setnx.mockResolvedValue(true)
-    mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+    mockRedis.revokeAllUserTokens.mockResolvedValue(undefined)
     mockSleep.mockResolvedValue(undefined)
 
     const module = await buildModule()
@@ -635,7 +635,10 @@ describe('PasswordResetService', () => {
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', '$hashed$')
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
+      // Full revocation: refresh sessions are deleted AND a per-user access-token
+      // cutoff is recorded (via revokeAllUserTokens) so already-issued stateless
+      // access tokens are rejected immediately, not left valid until their exp.
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith('u1', expect.any(Number))
     })
 
     // Scenario: token flow; expected: getdel is called with a `pw_reset:<sha256>` key, never an
@@ -836,7 +839,7 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2')
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith('u2', expect.any(Number))
       // Pin the verifiedToken Redis key template — emptying it (`getdel('')`) reads the wrong key.
       const [key] = mockRedis.getdel.mock.calls[0] as [string]
       expect(key).toMatch(/^pw_vtok:[0-9a-f]{64}$/)
@@ -920,7 +923,7 @@ describe('PasswordResetService', () => {
         '654321'
       )
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3')
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith('u3', expect.any(Number))
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when no proof field is present (otp method).

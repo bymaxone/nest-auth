@@ -304,10 +304,42 @@ export class TokenManagerService {
       return this.rotateFromGrace(graceSessionJson, ip, userAgent, refreshTtl, graceTtl)
     }
 
-    this.logger.warn(
-      'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-    )
+    // Neither the live session nor the grace pointer exists. Distinguish a genuine
+    // theft signal (reuse of a rotated-away token) from a plain invalid string, then fail.
+    await this.handleReusedToken(oldHash)
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+  }
+
+  /**
+   * Reacts to a refresh token that matched neither a live session nor a grace pointer.
+   *
+   * If a reuse sentinel (`rused:{hash}`) still names a user, the presented token was a
+   * legitimately-issued refresh token that has been rotated away and had its grace
+   * window consumed — replaying it now is a theft signal (RFC 6819), so the whole token
+   * family is revoked and the user's access tokens are cut off, preventing a stolen
+   * refresh token from keeping a parallel session alive next to the victim's. Absent the
+   * sentinel the token is just an invalid/expired string and nothing is revoked. The
+   * caller always throws `REFRESH_TOKEN_INVALID` afterwards — this never resurrects it.
+   *
+   * The sentinel is CONSUMED (GETDEL) on the first reaction: a second replay of the same
+   * stolen token then finds no sentinel and fails as a plain invalid token, so an attacker
+   * cannot loop the same token to re-revoke the account and repeatedly log the victim out
+   * (an availability/DoS vector). One replay = one revocation.
+   *
+   * @param oldHash - SHA-256 of the presented refresh token; the reuse-sentinel key.
+   */
+  private async handleReusedToken(oldHash: string): Promise<void> {
+    const reusedUserId = await this.redis.getdel(`rused:${oldHash}`)
+    if (reusedUserId === null) {
+      this.logger.warn(
+        'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+      )
+      return
+    }
+    this.logger.warn(
+      `reissueTokens: reuse of a rotated refresh token detected — revoking all sessions userId=${reusedUserId}`
+    )
+    await this.redis.revokeAllUserTokens(reusedUserId, this.options.jwt.accessCookieMaxAgeMs)
   }
 
   /**
@@ -340,6 +372,13 @@ export class TokenManagerService {
     )
     await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
     await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
+    // Reuse-detection sentinel: record that this exact refresh token was once a
+    // legitimately-issued session that has now been rotated away. It outlives the
+    // short grace window (TTL = full refresh lifetime), so a replay of this token
+    // AFTER the grace window — i.e. once both `rt:` and `rp:` are gone — is provably
+    // a reuse of a superseded token (the RFC 6819 theft signal) rather than a random
+    // invalid string. `reissueTokens` reads it to decide whether to revoke the family.
+    await this.redis.set(`rused:${oldHash}`, old.userId, refreshTtl)
     // Update the per-user session SET: remove the rotated-away session, add the new session
     // AND the grace pointer so that invalidateUserSessions can delete both on logout/MFA change.
     await this.redis.srem(`sess:${old.userId}`, `rt:${oldHash}`)

@@ -10,7 +10,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
  * Redis key prefix for brute-force lockout counters.
  *
  * Full key pattern: `{namespace}:lf:{identifier}`
- * Example: `bymaxauth:lf:a3f2b8c1` (hashed identifier)
+ * Example: `auth:lf:a3f2b8c1` (hashed identifier)
  */
 const LOCKOUT_PREFIX = 'lf:'
 

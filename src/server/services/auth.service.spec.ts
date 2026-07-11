@@ -94,7 +94,8 @@ const mockHooks = {
 
 const mockPasswordService = {
   hash: jest.fn(),
-  compare: jest.fn()
+  compare: jest.fn(),
+  compareDummy: jest.fn().mockResolvedValue(false)
 }
 
 const mockTokenManager = {
@@ -204,6 +205,18 @@ describe('AuthService', () => {
       const result = await service.register(dto, mockReq)
       expect(result).toBe(AUTH_RESULT)
       expect(mockUserRepo.create).toHaveBeenCalled()
+    })
+
+    // Verifies the email is canonicalized at the service boundary (not only via the DTO
+    // @Transform, which the non-transforming ValidationPipe discards): a mixed-case,
+    // padded email is looked up and stored lowercased/trimmed, so the stored identity
+    // matches every email-keyed control.
+    it('should normalize the email before lookup and persistence', async () => {
+      await service.register({ ...dto, email: '  New.USER@Example.COM  ' }, mockReq)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('new.user@example.com', 'tenant-1')
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'new.user@example.com' })
+      )
     })
 
     // Scenario: register with a populated request. Expected: issueTokens receives the request's
@@ -552,6 +565,18 @@ describe('AuthService', () => {
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedIdentifier)
     })
 
+    // Verifies the case-rotation lockout bypass is closed at the service layer: a
+    // mixed-case, padded email yields the SAME brute-force HMAC and user lookup as the
+    // canonical lowercase form, so an attacker cannot rotate casing to get a fresh
+    // lockout bucket. This holds independently of the DTO @Transform (which the
+    // non-transforming ValidationPipe discards).
+    it('should derive the brute-force key and lookup from the normalized email', async () => {
+      await service.login({ ...dto, email: '  USER@Example.COM  ' }, mockReq)
+      const canonicalIdentifier = hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
+    })
+
     // Verifies that a wrong password records a brute-force failure and throws INVALID_CREDENTIALS.
     it('should throw INVALID_CREDENTIALS on wrong password', async () => {
       mockPasswordService.compare.mockResolvedValue(false)
@@ -584,6 +609,17 @@ describe('AuthService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
       await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+    })
+
+    // Verifies the timing-oracle defense: the "user not found" branch runs a decoy
+    // scrypt derivation so an unknown e-mail takes the same time as a wrong password,
+    // preventing account enumeration by response latency.
+    it('should run a dummy password compare when user not found (timing defense)', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      expect(mockPasswordService.compareDummy).toHaveBeenCalledWith(dto.password)
+      // The real compare must NOT run — there is no stored hash to compare against.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Verifies that an account locked by brute-force protection throws ACCOUNT_LOCKED.

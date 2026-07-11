@@ -31,6 +31,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { maskEmail } from '../utils/mask-email'
+import { normalizeEmail } from '../utils/normalize-email'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
@@ -91,6 +92,14 @@ export class AuthService {
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
+
+    // Canonicalize the email at the service boundary. The DTO `@Transform` is not
+    // enough: the controllers run `ValidationPipe` without `transform: true`, so the
+    // handler receives the raw body. Normalizing here guarantees the stored identity
+    // and every email-keyed control use the same canonical value regardless of pipe
+    // config. Merged immutably to avoid mutating the validated DTO.
+    dto = { ...dto, email: normalizeEmail(dto.email) }
+
     const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
     // beforeRegister hook — only hook that can block the flow.
@@ -182,6 +191,13 @@ export class AuthService {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
 
+    // Canonicalize the email before deriving ANY email-keyed value below. The DTO
+    // `@Transform` is discarded because the controllers run `ValidationPipe` without
+    // `transform: true`, so without this the brute-force lockout key and the user
+    // lookup would be computed from caller-controlled casing — the case-rotation
+    // lockout bypass. Merged immutably to avoid mutating the validated DTO.
+    dto = { ...dto, email: normalizeEmail(dto.email) }
+
     // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
     // The ':' separator ensures 'tenantABC' + 'x@y.com' and 'tenantABCx' + '@y.com'
     // never produce the same input string (prefix-collision resistance).
@@ -204,12 +220,14 @@ export class AuthService {
 
     const user = await this.userRepo.findByEmail(dto.email, tenantId)
 
-    // User-not-found path: we do NOT attempt a dummy scrypt compare. The brute-force
-    // counter lockout is the primary protection against credential probing — a constant-time
-    // dummy compare would add CPU amplification to every unknown-email request. The timing
-    // difference is intentionally bounded by `recordFailure` latency (a single Redis op) and
-    // masked by the brute-force lockout threshold.
+    // User-not-found path: run a dummy scrypt derivation before failing so that an
+    // unknown e-mail takes the same wall-clock time as a known e-mail with a wrong
+    // password. Skipping this leaks a timing oracle (~single-digit ms vs. tens of ms)
+    // that enumerates which accounts exist despite the identical error message. The
+    // cost matches one normal failed login — no new amplification — and route-level
+    // rate limiting bounds it further.
     if (!user || !user.passwordHash) {
+      await this.passwordService.compareDummy(dto.password)
       await this.bruteForce.recordFailure(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }

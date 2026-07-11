@@ -38,7 +38,8 @@ const mockRedis = {
   getdel: jest.fn(),
   sadd: jest.fn().mockResolvedValue(1),
   srem: jest.fn().mockResolvedValue(1),
-  expire: jest.fn().mockResolvedValue(undefined)
+  expire: jest.fn().mockResolvedValue(undefined),
+  revokeAllUserTokens: jest.fn().mockResolvedValue(undefined)
 }
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
@@ -55,6 +56,7 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: {
     accessExpiresIn: '15m',
+    accessCookieMaxAgeMs: 900_000,
     refreshExpiresInDays: 7,
     refreshGraceWindowSeconds: 30,
     algorithm: 'HS256',
@@ -104,6 +106,17 @@ describe('TokenManagerService', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     mockJwtService.sign.mockReturnValue(FIXED_JWT)
+    // Default: no reuse sentinel exists, so the terminal reissue path treats an
+    // unknown token as a plain invalid string. Reuse-detection tests override this.
+    mockRedis.get.mockResolvedValue(null)
+    // Reset getdel between tests: some reuse tests install a keyed mockImplementation
+    // (grace vs rused: key) that clearAllMocks does not clear, so wipe it here to stop
+    // it leaking into later tests. Re-seed the default to `null` (not the reset default
+    // of `undefined`) so the double matches the real getdel contract of
+    // `Promise<string | null>` — an `undefined` would fail the `=== null` guard in
+    // handleReusedToken and spuriously enter the reuse branch. Tests override as needed.
+    mockRedis.getdel.mockReset()
+    mockRedis.getdel.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -326,18 +339,20 @@ describe('TokenManagerService', () => {
       expect(result.session.role).toBe('member')
     })
 
-    // Verifies that primary rotation writes both a new session (rt:) and a grace pointer (rp:) to Redis.
-    it('should write both new session and grace pointer on primary rotation', async () => {
+    // Verifies that primary rotation writes a new session (rt:), a grace pointer
+    // (rp:), and a reuse-detection sentinel (rused:) for the rotated-away token.
+    it('should write new session, grace pointer, and reuse sentinel on primary rotation', async () => {
       mockRedis.eval.mockResolvedValue(OLD_SESSION)
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      // Two redis.set calls: new session (rt:) and grace pointer (rp:)
-      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      // Three redis.set calls: new session (rt:), grace pointer (rp:), reuse sentinel (rused:)
+      expect(mockRedis.set).toHaveBeenCalledTimes(3)
       const keys = mockRedis.set.mock.calls.map((c: unknown[]) => String(c[0]))
       expect(keys.some((k) => k.startsWith('rt:'))).toBe(true)
       expect(keys.some((k) => k.startsWith('rp:'))).toBe(true)
+      expect(keys.some((k) => k.startsWith('rused:'))).toBe(true)
     })
 
     // Verifies that primary rotation tracks the grace pointer in sess:{userId} so invalidateUserSessions can delete it.
@@ -431,6 +446,67 @@ describe('TokenManagerService', () => {
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID })
         })
       }
+    })
+
+    // Reuse detection (RFC 6819): when the live session and grace pointer are gone
+    // but the reuse sentinel (rused:{hash}) still names a user, the presented token
+    // is a replay of a rotated-away token past its grace window — a theft signal.
+    // The whole token family must be revoked and the user's access tokens cut off,
+    // then the request still fails as REFRESH_TOKEN_INVALID.
+    it('should revoke the whole family when a superseded token is reused', async () => {
+      mockRedis.eval.mockResolvedValue(null) // no live session
+      // grace pointer getdel → null; reuse-sentinel getdel → the victim's id (consumed).
+      mockRedis.getdel.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('rused:') ? 'victim-user-id' : null)
+      )
+
+      await expect(service.reissueTokens('stolen-token', '9.9.9.9', 'Attacker')).rejects.toThrow(
+        AuthException
+      )
+
+      // Sentinel is read-and-cleared with GETDEL so a replay cannot re-trigger revocation.
+      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rused:/))
+      // Full-family revocation: sessions deleted AND access-token cutoff recorded in one call.
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith(
+        'victim-user-id',
+        expect.any(Number)
+      )
+    })
+
+    // The theft reaction fires exactly once: because the sentinel is consumed (GETDEL),
+    // replaying the same stolen token a second time finds no sentinel and fails as a
+    // plain invalid token — an attacker cannot loop it to repeatedly log the victim out.
+    it('should react only once — a second replay does not re-revoke', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      let sentinelConsumed = false
+      mockRedis.getdel.mockImplementation((key: string) => {
+        if (!key.startsWith('rused:')) return Promise.resolve(null)
+        if (sentinelConsumed) return Promise.resolve(null)
+        sentinelConsumed = true
+        return Promise.resolve('victim-user-id')
+      })
+
+      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
+        AuthException
+      )
+      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledTimes(1)
+    })
+
+    // Without a sentinel the token is just an unknown/expired string — no family is
+    // touched; only the invalid error is raised.
+    it('should NOT revoke anything when no reuse sentinel exists', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(null) // grace + sentinel both absent
+
+      await expect(service.reissueTokens('garbage-token', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockRedis.revokeAllUserTokens).not.toHaveBeenCalled()
     })
 
     // Scenario: the rotation Lua is invoked with the exact old `rt:` key and an empty ARGV array.

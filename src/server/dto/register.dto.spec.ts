@@ -1,3 +1,4 @@
+import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
 
 import { RegisterDto } from './register.dto'
@@ -58,5 +59,28 @@ describe('RegisterDto', () => {
   it('should fail when tenantId is empty', async () => {
     const errors = await validate(buildDto({ tenantId: '' }))
     expect(errors.some((e) => e.property === 'tenantId')).toBe(true)
+  })
+
+  // Verifies the @Transform normalizes the email so the stored identity matches the
+  // canonical lowercase form used by every e-mail-keyed control.
+  it('should normalize email to lowercase and trimmed via @Transform', () => {
+    const dto = plainToInstance(RegisterDto, {
+      email: '  NEW.User@Example.COM  ',
+      password: 'password123',
+      name: 'New User',
+      tenantId: 'tenant-1'
+    })
+    expect(dto.email).toBe('new.user@example.com')
+  })
+
+  // Verifies that a non-string email value passes through the @Transform unchanged (false branch).
+  it('should pass non-string email through @Transform unchanged', () => {
+    const dto = plainToInstance(RegisterDto, {
+      email: 42,
+      password: 'password123',
+      name: 'New User',
+      tenantId: 'tenant-1'
+    })
+    expect((dto as unknown as Record<string, unknown>)['email']).toBe(42)
   })
 })

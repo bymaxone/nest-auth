@@ -167,4 +167,28 @@ describe('PasswordService', () => {
       expect(await service.compare('', hash)).toBe(false)
     })
   })
+
+  describe('compareDummy', () => {
+    // Verifies the decoy comparison always resolves false so it can be used purely
+    // to equalize timing on the "user not found" login branch.
+    it('should always return false', async () => {
+      expect(await service.compareDummy('anything')).toBe(false)
+      expect(await service.compareDummy('')).toBe(false)
+    })
+
+    // Verifies it delegates to `compare` against a well-formed decoy hash rather than
+    // short-circuiting — so it actually runs a scrypt derivation and spends the same
+    // wall-clock time as a genuine failed comparison (the whole point of the decoy).
+    it('should run a real scrypt compare against a valid decoy hash', async () => {
+      const spy = jest.spyOn(service, 'compare')
+      await service.compareDummy('wrong-password')
+      expect(spy).toHaveBeenCalledTimes(1)
+      const [plain, hash] = spy.mock.calls[0] as [string, string]
+      expect(plain).toBe('wrong-password')
+      // Decoy is in the canonical scrypt wire format so `compare` reaches the scrypt
+      // derivation (not the malformed-hash early return that would skip the work).
+      expect(hash).toMatch(/^scrypt:[0-9a-f]{32}:[0-9a-f]{128}$/)
+      spy.mockRestore()
+    })
+  })
 })

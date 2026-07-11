@@ -94,6 +94,20 @@ export class JwtAuthGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    // Bulk revocation check: a password reset or a detected refresh-token reuse
+    // records a per-user cutoff (`utc:{sub}`). Any access token issued before it
+    // is rejected, so those events invalidate every outstanding access token at
+    // once — not only the refresh tokens. Surfaced as TOKEN_INVALID for the same
+    // no-oracle reason as the jti revocation above.
+    // When a cutoff is present the token must carry a finite `iat` to be comparable —
+    // a token signed without `iat` (e.g. `noTimestamp`) or with a non-numeric one would
+    // make `iat < cutoff` silently false and slip past bulk revocation, so treat a
+    // missing/non-finite `iat` as invalid rather than trusting it.
+    const cutoff = await this.redis.getUserTokenCutoff(payload.sub)
+    if (cutoff !== null && (!Number.isFinite(payload.iat) || payload.iat < cutoff)) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
     request.user = payload
     return true
   }

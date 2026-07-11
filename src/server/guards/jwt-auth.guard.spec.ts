@@ -36,7 +36,8 @@ const mockTokenDelivery = {
 }
 
 const mockRedis = {
-  get: jest.fn()
+  get: jest.fn(),
+  getUserTokenCutoff: jest.fn()
 }
 
 const mockOptions = {
@@ -79,6 +80,9 @@ describe('JwtAuthGuard', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // Default: no per-user access-token cutoff is set, so the bulk-revocation
+    // check is a no-op for every existing test. Cutoff-specific tests override this.
+    mockRedis.getUserTokenCutoff.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -243,6 +247,71 @@ describe('JwtAuthGuard', () => {
       await guard.canActivate(ctx as never)
 
       expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_PAYLOAD.jti}`)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Per-user access-token cutoff (bulk revocation)
+  // ---------------------------------------------------------------------------
+
+  describe('access-token cutoff', () => {
+    // A token whose iat predates the user's cutoff (set on password reset or
+    // refresh-token-reuse detection) must be rejected, closing the window where a
+    // pre-reset access token stays usable until its natural exp.
+    it('should reject a token issued before the user cutoff', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat + 1)
+
+      const ctx = makeContext('some.jwt.token')
+      let caught: AuthException | undefined
+      try {
+        await guard.canActivate(ctx as never)
+      } catch (e) {
+        caught = e as AuthException
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
+        AUTH_ERROR_CODES.TOKEN_INVALID
+      )
+      expect(mockRedis.getUserTokenCutoff).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
+    })
+
+    // A token issued exactly at or after the cutoff is still valid — the cutoff
+    // must not lock out sessions established after the revocation event.
+    it('should allow a token issued at or after the cutoff', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+    })
+
+    // With no cutoff recorded, the check is a pure no-op and the token passes.
+    it('should allow when no cutoff is set', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(null)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+    })
+
+    // When a cutoff is active, a token with a non-finite iat (e.g. signed with
+    // noTimestamp) must be rejected — otherwise `iat < cutoff` is silently false and the
+    // token slips past bulk revocation.
+    it('should reject a token with a non-finite iat when a cutoff is set', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, iat: Number.NaN })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(1)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
     })
   })
 
