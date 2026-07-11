@@ -319,6 +319,28 @@ describe('WsJwtGuard', () => {
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
     })
+
+    // A token with a non-finite iat (e.g. signed with noTimestamp) must be rejected when
+    // a cutoff is active — otherwise the comparison is silently false and bulk revocation
+    // is bypassed on the WS surface.
+    it('should reject a token with a non-finite iat when a cutoff is set', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, iat: Number.NaN })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(1)
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+    })
+
+    // A malformed sub must be rejected before it keys the cutoff lookup (`utc:{sub}`),
+    // mirroring the HTTP guard's assertValidSub.
+    it('should reject a token whose sub is empty', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, sub: '' })
+      mockRedis.get.mockResolvedValue(null)
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+    })
   })
 
   // ----------------- Happy path -----------------

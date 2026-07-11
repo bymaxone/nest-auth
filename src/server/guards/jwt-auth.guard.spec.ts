@@ -300,6 +300,19 @@ describe('JwtAuthGuard', () => {
       const ctx = makeContext('some.jwt.token')
       await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
     })
+
+    // When a cutoff is active, a token with a non-finite iat (e.g. signed with
+    // noTimestamp) must be rejected — otherwise `iat < cutoff` is silently false and the
+    // token slips past bulk revocation.
+    it('should reject a token with a non-finite iat when a cutoff is set', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, iat: Number.NaN })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenCutoff.mockResolvedValue(1)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+    })
   })
 
   // ---------------------------------------------------------------------------
