@@ -70,6 +70,8 @@ pnpm add @bymax-one/nest-auth
 - ✅ **HttpOnly Cookies** — Secure, SameSite, path-scoped refresh tokens by default
 - ✅ **Timing-Safe Comparisons** — All secret comparisons use `crypto.timingSafeEqual`
 - ✅ **JWT Revocation** — Instant access token revocation via Redis JTI blacklist
+- ✅ **Refresh-Token Reuse Detection** — Replaying a consumed token revokes that login's whole lineage, and only that lineage
+- ✅ **Bulk Access-Token Revocation** — A password reset advances a per-user token epoch, invalidating every outstanding access token in one write
 
 ### 🏢 Multi-Tenant & Platform
 
@@ -832,12 +834,11 @@ The items below are on deck for future minor / major releases. None are shipping
 | Area                        | Item                                                                                                                    | Status    |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
 | OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core  | Planned   |
-| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults stay Portuguese; English preset)   | Planned   |
-| Refresh-token families      | Family-level revocation: detect grace-window reuse as a stolen-token signal and invalidate the entire session family    | Planned   |
+| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)  | Planned   |
 | Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API | Exploring |
 | Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module            | Exploring |
 | Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                  | Exploring |
-| Absolute session lifetime   | Hard cap on refresh chains so a session rotated every 6 days does not live forever                                      | Planned   |
+| Absolute session lifetime   | Hard cap on refresh chains so a session rotated every 6 days does not live forever — the family record is where it goes | Planned   |
 | Pluggable password policy   | `IPasswordPolicy` interface for disallow-lists, complexity classes, and per-tenant rules                                | Planned   |
 | Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)      | Exploring |
 

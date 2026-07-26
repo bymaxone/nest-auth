@@ -166,24 +166,25 @@ describe('cross-implementation conformance', () => {
     // Verifies the family index takes BARE hashes, unlike the session index. It only ever
     // tracks live refresh sessions, so the keyspace is implied — and the revocation script
     // rebuilds `rt:{hash}` from the member, which double-prefixing would break.
+    // The member SHAPE is asserted here; that the code actually SADDs the bare hash under it is
+    // pinned in the token-manager spec, which observes the call rather than the source text.
     it('declares bare-hash members for the family index', () => {
       expect(contract.familyIndexMembers['dashboardLive']).toBe('{sha256(refreshToken)}')
       expect(contract.familyIndexMembers['platformLive']).toBe('{sha256(refreshToken)}')
-
-      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
-      expect(source).toContain('`fam:${familyId}`, tokenHash')
-      expect(source).toContain('`pfam:${familyId}`, tokenHash')
+      // Distinct from the session index, whose members carry their own prefix.
+      expect(contract.familyIndexMembers['dashboardLive']).not.toBe(
+        contract.sessionIndexMembers['dashboardLive']
+      )
     })
 
     // Verifies the record carries the family, omitted rather than emptied. rust-auth skips the
     // field when empty, so writing `"familyId":""` would make the same session serialize to
     // different bytes on each side.
+    // That the serializer actually drops the empty key is pinned in the token-manager spec,
+    // which reads the record handed to the rotation rather than the source text.
     it('carries familyId on the refresh session record, omitted when empty', () => {
       expect(contract.recordEncodings['refreshSession']?.fields).toContain('familyId')
       expect(contract.recordEncodings['refreshSession']?.['familyId']).toContain('omitted')
-
-      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
-      expect(source).toContain('const { familyId: _omitted, ...rest } = session')
     })
 
     // Verifies the reaction to a replay is the same on both sides. The two backends share the
