@@ -866,6 +866,57 @@ describe('MfaService', () => {
       expect(result).toBe(MOCK_AUTH_RESULT)
     })
 
+    // Scenario: the matching digest sits in the MIDDLE of the set. Expected: that entry is the
+    // one consumed. Why: the MAC branch deliberately scans to completion instead of returning
+    // early, so it has to remember the first match rather than the last one — recording every
+    // comparison would consume whichever code happened to be stored last.
+    it('should consume the matching code, not the last one scanned', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      const before = 'a'.repeat(64)
+      const after = 'b'.repeat(64)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [before, hmacSha256(plainRecovery, HMAC_KEY), after]
+      })
+
+      await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ mfaRecoveryCodes: [before, after] })
+      )
+    })
+
+    // Scenario: the same digest stored twice. Expected: the FIRST occurrence is consumed and
+    // the duplicate survives. Why: the scan keeps the earliest match, so exactly one code is
+    // spent per use — recording later matches too would consume the wrong entry and leave the
+    // user's remaining count wrong.
+    it('should consume only the first of two identical recovery digests', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      const digest = hmacSha256(plainRecovery, HMAC_KEY)
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [digest, digest]
+      })
+
+      await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ mfaRecoveryCodes: [digest] })
+      )
+    })
+
     // Verifies a recovery code stored in the pre-MAC format still authenticates. A recovery
     // digest is one-way, so an upgrade cannot rewrite existing codes — they have to keep
     // verifying with the KDF that produced them or every enrolled user loses their codes.
@@ -2105,6 +2156,83 @@ describe('MfaService', () => {
       const result = await svc.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
 
       expect(result.recoveryCodes).toHaveLength(8)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Misconfiguration: platform context without a platform repository
+  // ---------------------------------------------------------------------------
+
+  describe('platform context with no platform repository wired', () => {
+    let unwired: MfaService
+
+    beforeEach(async () => {
+      // The same module, minus the platform repository. A host can enable MFA without ever
+      // wiring the platform plane, and every platform-context entry point has to fail closed
+      // rather than fall through to the tenant repository — writing a platform admin's MFA
+      // secret onto a tenant user row would be a cross-plane credential leak.
+      const module = await Test.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: null },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+
+      unwired = module.get(MfaService)
+    })
+
+    // Verifies setup refuses rather than provisioning against the wrong repository, with the
+    // misconfiguration code specifically. Asserting merely "some AuthException" would not
+    // distinguish this guard from a later failure on the fall-through path.
+    it('should refuse setup for the platform context', async () => {
+      await expect(unwired.setup('admin-1', 'platform')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
+
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
+    // Verifies verifyAndEnable refuses before it can persist a secret anywhere.
+    it('should refuse verifyAndEnable for the platform context', async () => {
+      await expect(
+        unwired.verifyAndEnable('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+    })
+
+    // Verifies regenerateRecoveryCodes refuses, so a caller cannot mint platform recovery
+    // codes that would be written to a tenant row.
+    it('should refuse regenerateRecoveryCodes for the platform context', async () => {
+      await expect(
+        unwired.regenerateRecoveryCodes('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
+
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      expect(mockBruteForce.isLockedOut).not.toHaveBeenCalled()
+    })
+
+    // Verifies the dashboard context is unaffected: the guard must key on the context, not
+    // simply refuse whenever the platform repository is absent.
+    it('should still serve the dashboard context', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.setIfAbsent.mockResolvedValue(true)
+
+      await expect(unwired.setup('user-1', 'dashboard')).resolves.toMatchObject({
+        secret: expect.any(String)
+      })
     })
   })
 })

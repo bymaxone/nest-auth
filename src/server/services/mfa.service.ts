@@ -289,20 +289,23 @@ export class MfaService {
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
     const candidate = this.digestRecoveryCode(code)
-    let matchIndex = -1
+    const macMatches: boolean[] = []
 
-    for (const [i, hashedCode] of hashedCodes.entries()) {
+    for (const [index, hashedCode] of hashedCodes.entries()) {
       if (hashedCode.startsWith(LEGACY_RECOVERY_DIGEST_PREFIX)) {
-        if (await this.passwordService.compare(code, hashedCode)) return i
+        if (await this.passwordService.compare(code, hashedCode)) return index
+        macMatches.push(false)
         continue
       }
 
-      if (timingSafeCompare(candidate, hashedCode) && matchIndex < 0) {
-        matchIndex = i
-      }
+      macMatches.push(timingSafeCompare(candidate, hashedCode))
     }
 
-    return matchIndex
+    // Recording every comparison and picking the first hit afterwards, rather than tracking
+    // the winner inside the loop, keeps the scan uniform: the same work happens whether the
+    // match is at the front, at the back, or absent. `indexOf` also returns -1 for no match,
+    // which is the contract this method already had.
+    return macMatches.indexOf(true)
   }
 
   /**
