@@ -58,6 +58,18 @@ interface RefreshSession {
    */
   familyId: string
   /**
+   * When the **family** was born — the moment of the login this session descends from, as an
+   * ISO-8601 string.
+   *
+   * Distinct from `createdAt`, which is this session's own creation and is reset on every
+   * rotation. Carried unchanged through the lineage so the absolute-lifetime cap has something
+   * to measure: without it, a client rotating every fifteen minutes renews its lifetime
+   * forever and a session established once never has to be established again.
+   *
+   * Absent on a record written before the field existed; such a session is simply not capped.
+   */
+  familyCreatedAt: string
+  /**
    * Whether MFA is enabled on the account at the time the session was created.
    *
    * Persisted so that `buildRotatedResult` can propagate the correct value into
@@ -344,6 +356,7 @@ export class TokenManagerService {
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
     const seed = await this.readSeedSession(`rt:${oldHash}`, ip, userAgent)
+    this.assertWithinAbsoluteLifetime(seed)
     const newSession = this.buildSession(
       seed.userId,
       seed.tenantId,
@@ -351,7 +364,8 @@ export class TokenManagerService {
       ip,
       userAgent,
       seed.mfaEnabled,
-      seed.familyId
+      seed.familyId,
+      seed.familyCreatedAt
     )
 
     const outcome = await this.redis.rotateRefreshSession({
@@ -389,6 +403,38 @@ export class TokenManagerService {
       'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
     )
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+  }
+
+  /**
+   * Refuses a rotation once the login it descends from has outlived the absolute cap.
+   *
+   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
+   * every fifteen minutes renews that lifetime forever, so without this a session established
+   * once never has to be established again. The cap measures from the **family's** birth, which
+   * is carried unchanged through the lineage.
+   *
+   * A session with no birth time predates the field and is not capped — it ages out under the
+   * refresh lifetime like any other. A cap of `0` disables the check entirely.
+   *
+   * @param session - The presented session, or the placeholder when the token is not live.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
+   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
+   *   remedy is the same (sign in again) and the difference would only tell a holder of a
+   *   stolen token how old the account's session is.
+   */
+  private assertWithinAbsoluteLifetime(session: RefreshSession): void {
+    const capDays = this.options.jwt.absoluteSessionLifetimeDays
+    if (capDays <= 0 || session.familyCreatedAt === '') return
+
+    const bornAt = Date.parse(session.familyCreatedAt)
+    // An unparseable birth time is not evidence the session is old; treat it as absent rather
+    // than ending a session on a malformed field.
+    if (!Number.isFinite(bornAt)) return
+
+    if (Date.now() - bornAt > capDays * 86_400_000) {
+      this.logger.warn('rotation refused: the session has outlived the absolute lifetime cap')
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
   }
 
   /**
@@ -480,7 +526,8 @@ export class TokenManagerService {
       ip,
       userAgent,
       graceSession.mfaEnabled,
-      graceSession.familyId
+      graceSession.familyId,
+      graceSession.familyCreatedAt
     )
     await this.redis.set(`rt:${anotherNewHash}`, this.serializeSession(anotherSession), refreshTtl)
     // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
@@ -527,7 +574,10 @@ export class TokenManagerService {
     // Same defensive read for the family: a session written before families existed carries
     // no `familyId`, which reads as "no family" and skips all family bookkeeping.
     const familyId = typeof rec['familyId'] === 'string' ? rec['familyId'] : ''
-    return { ...(parsed as RefreshSession), mfaEnabled, familyId }
+    // A record written before the family birth time existed carries none, which reads as "not
+    // capped" — it still ages out under the refresh lifetime like any other.
+    const familyCreatedAt = typeof rec['familyCreatedAt'] === 'string' ? rec['familyCreatedAt'] : ''
+    return { ...(parsed as RefreshSession), mfaEnabled, familyId, familyCreatedAt }
   }
 
   /**
@@ -542,7 +592,7 @@ export class TokenManagerService {
    */
   private serializeSession(session: RefreshSession): string {
     if (session.familyId !== '') return JSON.stringify(session)
-    const { familyId: _omitted, ...rest } = session
+    const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = session
     return JSON.stringify(rest)
   }
 
@@ -564,7 +614,8 @@ export class TokenManagerService {
     ip: string,
     device: string,
     mfaEnabled: boolean,
-    familyId: string
+    familyId: string,
+    familyCreatedAt: string = new Date().toISOString()
   ): RefreshSession {
     return {
       userId,
@@ -574,7 +625,8 @@ export class TokenManagerService {
       ip,
       createdAt: new Date().toISOString(),
       mfaEnabled,
-      familyId
+      familyId,
+      familyCreatedAt
     }
   }
 
@@ -648,6 +700,7 @@ export class TokenManagerService {
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
     const seed = await this.readSeedSession(`prt:${oldHash}`, ip, userAgent)
+    this.assertWithinAbsoluteLifetime(seed)
     const newSession = this.buildSession(
       seed.userId,
       '',
@@ -655,7 +708,8 @@ export class TokenManagerService {
       ip,
       userAgent,
       seed.mfaEnabled,
-      seed.familyId
+      seed.familyId,
+      seed.familyCreatedAt
     )
 
     const outcome = await this.redis.rotateRefreshSession({
@@ -764,7 +818,8 @@ export class TokenManagerService {
       ip,
       userAgent,
       graceSession.mfaEnabled,
-      graceSession.familyId
+      graceSession.familyId,
+      graceSession.familyCreatedAt
     )
 
     await this.redis.set(`prt:${anotherNewHash}`, this.serializeSession(anotherSession), refreshTtl)

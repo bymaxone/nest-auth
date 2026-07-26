@@ -80,6 +80,26 @@ export interface BymaxAuthModuleOptions {
     refreshExpiresInDays?: number
 
     /**
+     * Hard cap on how long one login can be extended by rotation, in days.
+     * Default: `0` — no cap.
+     *
+     * `refreshExpiresInDays` bounds how long a single refresh token lives, not how long a
+     * *session* lives: a client that rotates every fifteen minutes renews that lifetime
+     * indefinitely, so a session established once can outlive the laptop it was established
+     * on. This caps the whole lineage — the family's birth time is stamped at login and
+     * carried through every rotation, and once the cap is passed the rotation is refused and
+     * the user signs in again.
+     *
+     * Left off by default because switching it on ends sessions that are already older than
+     * the cap. Pick a value the product can justify asking a user to re-authenticate at (30
+     * or 90 days are common), and set it deliberately.
+     *
+     * Sessions written before this existed carry no birth time and are not capped; they age
+     * out under `refreshExpiresInDays` like any other.
+     */
+    absoluteSessionLifetimeDays?: number
+
+    /**
      * JWT signing algorithm. Only `'HS256'` is supported.
      * Default: `'HS256'`
      *

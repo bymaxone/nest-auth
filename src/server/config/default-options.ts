@@ -28,6 +28,9 @@ export const DEFAULT_OPTIONS = {
     // browser cookies outliving the JWT exp claim.
     accessCookieMaxAgeMs: 900_000,
     refreshExpiresInDays: 7,
+    // No cap by default: switching it on ends sessions already older than the cap, which is
+    // a decision a deployment makes, not one an upgrade makes for it.
+    absoluteSessionLifetimeDays: 0,
     algorithm: 'HS256' as const,
     // Security trade-off: 30 s grace window allows token rotation under slow mobile networks.
     // It also extends the replay window for a stolen refresh token by 30 s beyond expiry.

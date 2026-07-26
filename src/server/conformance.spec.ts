@@ -34,7 +34,10 @@ interface WireContract {
   sessionIndexMembers: Record<string, string>
   familyIndexMembers: Record<string, string>
   rotationSemantics: Record<string, string>
-  recordEncodings: Record<string, { fields?: string[]; createdAt?: string; familyId?: string }>
+  recordEncodings: Record<
+    string,
+    { fields?: string[]; createdAt?: string; familyId?: string; familyCreatedAt?: string }
+  >
   credentialFormats: Record<string, string>
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
@@ -187,6 +190,16 @@ describe('cross-implementation conformance', () => {
     it('carries familyId on the refresh session record, omitted when empty', () => {
       expect(contract.recordEncodings['refreshSession']?.fields).toContain('familyId')
       expect(contract.recordEncodings['refreshSession']?.['familyId']).toContain('omitted')
+    })
+
+    // The family's birth time is what the absolute-lifetime cap measures from, and it is
+    // deliberately NOT `createdAt`: that one is this session's own and resets on every
+    // rotation, which would make the cap unreachable while looking like it worked.
+    it('carries the family birth time, distinct from the session createdAt', () => {
+      expect(contract.recordEncodings['refreshSession']?.fields).toContain('familyCreatedAt')
+      expect(contract.recordEncodings['refreshSession']?.['familyCreatedAt']).toContain(
+        'carried unchanged through every rotation'
+      )
     })
 
     // Verifies the reaction to a replay is the same on both sides. The two backends share the

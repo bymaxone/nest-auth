@@ -731,6 +731,125 @@ describe('TokenManagerService', () => {
       expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
     })
 
+    // Scenario: the login this session descends from has outlived the configured cap.
+    // Expected: the rotation is refused, and it is refused BEFORE the token is consumed —
+    // `refreshExpiresInDays` bounds a single token, not a session, so without this a client
+    // rotating every fifteen minutes renews its lifetime forever.
+    it('refuses a rotation once the family has outlived the absolute cap', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      const bornAt = new Date(Date.now() - 31 * 86_400_000).toISOString()
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: new Date().toISOString(),
+          familyId: FAMILY,
+          familyCreatedAt: bornAt
+        })
+      )
+
+      await expect(
+        capped.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      // Refused before the script ran: the token is still spendable by the legitimate holder
+      // right up until they sign in again, and nothing was consumed on their behalf.
+      expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the same session, one day inside the cap. Expected: it rotates. The boundary
+    // matters — an off-by-one here signs users out a day early, every time.
+    it('rotates a family that is still inside the absolute cap', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      const bornAt = new Date(Date.now() - 29 * 86_400_000).toISOString()
+      const session = JSON.stringify({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        role: 'member',
+        device: 'Browser',
+        ip: '1.2.3.4',
+        createdAt: new Date().toISOString(),
+        familyId: FAMILY,
+        familyCreatedAt: bornAt
+      })
+      mockRedis.get.mockResolvedValue(session)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'rotated', sessionJson: session })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await expect(
+        capped.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).resolves.toMatchObject({ rawRefreshToken: FIXED_REFRESH_TOKEN })
+    })
+
+    // Scenario: the cap is off (the default), or the record predates the field, or the field is
+    // unparseable. Expected: the rotation proceeds in all three. A malformed timestamp is not
+    // evidence a session is old, and ending one on it would be a self-inflicted outage.
+    it.each([
+      ['the cap is disabled', 0, new Date(0).toISOString()],
+      ['the record carries no birth time', 30, ''],
+      ['the birth time is unparseable', 30, 'not-a-date']
+    ])('rotates when %s', async (_label, capDays, familyCreatedAt) => {
+      const module = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: capDays }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      const session = JSON.stringify({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        role: 'member',
+        device: 'Browser',
+        ip: '1.2.3.4',
+        createdAt: new Date().toISOString(),
+        familyId: FAMILY,
+        ...(familyCreatedAt === '' ? {} : { familyCreatedAt })
+      })
+      mockRedis.get.mockResolvedValue(session)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'rotated', sessionJson: session })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await expect(
+        module.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).resolves.toBeDefined()
+    })
+
     // Scenario: a rotated access token must carry status:'' and mfaVerified:false (state is not
     // persisted in the Redis session, forcing re-auth of MFA after rotation).
     it('issues the rotated access token with an empty status and mfaVerified:false', async () => {
