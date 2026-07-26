@@ -68,6 +68,7 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
     issuer: 'TestApp',

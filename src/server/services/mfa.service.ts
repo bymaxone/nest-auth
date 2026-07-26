@@ -34,6 +34,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -558,6 +559,14 @@ export class MfaService {
 
     // Step 3: Fetch user from the correct repository.
     const user = await this.fetchUserForContext(context, userId)
+
+    // Re-check the account status. Login gated it before issuing the temp token, but that
+    // token outlives the check by its whole TTL: an account suspended in between would
+    // otherwise complete the challenge and receive a full session. Revoking access must not
+    // depend on how far through the login the holder already was. Running it before Step 4
+    // also keeps a blocked account from spending the KDF — the recovery-code path costs one
+    // derivation per stored code.
+    assertNotBlocked(user.status, this.options.blockedStatuses)
 
     if (!user.mfaEnabled || !user.mfaSecret) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)

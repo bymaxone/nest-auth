@@ -147,6 +147,7 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
     issuer: 'TestApp',
@@ -1027,6 +1028,43 @@ describe('MfaService', () => {
       await expect(service.challenge('mfa.temp', '123456', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
+    })
+
+    // Verifies the challenge re-checks account status. Login gated it before minting the
+    // temp token, but that token stays valid for its whole TTL: an account suspended in the
+    // meantime must not be able to finish the second factor and walk away with a full
+    // session. Revoking access cannot depend on how far through login the holder had got.
+    it('should reject the challenge when the account was blocked after the temp token was issued', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        status: 'SUSPENDED'
+      })
+
+      let caught: AuthException | undefined
+      try {
+        await service.challenge('mfa.temp', '123456', '1.2.3.4', 'Browser')
+      } catch (e) {
+        caught = e instanceof AuthException ? e : undefined
+      }
+
+      expect(caught).toBeInstanceOf(AuthException)
+      expect(caught!.getStatus()).toBe(403)
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    // Verifies the status gate runs before the code is verified: the recovery-code path
+    // costs one scrypt derivation per stored code, so a blocked account must never reach it.
+    it('should reject a blocked account without verifying the submitted code', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        status: 'BANNED'
+      })
+
+      await expect(
+        service.challenge('mfa.temp', 'some-recovery-code', '1.2.3.4', 'Browser')
+      ).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Verifies that MFA_NOT_ENABLED is thrown when the user record shows mfaEnabled: false.
