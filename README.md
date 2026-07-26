@@ -72,6 +72,10 @@ pnpm add @bymax-one/nest-auth
 - ✅ **JWT Revocation** — Instant access token revocation via Redis JTI blacklist
 - ✅ **Refresh-Token Reuse Detection** — Replaying a consumed token revokes that login's whole lineage, and only that lineage
 - ✅ **Bulk Access-Token Revocation** — A password reset advances a per-user token epoch, invalidating every outstanding access token in one write
+- ✅ **Absolute Session Lifetime** — Optional hard cap on how long one login can be extended by rotation
+- ✅ **Cross-Site Request Refusal** — Cookie-authenticated writes from an untrusted origin are rejected (matters under `SameSite=None`)
+- ✅ **Breached-Password Refusal** — Optional Have I Been Pwned check by k-anonymity range; the password never leaves the process
+- ✅ **Per-IP Rate Limiting** — Enforced by the library over Redis, so the limit holds across instances with no host wiring
 
 ### 🏢 Multi-Tenant & Platform
 
@@ -588,24 +592,45 @@ export const POST = createLogoutHandler({
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group             | Key Options                                                                                       | Default                   |
-| ----------------- | ------------------------------------------------------------------------------------------------- | ------------------------- |
-| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `algorithm`                       | `15m`, `7d`, `HS256`      |
-| **password**      | `costFactor`, `blockSize`, `parallelization`                                                      | scrypt N=2¹⁵, r=8, p=1    |
-| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                              | `'cookie'`                |
-| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `resolveDomains` | — (see cookie section)    |
-| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                      | —                         |
-| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                        | `false`, `5`, —, `'fifo'` |
-| **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                    | `5`, `900`                |
-| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                     | `'token'`                 |
-| **platform**      | `enabled`                                                                                         | `false`                   |
-| **invitations**   | `enabled`, `tokenTtlSeconds`                                                                      | `false`                   |
-| **roles**         | `hierarchy` (required), `platformHierarchy`                                                       | —                         |
-| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                                                 | —                         |
-| **controllers**   | Toggle individual controllers on/off                                                              | All enabled               |
+| Group             | Key Options                                                                                                                     | Default                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`                      | `15m`, `7d`, off, `HS256`          |
+| **password**      | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁵, r=8, p=1             |
+| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                         |
+| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section) |
+| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                                    | —                                  |
+| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`          |
+| **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                         |
+| **rateLimit**     | `enabled` — per-IP limits enforced by the library over Redis                                                                    | `true`                             |
+| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                   | `'token'`                          |
+| **platform**      | `enabled`                                                                                                                       | `false`                            |
+| **invitations**   | `enabled`, `tokenTtlSeconds`                                                                                                    | `false`                            |
+| **roles**         | `hierarchy` (required), `platformHierarchy`                                                                                     | —                                  |
+| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                                                                               | —                                  |
+| **controllers**   | Toggle individual controllers on/off                                                                                            | All enabled                        |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
+
+Two options are deliberately off by default because switching them on changes behaviour for
+sessions and origins that already exist:
+
+- `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation. Without
+  it, a client refreshing every fifteen minutes keeps a session alive forever.
+- `cookies.trustedOrigins` is required as soon as `cookies.sameSite: 'none'` is set, and refused
+  otherwise — that posture is the only one where the browser sends the session cookie
+  cross-site, and it is the only one where the origin check has anything to authorize.
+
+The breach check is opt-in for a different reason: it is the only part of the credential path
+that reaches the network, and a library should not start talking to a third party because it was
+upgraded. Wire it explicitly:
+
+```typescript
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({ ... }),
+  extraProviders: [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: HibpBreachChecker }]
+})
+```
 
 ---
 
@@ -831,16 +856,15 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 The items below are on deck for future minor / major releases. None are shipping today — the list exists so contributors can see where the library is headed and where help is most useful. Open an issue if you'd like to discuss priorities or propose a design.
 
-| Area                        | Item                                                                                                                    | Status    |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
-| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core  | Planned   |
-| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)  | Planned   |
-| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API | Exploring |
-| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module            | Exploring |
-| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                  | Exploring |
-| Absolute session lifetime   | Hard cap on refresh chains so a session rotated every 6 days does not live forever — the family record is where it goes | Planned   |
-| Pluggable password policy   | `IPasswordPolicy` interface for disallow-lists, complexity classes, and per-tenant rules                                | Planned   |
-| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)      | Exploring |
+| Area                        | Item                                                                                                                       | Status    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------- |
+| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core     | Planned   |
+| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)     | Planned   |
+| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API    | Exploring |
+| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module               | Exploring |
+| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                     | Exploring |
+| Pluggable password policy   | `IPasswordPolicy` for complexity classes and per-tenant rules (the breach check already ships as `IPasswordBreachChecker`) | Planned   |
+| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)         | Exploring |
 
 > Track progress and discuss proposals on the [issues board](https://github.com/bymaxone/nest-auth/issues).
 
