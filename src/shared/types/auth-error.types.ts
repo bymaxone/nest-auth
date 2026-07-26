@@ -18,20 +18,38 @@ import type { AuthErrorCode } from '../constants/error-codes'
 export type AuthResponseCode = AuthErrorCode | (string & {})
 
 /**
- * Shape of the error response body returned by the @bymax-one/nest-auth server.
+ * Normalized view of the error response body returned by an
+ * @bymax-one/nest-auth server.
  *
  * @remarks
- * Mirrors the JSON body emitted by `AuthException` after NestJS's exception
- * filter serializes it. The `code` field uses the `auth.<domain>_<action>`
- * convention defined by `AUTH_ERROR_CODES` and is the recommended branch
- * point for client-side error handling — `message` is meant for end-user
- * display and may be localized in the future.
+ * Two wire shapes reach a client and both are normalized into this one type:
+ *
+ * 1. The library's own envelope, emitted by `AuthException`:
+ *    `{ error: { code, message, details } }`. The client lifts `code`,
+ *    `message`, and `details` out of the envelope and fills `error` /
+ *    `statusCode` from the HTTP response itself, since the envelope does
+ *    not repeat them in the body.
+ * 2. A flat NestJS exception body (`{ message, error, statusCode }`), as
+ *    produced by a `ValidationPipe` 400 or any built-in `HttpException`
+ *    thrown outside the auth flow. Those pass through unchanged.
+ *
+ * The `code` field uses the `auth.<domain>_<action>` convention defined by
+ * `AUTH_ERROR_CODES` and is the recommended branch point for client-side
+ * error handling — `message` is meant for end-user display and may be
+ * localized in the future.
  */
 export interface AuthErrorResponse {
   /** End-user-facing message (may be localized server-side in future versions). */
   message: string
 
-  /** HTTP status text (NestJS convention, e.g. `'Unauthorized'`). */
+  /**
+   * HTTP status text (NestJS convention, e.g. `'Unauthorized'`).
+   *
+   * For the `AuthException` envelope — which carries no status text — the
+   * client fills this from the response's `statusText`, falling back to
+   * `'Error'` when the transport omits it (HTTP/2 never sends a reason
+   * phrase).
+   */
   error: string
 
   /** HTTP status code (e.g. `401`, `403`). */
@@ -45,6 +63,15 @@ export interface AuthErrorResponse {
    * (e.g. a `ValidationPipe` 400) may not carry it.
    */
   code?: AuthResponseCode
+
+  /**
+   * Structured payload attached by the server under `error.details`
+   * (e.g. `{ retryAfterSeconds: 300 }` on a lockout).
+   *
+   * `null` when the server sent the envelope without details, and absent
+   * entirely for flat NestJS bodies, which have no equivalent field.
+   */
+  details?: Record<string, unknown> | null
 }
 
 /**

@@ -203,14 +203,20 @@ function jsonBody(value: unknown): string {
 /**
  * Best-effort `AuthErrorResponse` extraction from a raw response body
  * string. Returns `undefined` when the text is empty, not JSON, or
- * does not match the canonical error shape. Centralized so the
+ * does not match either recognized error shape. Centralized so the
  * happy and no-content paths produce identical error envelopes.
+ *
+ * The `response` is needed because the server's own error envelope
+ * carries no status information in the body — see
+ * {@link readErrorEnvelope}.
  */
-function extractErrorBody(text: string): AuthErrorResponse | undefined {
+function extractErrorBody(text: string, response: Response): AuthErrorResponse | undefined {
   // Stryker disable next-line ConditionalExpression: empty-body fast path is an optimization; an empty string also makes JSON.parse throw, which the surrounding try/catch turns into the same `undefined`
   if (text.length === 0) return undefined
   try {
     const parsed: unknown = JSON.parse(text)
+    const fromEnvelope = readErrorEnvelope(parsed, response)
+    if (fromEnvelope !== undefined) return fromEnvelope
     return isAuthErrorBody(parsed) ? parsed : undefined
   } catch {
     return undefined
@@ -223,7 +229,7 @@ function extractErrorBody(text: string): AuthErrorResponse | undefined {
  * for branching on `response.ok` first.
  */
 function throwAuthError(response: Response, text: string): never {
-  const body = extractErrorBody(text)
+  const body = extractErrorBody(text, response)
   const message = body?.message ?? `Request failed with status ${response.status}`
   throw new AuthClientError(message, response.status, body)
 }
@@ -277,10 +283,61 @@ async function expectNoContent(response: Response): Promise<void> {
 }
 
 /**
- * Type-guard for the canonical server error body shape.
+ * Fallback for `AuthErrorResponse.error` when the transport supplies
+ * no reason phrase — HTTP/2 and HTTP/3 never send one, so an empty
+ * `statusText` is the norm on modern deployments rather than an
+ * anomaly.
+ */
+const UNKNOWN_STATUS_TEXT = 'Error'
+
+/**
+ * Lift the @bymax-one/nest-auth error envelope into the flat
+ * {@link AuthErrorResponse} view exposed to consumers.
  *
- * Conservative — checks for the three structural fields that
- * AuthException guarantees. The `code` field is optional so callers
+ * The server's `AuthException` serializes to
+ * `{ error: { code, message, details } }` — `details` being `null`
+ * when the thrower supplied none. That body carries no status
+ * information of its own, so `error` and `statusCode` are filled from
+ * the HTTP response, keeping the consumer-facing shape identical to
+ * the one produced by a flat NestJS exception body.
+ *
+ * Returns `undefined` for anything that is not that envelope (a
+ * primitive, a flat NestJS body, an HTML error page already rejected
+ * upstream by `JSON.parse`, or an envelope missing `code`/`message`),
+ * letting the caller fall through to the flat-body guard.
+ */
+function readErrorEnvelope(value: unknown, response: Response): AuthErrorResponse | undefined {
+  const envelope = (value as { error?: unknown } | null)?.error
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: object-type guard precedes the authoritative field checks; a non-object envelope also fails those (or the caller's catch swallows the null-deref), yielding the same `undefined`
+  if (typeof envelope !== 'object' || envelope === null) return undefined
+
+  const candidate = envelope as Record<string, unknown>
+  const code = candidate['code']
+  const message = candidate['message']
+  if (typeof code !== 'string' || typeof message !== 'string') return undefined
+
+  const details = candidate['details']
+  return {
+    message,
+    error: response.statusText.length > 0 ? response.statusText : UNKNOWN_STATUS_TEXT,
+    statusCode: response.status,
+    code,
+    // A non-object `details` is not something the server emits; treat
+    // it as absent rather than propagating an unusable value under a
+    // type that promises a record.
+    details:
+      typeof details === 'object' && details !== null ? (details as Record<string, unknown>) : null
+  }
+}
+
+/**
+ * Type-guard for the flat NestJS error body shape.
+ *
+ * Conservative — checks for the three structural fields that a
+ * built-in `HttpException` guarantees (a `ValidationPipe` 400, or any
+ * non-auth exception thrown by the consumer's app). The library's own
+ * errors do NOT take this path; they are handled by
+ * {@link readErrorEnvelope}. The `code` field is optional so callers
  * cannot silently rely on it.
  */
 function isAuthErrorBody(value: unknown): value is AuthErrorResponse {
