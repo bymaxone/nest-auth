@@ -845,86 +845,97 @@ describe('MfaService', () => {
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
       const plainRecovery = '1234-5678-9012'
-      const hashedCodes = ['$scrypt$hash1', '$scrypt$hash2']
+      const otherDigest = 'a'.repeat(64)
+      const hashedCodes = [otherDigest, hmacSha256(plainRecovery, HMAC_KEY)]
 
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
         mfaRecoveryCodes: hashedCodes
       })
-      // passwordService.compare: first code doesn't match, second does
-      mockPasswordService.compare
-        .mockResolvedValueOnce(false) // first hash
-        .mockResolvedValueOnce(true) // second hash
 
       const result = await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
         mfaEnabled: true,
         mfaSecret: expect.any(String),
-        mfaRecoveryCodes: ['$scrypt$hash1'] // second code removed; mfaSecret preserved
+        mfaRecoveryCodes: [otherDigest] // matched code consumed; mfaSecret preserved
       })
+      // The keyed MAC replaces the KDF entirely on this path.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
       expect(result).toBe(MOCK_AUTH_RESULT)
     })
 
-    // Verifies that challenge stops iterating recovery codes after the first match
-    // (early exit). Position-timing leakage is not exploitable here — the matched
-    // code is consumed immediately afterwards (its position is no longer secret) —
-    // and avoiding the remaining scrypt hashes prevents an O(N) CPU-amplification
-    // window an attacker could otherwise force on every challenge attempt.
-    it('should early-exit recovery code iteration after the first match', async () => {
+    // Verifies a recovery code stored in the pre-MAC format still authenticates. A recovery
+    // digest is one-way, so an upgrade cannot rewrite existing codes — they have to keep
+    // verifying with the KDF that produced them or every enrolled user loses their codes.
+    it('should still accept a legacy scrypt recovery digest', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
-      const hashedCodes = ['$scrypt$hash1', '$scrypt$hash2', '$scrypt$hash3']
+      const legacy = 'scrypt:0011223344556677:8899aabbccddeeff'
 
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: hashedCodes
+        mfaRecoveryCodes: [legacy]
       })
-      // '1234-5678-9012' does not match /^\d{6}$/ so the recovery code path is used (not TOTP).
-      // First code matches — service should NOT continue past it.
-      mockPasswordService.compare
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(false)
+      mockPasswordService.compare.mockResolvedValue(true)
+
+      await service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
+
+      expect(mockPasswordService.compare).toHaveBeenCalledWith('1234-5678-9012', legacy)
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ mfaRecoveryCodes: [] })
+      )
+    })
+
+    // Verifies a legacy digest short-circuits the scan on a match. Each legacy entry costs a
+    // full scrypt derivation, so letting the loop run would hand an attacker one derivation
+    // per remaining code on every challenge — the CPU amplifier the MAC format removes.
+    it('should stop scanning legacy digests at the first match', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const legacy = ['scrypt:aa:bb', 'scrypt:cc:dd', 'scrypt:ee:ff']
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: legacy
+      })
+      mockPasswordService.compare.mockResolvedValueOnce(true).mockResolvedValue(false)
 
       await service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
 
       expect(mockPasswordService.compare).toHaveBeenCalledTimes(1)
-      // Verify the first code (index 0) was the one removed.
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
-        expect.objectContaining({
-          mfaRecoveryCodes: ['$scrypt$hash2', '$scrypt$hash3']
-        })
+        expect.objectContaining({ mfaRecoveryCodes: ['scrypt:cc:dd', 'scrypt:ee:ff'] })
       )
     })
 
-    // Verifies that no match across all stored recovery codes still iterates every entry
-    // before returning -1, so attackers cannot infer "no match found before code N" via timing.
-    it('should iterate every recovery code when none match (full scan on miss)', async () => {
+    // Verifies a wrong code costs no key derivation at all once the codes are in the MAC
+    // format. This is the security property of the change: previously one wrong submission
+    // forced one scrypt derivation per stored code, an amplifier reachable by anyone holding
+    // a temp token.
+    it('should spend no key derivation when a wrong code is scanned against MAC digests', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
-      const hashedCodes = ['$scrypt$hash1', '$scrypt$hash2', '$scrypt$hash3']
 
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: hashedCodes
+        mfaRecoveryCodes: ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)]
       })
-      mockPasswordService.compare
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(false)
 
       await expect(
         service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
 
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(3)
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Verifies that TOTP anti-replay prevents a code from being used twice.
@@ -959,7 +970,8 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: ['$scrypt$hash1', '$scrypt$hash2']
+        // Legacy-format digests, so the recovery branch stays observable through the KDF.
+        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
       })
       // All comparisons return false — malformed code never matches
       mockPasswordService.compare.mockResolvedValue(false)
@@ -984,7 +996,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: ['$scrypt$hash1', '$scrypt$hash2']
+        // Legacy-format digests, so the recovery branch is observable through the KDF call
+        // the MAC format no longer needs.
+        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
       })
       mockPasswordService.compare.mockResolvedValue(false)
 
@@ -1007,7 +1021,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: ['$scrypt$hash1', '$scrypt$hash2']
+        // Legacy-format digests, so the recovery branch is observable through the KDF call
+        // the MAC format no longer needs.
+        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
       })
       mockPasswordService.compare.mockResolvedValue(false)
 
@@ -1111,7 +1127,7 @@ describe('MfaService', () => {
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
       const plainRecovery = '1234-5678-9012'
-      const hashedCodes = ['$scrypt$hash1', '$scrypt$hash2']
+      const hashedCodes = ['scrypt:aa:bb', 'scrypt:cc:dd']
 
       const PLATFORM_AUTH_RESULT = {
         admin: SAFE_ADMIN,
@@ -1142,7 +1158,7 @@ describe('MfaService', () => {
 
       expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
         'admin-1',
-        expect.objectContaining({ mfaRecoveryCodes: ['$scrypt$hash1'] })
+        expect.objectContaining({ mfaRecoveryCodes: ['scrypt:aa:bb'] })
       )
     })
 

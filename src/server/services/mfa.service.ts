@@ -15,7 +15,7 @@ import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
-import { hmacSha256 } from '../crypto/secure-token'
+import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { buildTotpUri, generateTotpSecret, verifyTotp } from '../crypto/totp'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -56,6 +56,12 @@ const TOTP_ANTI_REPLAY_TTL_SECONDS = 90
 
 /** Number of recovery codes generated when MFA is enabled. */
 const DEFAULT_RECOVERY_CODE_COUNT = 8
+
+/**
+ * Marker of a recovery digest written before the move to a keyed MAC. `PasswordService`
+ * emits `scrypt:{salt}:{hash}`, so the prefix identifies the format unambiguously.
+ */
+const LEGACY_RECOVERY_DIGEST_PREFIX = 'scrypt:'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -228,9 +234,7 @@ export class MfaService {
    * ~40 bits, which relied entirely on the scrypt hash for offline resistance —
    * any database leak would have put the raw codes within offline reach.
    */
-  private async hashRecoveryCodes(
-    count: number
-  ): Promise<{ plainCodes: string[]; hashedCodes: string[] }> {
+  private hashRecoveryCodes(count: number): { plainCodes: string[]; hashedCodes: string[] } {
     const plainCodes: string[] = []
     const hashedCodes: string[] = []
 
@@ -246,29 +250,59 @@ export class MfaService {
       }
       const code = groups.join('-').toUpperCase()
       plainCodes.push(code)
-      hashedCodes.push(await this.passwordService.hash(code))
+      hashedCodes.push(this.digestRecoveryCode(code))
     }
 
     return { plainCodes, hashedCodes }
   }
 
   /**
-   * Compares a submitted recovery code against all stored scrypt hashes.
+   * Derives the stored digest for a recovery code: a keyed HMAC-SHA-256, hex encoded.
    *
-   * Iterates the stored hashes and stops at the first match. Position-timing
-   * leakage is not exploitable here because the matched code is consumed
-   * immediately afterwards (its position is no longer secret); avoiding the
-   * remaining scrypt evaluations prevents an O(N) CPU amplification window
-   * an attacker could otherwise force on every challenge attempt.
+   * A recovery code is 96 bits of CSPRNG output, not a human-chosen password, so a
+   * memory-hard KDF buys nothing against it — there is no dictionary to walk and brute
+   * forcing 2^96 is out of reach whatever the hash costs. What the KDF did buy was an
+   * attacker-reachable CPU amplifier: a challenge submitting a wrong recovery code scanned
+   * every stored digest, so one request cost as many scrypt derivations as the user had
+   * codes. The keyed MAC is the right primitive here — the secret key is what stops an
+   * offline attacker precomputing digests from a leaked table, and it costs microseconds.
+   */
+  private digestRecoveryCode(code: string): string {
+    return hmacSha256(code, this.options.hmacKey)
+  }
+
+  /**
+   * Compares a submitted recovery code against every stored digest.
    *
-   * @returns Index of the matching hash, or `-1` if none match.
+   * Handles both storage formats. Codes written before recovery digests moved to a keyed
+   * MAC carry the `scrypt:` prefix and are verified with the KDF that produced them; those
+   * short-circuit on a match, because letting the scan run would spend one scrypt
+   * derivation per remaining code on every attempt. Codes in the current format are
+   * compared in constant time and the scan always runs to completion, so neither the
+   * position of a match nor the number of legacy codes is observable in the response time.
+   *
+   * Existing codes therefore keep working and are never invalidated: a recovery digest is
+   * one-way, so there is nothing to migrate — the set converts naturally the next time it
+   * is regenerated.
+   *
+   * @returns Index of the matching digest, or `-1` if none match.
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
+    const candidate = this.digestRecoveryCode(code)
+    let matchIndex = -1
+
     for (const [i, hashedCode] of hashedCodes.entries()) {
-      const isMatch = await this.passwordService.compare(code, hashedCode)
-      if (isMatch) return i
+      if (hashedCode.startsWith(LEGACY_RECOVERY_DIGEST_PREFIX)) {
+        if (await this.passwordService.compare(code, hashedCode)) return i
+        continue
+      }
+
+      if (timingSafeCompare(candidate, hashedCode) && matchIndex < 0) {
+        matchIndex = i
+      }
     }
-    return -1
+
+    return matchIndex
   }
 
   /**
@@ -374,7 +408,7 @@ export class MfaService {
     const { base32: secretBase32 } = generateTotpSecret()
     const encryptedSecret = this.encryptSecret(secretBase32)
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
-    const { plainCodes, hashedCodes } = await this.hashRecoveryCodes(recoveryCount)
+    const { plainCodes, hashedCodes } = this.hashRecoveryCodes(recoveryCount)
     const encryptedPlainCodes = encrypt(JSON.stringify(plainCodes), this.mfaOptions.encryptionKey)
 
     const setupData: MfaSetupData = { encryptedSecret, hashedCodes, encryptedPlainCodes }
@@ -884,7 +918,7 @@ export class MfaService {
     // Generate a fresh code set using the existing helper — same entropy, same
     // formatting, same scrypt hashing as the initial setup() path.
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
-    const { plainCodes, hashedCodes } = await this.hashRecoveryCodes(recoveryCount)
+    const { plainCodes, hashedCodes } = this.hashRecoveryCodes(recoveryCount)
 
     // Preserve the existing TOTP secret — only the recovery code list changes.
     //

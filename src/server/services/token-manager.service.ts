@@ -6,7 +6,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { hmacSha256, sha256 } from '../crypto/secure-token'
+import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {
@@ -181,7 +181,7 @@ export class TokenManagerService {
       mfaVerified: overrides?.mfaVerified ?? false
     })
 
-    const rawRefreshToken = randomUUID()
+    const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
     const sessionKey = `rt:${tokenHash}`
     const session = this.buildSession(
@@ -232,7 +232,7 @@ export class TokenManagerService {
       mfaVerified: overrides?.mfaVerified ?? false
     })
 
-    const rawRefreshToken = randomUUID()
+    const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
     const sessionKey = `prt:${tokenHash}`
     const session = this.buildSession(admin.id, '', admin.role, ip, userAgent, admin.mfaEnabled)
@@ -310,7 +310,7 @@ export class TokenManagerService {
     userAgent: string
   ): Promise<RotatedTokenResult> {
     const oldHash = sha256(oldRefresh)
-    const newRawRefresh = randomUUID()
+    const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
 
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
@@ -449,7 +449,7 @@ export class TokenManagerService {
     _graceTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
-    const anotherNewRefresh = randomUUID()
+    const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
       graceSession.userId,
@@ -577,7 +577,7 @@ export class TokenManagerService {
     userAgent: string
   ): Promise<RotatedTokenResult> {
     const oldHash = sha256(oldRefresh)
-    const newRawRefresh = randomUUID()
+    const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
 
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
@@ -679,7 +679,7 @@ export class TokenManagerService {
     _graceTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
-    const anotherNewRefresh = randomUUID()
+    const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
       graceSession.userId,

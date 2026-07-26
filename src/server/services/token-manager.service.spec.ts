@@ -21,8 +21,15 @@ function sha256(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex')
 }
 
-/** SHA-256 of the mocked randomUUID — the hash used for every newly issued refresh token. */
-const NEW_HASH = sha256(FIXED_UUID)
+/**
+ * The refresh token every mint produces under the mocked `randomBytes`: 32 bytes of 0x11
+ * rendered as 64 hex characters. Pinning the length here is what keeps the 256-bit format
+ * from silently regressing to a shorter token.
+ */
+const FIXED_REFRESH_TOKEN = '11'.repeat(32)
+
+/** SHA-256 of the minted refresh token — the hash keying every new refresh session. */
+const NEW_HASH = sha256(FIXED_REFRESH_TOKEN)
 
 const mockJwtService = {
   sign: jest.fn().mockReturnValue(FIXED_JWT),
@@ -94,10 +101,13 @@ const SAFE_ADMIN = {
 // Suite
 // ---------------------------------------------------------------------------
 
-// Use inline string to avoid TDZ — jest.mock factories run before const declarations.
+// Use inline values to avoid TDZ — jest.mock factories run before const declarations.
+// `randomUUID` still backs the access token's jti; `randomBytes` backs the refresh token,
+// which is now 32 CSPRNG bytes rendered as 64 hex characters rather than a UUID.
 jest.mock('node:crypto', () => ({
   ...jest.requireActual('node:crypto'),
-  randomUUID: jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000001')
+  randomUUID: jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000001'),
+  randomBytes: jest.fn((size: number) => Buffer.alloc(size, 0x11))
 }))
 
 describe('TokenManagerService', () => {
@@ -172,8 +182,21 @@ describe('TokenManagerService', () => {
         7 * 86_400
       )
       expect(result.accessToken).toBe(FIXED_JWT)
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.user).toEqual(SAFE_USER)
+    })
+
+    // Scenario: the minted refresh token's shape. Expected: 64 lowercase hex characters, i.e.
+    // 32 CSPRNG bytes. Why: this token is a bearer credential that survives for days, and the
+    // UUID v4 it replaced carried ~122 bits — six of its 128 bits are fixed version/variant
+    // markers. Pinning the length here stops a future change quietly shortening it, and it is
+    // the format the sibling Rust backend validates before it will even hash a presented token.
+    it('mints a 256-bit refresh token rendered as 64 hex characters', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      const result = await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
+
+      expect(result.rawRefreshToken).toMatch(/^[0-9a-f]{64}$/)
     })
 
     // Verifies that the stored session JSON contains the expected fields (userId, tenantId, role, ip, device).
@@ -233,7 +256,7 @@ describe('TokenManagerService', () => {
         expect.objectContaining({ type: 'platform', sub: 'admin-1' }),
         expect.any(Object)
       )
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.admin).toEqual(SAFE_ADMIN)
     })
 
@@ -364,7 +387,7 @@ describe('TokenManagerService', () => {
 
       expect(mockRedis.eval).toHaveBeenCalled()
       expect(result.accessToken).toBe(FIXED_JWT)
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       // RotatedTokenResult: identity in session field, not a full SafeAuthUser
       expect(result.session.userId).toBe('user-1')
       expect(result.session.tenantId).toBe('tenant-1')
@@ -408,7 +431,7 @@ describe('TokenManagerService', () => {
       const result = await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rp:/))
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
     })
 
     // Verifies that grace-window rotation writes ONLY the new session key (rt:), never another
@@ -993,7 +1016,7 @@ describe('TokenManagerService', () => {
 
       expect(mockRedis.eval).toHaveBeenCalled()
       expect(result.accessToken).toBe(FIXED_JWT)
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.session.userId).toBe('admin-1')
       expect(result.session.tenantId).toBe('')
       expect(result.session.role).toBe('super-admin')
@@ -1030,7 +1053,7 @@ describe('TokenManagerService', () => {
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^prp:/))
       expect(result.accessToken).toBe(FIXED_JWT)
-      expect(result.rawRefreshToken).toBe(FIXED_UUID)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.session.userId).toBe('admin-1')
     })
 

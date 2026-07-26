@@ -329,7 +329,8 @@ describe('MFA — integration smoke tests', () => {
       ...DASHBOARD_USER,
       mfaEnabled: true,
       mfaSecret: encryptedSecret,
-      mfaRecoveryCodes: ['$scrypt$hashedcode']
+      // Real legacy digest format, so the KDF-backed path this test drives still applies.
+      mfaRecoveryCodes: ['scrypt:0011223344556677:8899aabbccddeeff']
     })
     mockRedis.setnx.mockResolvedValue(true) // TOTP anti-replay
     // passwordService.compare returns true when the plain recovery code matches the hash
