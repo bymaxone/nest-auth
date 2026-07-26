@@ -93,7 +93,8 @@ const mockOtpService = {
 }
 
 const mockPasswordService = {
-  hash: jest.fn()
+  hash: jest.fn(),
+  assertNotCompromised: jest.fn().mockResolvedValue(undefined)
 }
 
 const mockRedis = {

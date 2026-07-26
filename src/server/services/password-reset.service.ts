@@ -405,6 +405,7 @@ export class PasswordResetService {
    * The current ordering minimises the security impact of a partial failure.
    */
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
+    await this.passwordService.assertNotCompromised(newPassword)
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
     // Revoke every session AND invalidate already-issued access tokens. This is two Redis

@@ -45,6 +45,9 @@ export const AUTH_ERROR_CODES = {
 
   // Password
   PASSWORD_TOO_WEAK: 'auth.password_too_weak',
+
+  /** The password appears in a known-breach corpus. */
+  PASSWORD_COMPROMISED: 'auth.password_compromised',
   PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
   PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
 

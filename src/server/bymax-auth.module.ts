@@ -10,6 +10,7 @@ import { DynamicModule, Module, type Provider } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 
 import {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -38,6 +39,7 @@ import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { buildOAuthPlugins } from './oauth/oauth.module'
 import { OAuthService } from './oauth/oauth.service'
+import { AllowAllBreachChecker } from './providers/hibp-breach-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
@@ -284,6 +286,15 @@ export class BymaxAuthModule {
       ? []
       : [{ provide: BYMAX_AUTH_EMAIL_PROVIDER, useClass: NoOpEmailProvider }]
 
+    // Fallback breach checker — approves every password, so the credential path never reaches
+    // the network unless the consumer wires a real checker (e.g. HibpBreachChecker).
+    const breachCheckerProviders: Provider[] = hasProviderToken(
+      extraProviders,
+      BYMAX_AUTH_BREACH_CHECKER
+    )
+      ? []
+      : [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: AllowAllBreachChecker }]
+
     // Fallback hooks provider — only registered when the consumer has not supplied one.
     const hooksProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_HOOKS)
       ? []
@@ -368,6 +379,7 @@ export class BymaxAuthModule {
         resolvedOptionsProvider,
         // Fallback NoOp providers (skipped if consumer already supplied them).
         ...emailProviders,
+        ...breachCheckerProviders,
         ...hooksProviders,
         // Core services.
         // AuthRedisService is registered directly (not via AuthRedisModule) so that
@@ -440,6 +452,7 @@ export class BymaxAuthModule {
         // Export email provider — allows host-app modules (e.g. custom invitation flows)
         // to inject the configured IEmailProvider without re-registering it.
         BYMAX_AUTH_EMAIL_PROVIDER,
+        BYMAX_AUTH_BREACH_CHECKER,
         // Export InvitationService — allows host-app modules to send or manage invitations.
         ...invitationProviders,
         // Export AuthRedisService so host-app modules that apply JwtPlatformGuard,

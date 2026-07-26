@@ -252,6 +252,7 @@ export class InvitationService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
+    await this.passwordService.assertNotCompromised(dto.password)
     const passwordHash = await this.passwordService.hash(dto.password)
 
     const authUser = await this.userRepo.create({

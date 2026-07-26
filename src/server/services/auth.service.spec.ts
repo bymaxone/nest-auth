@@ -95,7 +95,8 @@ const mockHooks = {
 const mockPasswordService = {
   hash: jest.fn(),
   compare: jest.fn(),
-  compareDummy: jest.fn().mockResolvedValue(false)
+  compareDummy: jest.fn().mockResolvedValue(false),
+  assertNotCompromised: jest.fn().mockResolvedValue(undefined)
 }
 
 const mockTokenManager = {

@@ -7,8 +7,13 @@
 
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { PasswordService } from './password.service'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
+
+/** Approves every password unless a test says otherwise. */
+const mockBreachChecker = { isBreached: jest.fn().mockResolvedValue(false) }
 
 const mockOptions = {
   password: {
@@ -23,10 +28,51 @@ describe('PasswordService', () => {
 
   beforeEach(async () => {
     const module = await Test.createTestingModule({
-      providers: [PasswordService, { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }]
+      providers: [
+        PasswordService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+        { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: mockBreachChecker }
+      ]
     }).compile()
 
     service = module.get(PasswordService)
+  })
+
+  // ---------------------------------------------------------------------------
+  // assertNotCompromised
+  // ---------------------------------------------------------------------------
+
+  describe('assertNotCompromised', () => {
+    // The whole point: a password the corpus knows is refused before it is ever hashed and
+    // stored, so it never becomes the account's credential.
+    it('rejects a password the checker reports as breached', async () => {
+      mockBreachChecker.isBreached.mockResolvedValue(true)
+
+      let thrown: unknown
+      try {
+        await service.assertNotCompromised('hunter2')
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(AuthException)
+      expect((thrown as AuthException).getResponse()).toMatchObject({
+        error: expect.objectContaining({ code: AUTH_ERROR_CODES.PASSWORD_COMPROMISED })
+      })
+      // 400, not 401: this is the submitted value being unacceptable, not an auth failure.
+      expect((thrown as AuthException).getStatus()).toBe(400)
+      expect(mockBreachChecker.isBreached).toHaveBeenCalledWith('hunter2')
+    })
+
+    // A clean password passes through silently — the check adds no observable behaviour when
+    // it has nothing to report.
+    it('accepts a password the checker clears', async () => {
+      mockBreachChecker.isBreached.mockResolvedValue(false)
+
+      await expect(
+        service.assertNotCompromised('a-long-unique-passphrase')
+      ).resolves.toBeUndefined()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -139,7 +185,11 @@ describe('PasswordService', () => {
         }
       }
       const module = await Test.createTestingModule({
-        providers: [PasswordService, { provide: BYMAX_AUTH_OPTIONS, useValue: highCostOptions }]
+        providers: [
+          PasswordService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: highCostOptions },
+          { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: mockBreachChecker }
+        ]
       }).compile()
       const highCostService = module.get(PasswordService)
 

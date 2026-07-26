@@ -11,6 +11,7 @@ export { BymaxAuthModule } from './bymax-auth.module'
 // ---------------------------------------------------------------------------
 
 export {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -110,6 +111,7 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { NoOpEmailProvider } from './providers/no-op-email.provider'
+export { AllowAllBreachChecker, HibpBreachChecker } from './providers/hibp-breach-checker.provider'
 
 // ---------------------------------------------------------------------------
 // Guards
@@ -200,3 +202,4 @@ export { OAuthService } from './oauth/oauth.service'
 // ---------------------------------------------------------------------------
 
 export { hasRole, sanitizeHeaders, sleep } from './utils'
+export type { IPasswordBreachChecker } from './interfaces/password-breach-checker.interface'

@@ -123,6 +123,12 @@ export const AUTH_ERROR_CODES = {
   /** Password does not meet minimum strength requirements (e.g., fewer than 8 characters). */
   PASSWORD_TOO_WEAK: 'auth.password_too_weak',
 
+  /**
+   * The password appears in a known-breach corpus. Distinct from `PASSWORD_TOO_WEAK`: the
+   * password may satisfy every complexity rule and still be one an attacker will try first.
+   */
+  PASSWORD_COMPROMISED: 'auth.password_compromised',
+
   /** Password reset token not found in Redis. */
   PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
 
@@ -225,6 +231,8 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.mfa_temp_token_invalid': 'Invalid or expired temporary MFA token',
   'auth.recovery_code_invalid': 'Invalid recovery code',
   'auth.password_too_weak': 'Password too weak',
+  'auth.password_compromised':
+    'This password has appeared in a data breach. Please choose a different one.',
   'auth.password_reset_token_invalid': 'Invalid password reset token',
   'auth.password_reset_token_expired': 'Expired password reset token',
   'auth.otp_invalid': 'Invalid OTP code',

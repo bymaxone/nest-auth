@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -28,6 +29,7 @@ import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
+import { AllowAllBreachChecker } from './providers/hibp-breach-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
@@ -339,6 +341,44 @@ describe('BymaxAuthModule', () => {
       // NoOpEmailProvider should still be registered because the class shorthand is not BYMAX_AUTH_EMAIL_PROVIDER
       const emailProvider = module.get(BYMAX_AUTH_EMAIL_PROVIDER)
       expect(emailProvider).toBeInstanceOf(NoOpEmailProvider)
+    })
+
+    // The default breach checker approves everything, so a deployment that upgrades the
+    // library never starts reaching a third-party corpus it did not ask for.
+    it('should register the allow-all breach checker when the consumer supplies none', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+            ]
+          })
+        ]
+      }).compile()
+
+      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBeInstanceOf(AllowAllBreachChecker)
+    })
+
+    // A supplied checker wins, and the fallback is not registered over it — otherwise opting
+    // into the check would silently do nothing.
+    it('should use the consumer-supplied breach checker when one is provided', async () => {
+      const consumerChecker = { isBreached: async () => true }
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+              { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: consumerChecker }
+            ]
+          })
+        ]
+      }).compile()
+
+      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBe(consumerChecker)
     })
 
     // Verifies that the module compiles without extraProviders (defaults to empty array).

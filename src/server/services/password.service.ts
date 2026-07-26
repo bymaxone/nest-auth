@@ -6,10 +6,13 @@ import {
 } from 'node:crypto'
 import { promisify } from 'node:util'
 
-import { Inject, Injectable } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable } from '@nestjs/common'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
+import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -79,7 +82,10 @@ export class PasswordService {
   private readonly p: number
   private readonly maxmem: number
 
-  constructor(@Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions) {
+  constructor(
+    @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions,
+    @Inject(BYMAX_AUTH_BREACH_CHECKER) private readonly breachChecker: IPasswordBreachChecker
+  ) {
     this.N = options.password.costFactor
     this.r = options.password.blockSize
     this.p = options.password.parallelization
@@ -103,6 +109,25 @@ export class PasswordService {
    * // 'scrypt:4a3b...:{128 hex chars}'
    * ```
    */
+  /**
+   * Rejects a password that appears in a known-breach corpus.
+   *
+   * Called wherever a password is being *set* — registration, reset, invitation acceptance —
+   * and never on login: refusing a breached password someone already has would lock them out
+   * of the account they need to get into to change it.
+   *
+   * The checker fails open by contract, so an unreachable corpus admits the password rather
+   * than blocking the credential path.
+   *
+   * @param plain - The plaintext password the user is trying to set.
+   * @throws {@link AuthException} with `PASSWORD_COMPROMISED` when the corpus knows it.
+   */
+  async assertNotCompromised(plain: string): Promise<void> {
+    if (await this.breachChecker.isBreached(plain)) {
+      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED, HttpStatus.BAD_REQUEST)
+    }
+  }
+
   async hash(plain: string): Promise<string> {
     const salt = randomBytes(SALT_BYTES)
     const derived = await scrypt(plain, salt, SCRYPT_KEY_LEN, {
