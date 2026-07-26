@@ -287,6 +287,24 @@ compile-adjacent branches; the 20 timeouts are dominated by `nextjs/helpers/dedu
 
 ---
 
+## Where the score stands since
+
+The 99.10% above is the snapshot at the end of that hardening pass. The number moves as the
+library grows: new code arrives with survivors, and each subsequent pass drives them out. Every
+figure here is from a recorded run; none is estimated.
+
+| Date       | Score      | Killed | Survived | No coverage | Timeout | What moved it                                                                     |
+| ---------- | ---------- | -----: | -------: | ----------: | ------: | --------------------------------------------------------------------------------- |
+| 2026-07-26 | **98.37%** |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors |
+
+The gate is the `break` threshold of **95**, not the peak: a run fails below it. The drop from
+99.10% is new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
+family-lineage rotation — not a regression in what was already covered. `token-manager.service.ts`
+and `auth-redis.service.ts`, the two files rewritten by that work, are both at **100% with no
+suppressions**.
+
+---
+
 ## How to reproduce
 
 ```bash
