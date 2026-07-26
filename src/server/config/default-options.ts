@@ -59,7 +59,12 @@ export const DEFAULT_OPTIONS = {
     // case that makes OAuth redirects (Google → callback → dashboard) work
     // without dropping the freshly-issued session on the first hop. Consumers
     // that want the stricter posture can override via `cookies.sameSite`.
-    sameSite: 'lax' as const
+    sameSite: 'lax' as const,
+
+    // Empty by default: under the default `sameSite: 'lax'` the browser never sends the
+    // session cookie cross-site, so there is no cross-origin caller to authorize. A
+    // deployment that opts into `sameSite: 'none'` has to name its origins.
+    trustedOrigins: [] as string[]
   },
 
   mfa: {

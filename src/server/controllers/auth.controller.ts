@@ -22,6 +22,7 @@ import { RegisterDto } from '../dto/register.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
@@ -61,6 +62,7 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
  * @layer Controller
  */
 @Controller()
+@UseGuards(TrustedOriginGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class AuthController {
   constructor(

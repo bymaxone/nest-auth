@@ -160,6 +160,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthErrorRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateSameSiteNoneRequiresSecure(userOptions)
+  validateTrustedOrigins(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
@@ -611,6 +612,68 @@ function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions)
         `cookies would never be stored. Set secureCookies: true (and serve over HTTPS) or ` +
         `use cookies.sameSite: 'lax' / 'strict'.`
     )
+  }
+}
+
+/**
+ * Validates that the trusted-origin allowlist and the `SameSite` posture agree.
+ *
+ * The allowlist only ever matters under `SameSite=None`: that is the one setting where the
+ * browser sends the session cookie on a cross-site state-changing request, and therefore the
+ * one setting where an origin needs authorizing. Either half without the other is a
+ * misconfiguration that fails quietly — `'none'` with no list rejects every cross-site call,
+ * a list under `'lax'` is never consulted — so both are refused at startup rather than
+ * discovered in production.
+ */
+function validateTrustedOrigins(userOptions: BymaxAuthModuleOptions): void {
+  const sameSite = userOptions.cookies?.sameSite ?? DEFAULT_OPTIONS.cookies.sameSite
+  const trustedOrigins = userOptions.cookies?.trustedOrigins ?? []
+
+  if (sameSite === 'none' && trustedOrigins.length === 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.sameSite is 'none' but cookies.trustedOrigins is empty. ` +
+        `SameSite=None sends the session cookie on every cross-site request, so the origins ` +
+        `allowed to make one must be named — with none listed, every cross-site call that ` +
+        `changes state is rejected. Set cookies.trustedOrigins: ['https://app.example.com'].`
+    )
+  }
+
+  if (sameSite !== 'none' && trustedOrigins.length > 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.trustedOrigins is set but cookies.sameSite is '${sameSite}'. ` +
+        `The browser does not send the session cookie cross-site under that posture, so the ` +
+        `allowlist is never consulted and the configuration is misleading. Use ` +
+        `cookies.sameSite: 'none' (with secureCookies: true), or drop trustedOrigins.`
+    )
+  }
+
+  const malformed = trustedOrigins.filter((origin) => !isAbsoluteOrigin(origin))
+  if (malformed.length > 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.trustedOrigins contains entries that are not absolute ` +
+        `origins: ${malformed.join(', ')}. Each entry is compared verbatim against the ` +
+        `request's Origin header, which is always 'scheme://host[:port]' with no path or ` +
+        `trailing slash — anything else can never match.`
+    )
+  }
+}
+
+/**
+ * Whether a string is exactly an origin: scheme, host, optional port, nothing else.
+ *
+ * Parsing rather than pattern-matching, then requiring the round trip to be identical, is what
+ * rejects a trailing slash, a path, or credentials — all of which parse fine but never equal
+ * an `Origin` header.
+ *
+ * @param value - The configured entry.
+ * @returns `true` when the value is a bare absolute origin.
+ */
+function isAbsoluteOrigin(value: string): boolean {
+  try {
+    return new URL(value).origin === value
+  } catch {
+    // Not a URL at all — a bare hostname or a typo.
+    return false
   }
 }
 

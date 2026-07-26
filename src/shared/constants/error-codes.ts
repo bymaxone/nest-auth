@@ -57,6 +57,12 @@ export const AUTH_ERROR_CODES = {
   INSUFFICIENT_ROLE: 'auth.insufficient_role',
   FORBIDDEN: 'auth.forbidden',
 
+  /**
+   * A state-changing request carrying the session cookie came from an origin the deployment
+   * does not trust.
+   */
+  UNTRUSTED_ORIGIN: 'auth.untrusted_origin',
+
   // Invitations
   INVALID_INVITATION_TOKEN: 'auth.invalid_invitation_token',
 

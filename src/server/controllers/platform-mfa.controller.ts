@@ -18,6 +18,7 @@ import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
@@ -54,6 +55,7 @@ import { MfaService } from '../services/mfa.service'
  * @layer Controller
  */
 @Controller('platform/mfa')
+@UseGuards(TrustedOriginGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )

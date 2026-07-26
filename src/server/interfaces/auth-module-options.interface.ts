@@ -235,6 +235,27 @@ export interface BymaxAuthModuleOptions {
      *   Pick this for embedded scenarios (iframes, third-party widgets).
      */
     sameSite?: 'lax' | 'strict' | 'none'
+
+    /**
+     * Origins allowed to make state-changing requests that carry the session cookie.
+     * Default: `[]`.
+     *
+     * Each entry is a full origin — scheme, host and, when non-default, port
+     * (`'https://app.example.com'`, `'http://localhost:3000'`) — compared verbatim against the
+     * request's `Origin` header. No wildcards: an origin allowlist that matches by pattern is
+     * one typo away from allowing an attacker-controlled subdomain.
+     *
+     * This only matters with `sameSite: 'none'`. Under `'lax'` or `'strict'` the browser does
+     * not send the cookie cross-site at all, so there is nothing to authorize; the resolver
+     * warns when the two settings disagree, because a `'none'` deployment with an empty list
+     * rejects every cross-site call and one with a list but `'lax'` never uses it.
+     *
+     * @example
+     * ```ts
+     * { cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] } }
+     * ```
+     */
+    trustedOrigins?: string[]
   }
 
   /**

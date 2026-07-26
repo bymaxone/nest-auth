@@ -23,6 +23,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { InvitationService } from '../services/invitation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { InvitationController } from './invitation.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -99,6 +100,8 @@ describe('InvitationController', () => {
     })
       // Override JwtAuthGuard to avoid instantiating JwtService and related dependencies.
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

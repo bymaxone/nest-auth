@@ -152,6 +152,12 @@ export const AUTH_ERROR_CODES = {
   /** Generic access-denied fallback when no more specific code applies. */
   FORBIDDEN: 'auth.forbidden',
 
+  /**
+   * A state-changing request carrying the session cookie came from an origin the deployment
+   * does not trust. Raised by `TrustedOriginGuard` — see `cookies.trustedOrigins`.
+   */
+  UNTRUSTED_ORIGIN: 'auth.untrusted_origin',
+
   // ---------------------------------------------------------------------------
   // Invitations
   // ---------------------------------------------------------------------------
@@ -226,6 +232,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
   'auth.insufficient_role': 'Insufficient permission',
   'auth.forbidden': 'Access denied',
+  'auth.untrusted_origin': 'Request origin not allowed',
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',
   'auth.oauth_failed': 'OAuth authentication failed',
   'auth.oauth_email_mismatch': 'OAuth email does not match',

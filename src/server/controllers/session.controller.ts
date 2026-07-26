@@ -19,6 +19,7 @@ import { CurrentUser } from '../decorators/current-user.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SessionInfo } from '../services/session.service'
@@ -54,6 +55,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * @layer Controller
  */
 @Controller('sessions')
+@UseGuards(TrustedOriginGuard)
 @UseGuards(JwtAuthGuard, UserStatusGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class SessionController {

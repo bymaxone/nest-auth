@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { AuthController } from './auth.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -103,6 +104,8 @@ describe('AuthController', () => {
     })
       // Override guards applied via @UseGuards() — unit tests should not instantiate guard deps.
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

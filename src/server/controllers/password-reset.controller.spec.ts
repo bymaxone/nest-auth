@@ -15,6 +15,7 @@ import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { PasswordResetService } from '../services/password-reset.service'
 import { PasswordResetController } from './password-reset.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -50,7 +51,10 @@ describe('PasswordResetController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PasswordResetController],
       providers: [{ provide: PasswordResetService, useValue: mockPasswordResetService }]
-    }).compile()
+    })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .compile()
 
     controller = module.get(PasswordResetController)
   })
@@ -66,9 +70,13 @@ describe('PasswordResetController', () => {
   })
 
   // Verifies that no access guards are attached at the controller level because @Public() marks it as open.
-  it('should not have guards metadata at the controller level', () => {
-    const guards: unknown = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController)
-    expect(guards).toBeUndefined()
+  // The only class-level guard is the origin check, which authorizes nothing — it refuses a
+  // cross-site state-changing request that rides in on the session cookie. Every route here
+  // stays public: a password reset is performed by someone who cannot authenticate.
+  it('applies only the origin guard at the controller level', () => {
+    const guards = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController) as unknown[]
+
+    expect(guards).toEqual([TrustedOriginGuard])
   })
 
   // ---------------------------------------------------------------------------

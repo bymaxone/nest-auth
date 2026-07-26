@@ -22,6 +22,7 @@ import { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type {
   AuthResult,
   MfaChallengeResult,
@@ -99,6 +100,7 @@ function isMfaChallenge(
  * @layer Controller
  */
 @Controller('platform')
+@UseGuards(TrustedOriginGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class PlatformAuthController {
   constructor(

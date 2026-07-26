@@ -355,9 +355,72 @@ describe('resolveOptions — cookies.sameSite', () => {
       resolveOptions({
         ...MINIMAL_OPTIONS,
         secureCookies: true,
-        cookies: { sameSite: 'none' }
+        cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] }
       })
     ).not.toThrow()
+  })
+
+  /**
+   * Verifies that `SameSite=None` without an allowlist is refused. It is the one posture where
+   * the browser sends the session cookie cross-site, so with no origin named every cross-site
+   * state-changing call is rejected — a deployment that boots and then quietly fails.
+   */
+  it('should reject cookies.sameSite: "none" with an empty trustedOrigins', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: { sameSite: 'none' }
+      })
+    ).toThrow(/cookies\.trustedOrigins is empty/)
+  })
+
+  /**
+   * The inverse: an allowlist that can never be consulted, because under `lax` or `strict` the
+   * browser does not send the cookie cross-site at all. Refusing it stops a deployment from
+   * believing it authorized an origin that will never be asked about.
+   */
+  it('should reject trustedOrigins under a SameSite posture that never uses it', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        cookies: { trustedOrigins: ['https://app.example.com'] }
+      })
+    ).toThrow(/cookies\.trustedOrigins is set but cookies\.sameSite is 'lax'/)
+  })
+
+  /**
+   * Every entry is compared verbatim against the `Origin` header, which is always a bare
+   * origin. A path, a trailing slash or a naked hostname parses fine but can never match, so
+   * it is refused at startup rather than silently blocking the origin it was meant to allow.
+   */
+  it.each([
+    'https://app.example.com/',
+    'https://app.example.com/callback',
+    'app.example.com',
+    'not a url'
+  ])('should reject the malformed trusted origin %s', (origin) => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: { sameSite: 'none', trustedOrigins: [origin] }
+      })
+    ).toThrow(/not absolute origins/)
+  })
+
+  /**
+   * A port is part of the origin and must survive the round trip, so a local development
+   * front end can be listed.
+   */
+  it('should accept an origin carrying an explicit port', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      secureCookies: true,
+      cookies: { sameSite: 'none', trustedOrigins: ['http://localhost:3000'] }
+    })
+
+    expect(resolved.cookies.trustedOrigins).toEqual(['http://localhost:3000'])
   })
 
   /**
@@ -400,7 +463,7 @@ describe('resolveOptions — cookies.sameSite', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
-          cookies: { sameSite: 'none' }
+          cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] }
         })
       ).not.toThrow()
     } finally {

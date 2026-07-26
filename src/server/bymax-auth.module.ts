@@ -30,6 +30,7 @@ import { JwtPlatformGuard } from './guards/jwt-platform.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { PlatformRolesGuard } from './guards/platform-roles.guard'
 import { RolesGuard } from './guards/roles.guard'
+import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
@@ -386,6 +387,7 @@ export class BymaxAuthModule {
         AuthService,
         // Guards — registered as providers so they can be applied via @UseGuards().
         JwtAuthGuard,
+        TrustedOriginGuard,
         RolesGuard,
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.
@@ -409,6 +411,7 @@ export class BymaxAuthModule {
         AuthService,
         // Export guards so host-app modules can apply them without reimporting.
         JwtAuthGuard,
+        TrustedOriginGuard,
         RolesGuard,
         UserStatusGuard,
         // Export TokenDeliveryService for host-app refresh endpoints.

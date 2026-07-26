@@ -27,7 +27,8 @@ import {
   Req,
   Res,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseGuards
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
@@ -42,6 +43,7 @@ import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { OAuthCallbackQueryDto } from '../dto/oauth-callback-query.dto'
 import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { AuthException } from '../errors/auth-exception'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type {
   BearerAuthResponse,
@@ -119,6 +121,7 @@ function appendErrorQueryParam(url: string, errorCode: string): string {
 @Public()
 @SkipMfa()
 @Controller('oauth')
+@UseGuards(TrustedOriginGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )

@@ -13,6 +13,7 @@ import { AuthException } from '../errors/auth-exception'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { MfaService } from '../services/mfa.service'
 import { PlatformMfaController } from './platform-mfa.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -69,6 +70,8 @@ describe('PlatformMfaController', () => {
       providers: [{ provide: MfaService, useValue: mockMfaService }]
     })
       .overrideGuard(JwtPlatformGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

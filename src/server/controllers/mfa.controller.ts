@@ -28,6 +28,7 @@ import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { MfaSetupResult } from '../services/mfa.service'
@@ -114,6 +115,7 @@ function isTokenInvalidException(err: unknown): boolean {
  * @layer Controller
  */
 @Controller('mfa')
+@UseGuards(TrustedOriginGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )

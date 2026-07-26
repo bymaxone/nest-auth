@@ -16,6 +16,7 @@ import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { SessionController } from './session.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -81,6 +82,8 @@ describe('SessionController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(UserStatusGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

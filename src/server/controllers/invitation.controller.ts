@@ -19,6 +19,7 @@ import { Public } from '../decorators/public.decorator'
 import { AcceptInvitationDto } from '../dto/accept-invitation.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { InvitationService } from '../services/invitation.service'
@@ -52,6 +53,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * @layer Controller
  */
 @Controller('invitations')
+@UseGuards(TrustedOriginGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class InvitationController {
   constructor(

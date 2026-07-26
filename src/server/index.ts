@@ -122,6 +122,7 @@ export { OptionalAuthGuard } from './guards/optional-auth.guard'
 export { PlatformRolesGuard } from './guards/platform-roles.guard'
 export { RolesGuard } from './guards/roles.guard'
 export { SelfOrAdminGuard } from './guards/self-or-admin.guard'
+export { TrustedOriginGuard } from './guards/trusted-origin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
 

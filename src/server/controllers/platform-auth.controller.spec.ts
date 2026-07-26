@@ -27,6 +27,7 @@ import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { PlatformAuthController } from './platform-auth.controller'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles — fixtures
@@ -119,6 +120,8 @@ async function buildModule(): Promise<TestingModule> {
     })
       // Override guard to avoid instantiating JwtService / Redis / Reflector.
       .overrideGuard(JwtPlatformGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .compile()
   )

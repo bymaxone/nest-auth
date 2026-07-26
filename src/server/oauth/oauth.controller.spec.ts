@@ -25,6 +25,7 @@ import { OAuthService } from './oauth.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -79,7 +80,10 @@ describe('OAuthController', () => {
         { provide: TokenDeliveryService, useValue: mockTokenDelivery },
         { provide: BYMAX_AUTH_OPTIONS, useValue: buildOptions(oauth) }
       ]
-    }).compile()
+    })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .compile()
 
     controller = module.get(OAuthController)
   }
@@ -453,7 +457,10 @@ describe('OAuthController', () => {
             } as unknown as ResolvedOptions
           }
         ]
-      }).compile()
+      })
+        .overrideGuard(TrustedOriginGuard)
+        .useValue({ canActivate: () => true })
+        .compile()
       controller = module.get(OAuthController)
 
       const mockReq = makeReq()
