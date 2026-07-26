@@ -19,6 +19,7 @@ import { join } from 'node:path'
 
 import { hmacSha256 } from './crypto/secure-token'
 import { resolveOptions } from './config/resolved-options'
+import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
 
 interface WireContract {
   hmacKeyDerivation: {
@@ -36,6 +37,7 @@ interface WireContract {
   recordEncodings: Record<string, { fields?: string[]; createdAt?: string; familyId?: string }>
   credentialFormats: Record<string, string>
   accessTokenClaims: Record<string, unknown>
+  rateLimits: Record<string, string>
 }
 
 const contract = JSON.parse(
@@ -237,6 +239,43 @@ describe('cross-implementation conformance', () => {
         expect(server).toEqual(shared)
       }
     )
+  })
+
+  // -------------------------------------------------------------------------
+  // Rate limits
+  // -------------------------------------------------------------------------
+
+  describe('per-route rate limits', () => {
+    /** Render a throttle entry as the contract's `requests/windowSeconds` form. */
+    function asContractValue(config: { default: { limit: number; ttl: number } }): string {
+      return `${config.default.limit}/${config.default.ttl / 1000}`
+    }
+
+    // Both backends enforce these numbers, so a value changed on one side only means the same
+    // client is throttled at different points depending on which one served the request.
+    it.each(Object.keys(contract.rateLimits).filter((key) => !key.startsWith('$')))(
+      'serves %s under the contract limit',
+      (route) => {
+        const catalog = AUTH_THROTTLE_CONFIGS as Record<
+          string,
+          { default: { limit: number; ttl: number } } | undefined
+        >
+        const config = catalog[route]
+
+        expect(config).toBeDefined()
+        expect(asContractValue(config ?? { default: { limit: 0, ttl: 0 } })).toBe(
+          contract.rateLimits[route]
+        )
+      }
+    )
+
+    // The catalog and the contract must describe the same set of routes: an entry on one side
+    // only is a route whose limit nobody agreed on.
+    it('covers exactly the routes the contract names', () => {
+      const contractRoutes = Object.keys(contract.rateLimits).filter((key) => !key.startsWith('$'))
+
+      expect(Object.keys(AUTH_THROTTLE_CONFIGS).sort()).toEqual(contractRoutes.sort())
+    })
   })
 
   // -------------------------------------------------------------------------
