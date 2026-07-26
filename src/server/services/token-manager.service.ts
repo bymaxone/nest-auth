@@ -424,11 +424,14 @@ export class TokenManagerService {
    */
   private assertWithinAbsoluteLifetime(session: RefreshSession): void {
     const capDays = this.options.jwt.absoluteSessionLifetimeDays
-    if (capDays <= 0 || session.familyCreatedAt === '') return
+    if (capDays <= 0) return
 
+    // An absent birth time parses to NaN, so the finite check covers both the legacy record
+    // and a malformed value with one guard. Neither is evidence the session is old, and
+    // ending a session on a field that cannot be read would be a self-inflicted outage.
     const bornAt = Date.parse(session.familyCreatedAt)
-    // An unparseable birth time is not evidence the session is old; treat it as absent rather
-    // than ending a session on a malformed field.
+    // Stryker disable next-line ConditionalExpression: equivalent — `NaN > cap` is false, so
+    // dropping this guard reaches the same decision by a longer route. It states the intent.
     if (!Number.isFinite(bornAt)) return
 
     if (Date.now() - bornAt > capDays * 86_400_000) {

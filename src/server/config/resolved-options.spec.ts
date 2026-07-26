@@ -366,13 +366,19 @@ describe('resolveOptions — cookies.sameSite', () => {
    * state-changing call is rejected — a deployment that boots and then quietly fails.
    */
   it('should reject cookies.sameSite: "none" with an empty trustedOrigins', () => {
-    expect(() =>
+    const resolve = () =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
         secureCookies: true,
         cookies: { sameSite: 'none' }
       })
-    ).toThrow(/cookies\.trustedOrigins is empty/)
+
+    expect(resolve).toThrow(/cookies\.trustedOrigins is empty/)
+    // The message has to carry the remedy, not just the diagnosis: it is the whole reason
+    // this is refused at startup instead of at the first rejected request.
+    expect(resolve).toThrow('sends the session cookie on every cross-site request')
+    expect(resolve).toThrow('every cross-site call that changes state is rejected')
+    expect(resolve).toThrow("Set cookies.trustedOrigins: ['https://app.example.com']")
   })
 
   /**
@@ -381,12 +387,16 @@ describe('resolveOptions — cookies.sameSite', () => {
    * believing it authorized an origin that will never be asked about.
    */
   it('should reject trustedOrigins under a SameSite posture that never uses it', () => {
-    expect(() =>
+    const resolve = () =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
         cookies: { trustedOrigins: ['https://app.example.com'] }
       })
-    ).toThrow(/cookies\.trustedOrigins is set but cookies\.sameSite is 'lax'/)
+
+    expect(resolve).toThrow(/cookies\.trustedOrigins is set but cookies\.sameSite is 'lax'/)
+    expect(resolve).toThrow('does not send the session cookie cross-site under that posture')
+    expect(resolve).toThrow('the allowlist is never consulted')
+    expect(resolve).toThrow("Use cookies.sameSite: 'none' (with secureCookies: true)")
   })
 
   /**
@@ -400,13 +410,37 @@ describe('resolveOptions — cookies.sameSite', () => {
     'app.example.com',
     'not a url'
   ])('should reject the malformed trusted origin %s', (origin) => {
-    expect(() =>
+    const resolve = () =>
       resolveOptions({
         ...MINIMAL_OPTIONS,
         secureCookies: true,
         cookies: { sameSite: 'none', trustedOrigins: [origin] }
       })
-    ).toThrow(/not absolute origins/)
+
+    expect(resolve).toThrow(/not absolute origins/)
+    // The offending entry is named, along with the shape that would have worked — with four
+    // origins listed, "one of these is wrong" is not an actionable message.
+    expect(resolve).toThrow(origin)
+    expect(resolve).toThrow('compared verbatim against the')
+    expect(resolve).toThrow("always 'scheme://host[:port]' with no path or trailing slash")
+  })
+
+  /**
+   * With more than one bad entry the message has to keep them apart — a run-together list is
+   * not a list, and the operator has to be able to read which origins to fix.
+   */
+  it('should name every malformed trusted origin, separated', () => {
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: {
+          sameSite: 'none',
+          trustedOrigins: ['app.example.com', 'https://app.example.com/']
+        }
+      })
+
+    expect(resolve).toThrow('app.example.com, https://app.example.com/')
   })
 
   /**
@@ -434,12 +468,17 @@ describe('resolveOptions — cookies.sameSite', () => {
     const original = process.env['NODE_ENV']
     process.env['NODE_ENV'] = 'development'
     try {
-      expect(() =>
+      const resolve = () =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
           cookies: { sameSite: 'none' }
         })
-      ).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+
+      expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+      expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
+      expect(resolve).toThrow('the auth cookies would never be stored')
+      expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
+      expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
     } finally {
       if (original === undefined) {
         delete process.env['NODE_ENV']

@@ -515,6 +515,34 @@ describe('TokenManagerService', () => {
       expect(bundle.newSessionJson).not.toContain('familyId')
     })
 
+    // Scenario: a record from the window where families existed but the birth time did not.
+    // Expected: rotation inherits the family and leaves the birth time absent. Inventing one
+    // would start an absolute-lifetime clock at the rotation rather than at the login, which
+    // is the opposite of what the cap measures — and it would diverge from rust-auth, which
+    // omits the field rather than writing a placeholder.
+    it('rotates a family-bearing session with no birth time without inventing one', async () => {
+      armLiveRotation(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          familyId: FAMILY
+        })
+      )
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const bundle = mockRedis.rotateRefreshSession.mock.calls[0]?.[0] as {
+        familyId: string
+        newSessionJson: string
+      }
+      expect(bundle.familyId).toBe(FAMILY)
+      expect(JSON.parse(bundle.newSessionJson)).toMatchObject({ familyCreatedAt: '' })
+    })
+
     // Verifies that primary rotation tracks the grace pointer in sess:{userId} so
     // invalidateUserSessions can delete it — without that member, a token rotated away moments
     // before "log out everywhere" would still recover a session for the whole grace window.
@@ -764,12 +792,19 @@ describe('TokenManagerService', () => {
         })
       )
 
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       await expect(
         capped.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
       // Refused before the script ran: the token is still spendable by the legitimate holder
       // right up until they sign in again, and nothing was consumed on their behalf.
       expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
+      // The warning is the operator's only signal that sessions are being ended by the cap
+      // rather than by a bug.
+      expect(warnSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        'outlived the absolute lifetime cap'
+      )
+      warnSpy.mockRestore()
     })
 
     // Scenario: the same session, one day inside the cap. Expected: it rotates. The boundary

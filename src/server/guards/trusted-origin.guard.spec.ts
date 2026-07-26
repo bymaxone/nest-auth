@@ -106,11 +106,19 @@ describe('TrustedOriginGuard', () => {
     })
 
     // A request with no cookie jar at all (a framework that never parsed cookies) is treated
-    // the same as one with an empty jar rather than crashing on the property access.
+    // the same as one with an empty jar rather than crashing on the property access. The
+    // untrusted origin is what makes this observable: reading such a jar as credential-bearing
+    // would turn every unparsed request into a rejection.
     it.each([undefined, null, 'not-an-object'])(
       'treats a %s cookie jar as carrying no credential',
       (cookies) => {
-        expect(guard.canActivate(contextFor({ method: 'POST', headers: {}, cookies }))).toBe(true)
+        const context = contextFor({
+          method: 'POST',
+          headers: { origin: 'https://evil.example.com' },
+          cookies
+        })
+
+        expect(guard.canActivate(context)).toBe(true)
       }
     )
 
@@ -126,13 +134,17 @@ describe('TrustedOriginGuard', () => {
     // The refresh cookie is a credential too — the refresh endpoint is the single most
     // valuable CSRF target in the module, so it must be recognised.
     it('recognises the refresh cookie as a credential', () => {
+      // Asserted from the refusing side: the refresh cookie mints access tokens, so a
+      // cross-site write carrying only that one is as much a target as one carrying the
+      // access cookie. Against a trusted origin the request passes either way, which would
+      // have proved nothing.
       const context = {
         method: 'POST',
-        headers: { origin: TRUSTED },
+        headers: { origin: 'https://evil.example.com' },
         cookies: { [AUTH_REFRESH_COOKIE_NAME]: 'r_1' }
       }
 
-      expect(guard.canActivate(contextFor(context))).toBe(true)
+      expect(() => guard.canActivate(contextFor(context))).toThrow(AuthException)
     })
 
     // A listed origin is exactly what the allowlist is for.
