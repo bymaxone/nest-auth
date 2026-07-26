@@ -11,8 +11,9 @@ import { AuthException } from '../errors/auth-exception'
 /**
  * Maps a canonical (lowercased) blocked status to the error code that names it, so the
  * caller learns *why* the account is refused rather than a generic rejection. A status
- * that is configured as blocked but absent from this map falls back to
- * `ACCOUNT_INACTIVE` — consumers may define application-specific statuses.
+ * that is configured as blocked but absent from this map falls back to `ACCOUNT_INACTIVE`,
+ * which is why `inactive` itself carries no entry — listing it would be a second spelling
+ * of the fallback, indistinguishable at runtime and therefore untestable.
  *
  * A `Map` rather than an object literal: the status is application-defined data, and a
  * plain-object lookup would resolve inherited keys, so a status of `'constructor'` or
@@ -21,7 +22,6 @@ import { AuthException } from '../errors/auth-exception'
  */
 const BLOCKED_STATUS_CODES = new Map<string, AuthErrorCode>([
   ['banned', AUTH_ERROR_CODES.ACCOUNT_BANNED],
-  ['inactive', AUTH_ERROR_CODES.ACCOUNT_INACTIVE],
   ['suspended', AUTH_ERROR_CODES.ACCOUNT_SUSPENDED],
   ['pending', AUTH_ERROR_CODES.PENDING_APPROVAL],
   ['pending_approval', AUTH_ERROR_CODES.PENDING_APPROVAL]

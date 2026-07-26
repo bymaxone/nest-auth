@@ -1,5 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 
+import { Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
@@ -317,6 +318,25 @@ describe('TokenManagerService', () => {
       expect(typeof detail['lastActivityAt']).toBe('number')
     })
 
+    // Scenario: an oversized User-Agent and IP, both attacker-controlled request headers.
+    // Expected: each is truncated to the stored ceiling. Why: without the bound, a caller
+    // could push arbitrarily large values into a Redis value on every login — the record is
+    // written per session and never validated downstream, so the cap is the only limit.
+    it('truncates the device and IP before they reach the psd: record', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+      const hugeAgent = 'A'.repeat(500)
+      const hugeIp = '1'.repeat(500)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, hugeIp, hugeAgent)
+
+      const detailCall = mockRedis.set.mock.calls.find(
+        (call) => (call[0] as string) === `psd:${NEW_HASH}`
+      )
+      const detail = JSON.parse(detailCall![1] as string) as { device: string; ip: string }
+      expect(detail.device.length).toBe(45)
+      expect(detail.ip.length).toBe(45)
+    })
+
     // Scenario: a platform admin has no tenant — the stored session tenantId must be an empty string.
     // Expected: stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on line
     // 229 that passes "Stryker was here!" as the tenantId to buildSession.
@@ -509,6 +529,7 @@ describe('TokenManagerService', () => {
     // The whole token family must be revoked and the user's access tokens cut off,
     // then the request still fails as REFRESH_TOKEN_INVALID.
     it('should revoke the whole family when a superseded token is reused', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.eval.mockResolvedValue(null) // no live session
       // grace pointer getdel → null; reuse-sentinel getdel → the victim's id (consumed).
       mockRedis.getdel.mockImplementation((key: string) =>
@@ -521,6 +542,11 @@ describe('TokenManagerService', () => {
 
       // Sentinel is read-and-cleared with GETDEL so a replay cannot re-trigger revocation.
       expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rused:/))
+      // The warning is the operator's only signal that a token theft was detected — an
+      // emptied template would make the revocation silent.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('reuse of a rotated refresh token detected')
+      warnSpy.mockRestore()
       // Full-family revocation: sessions deleted AND access-token cutoff recorded in one call.
       expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith(
         'victim-user-id',
@@ -1128,6 +1154,7 @@ describe('TokenManagerService', () => {
       expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prt:${oldHash}`)
       const indexed = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
       expect(indexed).not.toContain('sess:admin-1')
+      expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
     // Scenario: the new platform session record must store an empty tenantId on primary rotation.
@@ -1161,6 +1188,9 @@ describe('TokenManagerService', () => {
       expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
       expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
       expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      // The superseded detail record is dropped by its exact key; a wrong key would leak
+      // the old record until TTL and leave a listing describing a token that no longer exists.
+      expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
     // Scenario: the new platform session record must store an empty tenantId on grace-window rotation.

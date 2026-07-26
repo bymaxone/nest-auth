@@ -60,6 +60,8 @@ describe('assertNotBlocked', () => {
 
   // Verifies each documented status maps to its own error code, so the caller learns why
   // the account was refused instead of receiving one opaque rejection for every state.
+  // `inactive` resolves through the fallback rather than an explicit entry — the two are
+  // indistinguishable at runtime, so a dedicated entry would be untestable duplication.
   it.each([
     ['banned', AUTH_ERROR_CODES.ACCOUNT_BANNED],
     ['inactive', AUTH_ERROR_CODES.ACCOUNT_INACTIVE],

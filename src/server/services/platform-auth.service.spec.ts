@@ -458,6 +458,33 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
+    // Scenario: logout must prune the session from the platform index and drop its detail
+    // record. Expected: the exact psess:/psd: keys, spelled out. Why: the platform plane has
+    // its own keyspace, and a prefix typo here would leave the member behind — the session
+    // would keep showing up in a listing and, worse, a later revoke-all would try to delete a
+    // key that no longer matches the one logout wrote.
+    it('should prune both platform index members and the detail record on logout', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 3600
+
+      await service.logout(userId, jti, futureExp, rawRefreshToken)
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.del).toHaveBeenCalledWith('psd:' + tokenHash)
+    })
+
+    // Scenario: the same logout against the legacy shared index. Expected: the pre-migration
+    // sess: members are pruned too. Why: sessions created before the platform plane got its
+    // own keyspace still live there, and logout has to reach them or they survive until TTL.
+    it('should also prune the legacy shared index on logout', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 3600
+
+      await service.logout(userId, jti, futureExp, rawRefreshToken)
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
+    })
+
     // Verifies that the primary platform refresh token key (prt:{hash}) is deleted from Redis.
     it('should delete prt:{sha256(rawRefreshToken)} from Redis', async () => {
       await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
