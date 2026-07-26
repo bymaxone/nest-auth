@@ -31,8 +31,11 @@ interface WireContract {
   }
   redisKeyPrefixes: Record<string, string>
   sessionIndexMembers: Record<string, string>
-  recordEncodings: Record<string, { fields?: string[]; createdAt?: string }>
+  familyIndexMembers: Record<string, string>
+  rotationSemantics: Record<string, string>
+  recordEncodings: Record<string, { fields?: string[]; createdAt?: string; familyId?: string }>
   credentialFormats: Record<string, string>
+  accessTokenClaims: Record<string, unknown>
 }
 
 const contract = JSON.parse(
@@ -88,6 +91,12 @@ describe('cross-implementation conformance', () => {
       platformGracePointer: 'services/token-manager.service.ts',
       platformSessionIndex: 'services/token-manager.service.ts',
       platformSessionDetail: 'services/token-manager.service.ts',
+      dashboardConsumedFamilyMarker: 'redis/auth-redis.service.ts',
+      dashboardFamilyIndex: 'services/token-manager.service.ts',
+      platformConsumedFamilyMarker: 'redis/auth-redis.service.ts',
+      platformFamilyIndex: 'services/token-manager.service.ts',
+      dashboardTokenEpoch: 'redis/auth-redis.service.ts',
+      platformTokenEpoch: 'redis/auth-redis.service.ts',
       accessTokenBlacklist: 'guards/jwt-auth.guard.ts',
       totpReplayMarker: 'services/mfa.service.ts',
       passwordResetToken: 'services/password-reset.service.ts',
@@ -97,6 +106,9 @@ describe('cross-implementation conformance', () => {
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on
     // one side only splits the keyspace: a reset link emailed by one backend becomes invisible
     // to the other, and a session index written by one is never swept by the other.
+    //
+    // A prefix appears in the source either interpolated into a key (`rt:${hash}`) or named in
+    // the prefix table the rotation scripts are driven by (`live: 'rt'`), so either form counts.
     it.each(Object.entries(PREFIX_SOURCES))(
       'writes the contract prefix for %s',
       (name, sourceFile) => {
@@ -104,7 +116,7 @@ describe('cross-implementation conformance', () => {
         const source = readFileSync(join(__dirname, sourceFile), 'utf8')
 
         expect(prefix).toBeDefined()
-        expect(source).toContain(`${prefix}:`)
+        expect(source.includes(`${prefix}:`) || source.includes(`'${prefix}'`)).toBe(true)
       }
     )
 
@@ -143,6 +155,70 @@ describe('cross-implementation conformance', () => {
 
       expect(source).toContain('`rt:${tokenHash}`')
       expect(source).toContain('`prt:${tokenHash}`')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Family index and rotation semantics
+  // -------------------------------------------------------------------------
+
+  describe('refresh-token families', () => {
+    // Verifies the family index takes BARE hashes, unlike the session index. It only ever
+    // tracks live refresh sessions, so the keyspace is implied — and the revocation script
+    // rebuilds `rt:{hash}` from the member, which double-prefixing would break.
+    it('declares bare-hash members for the family index', () => {
+      expect(contract.familyIndexMembers['dashboardLive']).toBe('{sha256(refreshToken)}')
+      expect(contract.familyIndexMembers['platformLive']).toBe('{sha256(refreshToken)}')
+
+      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
+      expect(source).toContain('`fam:${familyId}`, tokenHash')
+      expect(source).toContain('`pfam:${familyId}`, tokenHash')
+    })
+
+    // Verifies the record carries the family, omitted rather than emptied. rust-auth skips the
+    // field when empty, so writing `"familyId":""` would make the same session serialize to
+    // different bytes on each side.
+    it('carries familyId on the refresh session record, omitted when empty', () => {
+      expect(contract.recordEncodings['refreshSession']?.fields).toContain('familyId')
+      expect(contract.recordEncodings['refreshSession']?.['familyId']).toContain('omitted')
+
+      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
+      expect(source).toContain('const { familyId: _omitted, ...rest } = session')
+    })
+
+    // Verifies the reaction to a replay is the same on both sides. The two backends share the
+    // consumed-family marker, so one treating a replay as recoverable while the other treats it
+    // as theft would make the reaction depend on which backend the request happened to reach.
+    it('pins the grace and reuse semantics both sides implement', () => {
+      expect(contract.rotationSemantics['graceWindow']).toContain('single-shot')
+      expect(contract.rotationSemantics['graceRequiresLiveFamily']).toContain('refused')
+      expect(contract.rotationSemantics['reuseReaction']).toContain('revoke the whole family')
+
+      const source = readFileSync(join(__dirname, 'redis/auth-redis.service.ts'), 'utf8')
+      // The pointer is consumed on use, and a recovery is refused once its lineage is gone.
+      expect(source).toContain("redis.call('DEL', KEYS[3])")
+      expect(source).toContain('familyIsAlive')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Access-token claims
+  // -------------------------------------------------------------------------
+
+  describe('access token claims', () => {
+    // Verifies the bulk-revocation claim and its keyspace. Both sides stamp it and both sides
+    // compare it, so a token issued by either backend is judged the same way — and a token that
+    // predates the claim reads as generation 0 rather than being rejected outright.
+    it('pins the epoch claim, its keyspace, and the rejection rule', () => {
+      const epoch = contract.accessTokenClaims['epoch'] as Record<string, unknown>
+
+      expect(epoch['claim']).toBe('epoch')
+      expect(epoch['storedUnder']).toBe('{ep|pep}:{userId}')
+      expect(epoch['absentReadsAs']).toBe(0)
+      expect(epoch['rejectWhen']).toBe('stampedEpoch < storedEpoch')
+
+      const guard = readFileSync(join(__dirname, 'guards/jwt-auth.guard.ts'), 'utf8')
+      expect(guard).toContain('readStampedEpoch(payload) < epoch')
     })
   })
 
