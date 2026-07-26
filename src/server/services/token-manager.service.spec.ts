@@ -47,6 +47,9 @@ const mockRedis = {
   sadd: jest.fn().mockResolvedValue(1),
   srem: jest.fn().mockResolvedValue(1),
   expire: jest.fn().mockResolvedValue(undefined),
+  rotateRefreshSession: jest.fn(),
+  revokeFamily: jest.fn().mockResolvedValue(1),
+  invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined)
 }
 
@@ -117,15 +120,11 @@ describe('TokenManagerService', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     mockJwtService.sign.mockReturnValue(FIXED_JWT)
-    // Default: no reuse sentinel exists, so the terminal reissue path treats an
-    // unknown token as a plain invalid string. Reuse-detection tests override this.
+    // Defaults matching the real contracts, not jest's `undefined`: `get` returns
+    // `Promise<string | null>`, so an `undefined` would slip past the `=== null` guard that
+    // decides whether a live session was found. Rotation tests override both.
     mockRedis.get.mockResolvedValue(null)
-    // Reset getdel between tests: some reuse tests install a keyed mockImplementation
-    // (grace vs rused: key) that clearAllMocks does not clear, so wipe it here to stop
-    // it leaking into later tests. Re-seed the default to `null` (not the reset default
-    // of `undefined`) so the double matches the real getdel contract of
-    // `Promise<string | null>` — an `undefined` would fail the `=== null` guard in
-    // handleReusedToken and spuriously enter the reuse branch. Tests override as needed.
+    mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
     mockRedis.getdel.mockReset()
     mockRedis.getdel.mockResolvedValue(null)
 
@@ -228,6 +227,23 @@ describe('TokenManagerService', () => {
       expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
     })
 
+    // Scenario: a login opens a refresh-token family and indexes the session in it.
+    // Expected: the record carries the family, and the index holds the BARE hash under the
+    // family TTL. Why: the family is the unit reuse detection revokes — a login that opened no
+    // family could have its stolen token replayed forever without any lineage to kill. The index
+    // member is bare because a family only ever tracks live `rt:` sessions.
+    it('opens a refresh-token family and indexes the session under it', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
+
+      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
+      const session = JSON.parse(storedJson) as Record<string, unknown>
+      expect(session['familyId']).toBe(FIXED_UUID)
+      expect(mockRedis.sadd).toHaveBeenCalledWith(`fam:${FIXED_UUID}`, NEW_HASH)
+      expect(mockRedis.expire).toHaveBeenCalledWith(`fam:${FIXED_UUID}`, 7 * 86_400)
+    })
+
     // Scenario: a normal login (no MFA-complete override) must NOT mark the access token mfaVerified.
     // Expected: sign payload has mfaVerified:false. Why: kills the BooleanLiteral mutant on line 172
     // (`overrides?.mfaVerified ?? false` → `?? true`), a security regression that would skip the
@@ -284,6 +300,21 @@ describe('TokenManagerService', () => {
 
       expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
       expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
+    })
+
+    // Scenario: a platform login opens its own family, indexed under `pfam:` — the platform
+    // analogue of the dashboard `fam:` index, and separate from it for the same reason the
+    // session indexes are separate.
+    it('opens a platform refresh-token family and indexes the session under it', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
+      const session = JSON.parse(storedJson) as Record<string, unknown>
+      expect(session['familyId']).toBe(FIXED_UUID)
+      expect(mockRedis.sadd).toHaveBeenCalledWith(`pfam:${FIXED_UUID}`, NEW_HASH)
+      expect(mockRedis.expire).toHaveBeenCalledWith(`pfam:${FIXED_UUID}`, 7 * 86_400)
     })
 
     // Scenario: the platform plane must not write into the dashboard session index. Expected: no
@@ -368,29 +399,49 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('reissueTokens', () => {
+    const FAMILY = 'fam-old-1'
     const OLD_SESSION = JSON.stringify({
       userId: 'user-1',
       tenantId: 'tenant-1',
       role: 'member',
       device: 'Browser',
       ip: '1.2.3.4',
-      createdAt: '2026-01-01T00:00:00.000Z'
+      createdAt: '2026-01-01T00:00:00.000Z',
+      familyId: FAMILY
     })
+
+    /** Arms the seed read + the rotation script for a live (primary) rotation. */
+    function armLiveRotation(sessionJson = OLD_SESSION): void {
+      mockRedis.get.mockResolvedValue(sessionJson)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+    }
+
+    /** Arms a rotation whose presented token was already consumed but is inside its grace window. */
+    function armGraceRotation(sessionJson = OLD_SESSION): void {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'grace', sessionJson })
+      mockRedis.set.mockResolvedValue(undefined)
+    }
 
     // Verifies that mfaEnabled:true in the stored session is propagated into the rotated access token.
     // This is a critical security property: MfaRequiredGuard must continue to enforce MFA after rotation.
     it('should propagate mfaEnabled:true from the stored session into the rotated access token', async () => {
-      const sessionWithMfa = JSON.stringify({
-        userId: 'user-1',
-        tenantId: 'tenant-1',
-        role: 'member',
-        device: 'Browser',
-        ip: '1.2.3.4',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        mfaEnabled: true
-      })
-      mockRedis.eval.mockResolvedValue(sessionWithMfa)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLiveRotation(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          mfaEnabled: true,
+          familyId: FAMILY
+        })
+      )
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -398,14 +449,13 @@ describe('TokenManagerService', () => {
       expect(signCall[0]).toMatchObject({ mfaEnabled: true })
     })
 
-    // Verifies that a primary rotation (existing session found via Lua eval) returns new tokens.
+    // Verifies that a primary rotation (the presented token was live) returns new tokens.
     it('should create a new session and return new tokens when old session exists', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLiveRotation()
 
       const result = await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.eval).toHaveBeenCalled()
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalled()
       expect(result.accessToken).toBe(FIXED_JWT)
       expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       // RotatedTokenResult: identity in session field, not a full SafeAuthUser
@@ -414,43 +464,105 @@ describe('TokenManagerService', () => {
       expect(result.session.role).toBe('member')
     })
 
-    // Verifies that primary rotation writes a new session (rt:), a grace pointer
-    // (rp:), and a reuse-detection sentinel (rused:) for the rotated-away token.
-    it('should write new session, grace pointer, and reuse sentinel on primary rotation', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: the rotation is driven by ONE atomic call carrying both hashes, the inherited
+    // family, and both TTLs — the script plants `cf:`/`fam:` in the same step that consumes the
+    // old token, so it needs the family the presented session already belongs to.
+    // Expected: the exact rotation bundle for the dashboard plane.
+    it('drives the rotation with the presented session family and both TTLs', async () => {
+      const oldHash = sha256('old-refresh-token')
+      armLiveRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      // Three redis.set calls: new session (rt:), grace pointer (rp:), reuse sentinel (rused:)
-      expect(mockRedis.set).toHaveBeenCalledTimes(3)
-      const keys = mockRedis.set.mock.calls.map((c: unknown[]) => String(c[0]))
-      expect(keys.some((k) => k.startsWith('rt:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('rp:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('rused:'))).toBe(true)
+      expect(mockRedis.get).toHaveBeenCalledWith(`rt:${oldHash}`)
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith({
+        kind: 'dashboard',
+        oldHash,
+        newHash: NEW_HASH,
+        newSessionJson: expect.stringContaining(`"familyId":"${FAMILY}"`),
+        familyId: FAMILY,
+        refreshTtl: 7 * 86_400,
+        graceTtl: 30
+      })
     })
 
-    // Verifies that primary rotation tracks the grace pointer in sess:{userId} so invalidateUserSessions can delete it.
-    it('should add the grace pointer key to sess:{userId} SET on primary rotation', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: a legacy session written before families existed rotates without inventing one.
+    // Expected: an empty family is threaded through, and the stored record omits the key
+    // entirely rather than emitting `"familyId":""` — rust-auth skips the field when empty, so
+    // emitting it would make the same session serialize to different bytes on each side.
+    it('rotates a legacy session with no family and omits the empty key from the record', async () => {
+      armLiveRotation(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      )
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      const saddCalls = mockRedis.sadd.mock.calls as unknown[][]
-      const addedKeys = saddCalls.map((c) => String(c[1]))
+      const bundle = mockRedis.rotateRefreshSession.mock.calls[0]?.[0] as {
+        familyId: string
+        newSessionJson: string
+      }
+      expect(bundle.familyId).toBe('')
+      expect(bundle.newSessionJson).not.toContain('familyId')
+    })
+
+    // Verifies that primary rotation tracks the grace pointer in sess:{userId} so
+    // invalidateUserSessions can delete it — without that member, a token rotated away moments
+    // before "log out everywhere" would still recover a session for the whole grace window.
+    it('should add the grace pointer key to sess:{userId} SET on primary rotation', async () => {
+      armLiveRotation()
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
       expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(true)
     })
 
-    // Verifies that when the primary session key is null, the grace window pointer is checked via getdel.
-    it('should use grace window session when Lua returns null', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_SESSION) // grace pointer found (atomic GETDEL)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: a zero-width grace window writes no `rp:` key, so indexing an `rp:` member for
+    // it would leave the index pointing at nothing.
+    // Expected: only the live member is indexed. Why: kills the `graceTtl > 0` guard mutants.
+    it('indexes no grace member when the grace window is zero', async () => {
+      const zeroGrace = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, refreshGraceWindowSeconds: 0 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      armLiveRotation()
+
+      await zeroGrace
+        .get(TokenManagerService)
+        .reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
+      expect(addedKeys.some((k) => k.startsWith('rt:'))).toBe(true)
+      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(false)
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
+        expect.objectContaining({ graceTtl: 0 })
+      )
+    })
+
+    // Verifies that a token replayed inside its grace window still mints a session — the window
+    // exists to cover the gap where the old token was consumed but the client never got the new one.
+    it('should use grace window session when the live session is gone', async () => {
+      armGraceRotation()
 
       const result = await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rp:/))
       expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
     })
 
@@ -458,9 +570,7 @@ describe('TokenManagerService', () => {
     // grace pointer (rp:). Chaining grace pointers would allow an attacker with a single captured
     // refresh token to indefinitely extend the session by consuming consecutive grace windows.
     it('should write only a new session (no new grace pointer) on grace-window rotation', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armGraceRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -470,25 +580,45 @@ describe('TokenManagerService', () => {
       expect(keys.some((k) => k.startsWith('rp:'))).toBe(false)
     })
 
-    // Verifies that grace-window rotation registers only the new `rt:` session under sess:{userId}.
-    // No `rp:` pointer is added because none is created — the grace window is intentionally
-    // single-shot to prevent an indefinite-refresh attack from a captured token.
-    it('should add only the new rt: key to sess:{userId} SET on grace-window rotation', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Verifies that grace-window rotation registers only the new `rt:` session under sess:{userId}
+    // and keeps the recovered session inside its own lineage, so a later reuse still revokes it.
+    it('should index the new rt: key and keep the recovered session in its family', async () => {
+      armGraceRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      const saddCalls = mockRedis.sadd.mock.calls as unknown[][]
-      const addedKeys = saddCalls.map((c) => String(c[1]))
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
       expect(addedKeys.some((k) => k.startsWith('rt:'))).toBe(true)
       expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(false)
+      expect(mockRedis.sadd).toHaveBeenCalledWith(`fam:${FAMILY}`, NEW_HASH)
+      expect(mockRedis.expire).toHaveBeenCalledWith(`fam:${FAMILY}`, 7 * 86_400)
+    })
+
+    // Scenario: a legacy grace record carries no family, so there is no index to join.
+    // Expected: no `fam:` write at all. Why: kills the `familyId !== ''` guard mutant, which
+    // would otherwise create a `fam:` key with an empty id shared by every legacy session.
+    it('writes no family index when the recovered session is a legacy record', async () => {
+      armGraceRotation(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
+      expect(addedKeys.some((k) => k.startsWith('fam:'))).toBe(false)
+      expect(mockRedis.sadd).not.toHaveBeenCalledWith('fam:', expect.anything())
     })
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when the session contains invalid JSON.
     it('should throw REFRESH_TOKEN_INVALID when the session contains invalid JSON', async () => {
-      mockRedis.eval.mockResolvedValue('not-valid-json')
+      mockRedis.get.mockResolvedValue('not-valid-json')
 
       await expect(service.reissueTokens('old-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -497,17 +627,17 @@ describe('TokenManagerService', () => {
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when the session JSON is missing required fields.
     it('should throw REFRESH_TOKEN_INVALID when session JSON is missing userId or role', async () => {
-      mockRedis.eval.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', device: 'Browser' }))
+      mockRedis.get.mockResolvedValue(JSON.stringify({ ip: '1.2.3.4', device: 'Browser' }))
 
       await expect(service.reissueTokens('old-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
     })
 
-    // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the session nor the grace pointer exists.
+    // Verifies that REFRESH_TOKEN_INVALID is thrown when the token was never issued.
     it('should throw REFRESH_TOKEN_INVALID when neither old session nor grace window found', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
 
       await expect(service.reissueTokens('invalid-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -523,98 +653,62 @@ describe('TokenManagerService', () => {
       }
     })
 
-    // Reuse detection (RFC 6819): when the live session and grace pointer are gone
-    // but the reuse sentinel (rused:{hash}) still names a user, the presented token
-    // is a replay of a rotated-away token past its grace window — a theft signal.
-    // The whole token family must be revoked and the user's access tokens cut off,
-    // then the request still fails as REFRESH_TOKEN_INVALID.
-    it('should revoke the whole family when a superseded token is reused', async () => {
+    // Reuse detection (RFC 6819): replaying a consumed refresh token past its grace window is
+    // the signature of a stolen token. The compromised lineage is revoked and the request still
+    // fails as REFRESH_TOKEN_INVALID — the reaction never resurrects the token.
+    it('should revoke the compromised family when a consumed token is replayed', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-      mockRedis.eval.mockResolvedValue(null) // no live session
-      // grace pointer getdel → null; reuse-sentinel getdel → the victim's id (consumed).
-      mockRedis.getdel.mockImplementation((key: string) =>
-        Promise.resolve(key.startsWith('rused:') ? 'victim-user-id' : null)
-      )
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
 
       await expect(service.reissueTokens('stolen-token', '9.9.9.9', 'Attacker')).rejects.toThrow(
         AuthException
       )
 
-      // Sentinel is read-and-cleared with GETDEL so a replay cannot re-trigger revocation.
-      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^rused:/))
+      expect(mockRedis.revokeFamily).toHaveBeenCalledWith(FAMILY)
       // The warning is the operator's only signal that a token theft was detected — an
       // emptied template would make the revocation silent.
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('reuse of a rotated refresh token detected')
+      expect(warned).toContain('reuse of a consumed refresh token detected')
       warnSpy.mockRestore()
-      // Full-family revocation: sessions deleted AND access-token cutoff recorded in one call.
-      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledWith(
-        'victim-user-id',
-        expect.any(Number)
-      )
     })
 
-    // The theft reaction fires exactly once: because the sentinel is consumed (GETDEL),
-    // replaying the same stolen token a second time finds no sentinel and fails as a
-    // plain invalid token — an attacker cannot loop it to repeatedly log the victim out.
-    it('should react only once — a second replay does not re-revoke', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      let sentinelConsumed = false
-      mockRedis.getdel.mockImplementation((key: string) => {
-        if (!key.startsWith('rused:')) return Promise.resolve(null)
-        if (sentinelConsumed) return Promise.resolve(null)
-        sentinelConsumed = true
-        return Promise.resolve('victim-user-id')
-      })
+    // Scenario: the revocation is scoped to the stolen token's lineage.
+    // Expected: the family is revoked and the user's OTHER sessions are left alone. Why: the
+    // previous design revoked every session the user had, so a theft logged all their devices
+    // out — this pins the narrower, OWASP-recommended behaviour.
+    it('revokes only the family, not every session the user has', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
 
-      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
-        AuthException
-      )
-      await expect(service.reissueTokens('stolen', '9.9.9.9', 'Attacker')).rejects.toThrow(
+      await expect(service.reissueTokens('stolen-token', '9.9.9.9', 'Attacker')).rejects.toThrow(
         AuthException
       )
 
-      expect(mockRedis.revokeAllUserTokens).toHaveBeenCalledTimes(1)
+      expect(mockRedis.revokeFamily).toHaveBeenCalledTimes(1)
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockRedis.revokeAllUserTokens).not.toHaveBeenCalled()
     })
 
-    // Without a sentinel the token is just an unknown/expired string — no family is
-    // touched; only the invalid error is raised.
-    it('should NOT revoke anything when no reuse sentinel exists', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null) // grace + sentinel both absent
+    // An unknown token is just an invalid/expired string — no lineage is touched.
+    it('should NOT revoke anything when the token was never issued', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
 
       await expect(service.reissueTokens('garbage-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
 
-      expect(mockRedis.revokeAllUserTokens).not.toHaveBeenCalled()
-    })
-
-    // Scenario: the rotation Lua is invoked with the exact old `rt:` key and an empty ARGV array.
-    // Expected: eval called with the ROTATE_LUA script (containing GET + DEL) and [`rt:<oldHash>`].
-    // Why: kills the StringLiteral mutants on line 42 (script → '') and line 277 (oldSessionKey → '').
-    it('evaluates ROTATE_LUA with the rt:{oldHash} key on rotation', async () => {
-      const oldHash = sha256('old-refresh-token')
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
-
-      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
-
-      const evalCall = mockRedis.eval.mock.calls[0] as [string, string[], string[]]
-      expect(evalCall[0]).toContain("redis.call('GET'")
-      expect(evalCall[0]).toContain("redis.call('DEL'")
-      expect(evalCall[1]).toEqual([`rt:${oldHash}`])
+      expect(mockRedis.revokeFamily).not.toHaveBeenCalled()
     })
 
     // Scenario: primary rotation rewrites the per-user SET — remove old rt:, add new rt: and the
     // grace pointer, then expire the SET with the refresh TTL (days*86400).
-    // Expected: exact srem/sadd/expire calls on 'sess:user-1'. Why: kills the StringLiteral mutants
-    // on lines 343-346 (each `sess:${old.userId}` key → '' and each member value → '') and the
-    // arithmetic mutant on line 274 (`* 86_400` → `/ 86_400`) via the pinned TTL.
+    // Expected: exact srem/sadd/expire calls on 'sess:user-1'. Why: kills the StringLiteral
+    // mutants on each key/member and the arithmetic mutant on `* 86_400` via the pinned TTL.
     it('updates the sess:{userId} SET with exact keys and TTL on primary rotation', async () => {
       const oldHash = sha256('old-refresh-token')
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLiveRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -625,13 +719,8 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: grace-window rotation registers the new rt: under the per-user SET and expires it.
-    // Expected: sadd('sess:user-1', 'rt:<newHash>') and expire('sess:user-1', 7*86400). Why: kills
-    // the StringLiteral mutants on lines 383 (key/member) and 384 (expire key), plus the line 274
-    // TTL arithmetic mutant on the grace path.
     it('updates the sess:{userId} SET with exact key and TTL on grace-window rotation', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armGraceRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -641,11 +730,8 @@ describe('TokenManagerService', () => {
 
     // Scenario: a rotated access token must carry status:'' and mfaVerified:false (state is not
     // persisted in the Redis session, forcing re-auth of MFA after rotation).
-    // Expected: sign payload has status === '' and mfaVerified === false. Why: kills the StringLiteral
-    // mutant on line 456 (status → "Stryker was here!") and the BooleanLiteral on line 458 (false → true).
     it('issues the rotated access token with an empty status and mfaVerified:false', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLiveRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -655,13 +741,19 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: a stored session WITHOUT an mfaEnabled field must default mfaEnabled to false.
-    // Expected: rotated access token payload has mfaEnabled:false. Why: kills the BooleanLiteral
-    // mutant on line 417 (`... ? rec['mfaEnabled'] : false` → `: true`) which would silently grant
+    // Why: kills the BooleanLiteral mutant on the defaulting ternary, which would silently grant
     // mfaEnabled to legacy sessions on rotation.
     it('defaults mfaEnabled to false when the stored session omits it', async () => {
-      // OLD_SESSION intentionally has no mfaEnabled field.
-      mockRedis.eval.mockResolvedValue(OLD_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLiveRotation(
+        JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      )
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
@@ -670,12 +762,9 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: malformed JSON in the session record must be logged AND rejected as REFRESH_TOKEN_INVALID.
-    // Expected: logger.warn called with the exact parse-failure message; throws REFRESH_TOKEN_INVALID.
-    // Why: kills the BlockStatement mutant on line 401 (`catch {}` — would skip the warn+throw) and the
-    // StringLiteral mutant on line 402 (warn message → '').
     it('warns and throws REFRESH_TOKEN_INVALID on malformed session JSON', async () => {
       const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
-      mockRedis.eval.mockResolvedValue('not-valid-json{{{')
+      mockRedis.get.mockResolvedValue('not-valid-json{{{')
 
       let thrown: unknown
       try {
@@ -693,11 +782,8 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: a session JSON missing only userId (role present) must be rejected as AuthException.
-    // Expected: rejects with AuthException. Why: kills the `typeof rec['userId'] !== 'string'` → false
-    // mutant on line 409 (and the OR-chain collapses) — without the userId guard a role-only object
-    // would be accepted and rotation would succeed.
     it('throws AuthException when the session JSON has role but no userId', async () => {
-      mockRedis.eval.mockResolvedValue(JSON.stringify({ role: 'member' }))
+      mockRedis.get.mockResolvedValue(JSON.stringify({ role: 'member' }))
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
@@ -705,35 +791,29 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: a session JSON missing only role (userId present) must be rejected as AuthException.
-    // Expected: rejects with AuthException. Why: kills the `typeof rec['role'] !== 'string'` → false
-    // mutant on line 410 — without the role guard a userId-only object would be accepted.
     it('throws AuthException when the session JSON has userId but no role', async () => {
-      mockRedis.eval.mockResolvedValue(JSON.stringify({ userId: 'user-1' }))
+      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1' }))
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
     })
 
-    // Scenario: a session record that parses to JSON null must be rejected as AuthException — not a
-    // TypeError. Expected: rejects with AuthException specifically. Why: kills the `parsed === null`
-    // → false mutant on line 408; without the null guard the code dereferences null['userId'] and
-    // throws a TypeError (not an AuthException), changing observable behavior.
+    // Scenario: a session record that parses to JSON null must be rejected as AuthException — not
+    // a TypeError. Without the null guard the code dereferences null['userId'].
     it('throws AuthException (not TypeError) when the session JSON is null', async () => {
-      mockRedis.eval.mockResolvedValue('null')
+      mockRedis.get.mockResolvedValue('null')
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
     })
 
-    // Scenario: when neither the primary session nor the grace pointer exists, a warning is logged
-    // before throwing. Expected: logger.warn called with the exact "no valid session" message.
-    // Why: kills the StringLiteral mutant on line 306 (warn message → '').
+    // Scenario: when the token was never issued, a warning is logged before throwing.
     it('warns with the no-valid-session message before throwing REFRESH_TOKEN_INVALID', async () => {
       const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
 
       await expect(service.reissueTokens('gone-token', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -1017,6 +1097,7 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('reissuePlatformTokens', () => {
+    const PLATFORM_FAMILY = 'pfam-old-1'
     /** Minimal valid platform session JSON — matches the RefreshSession shape used for platform admins. */
     const OLD_PLATFORM_SESSION = JSON.stringify({
       userId: 'admin-1',
@@ -1025,14 +1106,28 @@ describe('TokenManagerService', () => {
       device: 'Browser',
       ip: '1.2.3.4',
       createdAt: '2026-01-01T00:00:00.000Z',
-      mfaEnabled: false
+      mfaEnabled: false,
+      familyId: PLATFORM_FAMILY
     })
 
-    // Verifies the primary rotation path: the old prt: session is found via Lua eval,
-    // a new session is issued, and a RotatedTokenResult is returned with the expected fields.
-    it('should return new tokens when the primary prt: session is found via Lua eval', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
+    /** Arms the seed read + the rotation script for a live platform rotation. */
+    function armLivePlatformRotation(sessionJson = OLD_PLATFORM_SESSION): void {
+      mockRedis.get.mockResolvedValue(sessionJson)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'rotated', sessionJson })
       mockRedis.set.mockResolvedValue(undefined)
+    }
+
+    /** Arms a platform rotation served from the grace window. */
+    function armPlatformGraceRotation(sessionJson = OLD_PLATFORM_SESSION): void {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'grace', sessionJson })
+      mockRedis.set.mockResolvedValue(undefined)
+    }
+
+    // Verifies the primary rotation path: the old prt: session was live, a new session is
+    // issued, and a RotatedTokenResult is returned with the expected fields.
+    it('should return new tokens when the primary prt: session is found', async () => {
+      armLivePlatformRotation()
 
       const result = await service.reissuePlatformTokens(
         'old-platform-refresh',
@@ -1040,7 +1135,7 @@ describe('TokenManagerService', () => {
         'Browser'
       )
 
-      expect(mockRedis.eval).toHaveBeenCalled()
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalled()
       expect(result.accessToken).toBe(FIXED_JWT)
       expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.session.userId).toBe('admin-1')
@@ -1048,28 +1143,36 @@ describe('TokenManagerService', () => {
       expect(result.session.role).toBe('super-admin')
     })
 
-    // Verifies that primary rotation writes two Redis entries: a new session under prt:
-    // and a grace-window pointer under prp: — both are required to handle concurrent requests.
-    it('should write a new prt: session and a prp: grace pointer on primary rotation', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: the platform rotation drives the platform keyspace, not the dashboard one.
+    // Expected: the bundle names `kind: 'platform'` with the exact hashes, the inherited family,
+    // and both TTLs. Why: the two planes are keyed by ids from different repositories that may
+    // collide, so rotating a platform token through the dashboard prefixes would cross the planes.
+    it('drives the rotation on the platform plane with the inherited family', async () => {
+      const oldHash = sha256('old-platform-refresh')
+      armLivePlatformRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
-      expect(keys.filter((k) => k.startsWith('prt:'))).toHaveLength(1)
-      expect(keys.filter((k) => k.startsWith('prp:'))).toHaveLength(1)
+      expect(mockRedis.get).toHaveBeenCalledWith(`prt:${oldHash}`)
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith({
+        kind: 'platform',
+        oldHash,
+        newHash: NEW_HASH,
+        newSessionJson: expect.stringContaining(`"familyId":"${PLATFORM_FAMILY}"`),
+        familyId: PLATFORM_FAMILY,
+        refreshTtl: 7 * 86_400,
+        graceTtl: 30
+      })
       // The rotated session carries its detail record along, so a listing describes the live
       // token rather than a hash that no longer exists.
+      const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
       expect(keys.filter((k) => k.startsWith('psd:'))).toHaveLength(1)
     })
 
-    // Verifies that primary rotation uses the grace-window path: Lua eval returns null (primary
-    // session gone) but getdel finds and consumes the prp: grace pointer, issuing a new token pair.
+    // Verifies the grace-window path: the primary session is gone but the pointer is still
+    // inside its window, so a new token pair is issued.
     it('should return new tokens from the prp: grace pointer when the primary session is gone', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armPlatformGraceRotation()
 
       const result = await service.reissuePlatformTokens(
         'old-platform-refresh',
@@ -1077,7 +1180,6 @@ describe('TokenManagerService', () => {
         'Browser'
       )
 
-      expect(mockRedis.getdel).toHaveBeenCalledWith(expect.stringMatching(/^prp:/))
       expect(result.accessToken).toBe(FIXED_JWT)
       expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
       expect(result.session.userId).toBe('admin-1')
@@ -1087,9 +1189,7 @@ describe('TokenManagerService', () => {
     // new prp: grace pointer. Single-shot grace semantics prevent indefinite session extension
     // from a captured refresh token (matches dashboard-side `rt:` / `rp:` behavior).
     it('should write only a new prt: session (no new prp: pointer) on grace-window rotation', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armPlatformGraceRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
@@ -1099,11 +1199,10 @@ describe('TokenManagerService', () => {
       expect(keys.filter((k) => k.startsWith('psd:'))).toHaveLength(1)
     })
 
-    // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the primary session nor
-    // the grace pointer exists — the refresh token has expired or was already consumed.
+    // Verifies that REFRESH_TOKEN_INVALID is thrown when the token was never issued.
     it('should throw REFRESH_TOKEN_INVALID when neither prt: session nor prp: grace pointer exists', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
 
       await expect(
         service.reissuePlatformTokens('expired-token', '1.2.3.4', 'Browser')
@@ -1119,29 +1218,33 @@ describe('TokenManagerService', () => {
       }
     })
 
-    // Scenario: platform rotation evaluates ROTATE_LUA with the exact old prt: key.
-    // Expected: eval called with the script and [`prt:<oldHash>`]. Why: kills the StringLiteral
-    // mutant on line 495 (oldSessionKey → '').
-    it('evaluates ROTATE_LUA with the prt:{oldHash} key on platform rotation', async () => {
-      const oldHash = sha256('old-platform-refresh')
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: a consumed platform token replayed past its grace window is a theft signal.
+    // Expected: the platform family is revoked and the request still fails. Why: #38 deferred
+    // platform reuse detection entirely, so this is the gap the family design closes.
+    it('revokes the platform family when a consumed platform token is replayed', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: PLATFORM_FAMILY
+      })
 
-      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+      await expect(
+        service.reissuePlatformTokens('stolen-platform-token', '9.9.9.9', 'Attacker')
+      ).rejects.toThrow(AuthException)
 
-      const evalCall = mockRedis.eval.mock.calls[0] as [string, string[], string[]]
-      expect(evalCall[1]).toEqual([`prt:${oldHash}`])
+      expect(mockRedis.revokeFamily).toHaveBeenCalledWith(PLATFORM_FAMILY, 'platform')
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('reuse of a consumed refresh token detected')
+      warnSpy.mockRestore()
     })
 
-    // Scenario: platform primary rotation rewrites the per-user SET — remove old prt:, add new prt:
-    // and the prp: grace pointer, then expire the SET with the refresh TTL (days*86400).
-    // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
-    // on lines 557-560 (each `sess:${old.userId}` key → '' and each member value → '') and the
-    // arithmetic mutant on line 492 (`* 86_400` → `/ 86_400`) via the pinned TTL.
+    // Scenario: platform primary rotation rewrites the per-admin SET — remove old prt:, add new
+    // prt: and the prp: grace pointer, then expire the SET with the refresh TTL (days*86400).
+    // Why: kills the StringLiteral mutants on each key/member and the `* 86_400` arithmetic mutant.
     it('updates the psess:{adminId} SET with exact keys and TTL on platform primary rotation', async () => {
       const oldHash = sha256('old-platform-refresh')
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLivePlatformRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
@@ -1157,30 +1260,51 @@ describe('TokenManagerService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
+    // Scenario: a zero-width grace window writes no `prp:` key, so indexing a `prp:` member for
+    // it would leave the platform index pointing at nothing.
+    it('indexes no platform grace member when the grace window is zero', async () => {
+      const zeroGrace = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, refreshGraceWindowSeconds: 0 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      armLivePlatformRotation()
+
+      await zeroGrace
+        .get(TokenManagerService)
+        .reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
+      expect(addedKeys.some((k) => k.startsWith('prt:'))).toBe(true)
+      expect(addedKeys.some((k) => k.startsWith('prp:'))).toBe(false)
+    })
+
     // Scenario: the new platform session record must store an empty tenantId on primary rotation.
-    // Expected: a stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on
-    // line 553 that passes "Stryker was here!" as the tenantId to buildSession.
+    // Why: kills the StringLiteral mutant that passes "Stryker was here!" as the tenantId.
     it('stores an empty tenantId in the rotated platform session on primary rotation', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLivePlatformRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const bundle = mockRedis.rotateRefreshSession.mock.calls[0]?.[0] as { newSessionJson: string }
+      const session = JSON.parse(bundle.newSessionJson) as Record<string, unknown>
       expect(session['tenantId']).toBe('')
     })
 
-    // Scenario: platform grace-window rotation removes the consumed prp: pointer, adds the new prt:,
-    // and expires the SET with the refresh TTL.
-    // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
-    // on lines 598 (srem key/member), 599 (sadd key/member), and 600 (expire key) and the line 492
-    // TTL arithmetic mutant on the grace path.
+    // Scenario: platform grace-window rotation removes the consumed prp: pointer, adds the new
+    // prt:, and expires the SET with the refresh TTL.
     it('updates the psess:{adminId} SET with exact keys and TTL on platform grace-window rotation', async () => {
       const oldHash = sha256('old-platform-refresh')
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armPlatformGraceRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
@@ -1191,15 +1315,15 @@ describe('TokenManagerService', () => {
       // The superseded detail record is dropped by its exact key; a wrong key would leak
       // the old record until TTL and leave a listing describing a token that no longer exists.
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
+      // The recovered session stays inside its lineage, so a later reuse still revokes it.
+      expect(mockRedis.sadd).toHaveBeenCalledWith(`pfam:${PLATFORM_FAMILY}`, NEW_HASH)
+      expect(mockRedis.expire).toHaveBeenCalledWith(`pfam:${PLATFORM_FAMILY}`, 7 * 86_400)
     })
 
-    // Scenario: the new platform session record must store an empty tenantId on grace-window rotation.
-    // Expected: the stored session JSON has tenantId === ''. Why: kills the StringLiteral mutant on
-    // line 587 that passes "Stryker was here!" as the tenantId to buildSession.
+    // Scenario: the new platform session record must store an empty tenantId on grace-window
+    // rotation. Why: kills the StringLiteral mutant on the grace-path buildSession tenantId.
     it('stores an empty tenantId in the rotated platform session on grace-window rotation', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armPlatformGraceRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
@@ -1208,12 +1332,28 @@ describe('TokenManagerService', () => {
       expect(session['tenantId']).toBe('')
     })
 
+    // Scenario: a legacy platform grace record carries no family, so there is no index to join.
+    it('writes no platform family index when the recovered session is a legacy record', async () => {
+      armPlatformGraceRotation(
+        JSON.stringify({
+          userId: 'admin-1',
+          tenantId: '',
+          role: 'super-admin',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+
+      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[0]))
+      expect(addedKeys.some((k) => k.startsWith('pfam:'))).toBe(false)
+    })
+
     // Scenario: a rotated platform access token must always carry mfaVerified:false.
-    // Expected: sign payload has mfaVerified === false. Why: kills the BooleanLiteral mutant on line
-    // 622 (`mfaVerified: false` → `true`).
     it('issues the rotated platform access token with mfaVerified:false', async () => {
-      mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
-      mockRedis.set.mockResolvedValue(undefined)
+      armLivePlatformRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
@@ -1221,13 +1361,11 @@ describe('TokenManagerService', () => {
       expect(signCall[0]['mfaVerified']).toBe(false)
     })
 
-    // Scenario: when neither the primary nor grace pointer exists, a warning is logged before throwing.
-    // Expected: logger.warn called with the exact platform "no valid session" message. Why: kills the
-    // StringLiteral mutant on line 528 (warn message → '').
+    // Scenario: when the token was never issued, a warning is logged before throwing.
     it('warns with the no-valid-session message before throwing on platform rotation', async () => {
       const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined)
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
 
       await expect(
         service.reissuePlatformTokens('gone-platform-token', '1.2.3.4', 'Browser')

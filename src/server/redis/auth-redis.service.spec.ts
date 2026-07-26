@@ -26,6 +26,7 @@ const mockRedis = {
   srem: jest.fn(),
   smembers: jest.fn(),
   sismember: jest.fn(),
+  exists: jest.fn(),
   eval: jest.fn()
 }
 
@@ -275,6 +276,235 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(null)
       await service.eval('return redis.call("ping")', [], [])
       expect(mockRedis.eval).toHaveBeenCalledWith('return redis.call("ping")', 0)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // rotateRefreshSession
+  // ---------------------------------------------------------------------------
+
+  describe('rotateRefreshSession', () => {
+    const BUNDLE = {
+      kind: 'dashboard' as const,
+      oldHash: 'old-hash',
+      newHash: 'new-hash',
+      newSessionJson: '{"userId":"u1"}',
+      familyId: 'fam-1',
+      refreshTtl: 604_800,
+      graceTtl: 30
+    }
+
+    // Verifies the script receives the five keys and six arguments it documents, in order.
+    it('passes the five rotation keys and six arguments to the script', async () => {
+      mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
+
+      await service.rotateRefreshSession(BUNDLE)
+
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('GET', KEYS[1])"),
+        5,
+        prefixed('rt:old-hash'),
+        prefixed('rt:new-hash'),
+        prefixed('rp:old-hash'),
+        prefixed('cf:old-hash'),
+        prefixed('fam:fam-1'),
+        '{"userId":"u1"}',
+        '604800',
+        '30',
+        'fam-1',
+        'old-hash',
+        'new-hash'
+      )
+    })
+
+    // Verifies the platform plane rotates over its own keyspace. The two planes are keyed by
+    // ids from different consumer repositories that may legitimately collide, so a platform
+    // rotation touching `rt:`/`fam:` would cross the planes.
+    it('rotates the platform plane over the platform keyspace', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+
+      await service.rotateRefreshSession({ ...BUNDLE, kind: 'platform' })
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call.slice(2, 7)).toEqual([
+        prefixed('prt:old-hash'),
+        prefixed('prt:new-hash'),
+        prefixed('prp:old-hash'),
+        prefixed('pcf:old-hash'),
+        prefixed('pfam:fam-1')
+      ])
+    })
+
+    // Verifies each tagged reply is decoded into its own outcome. The tags are what separate a
+    // recoverable replay from a theft signal, so a mis-parse would either reject a legitimate
+    // retry or silently skip the family revocation.
+    it('decodes every tagged reply into its outcome', async () => {
+      mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
+        kind: 'rotated',
+        sessionJson: '{"userId":"u1"}'
+      })
+
+      mockRedis.exists.mockResolvedValue(1)
+      mockRedis.eval.mockResolvedValue('GRACE:{"userId":"u1","familyId":"fam-1"}')
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
+        kind: 'grace',
+        sessionJson: '{"userId":"u1","familyId":"fam-1"}'
+      })
+      expect(mockRedis.exists).toHaveBeenCalledWith(prefixed('fam:fam-1'))
+
+      mockRedis.eval.mockResolvedValue('REUSED:fam-1')
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
+        kind: 'reused',
+        familyId: 'fam-1'
+      })
+    })
+
+    // SECURITY REGRESSION GUARD. A grace pointer can outlive its own lineage: reuse detection
+    // revokes the family's live sessions, but a pointer planted by an EARLIER rotation of that
+    // same lineage can still be inside its window. Recovering from it would mint a session
+    // carrying the revoked family id and hand back the lineage the revocation just killed.
+    it('refuses a grace recovery whose family has been revoked', async () => {
+      mockRedis.eval.mockResolvedValue('GRACE:{"userId":"u1","familyId":"fam-1"}')
+      mockRedis.exists.mockResolvedValue(0)
+
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({ kind: 'invalid' })
+    })
+
+    // Verifies a record written before families existed still recovers: it names no lineage, so
+    // there is nothing to check and no `EXISTS` round trip is spent.
+    it('recovers a legacy grace record that carries no family', async () => {
+      mockRedis.eval.mockResolvedValue('GRACE:{"userId":"u1"}')
+
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
+        kind: 'grace',
+        sessionJson: '{"userId":"u1"}'
+      })
+      expect(mockRedis.exists).not.toHaveBeenCalled()
+    })
+
+    // Verifies an empty family id is treated like an absent one — `fam:` with no id is a key
+    // every familyless session would share, so checking it would be meaningless.
+    it('recovers a grace record whose family id is empty', async () => {
+      mockRedis.eval.mockResolvedValue('GRACE:{"userId":"u1","familyId":""}')
+
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toMatchObject({ kind: 'grace' })
+      expect(mockRedis.exists).not.toHaveBeenCalled()
+    })
+
+    // Verifies a malformed grace record is passed through rather than swallowed here: the
+    // session parser downstream rejects it as REFRESH_TOKEN_INVALID with its own warning, and
+    // reporting it as a family revocation would be a misleading theft signal.
+    it('passes a malformed grace record through to the session parser', async () => {
+      mockRedis.eval.mockResolvedValue('GRACE:not-json{{{')
+
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
+        kind: 'grace',
+        sessionJson: 'not-json{{{'
+      })
+      expect(mockRedis.exists).not.toHaveBeenCalled()
+    })
+
+    // Verifies a non-string reply (Redis renders the script's `false` as nil) reads as invalid
+    // rather than as a session payload.
+    it('treats a nil reply as an invalid refresh', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+
+      await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({ kind: 'invalid' })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // revokeFamily
+  // ---------------------------------------------------------------------------
+
+  describe('revokeFamily', () => {
+    // Verifies the revocation targets the family index, resolves the owner from a member
+    // record, and hands the script the prefixes it needs to rebuild each member's keys.
+    it('runs the revocation over the dashboard family keyspace', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1', 'h2'])
+      mockRedis.get.mockResolvedValue('{"userId":"u1"}')
+      mockRedis.eval.mockResolvedValue(2)
+
+      await expect(service.revokeFamily('fam-1')).resolves.toBe(2)
+
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('rt:h1'))
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('SMEMBERS', KEYS[1])"),
+        1,
+        prefixed('fam:fam-1'),
+        NAMESPACE,
+        'rt',
+        'sd',
+        prefixed('sess:u1')
+      )
+    })
+
+    // Verifies the platform plane revokes its own family index with its own prefixes.
+    it('runs the revocation over the platform family keyspace', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      mockRedis.get.mockResolvedValue('{"userId":"admin-1"}')
+      mockRedis.eval.mockResolvedValue(1)
+
+      await expect(service.revokeFamily('fam-1', 'platform')).resolves.toBe(1)
+
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('prt:h1'))
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        1,
+        prefixed('pfam:fam-1'),
+        NAMESPACE,
+        'prt',
+        'psd',
+        prefixed('psess:admin-1')
+      )
+    })
+
+    // Verifies the owner lookup skips members whose record is gone or unreadable and keeps
+    // looking. A family outlives individual sessions, so the first member is not always the
+    // one that still names its owner.
+    it('skips expired and malformed member records when resolving the owner', async () => {
+      mockRedis.smembers.mockResolvedValue(['gone', 'broken', 'noUser', 'good'])
+      mockRedis.get.mockImplementation((key: string) => {
+        if (key.endsWith('gone')) return Promise.resolve(null)
+        if (key.endsWith('broken')) return Promise.resolve('not-json{{{')
+        if (key.endsWith('noUser')) return Promise.resolve('{"role":"member"}')
+        return Promise.resolve('{"userId":"u9"}')
+      })
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe(prefixed('sess:u9'))
+    })
+
+    // Verifies that a family whose members have all expired still drops its own index, with an
+    // empty owner telling the script there is no index left to prune.
+    it('passes an empty owner index when no member record is readable', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(0)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
+    // Verifies a legacy session's empty family short-circuits: `fam:` with no id is a key every
+    // familyless session would share, so revoking it would be an unbounded blast radius.
+    it('is a no-op for an empty family id', async () => {
+      await expect(service.revokeFamily('')).resolves.toBe(0)
+
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+    })
+
+    // Verifies a non-numeric reply reads as zero removals rather than leaking through.
+    it('reports zero removals when the script returns a non-numeric reply', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+
+      await expect(service.revokeFamily('fam-1')).resolves.toBe(0)
     })
   })
 

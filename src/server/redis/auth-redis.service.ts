@@ -9,6 +9,167 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 
+/** Tag the rotation script prepends to a session recovered from the grace window. */
+const GRACE_TAG = 'GRACE:'
+
+/** Tag the rotation script prepends to the family id of a replayed consumed token. */
+const REUSED_TAG = 'REUSED:'
+
+/**
+ * The key prefixes each identity plane rotates over. The two planes are keyed by ids from
+ * different consumer repositories, which may legitimately collide, so every keyspace is
+ * separated — sharing one would let a revoke on one plane log the other out.
+ */
+const REFRESH_PREFIXES = {
+  dashboard: {
+    live: 'rt',
+    grace: 'rp',
+    consumed: 'cf',
+    family: 'fam',
+    index: 'sess',
+    detail: 'sd'
+  },
+  platform: {
+    live: 'prt',
+    grace: 'prp',
+    consumed: 'pcf',
+    family: 'pfam',
+    index: 'psess',
+    detail: 'psd'
+  }
+} as const
+
+/**
+ * Selects the prefix set for an identity plane.
+ *
+ * Written as an explicit branch rather than an index expression: the two planes are the whole
+ * domain, and naming them keeps the lookup out of reach of a computed key.
+ *
+ * @param kind - The identity plane.
+ * @returns That plane's key prefixes.
+ */
+function prefixesFor(
+  kind: 'dashboard' | 'platform'
+): (typeof REFRESH_PREFIXES)['dashboard' | 'platform'] {
+  return kind === 'platform' ? REFRESH_PREFIXES.platform : REFRESH_PREFIXES.dashboard
+}
+
+/**
+ * Atomic refresh-token rotation with a grace window and reuse detection.
+ *
+ * Held byte-identical to rust-auth's `crates/bymax-auth-redis/src/lua/refresh_rotate.lua`
+ * so a session written by either backend rotates identically under the other.
+ *
+ * ```text
+ * KEYS[1] = rt:{sha256(old)}   KEYS[2] = rt:{sha256(new)}   KEYS[3] = rp:{sha256(old)}
+ * KEYS[4] = cf:{sha256(old)}   KEYS[5] = fam:{family}
+ * ARGV[1] = new session JSON   ARGV[2] = refresh TTL (s)    ARGV[3] = grace TTL (s; 0 skips)
+ * ARGV[4] = family id ('' = legacy record, skip family work)
+ * ARGV[5] = sha256(old)        ARGV[6] = sha256(new)
+ * ```
+ *
+ * The script deliberately never decodes a stored record: every JSON value it touches is
+ * returned to the caller and parsed there, by a real parser rather than Lua's `cjson`.
+ */
+const ROTATE_LUA = `
+local old = redis.call('GET', KEYS[1])
+if old then
+  redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+  -- A zero grace window means no grace recovery: skip the pointer rather than issue an
+  -- \`EX 0\` SET, which Redis rejects.
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SET', KEYS[3], ARGV[1], 'EX', ARGV[3])
+  end
+  -- Plant the consumed-family marker (it outlives the much shorter grace window) and move the
+  -- family membership onto the new hash, so a post-grace replay is detected as a reuse and the
+  -- whole lineage stays revocable. A legacy session with no family skips this bookkeeping.
+  if ARGV[4] ~= '' then
+    redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[2])
+    redis.call('SREM', KEYS[5], ARGV[5])
+    redis.call('SADD', KEYS[5], ARGV[6])
+    redis.call('EXPIRE', KEYS[5], ARGV[2])
+  end
+  redis.call('DEL', KEYS[1])
+  return old
+end
+local grace = redis.call('GET', KEYS[3])
+if grace then
+  -- The window is single-shot: consume the pointer so one captured token cannot mint a fresh
+  -- session on every request for the whole window. It exists to cover the one retry where the
+  -- old token was consumed but the client never received the new one.
+  redis.call('DEL', KEYS[3])
+  return 'GRACE:' .. grace
+end
+-- Post-grace reuse: the consumed-family marker outlives the grace pointer, so its presence
+-- here means this token was validly issued and already rotated — a replay of a consumed token.
+local family = redis.call('GET', KEYS[4])
+if family then
+  return 'REUSED:' .. family
+end
+return false
+`
+
+/**
+ * Revokes every live session in a refresh-token family in one transaction.
+ *
+ * Held byte-identical to rust-auth's `crates/bymax-auth-redis/src/lua/revoke_family.lua`.
+ *
+ * ```text
+ * KEYS[1] = fam:{family} (already namespaced)
+ * ARGV[1] = namespace   ARGV[2] = live prefix   ARGV[3] = detail prefix
+ * ARGV[4] = the owner's index key, or '' when no member record was readable
+ * ```
+ *
+ * The owner is resolved by the caller rather than decoded here: every member of one family
+ * belongs to the same user, and reading one record in the host language keeps the script free
+ * of `cjson`. The script still re-reads the membership itself, so a member added between the
+ * two steps is revoked too.
+ */
+const REVOKE_FAMILY_LUA = `
+local members = redis.call('SMEMBERS', KEYS[1])
+if #members == 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+local ns, rt, sd, sess_key = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
+for _, hash in ipairs(members) do
+  redis.call('DEL', ns .. ':' .. rt .. ':' .. hash)
+  redis.call('DEL', ns .. ':' .. sd .. ':' .. hash)
+  if sess_key ~= '' then
+    -- The index stores full key suffixes, not bare hashes, so the member to prune is
+    -- \`rt:{hash}\` (\`prt:{hash}\` on the platform plane).
+    redis.call('SREM', sess_key, rt .. ':' .. hash)
+  end
+end
+redis.call('DEL', KEYS[1])
+return #members
+`
+
+/** The rotation bundle {@link AuthRedisService.rotateRefreshSession} consumes. */
+export interface RefreshRotationParams {
+  /** Which identity plane is rotating; selects the whole prefix set. */
+  kind: 'dashboard' | 'platform'
+  /** SHA-256 of the presented (old) refresh token. */
+  oldHash: string
+  /** SHA-256 of the freshly minted refresh token. */
+  newHash: string
+  /** Serialized session record to store under the new hash. */
+  newSessionJson: string
+  /** Family of the presented session; `''` for a legacy record written before families. */
+  familyId: string
+  /** Refresh-session lifetime in seconds. */
+  refreshTtl: number
+  /** Grace-pointer lifetime in seconds; `0` writes no pointer. */
+  graceTtl: number
+}
+
+/** What {@link AuthRedisService.rotateRefreshSession} found for the presented token. */
+export type RefreshRotationOutcome =
+  | { kind: 'rotated'; sessionJson: string }
+  | { kind: 'grace'; sessionJson: string }
+  | { kind: 'reused'; familyId: string }
+  | { kind: 'invalid' }
+
 /**
  * Internal Redis service for @bymax-one/nest-auth.
  *
@@ -205,6 +366,157 @@ export class AuthRedisService {
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const prefixedKeys = keys.map((k) => this.prefix(k))
     return this.redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Refresh-token rotation and family revocation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Atomically rotates a refresh session, plants the reuse-detection bookkeeping, and
+   * reports what the presented token actually was.
+   *
+   * Byte-identical in behaviour to rust-auth's `refresh_rotate.lua`, so both backends can
+   * drive the same Redis. In one round trip it:
+   *
+   * - consumes the live session (`GET` + `DEL`) and writes the new one,
+   * - writes the rotation grace pointer, unless the grace window is zero,
+   * - plants the consumed-family marker `cf:{oldHash}` and moves the family membership
+   *   from the old hash to the new one.
+   *
+   * Writes happen **before** the old key is deleted. Redis does not roll back a script's
+   * earlier writes, so a failing write aborts the script with the old token still intact —
+   * the old token is never consumed without the new session being persisted and the
+   * consumed marker planted, which is what makes reuse detection crash-safe.
+   *
+   * @param params - The rotation bundle; see {@link RefreshRotationParams}.
+   * @returns What the presented token was: a live session (`rotated`), a replay inside the
+   *   grace window (`grace`), a replay of a consumed token past its grace window
+   *   (`reused`, carrying the compromised family), or never-issued (`invalid`).
+   */
+  async rotateRefreshSession(params: RefreshRotationParams): Promise<RefreshRotationOutcome> {
+    const p = prefixesFor(params.kind)
+    const raw = await this.eval(
+      ROTATE_LUA,
+      [
+        `${p.live}:${params.oldHash}`,
+        `${p.live}:${params.newHash}`,
+        `${p.grace}:${params.oldHash}`,
+        `${p.consumed}:${params.oldHash}`,
+        `${p.family}:${params.familyId}`
+      ],
+      [
+        params.newSessionJson,
+        String(params.refreshTtl),
+        String(params.graceTtl),
+        params.familyId,
+        params.oldHash,
+        params.newHash
+      ]
+    )
+    if (typeof raw !== 'string') return { kind: 'invalid' }
+    if (raw.startsWith(GRACE_TAG)) {
+      const sessionJson = raw.slice(GRACE_TAG.length)
+      const alive = await this.familyIsAlive(sessionJson, p.family)
+      return alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' }
+    }
+    if (raw.startsWith(REUSED_TAG)) {
+      return { kind: 'reused', familyId: raw.slice(REUSED_TAG.length) }
+    }
+    return { kind: 'rotated', sessionJson: raw }
+  }
+
+  /**
+   * Whether the lineage a recovered grace record belongs to is still alive.
+   *
+   * A grace pointer can outlive its own lineage: reuse detection revokes the family's live
+   * sessions, but a pointer planted by an *earlier* rotation of that same lineage can still be
+   * inside its (much shorter) window at that moment — detection only proves the replayed
+   * token's own pointer expired, which says nothing about a younger sibling's. Recovering from
+   * such a pointer would mint a fresh session carrying the revoked family id and hand the thief
+   * back the lineage the revocation just killed.
+   *
+   * A record written before families existed carries none and recovers as before.
+   *
+   * @param sessionJson - The record the grace pointer held.
+   * @param familyPrefix - The family-index prefix for the plane being rotated.
+   * @returns `false` only when the record names a family whose index is gone.
+   */
+  private async familyIsAlive(sessionJson: string, familyPrefix: string): Promise<boolean> {
+    let familyId: unknown
+    try {
+      familyId = (JSON.parse(sessionJson) as Record<string, unknown>)['familyId']
+    } catch {
+      // A malformed record is rejected downstream by the session parser; nothing to check here.
+      return true
+    }
+    if (typeof familyId !== 'string' || familyId === '') return true
+    const present = await this.redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
+    return present === 1
+  }
+
+  /**
+   * Revokes every live session in one refresh-token family, in a single transaction.
+   *
+   * Called on reuse detection: the whole lineage descending from the compromised login is
+   * deleted, forcing each holder to re-authenticate. This is deliberately narrower than
+   * {@link invalidateUserSessions} — the OWASP-recommended behaviour is to kill the stolen
+   * token's chain, not to log the user's other legitimate devices out.
+   *
+   * Idempotent: an empty, unknown, or already-cleared family is a no-op.
+   *
+   * @param familyId - The family id carried by the consumed-token marker.
+   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`.
+   * @returns The number of family members that were removed.
+   */
+  async revokeFamily(
+    familyId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<number> {
+    if (familyId === '') return 0
+    const p = prefixesFor(kind)
+    const members = await this.smembers(`${p.family}:${familyId}`)
+    const indexKey = await this.resolveFamilyOwnerIndex(members, p.live, p.index)
+    const removed = await this.eval(
+      REVOKE_FAMILY_LUA,
+      [`${p.family}:${familyId}`],
+      [this.namespace, p.live, p.detail, indexKey]
+    )
+    return typeof removed === 'number' ? removed : 0
+  }
+
+  /**
+   * Resolves the namespaced index key of the user a family belongs to.
+   *
+   * Every member of one family descends from the same login, so the first readable record
+   * names the owner. Reading it here rather than decoding JSON inside the revocation script
+   * keeps the script free of `cjson` and uses a real parser on the stored record.
+   *
+   * @param members - The family index members (bare session hashes).
+   * @param livePrefix - The live-session prefix for the plane (`rt` or `prt`).
+   * @param indexPrefix - The session-index prefix for the plane (`sess` or `psess`).
+   * @returns The namespaced `sess:`/`psess:` key, or `''` when no member record is readable —
+   *   every member may have already expired, in which case there is nothing left to prune.
+   */
+  private async resolveFamilyOwnerIndex(
+    members: string[],
+    livePrefix: string,
+    indexPrefix: string
+  ): Promise<string> {
+    for (const hash of members) {
+      const record = await this.get(`${livePrefix}:${hash}`)
+      if (record === null) continue
+      let userId: unknown
+      try {
+        userId = (JSON.parse(record) as Record<string, unknown>)['userId']
+      } catch {
+        continue
+      }
+      if (typeof userId === 'string' && userId !== '') {
+        return this.prefix(`${indexPrefix}:${userId}`)
+      }
+    }
+    return ''
   }
 
   // ---------------------------------------------------------------------------
