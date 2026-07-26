@@ -844,6 +844,48 @@ describe('TokenManagerService', () => {
       ).resolves.toMatchObject({ rawRefreshToken: FIXED_REFRESH_TOKEN })
     })
 
+    // Scenario: the session's age is exactly the cap, with the clock pinned so it is exactly
+    // that and not a millisecond more. Expected: it rotates. The cap is a maximum, not an
+    // exclusive bound, and only a record sitting on the boundary can tell the two apart.
+    it('rotates a family whose age is exactly the absolute cap', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+      // Pinned: real time advances between building the record and reading it, which would
+      // push the age a millisecond past the cap and make the assertion prove nothing.
+      const nowMs = Date.UTC(2026, 0, 31)
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(nowMs)
+      const session = JSON.stringify({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        role: 'member',
+        device: 'Browser',
+        ip: '1.2.3.4',
+        createdAt: new Date(nowMs).toISOString(),
+        familyId: FAMILY,
+        familyCreatedAt: new Date(nowMs - 30 * 86_400_000).toISOString()
+      })
+      mockRedis.get.mockResolvedValue(session)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'rotated', sessionJson: session })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await expect(
+        capped.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).resolves.toMatchObject({ rawRefreshToken: FIXED_REFRESH_TOKEN })
+      nowSpy.mockRestore()
+    })
+
     // Scenario: the cap is off (the default), or the record predates the field, or the field is
     // unparseable. Expected: the rotation proceeds in all three. A malformed timestamp is not
     // evidence a session is old, and ending one on it would be a self-inflicted outage.
