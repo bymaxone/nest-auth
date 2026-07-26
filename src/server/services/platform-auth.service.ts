@@ -19,7 +19,9 @@ import type {
   SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
+import { normalizeEmail } from '../utils/normalize-email'
 
 /**
  * Core authentication service for platform administrators.
@@ -69,12 +71,21 @@ export class PlatformAuthService {
    * @returns Auth result or MFA challenge prompt.
    * @throws {@link AuthException} with `ACCOUNT_LOCKED` (429) when brute-force limit reached.
    * @throws {@link AuthException} with `INVALID_CREDENTIALS` on bad email/password.
+   * @throws {@link AuthException} with the matching status code (403) when the admin's
+   *   account status is configured as blocked.
    */
   async login(
     dto: PlatformLoginDto,
     ip: string,
     userAgent: string
   ): Promise<PlatformAuthResult | MfaChallengeResult> {
+    // Canonicalize the email before deriving ANY email-keyed value below. The controllers
+    // run `ValidationPipe` without `transform: true`, so a DTO `@Transform` would be
+    // discarded and the lockout identifier would be derived from caller-controlled casing
+    // — the case-rotation bypass, where each casing is a distinct lockout bucket yet
+    // resolves the same admin. Merged immutably to avoid mutating the validated DTO.
+    dto = { ...dto, email: normalizeEmail(dto.email) }
+
     // HMAC-SHA-256 of 'platform:' + email prevents PII in Redis keys and blocks
     // rainbow-table reversal. The derived `hmacKey` is used so the Redis-identifier
     // security domain stays independent from the JWT-signing secret.
@@ -88,11 +99,24 @@ export class PlatformAuthService {
     }
 
     const admin = await this.platformUserRepo.findByEmail(dto.email)
+
+    // Admin-not-found path: run a dummy scrypt derivation before failing so an unknown
+    // address costs the same wall-clock time as a known address with a wrong password.
+    // Skipping it leaks a timing oracle (single-digit vs. tens of milliseconds) that
+    // enumerates which administrator accounts exist despite the identical error body —
+    // the same oracle the dashboard login already closes.
     if (!admin) {
+      await this.passwordService.compareDummy(dto.password)
       await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
+
+    // Status gate before the KDF. A suspended, inactive, or banned administrator must never
+    // authenticate — without this a revoked operator keeps full platform access as long as
+    // the password is known. Running it ahead of scrypt also denies an attacker unbounded
+    // hashing work on an account whose login could never succeed.
+    assertNotBlocked(admin.status, this.options.blockedStatuses)
 
     const passwordMatch = await this.passwordService.compare(dto.password, admin.passwordHash)
     if (!passwordMatch) {

@@ -105,7 +105,8 @@ const mockPlatformUserRepo = {
 
 const mockPasswordService = {
   hash: jest.fn(),
-  compare: jest.fn()
+  compare: jest.fn(),
+  compareDummy: jest.fn()
 }
 
 const mockTokenManager = {
@@ -130,7 +131,8 @@ const mockRedis = {
 
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
-  hmacKey: HMAC_KEY
+  hmacKey: HMAC_KEY,
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED']
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +177,7 @@ describe('PlatformAuthService', () => {
       mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(120)
       mockPlatformUserRepo.findByEmail.mockResolvedValue(PLATFORM_ADMIN)
       mockPasswordService.compare.mockResolvedValue(true)
+      mockPasswordService.compareDummy.mockResolvedValue(false)
       mockTokenManager.issuePlatformTokens.mockResolvedValue(PLATFORM_AUTH_RESULT)
       mockPlatformUserRepo.updateLastLogin.mockResolvedValue(undefined)
     })
@@ -281,6 +284,87 @@ describe('PlatformAuthService', () => {
       const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ')
       expect(logged).toContain('login: invalid credentials')
       warnSpy.mockRestore()
+    })
+
+    // Verifies the anti-enumeration decoy: an unknown admin address must still pay the
+    // scrypt cost. Without it the not-found path returns in single-digit milliseconds
+    // while a wrong password takes tens, and that delta enumerates which administrator
+    // accounts exist even though both responses carry the identical error body.
+    it('should run the dummy KDF when the admin address is unknown', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue(null)
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockPasswordService.compareDummy).toHaveBeenCalledWith(dto.password)
+    })
+
+    // Verifies the status gate refuses a suspended administrator that presents the
+    // correct password. Without it a revoked operator keeps full platform access for as
+    // long as the credential is known — the password check alone says nothing about
+    // whether the account is still permitted to authenticate.
+    it('should reject a blocked admin even when the password is correct', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({
+        ...PLATFORM_ADMIN,
+        status: 'SUSPENDED'
+      })
+
+      let caught: AuthException | undefined
+      try {
+        await service.login(dto, ip, userAgent)
+      } catch (e) {
+        caught = e instanceof AuthException ? e : undefined
+      }
+
+      expect(caught).toBeInstanceOf(AuthException)
+      const response = caught!.getResponse() as { error: { code: string } }
+      expect(response.error.code).toBe(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      expect(caught!.getStatus()).toBe(403)
+      expect(mockTokenManager.issuePlatformTokens).not.toHaveBeenCalled()
+    })
+
+    // Verifies the status gate runs BEFORE the KDF. Ordering is the security property:
+    // if it ran after, an attacker knowing a disabled address could force unbounded
+    // scrypt work with attempts that could never succeed.
+    it('should reject a blocked admin without running the password KDF', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({ ...PLATFORM_ADMIN, status: 'BANNED' })
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+    })
+
+    // Verifies an MFA-enrolled admin whose account is blocked never receives a temp
+    // token. The MFA branch sits after the gate, so a blocked account must fail before
+    // it — otherwise the challenge flow would hand out a path back to a live session.
+    it('should not issue an MFA challenge for a blocked admin', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({
+        ...PLATFORM_ADMIN_MFA,
+        status: 'INACTIVE'
+      })
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Verifies the lockout identifier is derived from the CANONICAL email. Without
+    // normalization each casing of one address is a distinct brute-force bucket that
+    // resolves the same admin, so an attacker rotates the case to reset the counter and
+    // the lockout never trips — the case-rotation bypass.
+    it('should derive the brute-force identifier from the normalized email', async () => {
+      await service.login({ ...dto, email: '  ADMIN@Example.COM  ' }, ip, userAgent)
+
+      const canonicalIdentifier = hmacSha256('platform:admin@example.com', HMAC_KEY)
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
+    })
+
+    // Verifies the repository lookup also receives the canonical address, so the stored
+    // identity and the lockout bucket can never be keyed on different values.
+    it('should look the admin up by the normalized email', async () => {
+      await service.login({ ...dto, email: 'ADMIN@EXAMPLE.COM' }, ip, userAgent)
+
+      expect(mockPlatformUserRepo.findByEmail).toHaveBeenCalledWith('admin@example.com')
     })
 
     // Verifies INVALID_CREDENTIALS when the password does not match and recordFailure is called.

@@ -15,7 +15,6 @@ import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
@@ -30,6 +29,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
@@ -604,20 +604,7 @@ export class AuthService {
   }
 
   private assertUserNotBlocked(user: AuthUser): void {
-    const blocked = this.options.blockedStatuses.map((s) => s.toLowerCase())
-    if (blocked.includes(user.status.toLowerCase())) {
-      const codeMap: Record<string, AuthErrorCode> = {
-        banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
-        inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
-        suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
-        pending: AUTH_ERROR_CODES.PENDING_APPROVAL,
-        pending_approval: AUTH_ERROR_CODES.PENDING_APPROVAL
-      }
-
-      const code: AuthErrorCode =
-        codeMap[user.status.toLowerCase()] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
-      throw new AuthException(code, 403)
-    }
+    assertNotBlocked(user.status, this.options.blockedStatuses)
   }
 
   private async sendVerificationOtp(
