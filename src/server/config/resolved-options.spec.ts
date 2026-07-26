@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 
 import type { Request } from 'express'
 
+import { hmacSha256 } from '../crypto/secure-token'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import { resolveOptions } from './resolved-options'
 
@@ -142,6 +143,26 @@ describe('resolveOptions — success', () => {
     expect(resolved.hmacKey).toBe(expected)
     expect(resolved.hmacKey).not.toBe(VALID_SECRET)
     expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  // CROSS-IMPLEMENTATION KNOWN-ANSWER TEST. The sibling Rust port (bymax-auth) derives the
+  // same key and both backends key the same Redis identifiers with it, so this derivation is
+  // a wire contract rather than an internal detail: the separator, the hash, and the fact
+  // that the HMAC is keyed with the hex TEXT (not the raw digest) all have to match.
+  // rust-auth carries the identical vectors in
+  // `crates/bymax-auth-core/src/config/validate.rs`. If either side drifts, exactly one of
+  // the two suites goes red — instead of the split surfacing in production as lockouts and
+  // OTPs that silently miss each other across backends.
+  it('should match the rust-auth known-answer vectors for key and identifier', () => {
+    const secret = '0123456789abcdef0123456789abcdef'
+    const expectedKey = '0dd66555bd2d89e0eb4ce050f1fef427bea6799bec27fb8e313f69ab965048c1'
+    const identifierMessage = 'tenant-a:user@example.com'
+    const expectedIdentifier = '609a759522bd8b397748fad2dbde07957cea580fe4f4f1f0ce0f526485de2b6d'
+
+    const resolved = resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret } })
+
+    expect(resolved.hmacKey).toBe(expectedKey)
+    expect(hmacSha256(identifierMessage, resolved.hmacKey)).toBe(expectedIdentifier)
   })
 
   // Verifies that changing the JWT secret produces a different hmacKey (deterministic
