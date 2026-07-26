@@ -343,7 +343,7 @@ export class TokenManagerService {
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
-    const seed = await this.readSeedSession(`rt:${oldHash}`)
+    const seed = await this.readSeedSession(`rt:${oldHash}`, ip, userAgent)
     const newSession = this.buildSession(
       seed.userId,
       seed.tenantId,
@@ -400,12 +400,20 @@ export class TokenManagerService {
    * the record being built here, so an empty placeholder is returned rather than failing early.
    *
    * @param sessionKey - The `rt:`/`prt:` key of the presented token.
-   * @returns The parsed live record, or an empty placeholder when the key is gone.
+   * @param ip - Client IP, carried into the placeholder so its every field is the real one.
+   * @param userAgent - User-Agent, carried into the placeholder for the same reason.
+   * @returns The parsed live record, or an empty-identity placeholder when the key is gone.
    */
-  private async readSeedSession(sessionKey: string): Promise<RefreshSession> {
+  private async readSeedSession(
+    sessionKey: string,
+    ip: string,
+    userAgent: string
+  ): Promise<RefreshSession> {
     const json = await this.redis.get(sessionKey)
     if (json === null) {
-      return this.buildSession('', '', '', '', '', false, '')
+      // Empty identity, MFA left enforcing, and no family — a placeholder must never be able
+      // to plant family bookkeeping or mint a token that clears the MFA gate.
+      return this.buildSession('', '', '', ip, userAgent, false, '')
     }
     return this.parseSession(json)
   }
@@ -639,7 +647,7 @@ export class TokenManagerService {
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
-    const seed = await this.readSeedSession(`prt:${oldHash}`)
+    const seed = await this.readSeedSession(`prt:${oldHash}`, ip, userAgent)
     const newSession = this.buildSession(
       seed.userId,
       '',

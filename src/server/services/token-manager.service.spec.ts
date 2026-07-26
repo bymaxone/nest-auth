@@ -784,22 +784,66 @@ describe('TokenManagerService', () => {
       warnSpy.mockRestore()
     })
 
-    // Scenario: a session JSON missing only userId (role present) must be rejected as AuthException.
+    // Scenario: a session JSON missing only userId (role present) must be rejected as
+    // AuthException. The rotation is armed to SUCCEED, so the only thing that can fail the call
+    // is the parse guard itself — otherwise the rejection could come from the rotation and the
+    // test would pass with the guard removed.
     it('throws AuthException when the session JSON has role but no userId', async () => {
       mockRedis.get.mockResolvedValue(JSON.stringify({ role: 'member' }))
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: OLD_SESSION
+      })
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
     })
 
-    // Scenario: a session JSON missing only role (userId present) must be rejected as AuthException.
+    // Same, for a record missing only the role. Rotation armed to succeed for the same reason.
     it('throws AuthException when the session JSON has userId but no role', async () => {
       mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1' }))
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: OLD_SESSION
+      })
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: the presented token has no live record, so the rotation is seeded with a
+    // placeholder. Expected: the placeholder carries an EMPTY identity and MFA off.
+    // Why: the script only stores that record when the live key exists — which is exactly the
+    // case where the seed came from the live record instead — so the placeholder is never
+    // persisted. Pinning it anyway is defense in depth: if that invariant ever broke, the record
+    // that leaked would be an empty identity with the MFA gate ON, not a usable session.
+    it('seeds an absent live session with an empty, MFA-enforcing placeholder', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'grace', sessionJson: OLD_SESSION })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      const bundle = mockRedis.rotateRefreshSession.mock.calls[0]?.[0] as {
+        newSessionJson: string
+        familyId: string
+      }
+      const placeholder = JSON.parse(bundle.newSessionJson) as Record<string, unknown>
+      expect(placeholder['userId']).toBe('')
+      expect(placeholder['tenantId']).toBe('')
+      expect(placeholder['role']).toBe('')
+      // The request's own IP and User-Agent are carried through — the placeholder replaces the
+      // IDENTITY, never the request metadata.
+      expect(placeholder['ip']).toBe('1.2.3.4')
+      expect(placeholder['device']).toBe('Browser')
+      // MFA off in the record means the gate stays ON for the rotated token, because the gate
+      // refuses only when `mfaEnabled && !mfaVerified` — the safe default for a hollow record.
+      expect(placeholder['mfaEnabled']).toBe(false)
+      // No family: a placeholder must never be able to plant family bookkeeping.
+      expect(bundle.familyId).toBe('')
+      expect(placeholder['familyId']).toBeUndefined()
     })
 
     // Scenario: a session record that parses to JSON null must be rejected as AuthException — not

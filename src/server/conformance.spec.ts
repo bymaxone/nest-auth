@@ -203,6 +203,43 @@ describe('cross-implementation conformance', () => {
   })
 
   // -------------------------------------------------------------------------
+  // Duplicated contracts
+  // -------------------------------------------------------------------------
+
+  describe('JWT payload contracts', () => {
+    /**
+     * Reads the field names of a TypeScript interface out of a source file.
+     *
+     * Comparing the two declarations structurally is only possible at build time; comparing the
+     * declared field names is possible now, and catches the drift that actually happens — a
+     * claim added to one copy and forgotten in the other.
+     */
+    function interfaceFields(relativePath: string, name: string): string[] {
+      const source = readFileSync(join(__dirname, relativePath), 'utf8')
+      const declaration = new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`).exec(source)
+      const body = (declaration?.[1] ?? '')
+        .replace(/\/\*\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '')
+      return [...body.matchAll(/^\s*(\w+\??):/gm)].map((match) => match[1] ?? '')
+    }
+
+    // The same three payload contracts are declared twice — once in `shared` for consumers and
+    // once in `server` for the guards — because the two subpaths must not import each other.
+    // Nothing but this test stops them diverging, and a claim that exists on one side only is
+    // exactly how a guard ends up checking something the issuer never stamps.
+    it.each(['DashboardJwtPayload', 'PlatformJwtPayload', 'MfaTempPayload'])(
+      'declares %s identically in shared and server',
+      (name) => {
+        const shared = interfaceFields('../shared/types/jwt-payload.types.ts', name)
+        const server = interfaceFields('interfaces/jwt-payload.interface.ts', name)
+
+        expect(shared.length).toBeGreaterThan(0)
+        expect(server).toEqual(shared)
+      }
+    )
+  })
+
+  // -------------------------------------------------------------------------
   // Access-token claims
   // -------------------------------------------------------------------------
 
