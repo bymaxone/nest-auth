@@ -9,6 +9,15 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 
+/**
+ * Lifetime of a token-epoch key, in seconds (30 days).
+ *
+ * It must comfortably exceed the longest an access token can live, so a bump stays in force
+ * for every pre-bump token's remaining lifetime. A small integer per reset-affected user is
+ * negligible, and rust-auth applies the same value so a shared Redis ages the two identically.
+ */
+const EPOCH_TTL_SECONDS = 30 * 24 * 60 * 60
+
 /** Tag the rotation script prepends to a session recovered from the grace window. */
 const GRACE_TAG = 'GRACE:'
 
@@ -659,67 +668,57 @@ export class AuthRedisService {
   }
 
   // ---------------------------------------------------------------------------
-  // Access-token cutoff (bulk revocation of stateless access tokens)
+  // Token epoch (bulk revocation of stateless access tokens)
   // ---------------------------------------------------------------------------
 
   /**
-   * Records a per-user access-token cutoff timestamp under `utc:{userId}`.
+   * Reads the user's token **epoch** — a per-user generation counter — defaulting to `0`.
    *
-   * Access tokens are stateless JWTs, so the server does not track their
-   * individual `jti`s and cannot add them to the per-`jti` revocation list on a
-   * bulk event (password reset, refresh-token-reuse detection). Instead the guard
-   * rejects any access token whose `iat` predates this cutoff, invalidating every
-   * token issued before it in one write — without enumerating them.
+   * Access tokens are stateless JWTs: the server does not track their individual `jti`s and
+   * cannot enumerate them on a bulk event such as a password reset. Instead every token is
+   * stamped with the epoch current at issuance, and a token stamped below the stored epoch is
+   * rejected — one write invalidates every outstanding token for that user.
    *
-   * @param userId - Internal user ID whose pre-cutoff access tokens are revoked.
-   * @param cutoffEpochSeconds - Unix time (seconds); tokens with `iat < cutoff` are rejected.
-   * @param ttlSeconds - Key lifetime — set to the access-token max age so the key
-   *   auto-expires exactly when no pre-cutoff token can still be unexpired.
+   * The counter replaced an `iat < cutoff` timestamp comparison, which could not separate a
+   * token issued in the same second as the reset from one issued just before it, and depended
+   * on the token carrying a well-formed `iat` at all.
+   *
+   * This is a plain read: it never creates the key, so only a user who has actually been
+   * bumped carries one.
+   *
+   * @param userId - Internal user or admin ID to look up.
+   * @param kind - Which identity plane to read. Defaults to `'dashboard'`.
+   * @returns The stored epoch, or `0` when none is stored or the value is unreadable.
    */
-  async setUserTokenCutoff(
+  async getUserTokenEpoch(
     userId: string,
-    cutoffEpochSeconds: number,
-    ttlSeconds: number
-  ): Promise<void> {
-    await this.set(`utc:${userId}`, String(cutoffEpochSeconds), ttlSeconds)
-  }
-
-  /**
-   * Reads the per-user access-token cutoff timestamp, or `null` when none is set.
-   *
-   * @param userId - Internal user ID to look up.
-   * @returns The cutoff Unix time in seconds, or `null` if absent or unparseable.
-   */
-  async getUserTokenCutoff(userId: string): Promise<number | null> {
-    const raw = await this.get(`utc:${userId}`)
-    if (raw === null) return null
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<number> {
+    const raw = await this.get(`${kind === 'platform' ? 'pep' : 'ep'}:${userId}`)
+    if (raw === null) return 0
     const parsed = Number(raw)
-    return Number.isFinite(parsed) ? parsed : null
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0
   }
 
   /**
-   * Revokes every outstanding token for a user in a single call: deletes all
-   * refresh sessions AND records an access-token cutoff at the current time.
+   * Atomically advances the user's token epoch and returns the new value, invalidating every
+   * outstanding access token for that user at once.
    *
-   * Combines the two halves of a full-account revocation. Deleting the refresh
-   * sessions stops rotation, but stateless access tokens are not tracked per-`jti`
-   * and would stay valid until their natural `exp`; the cutoff makes the guard
-   * reject every access token issued before now. Invoke on any event that must
-   * terminate all of a user's sessions at once — password reset, or refresh-token
-   * reuse detection. The cutoff key lifetime equals the access-token max age, after
-   * which no pre-cutoff token can still be unexpired.
+   * The TTL is deliberately far longer than any access token lives, so a bump stays in force
+   * for the whole window a pre-bump token could still be presented. Once it lapses the counter
+   * restarts at zero, which is safe: by then every token stamped below it has expired anyway.
    *
-   * @param userId - Internal user ID whose sessions and access tokens are revoked.
-   * @param accessTokenMaxAgeMs - Access-token max age in ms; sets the cutoff key TTL.
+   * @param userId - Internal user or admin ID whose outstanding access tokens are revoked.
+   * @param kind - Which identity plane to bump. Defaults to `'dashboard'`.
+   * @returns The epoch after the increment.
    */
-  async revokeAllUserTokens(userId: string, accessTokenMaxAgeMs: number): Promise<void> {
-    await this.invalidateUserSessions(userId)
-    const cutoffEpochSeconds = Math.floor(Date.now() / 1000)
-    // Clamp the TTL to a minimum of 1 second. A misconfigured `accessCookieMaxAgeMs`
-    // (0, negative, or NaN) would otherwise make `SET ... EX` fail or expire the cutoff
-    // immediately — letting pre-cutoff access tokens become valid again. `|| 1` maps a
-    // falsy/NaN ceil to 1; `Math.max` catches a truthy-negative ceil.
-    const ttlSeconds = Math.max(1, Math.ceil(accessTokenMaxAgeMs / 1000) || 1)
-    await this.setUserTokenCutoff(userId, cutoffEpochSeconds, ttlSeconds)
+  async bumpUserTokenEpoch(
+    userId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<number> {
+    return this.incrWithFixedTtl(
+      `${kind === 'platform' ? 'pep' : 'ep'}:${userId}`,
+      EPOCH_TTL_SECONDS
+    )
   }
 }

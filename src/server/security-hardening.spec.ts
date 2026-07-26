@@ -85,7 +85,7 @@ const options = {
 /** Redis double that reports nothing revoked and no cutoff — the permissive baseline. */
 const permissiveRedis = {
   get: jest.fn().mockResolvedValue(null),
-  getUserTokenCutoff: jest.fn().mockResolvedValue(null)
+  getUserTokenEpoch: jest.fn().mockResolvedValue(0)
 }
 
 /** Stand-ins for the decorated route the Reflector reads metadata from. */
@@ -110,6 +110,14 @@ async function expectRefused(
   await expect(guard.canActivate(contextWithToken(token))).rejects.toBeInstanceOf(AuthException)
 }
 
+/** Runs a guard against a bearer token and returns its verdict. */
+async function runGuard(
+  guard: { canActivate: (c: never) => Promise<boolean> },
+  token: string
+): Promise<boolean> {
+  return guard.canActivate(contextWithToken(token))
+}
+
 describe('security hardening — adversarial', () => {
   let jwtService: JwtService
   let dashboardGuard: JwtAuthGuard
@@ -118,7 +126,7 @@ describe('security hardening — adversarial', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     permissiveRedis.get.mockResolvedValue(null)
-    permissiveRedis.getUserTokenCutoff.mockResolvedValue(null)
+    permissiveRedis.getUserTokenEpoch.mockResolvedValue(0)
 
     jwtService = new JwtService({ secret: JWT_SECRET })
     const delivery = new TokenDeliveryService(options as never)
@@ -252,29 +260,40 @@ describe('security hardening — adversarial', () => {
       await expectRefused(dashboardGuard, jwtService.sign(dashboardPayload({ jti: '../../etc' })))
     })
 
-    // The bulk cutoff compares `iat` against a per-user timestamp. A token signed without
-    // `iat` would make that comparison silently false and slip past a password reset.
-    it('rejects a token with no iat when a bulk cutoff is active', async () => {
-      permissiveRedis.getUserTokenCutoff.mockResolvedValue(Math.floor(Date.now() / 1000))
-      const payload = dashboardPayload()
-      delete payload['iat']
+    // Bulk revocation compares the token's stamped generation against the user's current one.
+    // A token carrying no `epoch` at all — every token issued before the field existed — must
+    // read as the lowest generation, not slip past because the claim is missing.
+    it('rejects a token with no epoch once the user has been bumped', async () => {
+      permissiveRedis.getUserTokenEpoch.mockResolvedValue(1)
 
-      await expectRefused(dashboardGuard, jwtService.sign(payload, { noTimestamp: true }))
+      await expectRefused(dashboardGuard, jwtService.sign(dashboardPayload()))
     })
 
-    // Same evasion with a non-numeric iat, which would also defeat the `<` comparison. This
-    // one is hand-signed rather than produced by the library: its own signer refuses a
-    // non-numeric `iat`, but the guard must not rely on that. Any other signer holding the
-    // deployment secret — a sibling service, an older library version — could emit one, and
-    // the guard is the component that has to refuse it.
-    it('rejects a token whose iat is not a finite number when a cutoff is active', async () => {
-      permissiveRedis.getUserTokenCutoff.mockResolvedValue(Math.floor(Date.now() / 1000))
-      const header = { alg: 'HS256', typ: 'JWT' }
-      const payload = dashboardPayload({ iat: 'not-a-number' })
-      const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`
-      const signature = createHmac('sha256', JWT_SECRET).update(signingInput).digest('base64url')
+    // Same evasion with a non-numeric epoch, which would defeat the `<` comparison outright:
+    // JavaScript answers `false` for `'zzz' < 1`, so the token would sail past the revocation.
+    // Hand-signed rather than produced by the library: its own signer would never emit this,
+    // but the guard must not rely on that — any other holder of the deployment secret (a
+    // sibling service, an older version) could, and the guard is what has to refuse it.
+    it('rejects a token whose epoch is not a usable number when the user has been bumped', async () => {
+      permissiveRedis.getUserTokenEpoch.mockResolvedValue(1)
+      for (const epoch of ['zzz', Number.NaN, 1.5, -3, {}]) {
+        const header = { alg: 'HS256', typ: 'JWT' }
+        const payload = dashboardPayload({ epoch })
+        const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`
+        const signature = createHmac('sha256', JWT_SECRET).update(signingInput).digest('base64url')
 
-      await expectRefused(dashboardGuard, forgeJwt(header, payload, signature))
+        await expectRefused(dashboardGuard, forgeJwt(header, payload, signature))
+      }
+    })
+
+    // The counterpart: a token stamped at or above the stored generation is admitted, so the
+    // mechanism revokes what predates the reset without locking the user out of what follows.
+    it('admits a token stamped at the current epoch', async () => {
+      permissiveRedis.getUserTokenEpoch.mockResolvedValue(2)
+
+      await expect(
+        runGuard(dashboardGuard, jwtService.sign(dashboardPayload({ epoch: 2 })))
+      ).resolves.toBe(true)
     })
 
     // An empty sub keys `sess:` and the HMAC pre-images. Admitting it would let one

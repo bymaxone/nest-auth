@@ -162,6 +162,9 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<AuthResult> {
+    // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
+    // token at verification, without the server having to enumerate outstanding tokens.
+    const epoch = await this.redis.getUserTokenEpoch(user.id)
     const accessToken = this.issueAccess({
       sub: user.id,
       tenantId: user.tenantId,
@@ -169,7 +172,8 @@ export class TokenManagerService {
       type: 'dashboard',
       status: user.status,
       mfaEnabled: user.mfaEnabled,
-      mfaVerified: overrides?.mfaVerified ?? false
+      mfaVerified: overrides?.mfaVerified ?? false,
+      epoch
     })
 
     const rawRefreshToken = generateSecureToken()
@@ -223,12 +227,14 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
+    const epoch = await this.redis.getUserTokenEpoch(admin.id, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: admin.id,
       role: admin.role,
       type: 'platform',
       mfaEnabled: admin.mfaEnabled,
-      mfaVerified: overrides?.mfaVerified ?? false
+      mfaVerified: overrides?.mfaVerified ?? false,
+      epoch
     })
 
     const rawRefreshToken = generateSecureToken()
@@ -430,7 +436,7 @@ export class TokenManagerService {
       await this.redis.sadd(`sess:${old.userId}`, `rp:${oldHash}`)
     }
     await this.redis.expire(`sess:${old.userId}`, refreshTtl)
-    return this.buildRotatedResult(newSession, newRawRefresh)
+    return await this.buildRotatedResult(newSession, newRawRefresh)
   }
 
   /**
@@ -476,7 +482,7 @@ export class TokenManagerService {
       await this.redis.sadd(`fam:${graceSession.familyId}`, anotherNewHash)
       await this.redis.expire(`fam:${graceSession.familyId}`, refreshTtl)
     }
-    return this.buildRotatedResult(anotherSession, anotherNewRefresh)
+    return await this.buildRotatedResult(anotherSession, anotherNewRefresh)
   }
 
   /**
@@ -578,10 +584,16 @@ export class TokenManagerService {
    * `mfaVerified: true` claim on the first token rotation. MFA guards should be aware
    * of this behaviour and direct users through the MFA challenge flow to re-acquire it.
    */
-  private buildRotatedResult(session: RefreshSession, rawRefreshToken: string): RotatedTokenResult {
+  private async buildRotatedResult(
+    session: RefreshSession,
+    rawRefreshToken: string
+  ): Promise<RotatedTokenResult> {
     // mfaEnabled is propagated from the stored session so MfaRequiredGuard continues
     // to enforce MFA after rotation. mfaVerified is always false — the user must
     // re-complete the MFA challenge after rotation to re-acquire a verified token.
+    // The epoch is re-read at rotation time, so a reset that lands mid-session is picked up
+    // by the very next rotation rather than being carried over from the old token.
+    const epoch = await this.redis.getUserTokenEpoch(session.userId)
     const accessToken = this.issueAccess({
       sub: session.userId,
       tenantId: session.tenantId,
@@ -589,7 +601,8 @@ export class TokenManagerService {
       type: 'dashboard',
       status: '',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false
+      mfaVerified: false,
+      epoch
     })
 
     return {
@@ -714,7 +727,7 @@ export class TokenManagerService {
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
-    return this.buildPlatformRotatedResult(newSession, newRawRefresh)
+    return await this.buildPlatformRotatedResult(newSession, newRawRefresh)
   }
 
   /**
@@ -761,7 +774,7 @@ export class TokenManagerService {
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
-    return this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
+    return await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
   }
 
   /**
@@ -771,17 +784,19 @@ export class TokenManagerService {
    * `mfaVerified` is always `false` after rotation — same semantics as {@link buildRotatedResult}.
    * Platform admins must re-complete the MFA challenge flow to re-acquire a verified token.
    */
-  private buildPlatformRotatedResult(
+  private async buildPlatformRotatedResult(
     session: RefreshSession,
     rawRefreshToken: string
-  ): RotatedTokenResult {
+  ): Promise<RotatedTokenResult> {
     // mfaVerified is always false after rotation (same semantics as buildRotatedResult).
+    const epoch = await this.redis.getUserTokenEpoch(session.userId, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: session.userId,
       role: session.role,
       type: 'platform',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false
+      mfaVerified: false,
+      epoch
     })
 
     return {

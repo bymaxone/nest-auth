@@ -35,7 +35,7 @@ const mockTokenDelivery = {
 
 const mockRedis = {
   get: jest.fn(),
-  getUserTokenCutoff: jest.fn().mockResolvedValue(null)
+  getUserTokenEpoch: jest.fn().mockResolvedValue(0)
 }
 
 const mockOptions = {
@@ -70,7 +70,7 @@ describe('OptionalAuthGuard', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    mockRedis.getUserTokenCutoff.mockResolvedValue(null)
+    mockRedis.getUserTokenEpoch.mockResolvedValue(0)
 
     const module = await Test.createTestingModule({
       providers: [

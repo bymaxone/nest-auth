@@ -48,6 +48,8 @@ const mockRedis = {
   srem: jest.fn().mockResolvedValue(1),
   expire: jest.fn().mockResolvedValue(undefined),
   rotateRefreshSession: jest.fn(),
+  getUserTokenEpoch: jest.fn().mockResolvedValue(0),
+  bumpUserTokenEpoch: jest.fn().mockResolvedValue(1),
   revokeFamily: jest.fn().mockResolvedValue(1),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined)
@@ -125,6 +127,7 @@ describe('TokenManagerService', () => {
     // decides whether a live session was found. Rotation tests override both.
     mockRedis.get.mockResolvedValue(null)
     mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'invalid' })
+    mockRedis.getUserTokenEpoch.mockResolvedValue(0)
     mockRedis.getdel.mockReset()
     mockRedis.getdel.mockResolvedValue(null)
 

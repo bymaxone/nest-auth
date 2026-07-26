@@ -8,6 +8,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { readStampedEpoch } from '../utils'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
@@ -106,20 +107,18 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_REVOKED)
     }
 
-    // Require a well-formed `sub` before it keys the cutoff lookup (`utc:{sub}`) —
+    // Require a well-formed `sub` before it keys the epoch lookup (`ep:{sub}`) —
     // mirrors JwtAuthGuard; a missing/empty/oversized sub would otherwise build a
     // malformed Redis key.
     assertValidSub(payload.sub)
 
-    // Bulk revocation: reject any access token issued before the user's cutoff (set on
-    // password reset or refresh-token-reuse detection). Mirrors JwtAuthGuard so a
-    // dashboard revocation event kills WebSocket access tokens too, not just HTTP ones.
-    // Surfaced as TOKEN_INVALID (not TOKEN_REVOKED) so the response is indistinguishable
-    // from a malformed/expired token and leaks no oracle for whether a given user has an
-    // active cutoff. A missing/non-finite `iat` is treated as invalid so a token signed
-    // without a timestamp cannot slip past the cutoff comparison.
-    const cutoff = await this.redis.getUserTokenCutoff(payload.sub)
-    if (cutoff !== null && (!Number.isFinite(payload.iat) || payload.iat < cutoff)) {
+    // Bulk revocation: reject any access token stamped below the user's current token epoch
+    // (advanced on password reset). Mirrors JwtAuthGuard so a dashboard revocation event kills
+    // WebSocket access tokens too, not just HTTP ones. Surfaced as TOKEN_INVALID (not
+    // TOKEN_REVOKED) so the response is indistinguishable from a malformed/expired token and
+    // leaks no oracle for whether a given user has been bumped.
+    const epoch = await this.redis.getUserTokenEpoch(payload.sub)
+    if (readStampedEpoch(payload) < epoch) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

@@ -47,7 +47,7 @@ const mockJwtService = {
 
 const mockRedis = {
   get: jest.fn(),
-  getUserTokenCutoff: jest.fn()
+  getUserTokenEpoch: jest.fn()
 }
 
 const mockOptions = {
@@ -101,7 +101,7 @@ describe('WsJwtGuard', () => {
     jest.clearAllMocks()
     // Default: no per-user cutoff, so the bulk-revocation check is a no-op for the
     // existing tests. Cutoff-specific tests override this.
-    mockRedis.getUserTokenCutoff.mockResolvedValue(null)
+    mockRedis.getUserTokenEpoch.mockResolvedValue(0)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -283,56 +283,55 @@ describe('WsJwtGuard', () => {
     })
   })
 
-  // ----------------- Access-token cutoff (bulk revocation) -----------------
+  // ----------------- Token epoch (bulk revocation) -----------------
 
-  describe('access-token cutoff', () => {
-    // A token issued before the user's cutoff (set on password reset / refresh-token
-    // reuse) must be rejected on the WS surface too, mirroring JwtAuthGuard — otherwise
-    // a dashboard revocation would not kill already-issued WebSocket access tokens.
-    it('should reject a token issued before the user cutoff', async () => {
-      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+  describe('token epoch', () => {
+    // A token stamped below the user's current generation must be rejected on the WS surface
+    // too, mirroring JwtAuthGuard — otherwise a password reset would not kill already-issued
+    // WebSocket access tokens.
+    it('should reject a token stamped below the current epoch', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: 1 })
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat + 1)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(2)
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      expect(mockRedis.getUserTokenCutoff).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
     })
 
-    // A token issued exactly at the cutoff is still valid — the cutoff must not lock
-    // out sessions established at or after the revocation event.
-    it('should allow a token issued at or after the cutoff', async () => {
-      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+    // A token stamped at the current generation is still valid — the bump must not lock out
+    // the session established after the revocation event.
+    it('should allow a token stamped at the current epoch', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: 2 })
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.getUserTokenCutoff.mockResolvedValue(VALID_PAYLOAD.iat)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(2)
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
     })
 
-    // With no cutoff recorded the check is a pure no-op and the token passes.
-    it('should allow when no cutoff is set', async () => {
+    // With no bump recorded the check is a pure no-op and an unstamped token passes.
+    it('should allow an unstamped token when the user has never been bumped', async () => {
       mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.getUserTokenCutoff.mockResolvedValue(null)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).resolves.toBe(true)
     })
 
-    // A token with a non-finite iat (e.g. signed with noTimestamp) must be rejected when
-    // a cutoff is active — otherwise the comparison is silently false and bulk revocation
-    // is bypassed on the WS surface.
-    it('should reject a token with a non-finite iat when a cutoff is set', async () => {
-      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, iat: Number.NaN })
+    // An unusable epoch claim reads as generation 0, so a bumped user's stale token cannot
+    // slip past the comparison by carrying a non-numeric value.
+    it('should reject a token whose epoch claim is unusable once the user is bumped', async () => {
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: Number.NaN })
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.getUserTokenCutoff.mockResolvedValue(1)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(1)
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
     })
 
-    // A malformed sub must be rejected before it keys the cutoff lookup (`utc:{sub}`),
+    // A malformed sub must be rejected before it keys the epoch lookup (`ep:{sub}`),
     // mirroring the HTTP guard's assertValidSub.
     it('should reject a token whose sub is empty', async () => {
       mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, sub: '' })

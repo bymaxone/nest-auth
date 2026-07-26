@@ -666,98 +666,66 @@ describe('AuthRedisService', () => {
     })
   })
 
-  describe('user token cutoff', () => {
-    // Verifies the cutoff is written under utc:{userId} as a string with the given TTL.
-    it('should store the cutoff under utc:{userId} with EX ttl', async () => {
-      mockRedis.set.mockResolvedValue('OK')
-      await service.setUserTokenCutoff('user-1', 1_700_000_000, 900)
-      expect(mockRedis.set).toHaveBeenCalledWith(prefixed('utc:user-1'), '1700000000', 'EX', 900)
+  describe('token epoch', () => {
+    // Verifies the epoch is read from `ep:{userId}` and parsed to a number.
+    it('should return the stored epoch for the dashboard plane', async () => {
+      mockRedis.get.mockResolvedValue('3')
+
+      expect(await service.getUserTokenEpoch('user-1')).toBe(3)
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('ep:user-1'))
     })
 
-    // Verifies a stored cutoff is read back and parsed to a number.
-    it('should return the parsed cutoff when present', async () => {
-      mockRedis.get.mockResolvedValue('1700000000')
-      expect(await service.getUserTokenCutoff('user-1')).toBe(1_700_000_000)
-      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('utc:user-1'))
+    // Verifies the platform plane carries its own counter. The two planes are keyed by ids
+    // from different repositories that may collide, so one shared counter would let a reset
+    // on one plane invalidate the other plane's tokens.
+    it('should read the platform epoch from its own keyspace', async () => {
+      mockRedis.get.mockResolvedValue('1')
+
+      expect(await service.getUserTokenEpoch('admin-1', 'platform')).toBe(1)
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('pep:admin-1'))
     })
 
-    // Verifies a missing cutoff key resolves to null (no bulk revocation in effect).
-    it('should return null when no cutoff is set', async () => {
+    // Verifies an unbumped user reads as 0, which keeps the mechanism inert: every token is
+    // stamped 0 too, so nothing is rejected until the first bump.
+    it('should return 0 when no epoch is stored', async () => {
       mockRedis.get.mockResolvedValue(null)
-      expect(await service.getUserTokenCutoff('user-1')).toBeNull()
+
+      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
     })
 
-    // Verifies a corrupt (unparseable) stored value is treated as absent rather than NaN,
-    // so a garbage key can never spuriously reject every token.
-    it('should return null when the stored cutoff is unparseable', async () => {
+    // Verifies a corrupt or negative stored value reads as 0 rather than NaN. Comparing
+    // against NaN is always false, which would silently disable bulk revocation for that user.
+    it('should return 0 when the stored epoch is unusable', async () => {
       mockRedis.get.mockResolvedValue('not-a-number')
-      expect(await service.getUserTokenCutoff('user-1')).toBeNull()
-    })
-  })
+      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
 
-  describe('revokeAllUserTokens', () => {
-    // Verifies the combined revocation deletes all sessions (eval) AND writes an
-    // access-token cutoff (set) under utc:{userId} — the two halves of a full-account
-    // revocation must both fire from one call.
-    it('should invalidate sessions and record a cutoff with ttl derived from the max age', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.set.mockResolvedValue('OK')
+      mockRedis.get.mockResolvedValue('1.5')
+      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
 
-      await service.revokeAllUserTokens('user-9', 900_000)
-
-      expect(mockRedis.eval).toHaveBeenCalledWith(
-        expect.stringContaining('SMEMBERS'),
-        1,
-        prefixed('sess:user-9'),
-        NAMESPACE,
-        'rt:',
-        'rp:',
-        'sd:'
-      )
-      // 900_000 ms → 900 s TTL; the cutoff value is a finite epoch-seconds string.
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        prefixed('utc:user-9'),
-        expect.stringMatching(/^\d+$/),
-        'EX',
-        900
-      )
+      mockRedis.get.mockResolvedValue('-2')
+      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
     })
 
-    // Verifies the ms→s TTL conversion rounds UP (Math.ceil), so a sub-second remainder
-    // never truncates the key lifetime below the access-token max age.
-    it('should round the ttl up to the next whole second', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.set.mockResolvedValue('OK')
+    // Verifies the bump increments atomically and pins the key lifetime to 30 days — far
+    // longer than any access token lives, so the bump stays in force for every pre-bump
+    // token's remaining lifetime. rust-auth applies the same value on a shared Redis.
+    it('should increment the epoch and pin a 30-day lifetime', async () => {
+      mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeAllUserTokens('user-9', 1_499)
+      expect(await service.bumpUserTokenEpoch('user-1')).toBe(1)
 
-      const ttl = (mockRedis.set.mock.calls[0] as unknown[])[3]
-      expect(ttl).toBe(2)
+      const call = mockRedis.eval.mock.calls[0] as unknown[]
+      expect(call[0]).toEqual(expect.stringContaining("redis.call('INCR'"))
+      expect(call[2]).toBe(prefixed('ep:user-1'))
+      expect(call[call.length - 1]).toBe(String(30 * 24 * 60 * 60))
     })
 
-    // Verifies a misconfigured zero/NaN max age clamps to a 1s TTL rather than emitting
-    // an invalid `EX 0`, which would make SET fail or expire the cutoff immediately and
-    // let pre-cutoff access tokens become valid again.
-    it('should clamp a zero or NaN max age to a 1s ttl', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.set.mockResolvedValue('OK')
+    // Verifies the platform bump targets the platform counter.
+    it('should increment the platform epoch in its own keyspace', async () => {
+      mockRedis.eval.mockResolvedValue(2)
 
-      await service.revokeAllUserTokens('user-9', 0)
-      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
-
-      mockRedis.set.mockClear()
-      await service.revokeAllUserTokens('user-9', Number.NaN)
-      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
-    })
-
-    // Verifies a negative max age also clamps to 1s — a truthy-negative ceil must not
-    // slip past the `|| 1` guard, which is why Math.max is applied.
-    it('should clamp a negative max age to a 1s ttl', async () => {
-      mockRedis.eval.mockResolvedValue(null)
-      mockRedis.set.mockResolvedValue('OK')
-
-      await service.revokeAllUserTokens('user-9', -5_000)
-      expect((mockRedis.set.mock.calls[0] as unknown[])[3]).toBe(1)
+      expect(await service.bumpUserTokenEpoch('admin-1', 'platform')).toBe(2)
+      expect((mockRedis.eval.mock.calls[0] as unknown[])[2]).toBe(prefixed('pep:admin-1'))
     })
   })
 })

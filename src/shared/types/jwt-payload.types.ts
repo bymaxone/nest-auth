@@ -44,6 +44,17 @@ export interface DashboardJwtPayload {
   /** Whether the user completed MFA verification before this token was issued. */
   mfaVerified: boolean
 
+  /**
+   * The user's token **epoch** at issuance — a per-user generation counter the server bumps
+   * to invalidate every outstanding access token at once (a password reset). Verification
+   * rejects a token whose epoch is below the user's stored epoch.
+   *
+   * Optional: a token issued before the field existed carries none, which reads as `0` and is
+   * never rejected while the stored epoch is also `0` — the mechanism stays inert until the
+   * first bump.
+   */
+  epoch?: number
+
   /** Issued-at timestamp (Unix seconds). */
   iat: number
 
@@ -76,6 +87,17 @@ export interface PlatformJwtPayload {
 
   /** Whether the admin completed MFA verification before this token was issued. */
   mfaVerified: boolean
+
+  /**
+   * The admin's token **epoch** at issuance — a per-user generation counter the server bumps
+   * to invalidate every outstanding access token at once (a password reset). Verification
+   * rejects a token whose epoch is below the admin's stored epoch.
+   *
+   * Optional: a token issued before the field existed carries none, which reads as `0` and is
+   * never rejected while the stored epoch is also `0` — the mechanism stays inert until the
+   * first bump.
+   */
+  epoch?: number
 
   /** Issued-at timestamp (Unix seconds). */
   iat: number
