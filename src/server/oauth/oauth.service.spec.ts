@@ -72,6 +72,7 @@ const OAUTH_PROFILE = {
   provider: 'google',
   providerId: 'g-123',
   email: 'user@example.com',
+  emailVerified: true,
   name: 'Test User'
 }
 
@@ -363,6 +364,23 @@ describe('OAuthService', () => {
       mockUserRepo.createWithOAuth.mockResolvedValue(AUTH_USER)
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
     }
+
+    // Scenario: the provider hands back an address it has NOT verified.
+    // Expected: the account is created unverified, so the consumer's own verification flow
+    // still has to run. Why: the account belongs to whoever controls the OAuth account, not to
+    // whoever controls the mailbox — marking it verified anyway would make "this email is
+    // proven" false from the first login, which is how an account gets taken over by
+    // registering with someone else's address at a provider that does not check.
+    it('creates the account unverified when the provider did not verify the email', async () => {
+      setupHappyPathCreate()
+      mockPlugin.fetchProfile.mockResolvedValue({ ...OAUTH_PROFILE, emailVerified: false })
+
+      await callCallback()
+
+      expect(mockUserRepo.createWithOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({ emailVerified: false })
+      )
+    })
 
     // Verifies that the 'create' action provisions a new user, strips credentials
     // before calling issueTokens, and returns the full AuthResult.

@@ -300,6 +300,9 @@ describe('GoogleOAuthPlugin', () => {
         provider: 'google',
         providerId: 'g-sub-123',
         email: 'user@example.com',
+        // The plugin refuses an unverified profile above, so this is always true here — and
+        // it has to be stated, because the service now trusts the field instead of assuming.
+        emailVerified: true,
         name: 'Test User',
         avatar: 'https://lh3.googleusercontent.com/photo.jpg'
       })

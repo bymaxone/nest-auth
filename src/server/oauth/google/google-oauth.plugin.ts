@@ -194,7 +194,9 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
     const profile: OAuthProfile = {
       provider: 'google',
       providerId: info.id,
-      email: info.email
+      email: info.email,
+      // Unconditionally true here only because the guard above already refused anything else.
+      emailVerified: true
     }
     if (info.name !== undefined) profile.name = info.name
     if (info.picture !== undefined) profile.avatar = info.picture

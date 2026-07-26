@@ -281,7 +281,11 @@ export class OAuthService {
           email: profile.email,
           name: derivedName,
           tenantId,
-          emailVerified: true,
+          // What the provider actually asserted, not a convenient constant. An account created
+          // from an unverified address belongs to whoever controls the OAuth account, not to
+          // whoever controls the mailbox; marking it verified would make the consumer's
+          // "this email is proven" invariant false from the first login.
+          emailVerified: profile.emailVerified,
           oauthProvider: provider,
           oauthProviderId: profile.providerId
         })
