@@ -26,6 +26,7 @@ import { PasswordResetController } from './controllers/password-reset.controller
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
@@ -400,6 +401,7 @@ export class BymaxAuthModule {
         // Guards — registered as providers so they can be applied via @UseGuards().
         JwtAuthGuard,
         TrustedOriginGuard,
+        AuthRateLimitGuard,
         RolesGuard,
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.
@@ -424,6 +426,7 @@ export class BymaxAuthModule {
         // Export guards so host-app modules can apply them without reimporting.
         JwtAuthGuard,
         TrustedOriginGuard,
+        AuthRateLimitGuard,
         RolesGuard,
         UserStatusGuard,
         // Export TokenDeliveryService for host-app refresh endpoints.

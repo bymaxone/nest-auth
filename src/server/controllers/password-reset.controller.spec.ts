@@ -15,6 +15,7 @@ import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { PasswordResetService } from '../services/password-reset.service'
 import { PasswordResetController } from './password-reset.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,8 @@ describe('PasswordResetController', () => {
     })
       .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
       .compile()
 
     controller = module.get(PasswordResetController)
@@ -70,13 +73,13 @@ describe('PasswordResetController', () => {
   })
 
   // Verifies that no access guards are attached at the controller level because @Public() marks it as open.
-  // The only class-level guard is the origin check, which authorizes nothing — it refuses a
-  // cross-site state-changing request that rides in on the session cookie. Every route here
-  // stays public: a password reset is performed by someone who cannot authenticate.
-  it('applies only the origin guard at the controller level', () => {
+  // Neither class-level guard authorizes anything: one refuses a cross-site state-changing
+  // request riding in on the session cookie, the other enforces the per-IP limit. Every route
+  // here stays public — a password reset is performed by someone who cannot authenticate.
+  it('applies only the origin and rate-limit guards at the controller level', () => {
     const guards = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController) as unknown[]
 
-    expect(guards).toEqual([TrustedOriginGuard])
+    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard])
   })
 
   // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import { AuthException } from '../errors/auth-exception'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { MfaService } from '../services/mfa.service'
 import { PlatformMfaController } from './platform-mfa.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,8 @@ describe('PlatformMfaController', () => {
       .overrideGuard(JwtPlatformGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

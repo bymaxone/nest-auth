@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { MfaService } from '../services/mfa.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { MfaController } from './mfa.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,8 @@ describe('MfaController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

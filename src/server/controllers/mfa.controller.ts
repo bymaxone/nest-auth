@@ -18,6 +18,7 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
@@ -27,6 +28,7 @@ import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-co
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
@@ -115,7 +117,7 @@ function isTokenInvalidException(err: unknown): boolean {
  * @layer Controller
  */
 @Controller('mfa')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )
@@ -171,6 +173,7 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
   async setup(@CurrentUser() user: DashboardJwtPayload): Promise<MfaSetupResult> {
     return this.mfaService.setup(user.sub)
@@ -190,6 +193,7 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
   async verifyEnable(
@@ -233,6 +237,7 @@ export class MfaController {
   @Public()
   @SkipMfa()
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
   @Post('challenge')
   async challenge(
@@ -293,6 +298,7 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
   async disable(
@@ -327,6 +333,7 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
   async regenerateRecoveryCodes(

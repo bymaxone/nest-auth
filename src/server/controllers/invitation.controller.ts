@@ -14,10 +14,12 @@ import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { AcceptInvitationDto } from '../dto/accept-invitation.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult } from '../interfaces/auth-result.interface'
@@ -53,7 +55,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * @layer Controller
  */
 @Controller('invitations')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class InvitationController {
   constructor(
@@ -77,6 +79,7 @@ export class InvitationController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.invitationCreate)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationCreate)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post()
   async invite(
@@ -111,6 +114,7 @@ export class InvitationController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.invitationAccept)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationAccept)
   @HttpCode(HttpStatus.CREATED)
   @Post('accept')
   async accept(

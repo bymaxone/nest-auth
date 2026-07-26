@@ -11,11 +11,13 @@ import {
 import { Throttle } from '@nestjs/throttler'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { Public } from '../decorators/public.decorator'
 import { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import { ResendOtpDto } from '../dto/resend-otp.dto'
 import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { PasswordResetService } from '../services/password-reset.service'
 
@@ -44,7 +46,7 @@ import { PasswordResetService } from '../services/password-reset.service'
  */
 @Public()
 @Controller('password')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class PasswordResetController {
   constructor(private readonly passwordResetService: PasswordResetService) {}
@@ -62,6 +64,7 @@ export class PasswordResetController {
    * @param dto - Validated DTO with `email` and `tenantId`.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.forgotPassword)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @HttpCode(HttpStatus.OK)
   @Post('forgot-password')
   async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
@@ -85,6 +88,7 @@ export class PasswordResetController {
    *   for OTP-path failures.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.resetPassword)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resetPassword)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
@@ -109,6 +113,7 @@ export class PasswordResetController {
    * @throws {@link AuthException} `OTP_INVALID` when the OTP does not match.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.verifyOtp)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyOtp)
   @HttpCode(HttpStatus.OK)
   @Post('verify-otp')
   async verifyOtp(@Body() dto: VerifyOtpDto): Promise<{ verifiedToken: string }> {
@@ -129,6 +134,7 @@ export class PasswordResetController {
    * @param dto - Validated DTO with `email` and `tenantId`.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
   @HttpCode(HttpStatus.OK)
   @Post('resend-otp')
   async resendOtp(@Body() dto: ResendOtpDto): Promise<void> {

@@ -475,7 +475,11 @@ export async function bootstrapTestApp(
     emailVerification: { required: false },
     sessions: { enabled: true },
     mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' },
-    secureCookies: false
+    secureCookies: false,
+    // The per-IP limiter is off for the shared bootstrap: every scenario here drives many
+    // requests from one address on purpose, and a 429 would mask what the scenario is
+    // actually asserting. `rate-limit.e2e-spec.ts` turns it on and tests it directly.
+    rateLimit: { enabled: false }
   }
 
   const options: BymaxAuthModuleOptions = { ...baseOptions, ...overrides }

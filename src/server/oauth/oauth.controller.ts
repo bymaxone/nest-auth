@@ -38,11 +38,13 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { MFA_TEMP_COOKIE_MAX_AGE_SECONDS, MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { OAuthCallbackQueryDto } from '../dto/oauth-callback-query.dto'
 import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type {
@@ -121,7 +123,7 @@ function appendErrorQueryParam(url: string, errorCode: string): string {
 @Public()
 @SkipMfa()
 @Controller('oauth')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )
@@ -149,6 +151,7 @@ export class OAuthController {
    * @param res - Express response object (used to issue the 302 redirect).
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.oauthInitiate)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.oauthInitiate)
   @Get(':provider')
   async initiate(
     @Param('provider') provider: string,
@@ -198,6 +201,7 @@ export class OAuthController {
    *   payload, or `undefined` when a redirect was issued.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.oauthCallback)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.oauthCallback)
   @HttpCode(HttpStatus.OK)
   @Get(':provider/callback')
   async callback(

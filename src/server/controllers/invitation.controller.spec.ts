@@ -23,6 +23,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { InvitationService } from '../services/invitation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { InvitationController } from './invitation.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,8 @@ describe('InvitationController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

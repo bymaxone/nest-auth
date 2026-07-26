@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { AuthController } from './auth.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,8 @@ describe('AuthController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

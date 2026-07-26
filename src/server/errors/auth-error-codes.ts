@@ -159,6 +159,12 @@ export const AUTH_ERROR_CODES = {
   FORBIDDEN: 'auth.forbidden',
 
   /**
+   * The caller exceeded a per-IP rate limit on an auth route. Carries `Retry-After`.
+   * Distinct from `ACCOUNT_LOCKED`, which is the per-identity brute-force lockout.
+   */
+  TOO_MANY_REQUESTS: 'auth.too_many_requests',
+
+  /**
    * A state-changing request carrying the session cookie came from an origin the deployment
    * does not trust. Raised by `TrustedOriginGuard` — see `cookies.trustedOrigins`.
    */
@@ -240,6 +246,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
   'auth.insufficient_role': 'Insufficient permission',
   'auth.forbidden': 'Access denied',
+  'auth.too_many_requests': 'Too many requests. Please try again shortly.',
   'auth.untrusted_origin': 'Request origin not allowed',
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',
   'auth.oauth_failed': 'OAuth authentication failed',

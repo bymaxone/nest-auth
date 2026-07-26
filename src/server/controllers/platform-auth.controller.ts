@@ -15,12 +15,14 @@ import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type {
@@ -100,7 +102,7 @@ function isMfaChallenge(
  * @layer Controller
  */
 @Controller('platform')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class PlatformAuthController {
   constructor(
@@ -125,6 +127,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.platformLogin)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.platformLogin)
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -168,6 +171,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
   @Post('mfa/challenge')
   async mfaChallenge(
@@ -263,6 +267,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
@@ -303,6 +308,7 @@ export class PlatformAuthController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('sessions')
   async revokeSessions(@CurrentUser() user: PlatformJwtPayload): Promise<void> {

@@ -67,6 +67,11 @@ export const DEFAULT_OPTIONS = {
     trustedOrigins: [] as string[]
   },
 
+  rateLimit: {
+    // On by default: the numbers existed before this and did nothing unless the host wired a
+    // throttler, which is the kind of default that reads as protection and is not.
+    enabled: true
+  },
   mfa: {
     recoveryCodeCount: 8,
     totpWindow: 1

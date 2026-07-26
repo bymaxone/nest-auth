@@ -55,6 +55,7 @@ export type ResolvedOptions = Omit<
   | 'userStatusCacheTtlSeconds'
   | 'secureCookies'
   | 'mfa'
+  | 'rateLimit'
 > & {
   jwt: Required<BymaxAuthModuleOptions['jwt']>
   password: Required<NonNullable<BymaxAuthModuleOptions['password']>>
@@ -68,6 +69,7 @@ export type ResolvedOptions = Omit<
   emailVerification: Required<NonNullable<BymaxAuthModuleOptions['emailVerification']>>
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
+  rateLimit: Required<NonNullable<BymaxAuthModuleOptions['rateLimit']>>
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
   redisNamespace: string
@@ -232,6 +234,11 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       userOptions.userStatusCacheTtlSeconds ?? DEFAULT_OPTIONS.userStatusCacheTtlSeconds,
 
     // Evaluated once at startup — not re-evaluated per request.
+    rateLimit: {
+      ...DEFAULT_OPTIONS.rateLimit,
+      ...userOptions.rateLimit
+    },
+
     secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
 
     hmacKey: deriveHmacKey(userOptions.jwt.secret),

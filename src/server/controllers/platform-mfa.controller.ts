@@ -13,10 +13,12 @@ import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -55,7 +57,7 @@ import { MfaService } from '../services/mfa.service'
  * @layer Controller
  */
 @Controller('platform/mfa')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )
@@ -74,6 +76,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
   async setup(@CurrentUser() user: PlatformJwtPayload): Promise<MfaSetupResult> {
     return this.mfaService.setup(user.sub, 'platform')
@@ -94,6 +97,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
   async verifyEnable(
@@ -121,6 +125,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
   async disable(
@@ -150,6 +155,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
   async regenerateRecoveryCodes(

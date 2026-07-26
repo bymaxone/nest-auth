@@ -15,12 +15,14 @@ import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { LoginDto } from '../dto/login.dto'
 import { RegisterDto } from '../dto/register.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
@@ -62,7 +64,7 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
  * @layer Controller
  */
 @Controller()
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class AuthController {
   constructor(
@@ -80,6 +82,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.register)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.register)
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -102,6 +105,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.login)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.login)
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -152,6 +156,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   async refresh(
@@ -194,6 +199,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.verifyEmail)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyEmail)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-email')
   async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
@@ -209,6 +215,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.resendVerification)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendVerification)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('resend-verification')
   async resendVerification(@Body() dto: ResendVerificationDto): Promise<void> {

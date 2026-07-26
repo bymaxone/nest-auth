@@ -25,6 +25,7 @@ import { OAuthService } from './oauth.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,8 @@ describe('OAuthController', () => {
       ]
     })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 
@@ -459,6 +462,8 @@ describe('OAuthController', () => {
         ]
       })
         .overrideGuard(TrustedOriginGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(AuthRateLimitGuard)
         .useValue({ canActivate: () => true })
         .compile()
       controller = module.get(OAuthController)

@@ -259,6 +259,25 @@ export interface BymaxAuthModuleOptions {
   }
 
   /**
+   * Per-IP rate limiting of the auth routes, enforced by the library itself.
+   */
+  rateLimit?: {
+    /**
+     * Whether the library enforces the per-route limits in `AUTH_THROTTLE_CONFIGS`.
+     * Default: `true`.
+     *
+     * Those numbers used to be advisory — they took effect only if the host wired
+     * `ThrottlerModule` and registered its guard, and a deployment that did not ran every auth
+     * route unlimited without being told. The library now enforces them itself, backed by the
+     * same Redis counter as the brute-force lockout, so the limit also holds across instances.
+     *
+     * Set `false` when the same limits are already enforced at the edge (an API gateway, a
+     * WAF, or a host-side `ThrottlerModule`) and counting twice is not wanted.
+     */
+    enabled?: boolean
+  }
+
+  /**
    * Multi-factor authentication (MFA/TOTP) configuration.
    * When provided, `encryptionKey` and `issuer` are required.
    */

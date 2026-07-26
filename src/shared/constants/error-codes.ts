@@ -60,6 +60,9 @@ export const AUTH_ERROR_CODES = {
   INSUFFICIENT_ROLE: 'auth.insufficient_role',
   FORBIDDEN: 'auth.forbidden',
 
+  /** The caller exceeded a per-IP rate limit on an auth route. */
+  TOO_MANY_REQUESTS: 'auth.too_many_requests',
+
   /**
    * A state-changing request carrying the session cookie came from an origin the deployment
    * does not trust.

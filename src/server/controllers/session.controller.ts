@@ -15,9 +15,11 @@ import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { sha256 } from '../crypto/secure-token'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
@@ -55,7 +57,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * @layer Controller
  */
 @Controller('sessions')
-@UseGuards(TrustedOriginGuard)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UseGuards(JwtAuthGuard, UserStatusGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
 export class SessionController {
@@ -81,6 +83,7 @@ export class SessionController {
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.listSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.listSessions)
   @Get()
   async listSessions(
     @CurrentUser() user: DashboardJwtPayload,
@@ -111,6 +114,7 @@ export class SessionController {
    *   the request (current session cannot be determined without it).
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('all')
   async revokeAllSessions(
@@ -150,6 +154,7 @@ export class SessionController {
    * @returns 204 No Content on success.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeSession)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeSession)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete(':id')
   async revokeSession(

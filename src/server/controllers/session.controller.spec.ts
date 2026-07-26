@@ -16,6 +16,7 @@ import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { SessionController } from './session.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,8 @@ describe('SessionController', () => {
       .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

@@ -27,6 +27,7 @@ import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { PlatformAuthController } from './platform-auth.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
@@ -122,6 +123,8 @@ async function buildModule(): Promise<TestingModule> {
       .overrideGuard(JwtPlatformGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile()
   )
