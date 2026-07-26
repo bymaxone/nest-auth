@@ -485,7 +485,9 @@ export class MfaService {
 
     // Atomically invalidate all existing refresh sessions so the user must re-login
     // with the MFA challenge. Access tokens up to 15 min remain valid — accepted tradeoff.
-    await this.redis.invalidateUserSessions(userId)
+    // Scoped to the caller's own plane: the two id spaces come from different repositories
+    // and may collide, so an unscoped revoke would log out the unrelated account sharing it.
+    await this.redis.invalidateUserSessions(userId, context)
 
     this.logger.log(`verifyAndEnable: MFA enabled userId=${userId} context=${context}`)
     await this.emailProvider.sendMfaEnabledNotification(user.email)
@@ -748,7 +750,8 @@ export class MfaService {
     }
 
     // Invalidate all sessions so subsequent rotations produce tokens with mfaEnabled: false.
-    await this.redis.invalidateUserSessions(userId)
+    // Scoped to the caller's own identity plane (see verifyAndEnable).
+    await this.redis.invalidateUserSessions(userId, context)
 
     this.logger.log(`disable: MFA disabled userId=${userId} context=${context}`)
     await this.emailProvider.sendMfaDisabledNotification(user.email)

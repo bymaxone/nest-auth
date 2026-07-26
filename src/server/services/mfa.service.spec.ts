@@ -559,7 +559,7 @@ describe('MfaService', () => {
         'user-1',
         expect.objectContaining({ mfaEnabled: true })
       )
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
       // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(userId): kills line 420 blanking.
       expect(mockRedis.get).toHaveBeenCalledWith(`mfa_setup:${hmacSha256('user-1', HMAC_KEY)}`)
       // The anti-replay key must be 'tu:' + HMAC('{userId}:{code}') with a 90s TTL: kills the
@@ -1418,7 +1418,7 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
       // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
         hmacSha256('disable:user-1', HMAC_KEY)

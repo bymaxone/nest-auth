@@ -181,6 +181,9 @@ export class PlatformAuthService {
     await this.redis.del('prp:' + tokenHash)
     await this.redis.srem('sess:' + userId, 'prt:' + tokenHash)
     await this.redis.srem('sess:' + userId, 'prp:' + tokenHash)
+    await this.redis.srem('psess:' + userId, 'prt:' + tokenHash)
+    await this.redis.srem('psess:' + userId, 'prp:' + tokenHash)
+    await this.redis.del('psd:' + tokenHash)
   }
 
   // ---------------------------------------------------------------------------
@@ -250,6 +253,6 @@ export class PlatformAuthService {
    * @param userId - The platform admin's internal ID.
    */
   async revokeAllPlatformSessions(userId: string): Promise<void> {
-    await this.redis.invalidateUserSessions(userId)
+    await this.redis.invalidateUserSessions(userId, 'platform')
   }
 }

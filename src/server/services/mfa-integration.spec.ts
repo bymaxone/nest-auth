@@ -580,7 +580,7 @@ describe('MFA — integration smoke tests', () => {
     const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
     await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
 
-    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
   })
 

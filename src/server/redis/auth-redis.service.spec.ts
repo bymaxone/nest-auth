@@ -343,15 +343,61 @@ describe('AuthRedisService', () => {
 
   describe('invalidateUserSessions', () => {
     // Verifies that invalidateUserSessions calls eval with the sess:{userId} key and namespace as ARGV.
-    it('should call eval with sess:{userId} key and namespace as ARGV[1]', async () => {
+    it('should sweep sess:{userId} with the dashboard member prefixes', async () => {
       mockRedis.eval.mockResolvedValue(null)
       await service.invalidateUserSessions('user-1')
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('SMEMBERS'),
         1,
         prefixed('sess:user-1'),
-        NAMESPACE
+        NAMESPACE,
+        'rt:',
+        'rp:',
+        'sd:'
       )
+    })
+
+    // Scenario: a platform revoke on an id that a dashboard user also owns. Expected: the
+    // platform sweep passes only the prt:/prp: prefixes, and it also visits the legacy
+    // sess: index. Why: the two id spaces come from different repositories and may collide,
+    // so an unfiltered sweep would log the unrelated dashboard user out. The legacy pass
+    // covers platform sessions written before they moved to their own keyspace.
+    it('should sweep both indexes with platform-only prefixes for a platform revoke', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+
+      await service.invalidateUserSessions('admin-1', 'platform')
+
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('SMEMBERS'),
+        1,
+        prefixed('psess:admin-1'),
+        NAMESPACE,
+        'prt:',
+        'prp:',
+        'psd:'
+      )
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('SMEMBERS'),
+        1,
+        prefixed('sess:admin-1'),
+        NAMESPACE,
+        'prt:',
+        'prp:',
+        'psd:'
+      )
+    })
+
+    // Scenario: the dashboard sweep must not touch platform members. Expected: no eval
+    // carries the prt:/prp: prefixes. Why: this is the other half of the collision fix —
+    // revoking a dashboard user must leave a same-id admin's sessions alone.
+    it('should never pass platform prefixes on a dashboard revoke', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+
+      await service.invalidateUserSessions('shared-id')
+
+      const prefixArgs = mockRedis.eval.mock.calls.flatMap((call) => call.slice(3) as string[])
+      expect(prefixArgs).not.toContain('prt:')
+      expect(prefixArgs).not.toContain('prp:')
     })
   })
 
@@ -433,7 +479,10 @@ describe('AuthRedisService', () => {
         expect.stringContaining('SMEMBERS'),
         1,
         prefixed('sess:user-9'),
-        NAMESPACE
+        NAMESPACE,
+        'rt:',
+        'rp:',
+        'sd:'
       )
       // 900_000 ms → 900 s TTL; the cutoff value is a finite epoch-seconds string.
       expect(mockRedis.set).toHaveBeenCalledWith(

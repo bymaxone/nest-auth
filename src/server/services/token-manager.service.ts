@@ -27,6 +27,13 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 const MFA_TEMP_TOKEN_TTL_SECONDS = 300
 
 /**
+ * Ceiling on the stored device and IP strings in a session detail record. Both are
+ * attacker-controlled request headers, so they are truncated before they reach Redis. 45
+ * characters is the longest possible textual IPv6 address (IPv4-mapped form).
+ */
+const MAX_SESSION_FIELD_LENGTH = 45
+
+/**
  * Lua script for atomic refresh-token rotation.
  *
  * Atomically reads the old session and deletes the old key.
@@ -232,11 +239,44 @@ export class TokenManagerService {
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
     await this.redis.set(sessionKey, JSON.stringify(session), ttl)
-    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
-    await this.redis.sadd(`sess:${admin.id}`, `prt:${tokenHash}`)
-    await this.redis.expire(`sess:${admin.id}`, ttl)
+    // Track the session in the platform-only index so MFA enable/disable and logout-all can
+    // invalidate every platform session atomically. The platform plane has its own `psess:`
+    // keyspace because the two id spaces come from different repositories and may collide:
+    // sharing one index let revoking a dashboard user log out the admin with the same id.
+    await this.redis.sadd(`psess:${admin.id}`, `prt:${tokenHash}`)
+    await this.redis.expire(`psess:${admin.id}`, ttl)
+    await this.writePlatformSessionDetail(tokenHash, ip, userAgent, ttl)
 
     return { admin, accessToken, rawRefreshToken }
+  }
+
+  /**
+   * Writes the per-session detail record for a platform session under `psd:{hash}`.
+   *
+   * The dashboard plane gets the equivalent `sd:{hash}` record from {@link SessionService},
+   * but platform sessions never had one, so a session listing had nothing to describe them
+   * with. The field set and the Unix-millisecond timestamps mirror the dashboard record
+   * exactly, so either backend sharing this Redis reads the same shape.
+   *
+   * @param tokenHash - SHA-256 of the raw refresh token; the key's `{hash}` segment.
+   * @param ip - Client IP, truncated before storage against oversized forwarded values.
+   * @param userAgent - Raw User-Agent, stored as the device description.
+   * @param ttl - Record lifetime in seconds; matches the refresh session it describes.
+   */
+  private async writePlatformSessionDetail(
+    tokenHash: string,
+    ip: string,
+    userAgent: string,
+    ttl: number
+  ): Promise<void> {
+    const now = Date.now()
+    const detail = {
+      device: userAgent.slice(0, MAX_SESSION_FIELD_LENGTH),
+      ip: ip.slice(0, MAX_SESSION_FIELD_LENGTH),
+      createdAt: now,
+      lastActivityAt: now
+    }
+    await this.redis.set(`psd:${tokenHash}`, JSON.stringify(detail), ttl)
   }
 
   // ---------------------------------------------------------------------------
@@ -605,10 +645,18 @@ export class TokenManagerService {
 
     await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
     await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
+    // The rotated session is indexed under the platform-only `psess:` key. The SREM against
+    // the legacy `sess:` index prunes a session created before the move, so the old index
+    // drains as sessions rotate instead of holding stale members for a full refresh lifetime.
     await this.redis.srem(`sess:${old.userId}`, `prt:${oldHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, `prt:${newHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, graceKey)
-    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
+    await this.redis.srem(`psess:${old.userId}`, `prt:${oldHash}`)
+    await this.redis.sadd(`psess:${old.userId}`, `prt:${newHash}`)
+    await this.redis.sadd(`psess:${old.userId}`, graceKey)
+    await this.redis.expire(`psess:${old.userId}`, refreshTtl)
+    // Move the detail record with the session, so a listing describes the live token rather
+    // than a hash that no longer exists.
+    await this.redis.del(`psd:${oldHash}`)
+    await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
     return this.buildPlatformRotatedResult(newSession, newRawRefresh)
   }
@@ -647,8 +695,11 @@ export class TokenManagerService {
     // Remove the consumed grace pointer from the per-user SET — the key was deleted
     // atomically by getdel() in reissuePlatformTokens; the SET entry is now stale.
     await this.redis.srem(`sess:${graceSession.userId}`, `prp:${oldHash}`)
-    await this.redis.sadd(`sess:${graceSession.userId}`, `prt:${anotherNewHash}`)
-    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
+    await this.redis.srem(`psess:${graceSession.userId}`, `prp:${oldHash}`)
+    await this.redis.sadd(`psess:${graceSession.userId}`, `prt:${anotherNewHash}`)
+    await this.redis.expire(`psess:${graceSession.userId}`, refreshTtl)
+    await this.redis.del(`psd:${oldHash}`)
+    await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
     return this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
   }

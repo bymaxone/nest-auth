@@ -249,27 +249,77 @@ export class AuthRedisService {
   }
 
   /**
-   * Atomically deletes all refresh sessions for a user.
+   * Atomically deletes every refresh session belonging to one identity plane.
    *
-   * Reads the `sess:{userId}` Redis SET whose members are full key suffixes
-   * (e.g. `rt:{hash}` for dashboard sessions, `prt:{hash}` for platform sessions).
-   * Deletes each corresponding namespaced key and then removes the SET itself —
-   * all in a single Lua transaction to prevent the race where a concurrent login
-   * could add a new session between the SMEMBERS read and the final DEL.
+   * The set members are full key suffixes — `rt:{hash}`/`rp:{hash}` on the dashboard plane,
+   * `prt:{hash}`/`prp:{hash}` on the platform plane — so a member names the key to delete
+   * outright. Grace pointers are members too, which is what lets a revoke-all also kill a
+   * refresh token that was rotated away but is still inside its grace window.
    *
-   * @param userId - Internal user ID whose sessions will be invalidated.
+   * Only members carrying one of the two supplied prefixes are touched. That filter is the
+   * point: a dashboard user id and a platform admin id come from different repositories and
+   * may legitimately collide, and an unfiltered sweep would let revoking one plane log the
+   * other out. Members that do not match are left in place, and the SET itself is deleted
+   * only once it is empty.
+   *
+   * The whole sweep is one Lua transaction, closing the race where a concurrent login adds a
+   * session between the SMEMBERS read and the delete.
+   *
+   * @param setKey - The un-namespaced index key (`sess:{id}` or `psess:{id}`).
+   * @param livePrefix - Member prefix for live sessions (`rt:` or `prt:`).
+   * @param gracePrefix - Member prefix for rotation grace pointers (`rp:` or `prp:`).
+   * @param detailPrefix - Key prefix for the per-session detail record (`sd:` or `psd:`).
    */
-  async invalidateUserSessions(userId: string): Promise<void> {
+  private async sweepSessionIndex(
+    setKey: string,
+    livePrefix: string,
+    gracePrefix: string,
+    detailPrefix: string
+  ): Promise<void> {
     await this.eval(
       `local members = redis.call('SMEMBERS', KEYS[1])
-       local ns = ARGV[1]
+       local ns, live, grace, detail = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
        for _, member in ipairs(members) do
-         redis.call('DEL', ns .. ':' .. member)
+         local isLive = string.sub(member, 1, string.len(live)) == live
+         if isLive or string.sub(member, 1, string.len(grace)) == grace then
+           redis.call('DEL', ns .. ':' .. member)
+           if isLive then
+             redis.call('DEL', ns .. ':' .. detail .. string.sub(member, string.len(live) + 1))
+           end
+           redis.call('SREM', KEYS[1], member)
+         end
        end
-       redis.call('DEL', KEYS[1])`,
-      [`sess:${userId}`],
-      [this.namespace]
+       if redis.call('SCARD', KEYS[1]) == 0 then
+         redis.call('DEL', KEYS[1])
+       end`,
+      [setKey],
+      [this.namespace, livePrefix, gracePrefix, detailPrefix]
     )
+  }
+
+  /**
+   * Atomically deletes all refresh sessions for a user on the given identity plane.
+   *
+   * A platform revoke also sweeps the legacy `sess:{id}` index, where platform sessions used
+   * to be indexed before they moved to their own `psess:` keyspace. It removes only the
+   * `prt:`/`prp:` members from there, so a dashboard user who happens to share the id keeps
+   * their sessions. That legacy pass can be dropped once every session predating the move has
+   * expired (one refresh lifetime, seven days by default).
+   *
+   * @param userId - Internal user or admin ID whose sessions will be invalidated.
+   * @param kind - Which identity plane to revoke. Defaults to `'dashboard'`.
+   */
+  async invalidateUserSessions(
+    userId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<void> {
+    if (kind === 'platform') {
+      await this.sweepSessionIndex(`psess:${userId}`, 'prt:', 'prp:', 'psd:')
+      await this.sweepSessionIndex(`sess:${userId}`, 'prt:', 'prp:', 'psd:')
+      return
+    }
+
+    await this.sweepSessionIndex(`sess:${userId}`, 'rt:', 'rp:', 'sd:')
   }
 
   /**

@@ -581,7 +581,7 @@ describe('PlatformAuthService', () => {
     it('should delegate to redis.invalidateUserSessions with the userId', async () => {
       mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
       await service.revokeAllPlatformSessions('admin-1')
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
     })
 
     // Verifies that errors from invalidateUserSessions propagate so the caller can handle them.

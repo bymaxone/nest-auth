@@ -253,13 +253,45 @@ describe('TokenManagerService', () => {
     // Scenario: platform issuance registers the prt: member in sess:{adminId} and sets the TTL.
     // Expected: sadd('sess:admin-1', 'prt:<newHash>') and expire('sess:admin-1', 7*86400). Why:
     // kills the StringLiteral mutants on lines 234 (key → '', member → '') and 235 (expire key → '').
-    it('adds the prt: member to sess:{adminId} and expires the SET with the refresh TTL', async () => {
+    it('adds the prt: member to psess:{adminId} and expires the SET with the refresh TTL', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
+    })
+
+    // Scenario: the platform plane must not write into the dashboard session index. Expected: no
+    // sadd targets sess:{adminId}. Why: a platform admin id and a dashboard user id come from
+    // different repositories and may collide, so sharing the index let a dashboard revoke-all
+    // log the same-id admin out. This pins the separation that fixes it.
+    it('never indexes a platform session in the dashboard sess: SET', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      const indexedKeys = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
+      expect(indexedKeys).not.toContain('sess:admin-1')
+    })
+
+    // Scenario: a platform session needs a detail record so a listing can describe it.
+    // Expected: psd:{hash} holds the same field set the dashboard sd: record uses, with
+    // Unix-millisecond timestamps. Why: the sibling Rust backend reads psd: when listing
+    // platform sessions; without this write it would find nothing for a nest-created session.
+    it('writes the psd: detail record with epoch-millisecond timestamps', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
+
+      const detailCall = mockRedis.set.mock.calls.find(
+        (call) => (call[0] as string) === `psd:${NEW_HASH}`
+      )
+      expect(detailCall).toBeDefined()
+      const detail = JSON.parse(detailCall![1] as string) as Record<string, unknown>
+      expect(detail).toMatchObject({ device: 'Firefox', ip: '1.2.3.4' })
+      expect(typeof detail['createdAt']).toBe('number')
+      expect(typeof detail['lastActivityAt']).toBe('number')
     })
 
     // Scenario: a platform admin has no tenant — the stored session tenantId must be an empty string.
@@ -975,10 +1007,12 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(2)
       const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
-      expect(keys.some((k) => k.startsWith('prt:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('prp:'))).toBe(true)
+      expect(keys.filter((k) => k.startsWith('prt:'))).toHaveLength(1)
+      expect(keys.filter((k) => k.startsWith('prp:'))).toHaveLength(1)
+      // The rotated session carries its detail record along, so a listing describes the live
+      // token rather than a hash that no longer exists.
+      expect(keys.filter((k) => k.startsWith('psd:'))).toHaveLength(1)
     })
 
     // Verifies that primary rotation uses the grace-window path: Lua eval returns null (primary
@@ -1010,10 +1044,10 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
-      expect(keys.some((k) => k.startsWith('prt:'))).toBe(true)
-      expect(keys.some((k) => k.startsWith('prp:'))).toBe(false)
+      expect(keys.filter((k) => k.startsWith('prt:'))).toHaveLength(1)
+      expect(keys.filter((k) => k.startsWith('prp:'))).toHaveLength(0)
+      expect(keys.filter((k) => k.startsWith('psd:'))).toHaveLength(1)
     })
 
     // Verifies that REFRESH_TOKEN_INVALID is thrown when neither the primary session nor
@@ -1055,17 +1089,22 @@ describe('TokenManagerService', () => {
     // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
     // on lines 557-560 (each `sess:${old.userId}` key → '' and each member value → '') and the
     // arithmetic mutant on line 492 (`* 86_400` → `/ 86_400`) via the pinned TTL.
-    it('updates the sess:{adminId} SET with exact keys and TTL on platform primary rotation', async () => {
+    it('updates the psess:{adminId} SET with exact keys and TTL on platform primary rotation', async () => {
       const oldHash = sha256('old-platform-refresh')
       mockRedis.eval.mockResolvedValue(OLD_PLATFORM_SESSION)
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prt:${oldHash}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
+      // The legacy index is pruned but never written to, so it drains as sessions rotate
+      // instead of holding stale members for a full refresh lifetime.
       expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prt:${oldHash}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
+      const indexed = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
+      expect(indexed).not.toContain('sess:admin-1')
     })
 
     // Scenario: the new platform session record must store an empty tenantId on primary rotation.
@@ -1087,7 +1126,7 @@ describe('TokenManagerService', () => {
     // Expected: exact srem/sadd/expire calls on 'sess:admin-1'. Why: kills the StringLiteral mutants
     // on lines 598 (srem key/member), 599 (sadd key/member), and 600 (expire key) and the line 492
     // TTL arithmetic mutant on the grace path.
-    it('updates the sess:{adminId} SET with exact keys and TTL on platform grace-window rotation', async () => {
+    it('updates the psess:{adminId} SET with exact keys and TTL on platform grace-window rotation', async () => {
       const oldHash = sha256('old-platform-refresh')
       mockRedis.eval.mockResolvedValue(null)
       mockRedis.getdel.mockResolvedValue(OLD_PLATFORM_SESSION)
@@ -1095,9 +1134,10 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
+      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
       expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:admin-1', 7 * 86_400)
     })
 
     // Scenario: the new platform session record must store an empty tenantId on grace-window rotation.
