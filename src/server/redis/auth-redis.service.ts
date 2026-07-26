@@ -456,8 +456,9 @@ export class AuthRedisService {
     try {
       familyId = (JSON.parse(sessionJson) as Record<string, unknown>)['familyId']
     } catch {
-      // A malformed record is rejected downstream by the session parser; nothing to check here.
-      return true
+      // Deliberately swallowed: a malformed record names no family, so there is nothing to
+      // check, and it is rejected downstream by the session parser with its own warning.
+      // Reporting it as a dead family here would be a misleading theft signal.
     }
     if (typeof familyId !== 'string' || familyId === '') return true
     const present = await this.redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
@@ -519,7 +520,8 @@ export class AuthRedisService {
       try {
         userId = (JSON.parse(record) as Record<string, unknown>)['userId']
       } catch {
-        continue
+        // Deliberately swallowed: an unreadable member names no owner, and the next member
+        // may still name one. The loop's own guard rejects the undefined that leaves here.
       }
       if (typeof userId === 'string' && userId !== '') {
         return this.prefix(`${indexPrefix}:${userId}`)
@@ -695,9 +697,13 @@ export class AuthRedisService {
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<number> {
     const raw = await this.get(`${kind === 'platform' ? 'pep' : 'ep'}:${userId}`)
-    if (raw === null) return 0
+    // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
+    // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
+    // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
+    // silently disable bulk revocation for that user. A negative value clamps up for the same
+    // reason.
     const parsed = Number(raw)
-    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0
+    return Number.isInteger(parsed) ? Math.max(0, parsed) : 0
   }
 
   /**

@@ -428,6 +428,9 @@ describe('AuthRedisService', () => {
 
       await expect(service.revokeFamily('fam-1')).resolves.toBe(2)
 
+      // The membership is read from the family index itself — a wrong key here would revoke
+      // nothing while still reporting success.
+      expect(mockRedis.smembers).toHaveBeenCalledWith(prefixed('fam:fam-1'))
       expect(mockRedis.get).toHaveBeenCalledWith(prefixed('rt:h1'))
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call('SMEMBERS', KEYS[1])"),
@@ -464,11 +467,14 @@ describe('AuthRedisService', () => {
     // looking. A family outlives individual sessions, so the first member is not always the
     // one that still names its owner.
     it('skips expired and malformed member records when resolving the owner', async () => {
-      mockRedis.smembers.mockResolvedValue(['gone', 'broken', 'noUser', 'good'])
+      mockRedis.smembers.mockResolvedValue(['gone', 'broken', 'noUser', 'blank', 'good'])
       mockRedis.get.mockImplementation((key: string) => {
         if (key.endsWith('gone')) return Promise.resolve(null)
         if (key.endsWith('broken')) return Promise.resolve('not-json{{{')
         if (key.endsWith('noUser')) return Promise.resolve('{"role":"member"}')
+        // An empty owner would build `sess:` with no id — a key every ownerless family would
+        // share, so it must be skipped like an absent one rather than pruned against.
+        if (key.endsWith('blank')) return Promise.resolve('{"userId":""}')
         return Promise.resolve('{"userId":"u9"}')
       })
       mockRedis.eval.mockResolvedValue(1)
