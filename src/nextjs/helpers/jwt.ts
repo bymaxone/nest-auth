@@ -36,6 +36,15 @@
  * Pinning the algorithm at verification time eliminates both vectors.
  */
 
+// This module receives the HS256 secret. It must never reach a browser bundle: a secret in a
+// client chunk is a secret published to every visitor, and nothing downstream would notice.
+// Importing `server-only` turns a Client-Component import of this module into a BUILD error
+// rather than a runtime surprise — the same guard rust-auth's Next.js package applies to its
+// own verifier. It is an optional peer dependency, so a consumer that does not use the
+// `./nextjs` subpath installs nothing; a consumer that does already installs `next`, whose own
+// documentation prescribes `server-only` for exactly this.
+import 'server-only'
+
 /**
  * Header of a JWT as carried in the first base64url segment.
  *

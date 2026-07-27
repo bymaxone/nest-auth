@@ -30,6 +30,7 @@ import {
 } from '../bymax-auth.constants'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { maskEmail } from '../utils/mask-email'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
@@ -97,6 +98,7 @@ const mockPlugin = {
 
 const mockUserRepo = {
   findByOAuthId: jest.fn(),
+  findByEmail: jest.fn(),
   createWithOAuth: jest.fn(),
   linkOAuth: jest.fn(),
   findById: jest.fn()
@@ -171,6 +173,9 @@ describe('OAuthService', () => {
   beforeEach(async () => {
     jest.resetAllMocks()
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+    // No email collision unless a test arranges one — `create` is the common arrangement here,
+    // and every one of those cases assumes the address is free.
+    mockUserRepo.findByEmail.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -562,6 +567,41 @@ describe('OAuthService', () => {
       await callCallback()
 
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the hook says 'create', but the address already belongs to an account that is
+    // not linked to this OAuth identity — a local registration, or a link to a different
+    // provider. Expected: a 409 `auth.oauth_email_mismatch`, and no create attempted. Why:
+    // `findByOAuthId` cannot see that account, so creating would hit the repository's
+    // uniqueness constraint and surface as an opaque 500 the caller can do nothing with. It is
+    // a conflict, and it is actionable (sign in and link instead). rust-auth answers the same
+    // 409 for the same collision.
+    it('should reject a create whose email already belongs to another account', async () => {
+      setupHappyPathCreate()
+      mockUserRepo.findByEmail.mockResolvedValue(AUTH_USER)
+
+      await expect(callCallback()).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH } },
+        status: 409
+      })
+      expect(mockUserRepo.createWithOAuth).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the collision above. Expected: the warning names the tenant and a MASKED
+    // address. Why: an operator correlating repeated collisions needs to know which tenant and
+    // roughly which account, and the log must not become a store of full addresses.
+    it('should log the refused create with a masked address', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      setupHappyPathCreate()
+      mockUserRepo.findByEmail.mockResolvedValue(AUTH_USER)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+
+      const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(logged).toContain('oauth: create refused')
+      expect(logged).toContain(maskEmail(OAUTH_PROFILE.email))
+      expect(logged).not.toContain(OAUTH_PROFILE.email)
+      warnSpy.mockRestore()
     })
 
     // Verifies that 'reject' action from the hook triggers OAUTH_FAILED.

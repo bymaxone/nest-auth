@@ -312,6 +312,14 @@ export class AuthService {
     const sessionHash = sha256(rawRefreshToken)
     await this.redis.del(`rt:${sessionHash}`)
 
+    // …and the rotation grace pointer for the same hash. A token presented at logout may
+    // already have been rotated and still be inside its grace window, in which case the
+    // `rt:` key above is gone but `rp:{hash}` remains — and a grace hit mints a fresh
+    // session. Deleting it is what makes logout final for the token the caller handed us,
+    // rather than final only for a token that had not yet rotated. rust-auth clears the
+    // same pointer on its logout path.
+    await this.redis.del(`rp:${sessionHash}`)
+
     // Delegate session metadata cleanup to SessionService.revokeSession(), which
     // performs an atomic SISMEMBER ownership check before deleting sd:{hash} and
     // SREMing from sess:{userId}. The rt:{hash} DEL above already ran — revokeSession's

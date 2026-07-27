@@ -91,7 +91,8 @@
     "ioredis": "^5.0.0",
     "next": "^16.0.0",
     "react": "^19.0.0",
-    "reflect-metadata": "^0.2.0"
+    "reflect-metadata": "^0.2.0",
+    "server-only": "^0.0.1"
   },
   "peerDependenciesMeta": {
     "@nestjs/common": {
@@ -125,6 +126,9 @@
       "optional": true
     },
     "reflect-metadata": {
+      "optional": true
+    },
+    "server-only": {
       "optional": true
     },
     "react": {

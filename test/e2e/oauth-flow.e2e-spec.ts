@@ -389,6 +389,14 @@ describe('oauth flow (E2E)', () => {
       )
       hookController.current = { action: 'create' }
       hookController.lastCall = null
+      // A distinct address and provider id: the scenarios above already created an account for
+      // MOCK_EMAIL, and a `create` onto an address that is already taken is now a 409 by
+      // design. This scenario is about query-param tolerance, so it needs a free address.
+      ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        email: 'extras@example.com',
+        providerId: 'google-extras-1'
+      })
 
       // Act — append every Google-specific query parameter the lib must
       // tolerate, exactly as accounts.google.com sends them on a successful
@@ -412,7 +420,7 @@ describe('oauth flow (E2E)', () => {
           accessToken: expect.any(String),
           refreshToken: expect.any(String),
           user: expect.objectContaining({
-            email: MOCK_EMAIL,
+            email: 'extras@example.com',
             oauthProvider: 'google'
           })
         })
@@ -513,6 +521,13 @@ describe('oauth flow (E2E)', () => {
      */
     it('should still set auth cookies on the 302 response', async () => {
       hookController.current = { action: 'create' }
+      // Its own address, for the same reason as the query-param scenario: this describes
+      // cookie delivery on a redirect, not a second account for an address already taken.
+      ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        email: 'redirect-cookies@example.com',
+        providerId: 'google-redirect-1'
+      })
 
       const initiate = await request(app.getHttpServer()).get('/oauth/google').query({
         tenantId: 'tenant-1'

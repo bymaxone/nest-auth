@@ -1907,6 +1907,120 @@ describe('resolveOptions — jwt.refreshGraceWindowSeconds validation', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation failures — jwt.accessExpiresIn vs the token-epoch retention window
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — jwt.accessExpiresIn validation', () => {
+  // 30 days, the window the store guarantees a bumped token epoch stays readable for.
+  const RETENTION_SECONDS = 30 * 24 * 60 * 60
+
+  // Scenario: an access token configured to live exactly as long as the epoch record. Expected:
+  // accepted. Why: the bound is the last value at which a pre-bump token is still covered, so an
+  // off-by-one that rejected it (or that shifted the comparison) would be caught here.
+  it('should accept an access lifetime exactly at the retention window', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: `${RETENTION_SECONDS}s` }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Scenario: one second past the window. Expected: startup fails. Why: this is the fail-open the
+  // rule exists to prevent — the epoch record can expire while the token it revokes is still
+  // presentable, and the staleness check silently stops firing.
+  it('should throw when the access lifetime outlives the retention window', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: `${RETENTION_SECONDS + 1}s` }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      new RegExp(`accessExpiresIn \\('${RETENTION_SECONDS + 1}s' = ${RETENTION_SECONDS + 1} s\\)`)
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /must not exceed the token-epoch retention window \(2592000 s\)\./
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /An access token that outlives the stored epoch would survive the password reset that revoked it/
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /the epoch lookup falls back to 0 once the record expires, and the staleness check stops firing\./
+    )
+  })
+
+  // Scenario: each unit `ms` accepts, long and short form, at a value inside the window. Expected:
+  // all parse. Why: the unit table is what converts the configured string into the number the bound
+  // is checked against — a unit read as the wrong magnitude would either reject a valid config or,
+  // worse, let an over-long lifetime through.
+  it.each([
+    ['900ms', false],
+    ['900 milliseconds', false],
+    ['15m', false],
+    ['15 minutes', false],
+    ['1h', false],
+    ['1 hour', false],
+    ['1d', false],
+    ['1 day', false],
+    ['1w', false],
+    ['1 week', false],
+    ['31 days', true],
+    ['1y', true],
+    ['1 year', true]
+  ])('should read %s and %s the retention bound', (accessExpiresIn, exceeds) => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn }
+    }
+    if (exceeds) {
+      expect(() => resolveOptions(options)).toThrow(/token-epoch retention window/)
+    } else {
+      expect(() => resolveOptions(options)).not.toThrow()
+    }
+  })
+
+  // Scenario: strings that are not a positive time span. Expected: startup fails with the parse
+  // message. Why: a bare number is ambiguous (`ms` reads it as milliseconds, a reader means
+  // seconds), an unknown unit leaves the bound unverifiable, and a zero or negative lifetime
+  // mints a token that is expired on arrival — all configuration errors that would otherwise
+  // surface at the first token issued.
+  it.each(['900', '', 'soon', '15 fortnights', '15 m s', 'm15', '0m', '-5m'])(
+    'should throw on the unreadable time span %p',
+    (accessExpiresIn) => {
+      const options: BymaxAuthModuleOptions = {
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, accessExpiresIn }
+      }
+      expect(() => resolveOptions(options)).toThrow(
+        /accessExpiresIn must be a time span such as '15m', '1h' or '900s'/
+      )
+      expect(() => resolveOptions(options)).toThrow(
+        /A value the signer cannot read would fail at the first token issued, and leaves the token-epoch retention bound unverifiable at startup\./
+      )
+    }
+  )
+
+  // Scenario: surrounding whitespace and mixed case, which a hand-written config picks up easily.
+  // Expected: both are normalised rather than rejected.
+  it('should tolerate surrounding whitespace and unit casing', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: '  15 Minutes  ' }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Scenario: the option left unset. Expected: the default is validated, not skipped. Why: an
+  // omitted value must be checked against the same bound, or the rule could be bypassed by
+  // relying on a default that later changes.
+  it('should validate the default access lifetime when the option is omitted', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — refreshCookiePath (now throws instead of warns)
 // ---------------------------------------------------------------------------
 

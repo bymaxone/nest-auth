@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto'
 
 import { DEFAULT_OPTIONS } from './default-options'
+import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 /**
@@ -164,6 +165,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateSameSiteNoneRequiresSecure(userOptions)
   validateTrustedOrigins(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
+  validateAccessLifetimeAgainstEpochRetention(userOptions.jwt)
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
   // mfa is re-added below with defaults applied.
@@ -704,6 +706,120 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
         `the refresh token lifetime jwt.refreshExpiresInDays * 86400 (${refreshLifetimeSeconds} s). ` +
         `A grace window equal to or longer than the token lifetime would allow grace pointers ` +
         `to outlive the refresh session they protect.`
+    )
+  }
+}
+
+/**
+ * Seconds per unit accepted in a `jwt.accessExpiresIn` time string.
+ *
+ * The vocabulary is `ms`'s, because `@nestjs/jwt` hands the value straight to that parser. It is
+ * reproduced rather than depended on: the library ships zero direct dependencies, and the epoch
+ * bound below needs the value as a number before any token is ever signed.
+ */
+const DURATION_UNIT_SECONDS: Record<string, number> = {
+  ms: 0.001,
+  msec: 0.001,
+  msecs: 0.001,
+  millisecond: 0.001,
+  milliseconds: 0.001,
+  s: 1,
+  sec: 1,
+  secs: 1,
+  second: 1,
+  seconds: 1,
+  m: 60,
+  min: 60,
+  mins: 60,
+  minute: 60,
+  minutes: 60,
+  h: 3_600,
+  hr: 3_600,
+  hrs: 3_600,
+  hour: 3_600,
+  hours: 3_600,
+  d: 86_400,
+  day: 86_400,
+  days: 86_400,
+  w: 604_800,
+  week: 604_800,
+  weeks: 604_800,
+  y: 31_557_600,
+  yr: 31_557_600,
+  yrs: 31_557_600,
+  year: 31_557_600,
+  years: 31_557_600
+}
+
+/** Strips the leading amount — digits, decimal point, and any space before the unit. */
+const DURATION_AMOUNT_PREFIX = /^[\d.\s]+/
+
+/**
+ * Convert a `jwt.accessExpiresIn` time string to seconds.
+ *
+ * A bare number is deliberately not accepted. `ms` reads it as milliseconds while a reader almost
+ * always means seconds, and the two differ by a factor of a thousand on a value that decides how
+ * long a stolen access token stays usable — so the ambiguity is rejected rather than guessed at.
+ * A number with no unit leaves nothing for the unit table to match, which is what rejects it.
+ *
+ * Parsed as amount-then-unit rather than through one anchored pattern so that every branch here
+ * is reachable from a real configuration value: a capture group the pattern already guarantees
+ * would still need an unreachable "absent" arm to satisfy `noUncheckedIndexedAccess`.
+ *
+ * @param value - The configured time span, e.g. `'15m'`, `'1 hour'`, `'900s'`.
+ * @returns The span in seconds, or `undefined` when the string is not a positive time span
+ *   `ms` accepts.
+ */
+function durationToSeconds(value: string): number | undefined {
+  const trimmed = value.trim()
+  const unit = trimmed.replace(DURATION_AMOUNT_PREFIX, '').toLowerCase()
+  const seconds = DURATION_UNIT_SECONDS[unit]
+  const amount = Number.parseFloat(trimmed)
+
+  // A non-positive lifetime is rejected here rather than compared against the bound below: it is
+  // not a value that "fits", it is a token that expires at or before it is issued.
+  if (seconds === undefined || !(amount > 0)) return undefined
+
+  return amount * seconds
+}
+
+/**
+ * Reject an access-token lifetime that outlives the window a store keeps a bumped token epoch
+ * readable.
+ *
+ * The epoch is what makes a stateless access token revocable: a password reset bumps the user's
+ * generation, and every token minted before it stops verifying. That only holds while the bumped
+ * value is still readable — once the record expires the lookup falls back to `0`, the comparison
+ * stops firing, and a token the reset revoked verifies again. An access token allowed to outlive
+ * {@link TOKEN_EPOCH_RETENTION_SECONDS} would sit in exactly that gap, so the bound is enforced
+ * at startup, where it is a configuration error, rather than discovered as a silent fail-open.
+ *
+ * An unparseable time string is rejected here too: `@nestjs/jwt` would otherwise fail at the
+ * first sign, long after startup, and a value this function cannot read is a value the bound
+ * cannot be checked against. rust-auth enforces the same rule
+ * (`AccessLifetimeExceedsEpochRetention`) over a `Duration`, which cannot be malformed.
+ *
+ * @param jwt - The user-supplied `jwt` option block.
+ * @throws If `accessExpiresIn` is malformed or exceeds the epoch retention window.
+ */
+function validateAccessLifetimeAgainstEpochRetention(jwt: BymaxAuthModuleOptions['jwt']): void {
+  const configured = jwt.accessExpiresIn ?? DEFAULT_OPTIONS.jwt.accessExpiresIn
+  const seconds = durationToSeconds(configured)
+
+  if (seconds === undefined) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.accessExpiresIn must be a time span such as '15m', '1h' or '900s'. ` +
+        `Got: '${configured}'. A value the signer cannot read would fail at the first token ` +
+        `issued, and leaves the token-epoch retention bound unverifiable at startup.`
+    )
+  }
+
+  if (seconds > TOKEN_EPOCH_RETENTION_SECONDS) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.accessExpiresIn ('${configured}' = ${seconds} s) must not exceed the ` +
+        `token-epoch retention window (${TOKEN_EPOCH_RETENTION_SECONDS} s). An access token that ` +
+        `outlives the stored epoch would survive the password reset that revoked it: the epoch ` +
+        `lookup falls back to 0 once the record expires, and the staleness check stops firing.`
     )
   }
 }

@@ -8,15 +8,18 @@ import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 
 /**
- * Lifetime of a token-epoch key, in seconds (30 days).
+ * Lifetime of a token-epoch key, in seconds.
  *
- * It must comfortably exceed the longest an access token can live, so a bump stays in force
- * for every pre-bump token's remaining lifetime. A small integer per reset-affected user is
- * negligible, and rust-auth applies the same value so a shared Redis ages the two identically.
+ * Pinned to the {@link TOKEN_EPOCH_RETENTION_SECONDS} store contract rather than repeating the
+ * literal: startup validation rejects a `jwt.accessExpiresIn` longer than that bound, so a bump
+ * can never lapse while a pre-bump access token is still presentable. Deriving the TTL from the
+ * same constant the validation reads is what keeps the two from drifting apart. A small integer
+ * per reset-affected user is negligible.
  */
-const EPOCH_TTL_SECONDS = 30 * 24 * 60 * 60
+const EPOCH_TTL_SECONDS = TOKEN_EPOCH_RETENTION_SECONDS
 
 /** Tag the rotation script prepends to a session recovered from the grace window. */
 const GRACE_TAG = 'GRACE:'

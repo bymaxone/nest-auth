@@ -19,7 +19,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
@@ -43,6 +43,7 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import { maskEmail } from '../utils/mask-email'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
@@ -280,6 +281,25 @@ export class OAuthService {
         // `?? profile.email` defence-in-depth branch is not expected at runtime.
         /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
         const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
+
+        // An account may already own this address without being linked to this OAuth identity
+        // — a local registration, or a link to a different provider. `findByOAuthId` above does
+        // not see it, so creating would violate the repository's uniqueness constraint and
+        // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
+        // link instead), so it is reported as one. rust-auth answers the same 409
+        // `auth.oauth_email_mismatch` for the same collision.
+        //
+        // A concurrent create between this check and the insert still reaches the repository.
+        // Nothing portable can be done about that here — `IUserRepository` is host-implemented
+        // and its errors are untyped — so the check closes the deterministic case and leaves
+        // the race to the constraint.
+        if (await this.userRepo.findByEmail(profile.email, tenantId)) {
+          this.logger.warn(
+            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${tenantId}`
+          )
+          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH, HttpStatus.CONFLICT)
+        }
+
         authUser = await this.userRepo.createWithOAuth({
           email: profile.email,
           name: derivedName,

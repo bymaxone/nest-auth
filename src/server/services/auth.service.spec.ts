@@ -894,6 +894,29 @@ describe('AuthService', () => {
       nowSpy.mockRestore()
     })
 
+    // Scenario: a refresh token that has already rotated and is still inside its grace window,
+    // presented at logout. Expected: both `rt:{hash}` and `rp:{hash}` are deleted. Why: the
+    // grace pointer is what a rotated-away token recovers through, so leaving it behind makes
+    // logout final only for a token that had NOT yet rotated — the one presented here would
+    // still mint a fresh session for the rest of its window. The platform plane already clears
+    // its `prp:` twin, and rust-auth clears the same pointer.
+    it('should delete the rotation grace pointer alongside the refresh key', async () => {
+      mockTokenManager.decodeToken.mockReturnValue({
+        jti: 'jti-grace',
+        sub: 'user-1',
+        exp: Math.floor(Date.now() / 1000) + 300
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+
+      await service.logout('access.token', 'raw-refresh', 'user-1')
+
+      const hash = createHash('sha256').update('raw-refresh').digest('hex')
+      expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hash}`)
+      expect(mockRedis.del).toHaveBeenCalledWith(`rp:${hash}`)
+    })
+
     // Scenario: any logout. Expected: an info log carrying the userId. Why: pins the log
     // template (line 276) so blanking it to '' is caught.
     it('should log the userId on logout', async () => {
