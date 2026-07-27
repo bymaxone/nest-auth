@@ -6,7 +6,9 @@ fail_ if that line were wrong. We seeded thousands of small faults into the sour
 booleans, removed guards, mangled string literals, swapped operators — and measured how many our
 suite detects. This document reports the hardening pass that took the library from a **73.59%**
 mutation score to **99.10%**, the five configuration corrections that made the run trustworthy,
-and an honest accounting of every mutant that remains. All numbers below come from the recorded
+and an honest accounting of every mutant that remains. A later pass
+([Where the score stands since](#where-the-score-stands-since)) closed the rest: the current run
+is **100.00%**, with no surviving mutants and none without coverage. All numbers below come from the recorded
 Stryker runs; nothing is estimated.
 
 ---
@@ -293,15 +295,51 @@ The 99.10% above is the snapshot at the end of that hardening pass. The number m
 library grows: new code arrives with survivors, and each subsequent pass drives them out. Every
 figure here is from a recorded run; none is estimated.
 
-| Date       | Score      | Killed | Survived | No coverage | Timeout | What moved it                                                                     |
-| ---------- | ---------- | -----: | -------: | ----------: | ------: | --------------------------------------------------------------------------------- |
-| 2026-07-26 | **98.37%** |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors |
+| Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                     |
+| ---------- | ----------- | -----: | -------: | ----------: | ------: | --------------------------------------------------------------------------------- |
+| 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors |
+| 2026-07-27 | **100.00%** |  3 458 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                       |
 
-The gate is the `break` threshold of **95**, not the peak: a run fails below it. The drop from
-99.10% is new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
-family-lineage rotation — not a regression in what was already covered. `token-manager.service.ts`
-and `auth-redis.service.ts`, the two files rewritten by that work, are both at **100% with no
-suppressions**.
+The gate is the `break` threshold of **95**, not the peak: a run fails below it. The 2026-07-26
+figure was new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
+family-lineage rotation — arriving with its own gaps, not a regression in what was already
+covered; the pass the day after closed all of them.
+
+### What the last 57 were
+
+Not one was a bug in the library. Every one was a test that could not see its own subject, and
+the fix was almost always to move the assertion to where the behaviour actually shows:
+
+- **Guards asserted from one side only.** A redirect URL was rejected as an empty string but
+  never as a non-string, so the `typeof` half was free to disappear — and a number is exactly
+  what arrives from env parsing. The MFA platform-misconfiguration guards were asserted by
+  "throws something", which any downstream failure satisfies.
+- **Fallbacks nothing could reach.** The OAuth error-code extractor's four fallbacks are only
+  observable through a malformed exception envelope, including the `null` and callable shapes
+  that separate its type check from its null check.
+- **Values written and read through the same symbol.** The rate-limit metadata key round-tripped
+  perfectly under any value, because the guard read it through the same constant a test wrote it
+  with; it is pinned to its literal now, and read back by name the way a consumer would.
+- **`catch` bodies whose throw is reached again a line later.** Four of them. Emptying the body
+  changed nothing observable, so each now logs what only it knows: a stored record that exists
+  but does not parse is _corrupted storage_, not an expired token, and a session-detail read that
+  throws is an _infrastructure fault_, not a stale index member. The caller cannot tell those
+  apart by design — the log line is the only place they differ.
+
+### Equivalent mutants, and a directive that does not always bind
+
+Sixteen timeouts remain (a mutation that makes a loop non-terminating is caught by other means),
+and the equivalents carry an inline `// Stryker disable` with the reason each cannot be killed.
+Two of those directives were **silently inert** before this pass, which is worth knowing:
+
+- `// Stryker disable next-line` binds to the line immediately after it. When the mutant shares
+  its line with a callback's closing brace (`}, [])`) or sits below a comment that wrapped onto a
+  second line, the directive points somewhere else and the mutant is reported as surviving.
+- The block form (`// Stryker disable X` … `// Stryker restore X`) binds in both cases and is
+  what `AuthProvider.tsx` and `createAuthClient.ts` use now.
+
+If a mutant you documented keeps showing up as a survivor, check that the directive lands on the
+line you think it does — it fails quietly, in the direction of reporting more work, not less.
 
 ---
 
