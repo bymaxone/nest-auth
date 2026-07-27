@@ -14,7 +14,7 @@
   <a href="https://www.npmjs.com/package/@bymax-one/nest-auth"><img src="https://img.shields.io/npm/dm/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="npm downloads" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bymaxone/nest-auth/ci.yml?branch=main&style=flat-square&colorA=000000&label=CI" alt="CI status" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square&colorA=000000" alt="coverage" /></a>
-  <a href="https://github.com/bymaxone/nest-auth/blob/main/docs/mutation_testing_results.md"><img src="https://img.shields.io/badge/mutation-99.10%25-brightgreen?style=flat-square&colorA=000000" alt="mutation score" /></a>
+  <a href="https://github.com/bymaxone/nest-auth/blob/main/docs/mutation_testing_results.md"><img src="https://img.shields.io/badge/mutation-100%25-brightgreen?style=flat-square&colorA=000000" alt="mutation score" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/bymaxone/nest-auth"><img src="https://api.scorecard.dev/projects/github.com/bymaxone/nest-auth/badge?style=flat-square" alt="OpenSSF Scorecard" /></a>
   <a href="https://github.com/bymaxone/nest-auth/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bymaxone/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="license" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
@@ -721,17 +721,22 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 
 ## 🛡️ Security Table
 
-| Layer             | Implementation                                     |
-| ----------------- | -------------------------------------------------- |
-| Password Hashing  | `node:crypto` scrypt (N=2¹⁵, r=8, p=1, keyLen=64)  |
-| MFA Encryption    | AES-256-GCM with 12-byte random IV per call        |
-| TOTP              | HMAC-SHA1 per RFC 4226/6238, ±1 step window        |
-| Token Generation  | `crypto.randomBytes(32)` — 256 bits of entropy     |
-| Secret Comparison | `crypto.timingSafeEqual` (constant-time)           |
-| JWT               | HS256 via `@nestjs/jwt`, JTI blacklist via Redis   |
-| Cookies           | HttpOnly, Secure, SameSite=Strict, path-scoped     |
-| Brute-Force       | Redis atomic counters per HMAC(email, jwt.secret)  |
-| CSRF (OAuth)      | 64-char hex state nonce, single-use via `getdel()` |
+| Layer              | Implementation                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| Password Hashing   | `node:crypto` scrypt (N=2¹⁵, r=8, p=1, keyLen=64)                                                      |
+| MFA Encryption     | AES-256-GCM with 12-byte random IV per call                                                            |
+| TOTP               | HMAC-SHA1 per RFC 4226/6238, ±1 step window                                                            |
+| Token Generation   | `crypto.randomBytes(32)` — 256 bits of entropy                                                         |
+| Secret Comparison  | `crypto.timingSafeEqual` (constant-time)                                                               |
+| JWT                | HS256 via `@nestjs/jwt`, JTI blacklist via Redis                                                       |
+| Cookies            | HttpOnly, Secure, SameSite=Strict, path-scoped                                                         |
+| Brute-Force        | Redis atomic counters per HMAC(email, jwt.secret)                                                      |
+| CSRF (OAuth)       | 64-char hex state nonce, single-use via `getdel()`                                                     |
+| Refresh Rotation   | Single-use tokens with a grace window; a replay past it revokes that login's whole family lineage      |
+| Cross-Site Writes  | `Origin` / `Sec-Fetch-Site` check on cookie-authenticated writes — the gap `SameSite=None` leaves open |
+| Breached Passwords | Optional Have I Been Pwned range check by k-anonymity; only a 5-char SHA-1 prefix leaves the process   |
+| Rate Limiting      | Per-IP fixed-window counters in Redis, keyed by `HMAC(ip)` — enforced by the library, not by the host  |
+| Session Lifetime   | Optional absolute cap on how long one login can be extended by rotation                                |
 
 > [!IMPORTANT]
 > This package uses **zero external cryptographic dependencies**. All operations use Node.js native `node:crypto`, eliminating supply chain attack vectors for critical security code.
@@ -757,9 +762,9 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **99.10% mutation score** — verified with [Stryker](https://stryker-mutator.io/): thousands of small faults are seeded into the source and the suite must catch them
-- ✅ **1,980 tests** — unit and end-to-end, spanning all five subpaths
-- ✅ **Security paths at 100% mutation** — `crypto/` and `guards/` are fully killed; refresh-cookie `HttpOnly`, session-hash validation, TOTP zero-padding, and response-splitting defenses are each pinned by a dedicated test
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 3,446 seeded faults killed, **no survivors and nothing left uncovered**, against a `break` threshold of 95
+- ✅ **2,417 tests** — unit and end-to-end, spanning all five subpaths
+- ✅ **Every equivalent mutant documented** — the handful that no test can kill (a redundant guard, a dependency array of stable references) carries an inline `// Stryker disable` with the reason it cannot be killed, so the score is an accounting rather than a number
 
 ```bash
 pnpm test          # unit suite

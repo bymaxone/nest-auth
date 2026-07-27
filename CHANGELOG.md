@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This cycle closes the divergences between this library and its Rust counterpart
+[`bymaxone/rust-auth`](https://github.com/bymaxone/rust-auth) — the two can back the same
+deployment over one Redis, so keys, stored record shapes, JWT claims and Lua scripts are a
+contract between them — and then ships five security items that came out of auditing both
+against `better-auth`. Every change here has a matching change on the Rust side, and
+`conformance/wire-contract.json` is held byte-identical in both repositories.
+
+### Added
+
+- **Refresh-token reuse detection by family lineage** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts), [`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts)). A login opens a family; every rotation inherits it; replaying a consumed token past its grace window revokes that lineage — and only that lineage. Previously a theft signed the user out of every device they owned. Platform rotation gains the same detection, which it never had.
+- **Bulk access-token revocation by epoch** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)). A per-user generation counter replaces the `utc:` cutoff timestamp. The counter has no clock semantics — a token issued in the same second as a password reset was previously indistinguishable from one issued just before it — and does not depend on the token carrying a well-formed `iat`.
+- **Cross-site request refusal** ([`src/server/guards/trusted-origin.guard.ts`](src/server/guards/trusted-origin.guard.ts)). `Origin` / `Sec-Fetch-Site` verification on cookie-authenticated writes. `SameSite` covers this for `lax`/`strict`; it does not for `SameSite=None`, which this library allows and which sends the session cookie cross-site. On by default; `cookies.trustedOrigins` is required as soon as `cookies.sameSite: 'none'` is set.
+- **Breached-password refusal** ([`src/server/providers/hibp-breach-checker.provider.ts`](src/server/providers/hibp-breach-checker.provider.ts)). `IPasswordBreachChecker` with an opt-in `HibpBreachChecker` using Have I Been Pwned k-anonymity ranges: only a 5-character SHA-1 prefix leaves the process. Fails **open** by contract — an unreachable corpus must never stop someone changing their password. Off by default (`AllowAllBreachChecker`): it is the only part of the credential path that reaches the network.
+- **Per-IP rate limiting enforced by the library** ([`src/server/guards/auth-rate-limit.guard.ts`](src/server/guards/auth-rate-limit.guard.ts), [`src/server/decorators/auth-rate-limit.decorator.ts`](src/server/decorators/auth-rate-limit.decorator.ts)). `AUTH_THROTTLE_CONFIGS` existed but was advisory: the numbers only applied if the host wired `ThrottlerModule`, and nothing said so. The refusal is now the library's own `auth.too_many_requests` envelope with `Retry-After`, matching what `rust-auth` already returned. On by default (`rateLimit.enabled`).
+- **Absolute session lifetime** ([`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts)). `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation. `refreshExpiresInDays` bounds a single token, not a session — a client rotating every fifteen minutes renews it forever. Off by default: switching it on ends sessions already older than the cap.
+
+### Changed
+
+- **`OAuthProfile.emailVerified` is now required** ([`src/server/oauth/oauth.service.ts`](src/server/oauth/oauth.service.ts)). `createWithOAuth` was called with `emailVerified: true` unconditionally. There is no bug today — the one shipped plugin is Google's, and it refuses an unverified profile before building one — but the roadmap opens `oauth.plugins` for GitHub, Microsoft and Apple, and GitHub hands back unverified addresses. The field cannot be defaulted to `true` without reintroducing exactly that assumption. **Breaking** for anyone implementing a custom OAuth plugin.
+- **`cookies.sameSite: 'none'` now requires `cookies.trustedOrigins`**, and the allowlist is refused under any other posture ([`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts)). Both halves fail quietly on their own: `'none'` with no list rejects every cross-site call, a list under `'lax'` is never consulted. **Breaking** for a deployment already on `SameSite=None`.
+- **`revokeAllUserTokens` is removed** ([`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts)). The password reset names its two steps directly. **Breaking** for a consumer calling it.
+
+### Fixed
+
+- **A grace pointer could resurrect a revoked lineage** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)). Reuse detection only proves the _replayed_ token's own pointer expired; a pointer planted by an earlier rotation of the same lineage can still be live, and recovering from it handed the thief back the family the revocation had just killed. A recovery now requires its family index to still exist. Red-checked: the test needs a three-token lineage to fail without the fix.
+- **The MFA challenge did not re-check account status** ([`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts)). A temp token stays valid for its whole TTL, so an account blocked between the password step and the second factor could still complete the challenge.
+- **Platform sessions shared the dashboard's Redis index** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)), so "sign out everywhere" on one plane could reach the other.
+- **Recovery-code verification amplified CPU** ([`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts)) by running the KDF once per stored code; refresh tokens widened to the documented entropy.
+- **The client parsed its own error shape rather than the server's envelope** ([`src/client/createAuthClient.ts`](src/client/createAuthClient.ts)), so `code` and `details` were lost on every failure.
+
+### Tests
+
+- **100% mutation score** ([docs/mutation_testing_results.md](docs/mutation_testing_results.md)) — 3,446 seeded faults killed, no survivors and nothing left uncovered, against a `break` threshold of 95. The pass closed 57 open mutants across 19 files; not one was a bug in the library, and every one was a test that could not see its own subject.
+- **2,417 tests** at 100% coverage on all four metrics, including a conformance tier that reads `conformance/wire-contract.json` — the same file `rust-auth` reads — and an adversarial suite for the credential paths.
+
 ## [1.0.11] - 2026-05-30
 
 ### Security
