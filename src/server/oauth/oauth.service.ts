@@ -219,8 +219,11 @@ export class OAuthService {
     let parsedState: unknown
     try {
       parsedState = JSON.parse(rawState)
-      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsedState` stays undefined, which isStoredOAuthState rejects, throwing the same OAUTH_FAILED — the catch body is a no-op either way
     } catch {
+      // A state key that exists but does not parse is corrupted storage, not a stale or
+      // forged callback — the two are indistinguishable to the caller (both answer
+      // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
+      this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 

@@ -439,12 +439,17 @@ describe('InvitationService', () => {
 
     // Verifies that a syntactically invalid JSON value stored in Redis triggers the catch branch.
     it('should throw AuthException(INVALID_INVITATION_TOKEN) when stored value is malformed JSON', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.getdel.mockResolvedValue('{not-valid-json}')
       const dto = { token: VALID_TOKEN, name: 'Jane', password: 'Secure123!' }
 
       await expect(
         service.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
       ).rejects.toThrow(AuthException)
+      // The invitee gets the same code as for an expired token, by design. The operator gets
+      // the one line that says the record was corrupted rather than stale.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not parseable JSON'))
+      warnSpy.mockRestore()
     })
 
     // Verifies the isStoredInvitation null-check branch: JSON.parse('null') returns null,

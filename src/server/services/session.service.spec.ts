@@ -1098,6 +1098,7 @@ describe('SessionService', () => {
 
     // Verifies that triggers async SREM for members where redis.get throws.
     it('triggers async SREM for members where redis.get throws', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const throwHash = sha256('throw-srem-token')
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`])
       mockRedis.get.mockRejectedValue(new Error('Redis connection lost'))
@@ -1108,6 +1109,16 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rt:${throwHash}`)
+      // A failed read and a genuinely stale member are pruned alike — both leave the index —
+      // so without this line a Redis outage reads as a tidy-up, and the sessions it silently
+      // dropped never come back.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session detail read failed'))
+      // Truncated: the full hash is the session's identifier in Redis, and a log line is the
+      // wrong place to put one. Eight characters is enough to correlate, not enough to use.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain(throwHash.slice(0, 8))
+      expect(warned).not.toContain(throwHash)
+      warnSpy.mockRestore()
     })
 
     // Verifies that logs error when fire-and-forget srem itself throws.

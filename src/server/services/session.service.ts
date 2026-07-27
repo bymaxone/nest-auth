@@ -325,8 +325,11 @@ export class SessionService {
 
         try {
           raw = await this.redis.get(`sd:${hash}`)
-          // Stryker disable next-line BlockStatement: on a get-throw `raw` stays null, so the subsequent `raw === null` branch performs the identical push+return; the catch body is a no-op
         } catch {
+          // A read that throws is an infrastructure fault, not a stale member — the pruning
+          // below treats them alike (both are dropped from the index), and only this line
+          // says which one happened, so a Redis outage does not read as a tidy-up.
+          this.logger.warn(`listSessions: session detail read failed hash=${hash.slice(0, 8)}`)
           staleKeys.push(member)
           return
         }
@@ -344,6 +347,9 @@ export class SessionService {
           if (
             // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
             parsed === null ||
+            // Stryker disable next-line ConditionalExpression: equivalent — a non-object
+            // parsed value reaches the field reads below as `undefined` on every property,
+            // which reject it with the identical outcome
             typeof parsed !== 'object' ||
             typeof p['device'] !== 'string' ||
             typeof p['ip'] !== 'string' ||

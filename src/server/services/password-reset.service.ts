@@ -530,8 +530,10 @@ export class PasswordResetService {
     let parsed: unknown
     try {
       parsed = JSON.parse(json)
-      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsed` stays undefined, caught by the next type guard → same thrown code; the catch body is a no-op
     } catch {
+      // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
+      // by design, and distinguishable to an operator only here.
+      this.logger.warn('reset: stored reset context is not parseable JSON')
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 

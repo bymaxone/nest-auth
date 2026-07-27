@@ -230,8 +230,11 @@ export class InvitationService {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
-      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsed` stays undefined, caught by the next `typeof !== 'object'` guard → same thrown code; the catch body is a no-op
     } catch {
+      // A record that exists but does not parse is corrupted storage, not an expired or
+      // forged invitation — the caller cannot tell the two apart (both answer the same code)
+      // and only this line does.
+      this.logger.warn('acceptInvitation: stored invitation is not parseable JSON')
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
 

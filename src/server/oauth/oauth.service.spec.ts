@@ -598,9 +598,15 @@ describe('OAuthService', () => {
     // Verifies that malformed JSON in the stored state value results in OAUTH_FAILED,
     // not an unhandled JSON.parse exception.
     it('should throw OAUTH_FAILED when the stored state contains malformed JSON', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.getdel.mockResolvedValue('{invalid-json')
 
       await expect(callCallback()).rejects.toThrow(AuthException)
+      // Corrupted storage and a stale callback answer the caller identically, so the log is
+      // the only place they are distinguishable — and the difference decides whether an
+      // operator goes looking at Redis or at the user's browser.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unparseable OAuth state'))
+      warnSpy.mockRestore()
     })
 
     // Verifies that a valid JSON object that is missing the tenantId field fails the

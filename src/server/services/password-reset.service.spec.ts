@@ -593,6 +593,7 @@ describe('PasswordResetService', () => {
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when stored JSON is malformed.
     it('throws PASSWORD_RESET_TOKEN_INVALID when stored JSON is malformed', async () => {
       // Arrange
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.getdel.mockResolvedValue('{{{invalid')
       const dto = { ...baseDto, token: 'mytoken' }
 
@@ -606,6 +607,10 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+      // The holder gets the same code as for a replayed token, by design. The operator gets
+      // the one line that says the record was corrupted rather than spent.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not parseable JSON'))
+      warnSpy.mockRestore()
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when stored JSON is missing required fields.

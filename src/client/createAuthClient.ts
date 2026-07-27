@@ -325,6 +325,9 @@ function readErrorEnvelope(value: unknown, response: Response): AuthErrorRespons
     // A non-object `details` is not something the server emits; treat
     // it as absent rather than propagating an unusable value under a
     // type that promises a record.
+    // Stryker disable next-line ConditionalExpression: equivalent — `typeof null` is
+    // `'object'`, so dropping the null check casts `null` to the record type and yields the
+    // very `null` the other branch returns.
     details:
       typeof details === 'object' && details !== null ? (details as Record<string, unknown>) : null
   }
