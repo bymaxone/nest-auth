@@ -68,7 +68,10 @@ const MOCK_PROFILE: OAuthProfile = {
   provider: 'google',
   providerId: MOCK_PROVIDER_ID,
   email: MOCK_EMAIL,
-  name: 'OAuth User'
+  name: 'OAuth User',
+  // The provider asserts it verified this address. A plugin that cannot assert it must send
+  // `false`, and the account is created unverified — the whole reason the field is required.
+  emailVerified: true
 }
 
 /**
