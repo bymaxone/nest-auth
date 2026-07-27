@@ -622,6 +622,9 @@ export class MfaService {
     if (isTotpCode) {
       codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
     } else {
+      // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
+      // account with no stored codes, and any content it could hold fails the constant-time
+      // comparison exactly as the empty array does.
       const recoveryCodes = user.mfaRecoveryCodes ?? []
       usedRecoveryIndex = await this.verifyRecoveryCode(code, recoveryCodes)
       codeValid = usedRecoveryIndex >= 0
@@ -653,6 +656,8 @@ export class MfaService {
       const existingCodes =
         user.mfaRecoveryCodes ??
         /* istanbul ignore next -- verifyRecoveryCode returns ≥0 only after iterating a non-null array */
+        // Stryker disable next-line ArrayDeclaration: unreachable — this branch is only taken
+        // when `verifyRecoveryCode` matched a code inside an array it had to iterate first.
         []
       const updatedCodes = [...existingCodes]
       updatedCodes.splice(usedRecoveryIndex, 1)

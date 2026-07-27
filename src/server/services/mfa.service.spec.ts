@@ -571,6 +571,13 @@ describe('MfaService', () => {
       // The afterMfaEnabled hook must be invoked (kills the BlockStatement emptying at line 461)
       // and the success log must carry the userId (kills line 457).
       expect(mockHooks.afterMfaEnabled).toHaveBeenCalledTimes(1)
+      // With the dashboard projection, not the platform one: the platform shape blanks the
+      // tenant (there is no tenant on that plane), so a hook that received it for a dashboard
+      // user would lose the very field a multi-tenant consumer routes on.
+      const dashboardHookUser = mockHooks.afterMfaEnabled.mock.calls[0]?.[0] as {
+        tenantId: string
+      }
+      expect(dashboardHookUser.tenantId).toBe('tenant-1')
       expect(logSpy).toHaveBeenCalledWith(
         'verifyAndEnable: MFA enabled userId=user-1 context=dashboard'
       )
@@ -1384,6 +1391,56 @@ describe('MfaService', () => {
     })
   })
 
+  /**
+   * The same misconfiguration guard as `setup`/`verifyAndEnable`, on the third
+   * entry point. Without it a platform regenerate falls through to the dashboard
+   * repository, which is how one admin's recovery codes end up written onto a
+   * dashboard user with the same id.
+   */
+  describe('regenerateRecoveryCodes — platform misconfiguration', () => {
+    it('should throw MFA_NOT_ENABLED when platform context is used without platformUserRepo', async () => {
+      const { Test: NestTest } = await import('@nestjs/testing')
+      const moduleWithoutRepo = await NestTest.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
+
+      await expect(
+        serviceWithoutRepo.regenerateRecoveryCodes(
+          'admin-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'platform'
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+
+      // And only the platform context is a misconfiguration here — a dashboard regenerate on
+      // the same platform-less service is an ordinary call and must not be refused by it.
+      mockUserRepo.findById.mockResolvedValue(null)
+      await expect(
+        serviceWithoutRepo.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      ).rejects.not.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
+    })
+  })
+
   // ---------------------------------------------------------------------------
   // disable
   // ---------------------------------------------------------------------------
@@ -1800,9 +1857,32 @@ describe('MfaService', () => {
       }).compile()
       const serviceWithoutRepo = moduleWithoutRepo.get(MfaService)
 
+      // The specific code matters: any other AuthException here would mean the guard let the
+      // request through and something downstream refused it instead — which is the bug this
+      // test exists for, since downstream would be the *dashboard* repository.
       await expect(
         serviceWithoutRepo.verifyAndEnable('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
-      ).rejects.toThrow(AuthException)
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
+      // Refused before any read: the dashboard repository is never consulted for a platform
+      // request, not even to fail.
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+
+      // And the guard is about the platform context specifically — a dashboard enable on the
+      // same (platform-less) service is not a misconfiguration and must run its normal course.
+      mockUserRepo.findById.mockResolvedValue({
+        ...SAFE_USER,
+        passwordHash: 'hash',
+        mfaEnabled: false,
+        mfaRecoveryCodes: []
+      })
+      mockRedis.get.mockResolvedValue(null)
+      await expect(
+        serviceWithoutRepo.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+      ).rejects.not.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+      })
     })
   })
 

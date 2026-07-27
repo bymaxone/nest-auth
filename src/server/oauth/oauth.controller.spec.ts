@@ -526,6 +526,79 @@ describe('OAuthController', () => {
     })
 
     /**
+     * The code that reaches the query string is read out of the exception's
+     * envelope, and every step of that read has a fallback. None of them is
+     * reachable through `AuthException`'s own constructor — a thrown value can
+     * carry any shape once a custom filter or a future subclass is in play — so
+     * they are driven directly here. The fallback is what keeps a malformed
+     * envelope from putting `undefined` (or an internal message) in a URL the
+     * user's browser follows.
+     */
+    it.each([
+      ['a non-object envelope', 'just a string', 'oauth_failed'],
+      ['a null envelope', null, 'oauth_failed'],
+      // The `typeof` half and the `null` half are independent: a callable is the
+      // one value that fails `typeof x === 'object'` and can still carry an
+      // `error.code`, so without the type check its code would reach the URL.
+      [
+        'a callable envelope carrying a code',
+        Object.assign(() => undefined, { error: { code: 'auth.smuggled' } }),
+        'oauth_failed'
+      ],
+      ['an envelope with no error object', { statusCode: 400 }, 'oauth_failed'],
+      ['an envelope whose code is not a string', { error: { code: 42 } }, 'oauth_failed'],
+      ['an envelope whose code is empty', { error: { code: '' } }, 'oauth_failed'],
+      ['a code with no namespace prefix', { error: { code: 'bare_code' } }, 'bare_code'],
+      ['a code that is only a prefix separator', { error: { code: '.suffix' } }, 'suffix']
+    ])('should fall back sensibly on %s', async (_label, response, expected) => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+
+      const exception = new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      jest.spyOn(exception, 'getResponse').mockReturnValue(response as never)
+      mockOAuthService.handleCallback.mockRejectedValue(exception)
+
+      await controller.callback('google', { code: 'c', state: 's' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(`/auth/error?error=${expected}`)
+    })
+
+    /**
+     * The MFA branch is chosen by a literal `true`, not by the key's presence.
+     * A result that carries the key set to `false` is a completed sign-in, and
+     * routing it to the challenge page would strand a user who has already
+     * authenticated — with tokens issued and no way back to them.
+     */
+    it('should treat mfaRequired: false as a completed sign-in', async () => {
+      await bootstrap({ successRedirectUrl: '/dashboard', mfaRedirectUrl: '/mfa' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+
+      mockOAuthService.handleCallback.mockResolvedValue({
+        mfaRequired: false,
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        user: { id: 'u1', email: 'u@e.com' }
+      } as never)
+
+      await controller.callback('google', { code: 'c', state: 's' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('/dashboard')
+    })
+
+    /**
      * Pins that an absolute URL passes through the WHATWG `URL` constructor:
      * existing query parameters are preserved AND the error code is appended
      * as a new param.

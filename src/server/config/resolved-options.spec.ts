@@ -1313,6 +1313,32 @@ describe('resolveOptions — oauth provider validation', () => {
   })
 
   /**
+   * The same guard from its other side. `typeof url !== 'string'` is not
+   * redundant with the emptiness check: the type says string, but the value
+   * comes from a host's configuration — often straight out of env parsing or a
+   * JSON file — and a number has no `.length` at all, so the emptiness half
+   * alone would let it through to be redirected to.
+   */
+  it.each(['successRedirectUrl', 'mfaRedirectUrl', 'errorRedirectUrl'])(
+    'should throw when oauth.%s is not a string at all',
+    (key) => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            [key]: 8080 as unknown as string,
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.com/cb'
+            }
+          }
+        })
+      ).toThrow(new RegExp(`${key} must be a non-empty string`))
+    }
+  )
+
+  /**
    * Verifies that an absolute HTTPS URL passes in production. Same security
    * posture as `callbackUrl` — TLS must protect both legs of the OAuth round-trip.
    */
@@ -1376,6 +1402,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/successRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: 'http://app.example.com/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/dashboard')")
     })
   })
 
@@ -1423,6 +1464,36 @@ describe('resolveOptions — oauth provider validation', () => {
         }
       })
     ).toThrow(/tokenDelivery is 'bearer'/)
+    // The remedy is the operator-facing half of this error, and the reason the pair is
+    // refused at boot instead of at the first sign-in that silently drops its token.
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          successRedirectUrl: 'https://app.example.com/dashboard',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.example.com/cb'
+          }
+        }
+      })
+    ).toThrow('A redirect discards the JSON response body')
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          successRedirectUrl: 'https://app.example.com/dashboard',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.example.com/cb'
+          }
+        }
+      })
+    ).toThrow("Use tokenDelivery: 'cookie' or 'both'")
   })
 
   /**
@@ -1535,6 +1606,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/mfaRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: 'http://app.example.com/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/mfa')")
     })
   })
 
@@ -1684,6 +1770,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/errorRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: 'http://app.example.com/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/error')")
     })
   })
 
