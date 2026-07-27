@@ -298,7 +298,7 @@ figure here is from a recorded run; none is estimated.
 | Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                     |
 | ---------- | ----------- | -----: | -------: | ----------: | ------: | --------------------------------------------------------------------------------- |
 | 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors |
-| 2026-07-27 | **100.00%** |  3 458 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                       |
+| 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                       |
 
 The gate is the `break` threshold of **95**, not the peak: a run fails below it. The 2026-07-26
 figure was new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
