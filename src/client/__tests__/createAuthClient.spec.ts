@@ -565,6 +565,30 @@ describe('createAuthClient — server error envelope', () => {
     })
   })
 
+  // `details` is typed as a record, and the client is what makes that type honest: an
+  // envelope carrying a string (or a number, or a boolean) there is not something this
+  // server emits, but the client parses whatever answered the request — a proxy, an error
+  // page, a future version. Passing it through would hand a consumer a value their types
+  // promise they can index into.
+  it.each([
+    ['a string', 'not-a-record'],
+    ['a number', 42],
+    ['a boolean', true]
+  ])('normalizes %s in details to null', async (_label, details) => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(400, {
+        code: 'auth.validation_failed',
+        message: 'Bad request',
+        details
+      })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(
+      client.login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+    ).rejects.toMatchObject({ body: { details: null } })
+  })
+
   // The envelope reaches the void endpoints through `expectNoContent`,
   // a different call path than `parseJsonOrThrow`. Verifies logout
   // surfaces the same normalized body rather than a generic failure.

@@ -109,6 +109,7 @@ function handleAuthenticatedOnPublic(
   sanitizedHeaders: Headers
 ): NextResponse {
   /* istanbul ignore next -- `authenticated` implies token is defined; optional chain is defensive */
+  // Stryker disable next-line StringLiteral: unreachable — this handler only runs for an authenticated state, which implies a decoded token, so the fallback's value can never be read
   const role = tokenState.token?.role ?? ''
   const reasonPresent = request.nextUrl.searchParams.has(REASON_PARAM)
   const isRedirectIfAuth = config.publicRoutesRedirectIfAuthenticated.some((route) =>

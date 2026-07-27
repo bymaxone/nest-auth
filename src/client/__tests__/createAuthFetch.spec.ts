@@ -410,6 +410,12 @@ describe('createAuthFetch — refresh on 401', () => {
       const res = await authFetch('/api/users')
       expect(res.status).toBe(401)
       expect(onSessionExpired).toHaveBeenCalledTimes(1)
+      // Swallowed, but not silently: the warning is the only trace a consumer has that their
+      // callback is broken, and the error it carries is the only way to find out how.
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[nest-auth] onSessionExpired callback threw:',
+        expect.objectContaining({ message: 'boom' })
+      )
     } finally {
       warnSpy.mockRestore()
     }

@@ -427,6 +427,16 @@ describe('PlatformAuthController', () => {
       await expect(controller.mfaChallenge(dto, req)).rejects.toBeInstanceOf(AuthException)
       // The guard runs BEFORE the service call.
       expect(mockMfaService.challenge).not.toHaveBeenCalled()
+
+      // An empty string is a *present* value: it reaches the guard without being defaulted,
+      // so the emptiness half is the only thing stopping a verify call on ''.
+      const emptyDto = { mfaTempToken: '', code: '654321' } as Parameters<
+        typeof controller.mfaChallenge
+      >[0]
+      await expect(controller.mfaChallenge(emptyDto, req)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
     })
   })
 

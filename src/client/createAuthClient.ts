@@ -363,8 +363,9 @@ function buildUrl(baseUrl: string, routePrefix: string, path: string): string {
   /* istanbul ignore next -- forward-compat: the current public API only
      composes relative AUTH_ROUTES values; the absolute-path branch keeps
      buildUrl correct if a future route is mounted at a non-prefixed path. */
-  // Stryker disable next-line ConditionalExpression,MethodExpression: forward-compat absolute-path branch; every route this builds is relative and none ends with '/', so startsWith('/') vs endsWith('/') vs false are indistinguishable
+  // Stryker disable next-line ConditionalExpression,MethodExpression,BlockStatement: forward-compat absolute-path branch; every route this builds is relative and none ends with '/', so startsWith('/') vs endsWith('/') vs false are indistinguishable
   if (path.startsWith('/')) {
+    // Stryker disable next-line StringLiteral: unreachable — no route this builds is absolute, so the branch never returns
     return `${baseUrl}${path}`
   }
   return routePrefix.length > 0 ? `${baseUrl}/${routePrefix}/${path}` : `${baseUrl}/${path}`

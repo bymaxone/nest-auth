@@ -145,6 +145,7 @@ export function parseSetCookieHeader(raw: string): ParsedSetCookie {
   // defined — the `?? ''` only exists to satisfy
   // `noUncheckedIndexedAccess` and is never executed at runtime.
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback */
+  // Stryker disable next-line StringLiteral: unreachable — `split` always yields at least one element, so the fallback's value can never be read
   const nameValueSegment = segments[0] ?? ''
   const attributeSegments = segments.slice(1)
 

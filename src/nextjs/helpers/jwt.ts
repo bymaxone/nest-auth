@@ -117,8 +117,10 @@ export function decodeJwtToken(token: string): DecodedToken {
   // `parts.length === 3` guarantees indices 0-2 are defined; the
   // `?? ''` only exists to satisfy `noUncheckedIndexedAccess`.
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
+  // Stryker disable next-line StringLiteral: unreachable — the length check above proves index 0 exists, so the fallback's value can never be read
   const headerSegment = parts[0] ?? ''
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
+  // Stryker disable next-line StringLiteral: unreachable — the length check above proves index 1 exists, so the fallback's value can never be read
   const payloadSegment = parts[1] ?? ''
   // Stryker disable next-line ConditionalExpression: empty-segment fast path; an empty payload also fails the `payload === undefined` check below, returning the same emptyDecoded()
   if (headerSegment.length === 0 || payloadSegment.length === 0) return emptyDecoded()
@@ -178,10 +180,13 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
   // `parts.length === 3` guarantees indices 0-2 are defined; the
   // `?? ''` only exists to satisfy `noUncheckedIndexedAccess`.
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
+  // Stryker disable next-line StringLiteral: unreachable — the length check above proves index 0 exists, so the fallback's value can never be read
   const headerSegment = parts[0] ?? ''
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
+  // Stryker disable next-line StringLiteral: unreachable — the length check above proves index 1 exists, so the fallback's value can never be read
   const payloadSegment = parts[1] ?? ''
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable after length check */
+  // Stryker disable next-line StringLiteral: unreachable — the length check above proves index 2 exists, so the fallback's value can never be read
   const signatureSegment = parts[2] ?? ''
   // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement: empty-segment early return; each segment is independently re-validated downstream (header/payload undefined, signature verify rejects empty), so any single mutation here is masked
   if (headerSegment.length === 0 || payloadSegment.length === 0 || signatureSegment.length === 0) {
@@ -455,8 +460,9 @@ function asciiBytes(input: string): Uint8Array {
   for (let i = 0; i < input.length; i += 1) {
     const code = input.charCodeAt(i)
     /* istanbul ignore if -- only called with base64url strings whose chars are all <= 0x7f; the guard is a defensive assert against future misuse */
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: non-ASCII guard is unreachable: this is only called with base64url segments whose chars are all <= 0x7f
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: non-ASCII guard is unreachable: this is only called with base64url segments whose chars are all <= 0x7f
     if (code > 0x7f) {
+      // Stryker disable next-line StringLiteral: unreachable — see the guard above
       throw new TypeError(`asciiBytes: non-ASCII character at index ${i}`)
     }
     // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop index over a typed array we just allocated.
