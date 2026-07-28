@@ -59,6 +59,12 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
 
   /** @inheritdoc */
   async isBreached(password: string): Promise<boolean> {
+    // SHA-1 is the range API's index, not a password hash: Have I Been Pwned publishes its
+    // corpus keyed by SHA-1, so a lookup can only be performed in the algorithm the corpus was
+    // built with. The digest is never stored and never leaves the process — only its first five
+    // characters are sent, which is what makes the query k-anonymous. Credentials at rest are
+    // hashed with scrypt by `PasswordService`; nothing here participates in that.
+    // codeql[js/insufficient-password-hash]
     const digest = createHash('sha1').update(password, 'utf8').digest('hex').toUpperCase()
     const prefix = digest.slice(0, PREFIX_LENGTH)
     const suffix = digest.slice(PREFIX_LENGTH)

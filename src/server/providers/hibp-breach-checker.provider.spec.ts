@@ -18,7 +18,12 @@ import { AllowAllBreachChecker, HibpBreachChecker } from './hibp-breach-checker.
 
 const PASSWORD = 'correct horse battery staple'
 
-/** The SHA-1 of the password, upper-cased, as the range API indexes it. */
+/**
+ * The SHA-1 of the password, upper-cased, as the range API indexes it. Reproduced here so the
+ * fixtures below are the real digest the provider will compute — not a password hash, and not a
+ * value this test stores anywhere.
+ */
+// codeql[js/insufficient-password-hash]
 const DIGEST = createHash('sha1').update(PASSWORD, 'utf8').digest('hex').toUpperCase()
 const PREFIX = DIGEST.slice(0, 5)
 const SUFFIX = DIGEST.slice(5)
