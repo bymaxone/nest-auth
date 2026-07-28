@@ -147,8 +147,14 @@ pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/webso
 pnpm add react
 
 # Next.js subpath (optional)
-pnpm add next react
+pnpm add next react server-only
 ```
+
+> [!NOTE]
+> `server-only` is what makes importing the Next.js JWT helper from a Client Component a
+> **build error**. That module receives the HS256 secret, and a secret in a client chunk is a
+> secret published to every visitor — with nothing downstream to notice. It is a marker package
+> with no runtime behaviour, and Next.js's own documentation prescribes it for exactly this.
 
 > [!IMPORTANT]
 > Requires `@nestjs/throttler >= 6.0.0` for `AUTH_THROTTLE_CONFIGS` decorators to be honored.
@@ -612,6 +618,15 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
 
+> [!IMPORTANT]
+> `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token
+> epoch readable. The epoch is what makes a stateless access token revocable: a password reset
+> advances it and every token stamped below it stops verifying — but only while the bumped value
+> is still there. A longer-lived access token would outlive it, the lookup would fall back to
+> `0`, and a token the reset revoked would verify again. Startup refuses the configuration
+> rather than letting it fail open, and rejects an unreadable time span or a non-positive
+> lifetime on the same pass.
+
 Two options are deliberately off by default because switching them on changes behaviour for
 sessions and origins that already exist:
 
@@ -861,15 +876,16 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 The items below are on deck for future minor / major releases. None are shipping today — the list exists so contributors can see where the library is headed and where help is most useful. Open an issue if you'd like to discuss priorities or propose a design.
 
-| Area                        | Item                                                                                                                       | Status    |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------- |
-| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core     | Planned   |
-| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)     | Planned   |
-| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API    | Exploring |
-| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module               | Exploring |
-| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                     | Exploring |
-| Pluggable password policy   | `IPasswordPolicy` for complexity classes and per-tenant rules (the breach check already ships as `IPasswordBreachChecker`) | Planned   |
-| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)         | Exploring |
+| Area                        | Item                                                                                                                                                                                                      | Status    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core                                                                                    | Planned   |
+| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)                                                                                    | Planned   |
+| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API                                                                                   | Exploring |
+| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module                                                                                              | Exploring |
+| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                                                                                                    | Exploring |
+| Pluggable password policy   | `IPasswordPolicy` for complexity classes and per-tenant rules (the breach check already ships as `IPasswordBreachChecker`)                                                                                | Planned   |
+| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)                                                                                        | Exploring |
+| Generated shared types      | Emit `./shared` from one source of truth with a CI drift gate, the way `rust-auth` generates its TypeScript from the Rust types — today the two sides are held in step by the conformance tier and review | Planned   |
 
 > Track progress and discuss proposals on the [issues board](https://github.com/bymaxone/nest-auth/issues).
 
