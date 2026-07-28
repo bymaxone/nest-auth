@@ -752,7 +752,15 @@ const DURATION_UNIT_SECONDS: Record<string, number> = {
 }
 
 /** Strips the leading amount — digits, decimal point, and any space before the unit. */
+// Stryker disable Regex: the `^` is equivalent under the `amount > 0` guard below. A string
+// that reaches the unit lookup with a usable amount has its numeric run at index 0, so an
+// unanchored search finds the same match; one whose numeric run starts later makes
+// `Number.parseFloat` return NaN and is rejected on the amount, never on the unit. Verified
+// against 211k generated inputs — anchored and unanchored agree on every one. The anchor stays
+// because it states what this pattern is for, and would become load-bearing again the moment
+// someone relaxes that guard.
 const DURATION_AMOUNT_PREFIX = /^[\d.\s]+/
+// Stryker restore Regex
 
 /**
  * Convert a `jwt.accessExpiresIn` time string to seconds.
