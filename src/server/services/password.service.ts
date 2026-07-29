@@ -62,8 +62,9 @@ const DUMMY_PASSWORD_HASH =
  *
  * @remarks
  * **Cost parameters:** Taken from `options.password` at construction time.
- * Defaults are `costFactor = 32768 (2^15)`, `blockSize = 8`, `parallelization = 1`.
- * Override in `BymaxAuthModule.forRoot({ password: { costFactor: 65536 } })`.
+ * Defaults are `costFactor = 131072 (2^17)`, `blockSize = 8`, `parallelization = 1` — OWASP's
+ * recommended minimum for scrypt. Override in
+ * `BymaxAuthModule.forRoot({ password: { costFactor: 65536 } })`.
  * Validated at startup by `resolveOptions()` — values below `16384 (2^14)` are rejected.
  *
  * **Security:** Comparison uses `crypto.timingSafeEqual` to prevent timing

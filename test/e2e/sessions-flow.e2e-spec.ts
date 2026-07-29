@@ -233,6 +233,38 @@ describe('sessions flow (E2E)', () => {
       expect(res.status).toBe(204)
     })
 
+    // Verifies that the bulk revocation reaches the ACCESS tokens too, not just the refresh
+    // sessions. Deleting a refresh session stops that device rotating, but its already-issued
+    // access token is stateless and would keep verifying for the rest of its lifetime — up to
+    // 15 minutes of continued access on a device the user just signed out. The token epoch
+    // advances instead, so every outstanding access token for the account goes stale at once,
+    // the caller's included.
+    it('should invalidate every outstanding access token, the caller own included', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/sessions')
+        .set('Authorization', `Bearer ${currentAccessToken}`)
+        .send({ refreshToken: currentRefreshToken })
+
+      expect(res.status).toBe(401)
+    })
+
+    // …and the caller — only the caller — recovers immediately, because the one refresh session
+    // the revocation deliberately preserved is theirs. The revoked devices cannot: they lost the
+    // refresh token that would let them.
+    it('should let the caller refresh straight back in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/refresh')
+        // The same device header the session was opened with: a rotation re-reads it, and a
+        // client that sent nothing would rename its own session mid-flight.
+        .set('User-Agent', UA_IPHONE)
+        .send({ refreshToken: currentRefreshToken })
+
+      expect(res.status).toBe(200)
+      const body = res.body as { accessToken: string; refreshToken: string }
+      currentAccessToken = body.accessToken
+      currentRefreshToken = body.refreshToken
+    })
+
     // Verifies that GET /sessions returns exactly one session marked as current after the bulk revocation.
     it('should list a single current session after bulk revocation', async () => {
       // Arrange — the bulk revocation in the previous it() removed every

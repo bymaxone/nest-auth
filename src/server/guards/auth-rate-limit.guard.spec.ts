@@ -26,31 +26,43 @@ const mockRedis = { incrWithFixedTtl: jest.fn() }
 const setHeader = jest.fn()
 
 /** Options with the limiter enabled unless a test says otherwise. */
-function optionsWith(enabled: boolean): Record<string, unknown> {
-  return { rateLimit: { enabled }, hmacKey: HMAC_KEY }
+function optionsWith(
+  enabled: boolean,
+  clientIpSource: 'peer' | 'trusted-proxy' = 'peer'
+): Record<string, unknown> {
+  return { rateLimit: { enabled, clientIpSource }, hmacKey: HMAC_KEY }
 }
 
-/** A context for `AuthController.login` from the given IP. */
-function contextFor(ip: unknown = '203.0.113.4'): ExecutionContext {
+/**
+ * A context for `AuthController.login`.
+ *
+ * Both address channels are separately controllable, because the whole point of the setting is
+ * that they can disagree — a forwarded header says one thing, the socket says another.
+ */
+function contextFor(ip: unknown = '203.0.113.4', peer: unknown = '198.51.100.9'): ExecutionContext {
   const handler = function login(): void {}
   class AuthController {}
   return {
     getHandler: () => handler,
     getClass: () => AuthController,
     switchToHttp: () => ({
-      getRequest: () => ({ ip }),
+      getRequest: () => ({ ip, socket: { remoteAddress: peer } }),
       getResponse: () => ({ setHeader })
     })
   } as unknown as ExecutionContext
 }
 
 /** Build the guard with a reflector that reports `limit` for every handler. */
-async function guardWith(limit: unknown, enabled = true): Promise<AuthRateLimitGuard> {
+async function guardWith(
+  limit: unknown,
+  enabled = true,
+  clientIpSource: 'peer' | 'trusted-proxy' = 'peer'
+): Promise<AuthRateLimitGuard> {
   const module = await Test.createTestingModule({
     providers: [
       AuthRateLimitGuard,
       { provide: Reflector, useValue: { get: () => limit } },
-      { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWith(enabled) },
+      { provide: BYMAX_AUTH_OPTIONS, useValue: optionsWith(enabled, clientIpSource) },
       { provide: AuthRedisService, useValue: mockRedis }
     ]
   }).compile()
@@ -133,8 +145,9 @@ describe('AuthRateLimitGuard', () => {
     const guard = await guardWith(LIMIT)
 
     // `null`, not `undefined`: a default parameter would swallow `undefined` and the test
-    // would silently exercise the happy path instead.
-    await guard.canActivate(contextFor(null))
+    // would silently exercise the happy path instead. Both channels, because "cannot be
+    // resolved" now means neither the forwarded address nor the socket yielded one.
+    await guard.canActivate(contextFor(null, null))
 
     const [key] = mockRedis.incrWithFixedTtl.mock.calls[0] as [string]
     expect(key).toBe(`rl:AuthController.login:${hmacSha256('unknown', HMAC_KEY)}`)
@@ -167,5 +180,80 @@ describe('AuthRateLimitGuard', () => {
 
     await expect(guard.canActivate(contextFor())).resolves.toBe(true)
     expect(mockRedis.incrWithFixedTtl).not.toHaveBeenCalled()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Which address the limit is keyed on
+  // ---------------------------------------------------------------------------
+
+  describe('client IP source', () => {
+    /** The HMAC'd address the guard actually counted against. */
+    function keyedAddress(): string {
+      const [key] = mockRedis.incrWithFixedTtl.mock.calls[0] as [string]
+      return key
+    }
+
+    // Scenario: a forwarded header disagreeing with the socket, under the default. Expected:
+    // the SOCKET address is counted. Why: this is the finding the setting exists for. Behind a
+    // `trust proxy` that admits more hops than the deployment really has, `req.ip` is whatever
+    // the caller wrote in `X-Forwarded-For` — and a limiter whose key the caller chooses is not
+    // a limit. Over-counting is the safer direction, and it is recoverable by opting in.
+    it('should key on the socket address by default, not the forwarded one', async () => {
+      mockRedis.incrWithFixedTtl.mockResolvedValue(1)
+      const guard = await guardWith(LIMIT)
+
+      await guard.canActivate(contextFor('1.2.3.4', '198.51.100.9'))
+
+      expect(keyedAddress()).toBe(`rl:AuthController.login:${hmacSha256('198.51.100.9', HMAC_KEY)}`)
+      expect(keyedAddress()).not.toContain(hmacSha256('1.2.3.4', HMAC_KEY))
+    })
+
+    // Scenario: the same disagreement with the setting opted in. Expected: `req.ip` is counted.
+    // Why: a deployment that has configured `trust proxy` for its real hop count wants the
+    // client address, not its own load balancer's — which would put every user in one bucket.
+    it('should key on req.ip when trusted-proxy is opted into', async () => {
+      mockRedis.incrWithFixedTtl.mockResolvedValue(1)
+      const guard = await guardWith(LIMIT, true, 'trusted-proxy')
+
+      await guard.canActivate(contextFor('1.2.3.4', '198.51.100.9'))
+
+      expect(keyedAddress()).toBe(`rl:AuthController.login:${hmacSha256('1.2.3.4', HMAC_KEY)}`)
+    })
+
+    // Scenario: no readable address on either channel, in either mode. Expected: one shared
+    // bucket, not a per-request one. Why: an unreadable address must not read as "unlimited" —
+    // that would make the limit skippable by whatever makes the address unreadable.
+    it.each([
+      ['peer', null, null],
+      ['peer', '1.2.3.4', ''],
+      ['trusted-proxy', null, '198.51.100.9'],
+      ['trusted-proxy', '', '198.51.100.9']
+    ])('should fall back to a shared bucket in %s mode', async (mode, ip, peer) => {
+      mockRedis.incrWithFixedTtl.mockResolvedValue(1)
+      const guard = await guardWith(LIMIT, true, mode as 'peer' | 'trusted-proxy')
+
+      await guard.canActivate(contextFor(ip, peer))
+
+      expect(keyedAddress()).toBe(`rl:AuthController.login:${hmacSha256('unknown', HMAC_KEY)}`)
+    })
+
+    // Scenario: a request with no socket at all, as a non-HTTP transport might present.
+    it('should tolerate a request with no socket', async () => {
+      mockRedis.incrWithFixedTtl.mockResolvedValue(1)
+      const guard = await guardWith(LIMIT)
+      const handler = function login(): void {}
+      class AuthController {}
+      const context = {
+        getHandler: () => handler,
+        getClass: () => AuthController,
+        switchToHttp: () => ({
+          getRequest: () => ({ ip: '1.2.3.4' }),
+          getResponse: () => ({ setHeader })
+        })
+      } as unknown as ExecutionContext
+
+      await expect(guard.canActivate(context)).resolves.toBe(true)
+      expect(keyedAddress()).toBe(`rl:AuthController.login:${hmacSha256('unknown', HMAC_KEY)}`)
+    })
   })
 })

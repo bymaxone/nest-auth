@@ -58,7 +58,10 @@ export type ResolvedOptions = Omit<
   | 'mfa'
   | 'rateLimit'
 > & {
-  jwt: Required<BymaxAuthModuleOptions['jwt']>
+  // `previousSecrets` stays optional: it is absent unless a rotation is in progress, and
+  // `Required` would force every consumer to declare an empty array to mean "not rotating".
+  jwt: Required<Omit<BymaxAuthModuleOptions['jwt'], 'previousSecrets'>> &
+    Pick<BymaxAuthModuleOptions['jwt'], 'previousSecrets'>
   password: Required<NonNullable<BymaxAuthModuleOptions['password']>>
   tokenDelivery: NonNullable<BymaxAuthModuleOptions['tokenDelivery']>
   cookies: Required<Omit<NonNullable<BymaxAuthModuleOptions['cookies']>, 'resolveDomains'>> &
@@ -89,6 +92,16 @@ export type ResolvedOptions = Omit<
    * cryptographically independent.
    */
   hmacKey: string
+  /**
+   * HMAC keys derived from `jwt.previousSecrets`, in the order given. Empty unless a rotation
+   * is in progress.
+   *
+   * Read-only, like the secrets they come from: a recovery-code digest written under a retired
+   * key still verifies, so rotating `jwt.secret` does not lock users out of the codes they
+   * printed and filed. Nothing is ever newly written under one — a code that matches here is
+   * consumed and the set is regenerated under the current key.
+   */
+  previousHmacKeys: string[]
   /** When provided, all sub-fields are resolved with defaults applied. */
   mfa?: Required<NonNullable<BymaxAuthModuleOptions['mfa']>>
 }
@@ -244,6 +257,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
     secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
 
     hmacKey: deriveHmacKey(userOptions.jwt.secret),
+    previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
 
     ...(userOptions.mfa !== undefined && {
       mfa: { ...DEFAULT_OPTIONS.mfa, ...userOptions.mfa } as Required<
@@ -267,6 +281,47 @@ function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
   }
   validateJwtSecret(jwt.secret)
   validateJwtAlgorithm(jwt.algorithm)
+  validatePreviousSecrets(jwt)
+}
+
+/**
+ * Validate the retired secrets accepted for verification during a rotation.
+ *
+ * Each is held to the same bar as the current secret: they still verify tokens, so a weak one
+ * is as forgeable as a weak current secret would be. A retired secret equal to the current one
+ * is rejected too — it means the rotation never happened, and a config that reads as rotated
+ * while nothing changed is worse than one that never claimed to.
+ *
+ * @param jwt - The user-supplied `jwt` option block.
+ * @throws If any entry is not a string, fails the secret rules, or repeats another entry.
+ */
+function validatePreviousSecrets(jwt: BymaxAuthModuleOptions['jwt']): void {
+  const previous = jwt.previousSecrets
+  if (previous === undefined) return
+
+  if (!Array.isArray(previous)) {
+    throw new Error(`[BymaxAuthModule] jwt.previousSecrets must be an array of strings when set.`)
+  }
+
+  const seen = new Set<string>([jwt.secret])
+  for (const [index, secret] of previous.entries()) {
+    if (typeof secret !== 'string') {
+      throw new Error(
+        `[BymaxAuthModule] jwt.previousSecrets[${index}] must be a string. ` +
+          `Every entry still verifies tokens, so each is held to the same rules as jwt.secret.`
+      )
+    }
+    validateJwtSecret(secret)
+    if (seen.has(secret)) {
+      throw new Error(
+        `[BymaxAuthModule] jwt.previousSecrets[${index}] repeats jwt.secret or an earlier entry. ` +
+          `A retired secret equal to the current one means the rotation did not happen, and a ` +
+          `configuration that reads as rotated while nothing changed is worse than one that ` +
+          `never claimed to.`
+      )
+    }
+    seen.add(secret)
+  }
 }
 
 function validateJwtSecret(secret: string): void {

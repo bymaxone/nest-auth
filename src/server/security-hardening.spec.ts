@@ -77,6 +77,7 @@ const options = {
     accessCookieMaxAgeMs: 900_000
   },
   hmacKey: hmacSha256('irrelevant', JWT_SECRET),
+  previousHmacKeys: [],
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   cookies: { accessTokenName: 'access_token', refreshTokenName: 'refresh_token' },
   tokenDelivery: 'bearer'

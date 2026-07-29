@@ -12,6 +12,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
@@ -72,9 +73,7 @@ export class JwtPlatformGuard implements CanActivate {
     // Verify signature and expiry. Algorithm is pinned from options — rejects alg:none and RS256.
     let payload: PlatformJwtPayload
     try {
-      payload = this.jwtService.verify<PlatformJwtPayload>(token, {
-        algorithms: [this.options.jwt.algorithm]
-      })
+      payload = verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }

@@ -140,6 +140,7 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  previousHmacKeys: [],
   emailVerification: { required: false, otpTtlSeconds: 600 },
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   bruteForce: { maxAttempts: 5, windowSeconds: 900 },

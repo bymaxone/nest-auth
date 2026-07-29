@@ -10,6 +10,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { readStampedEpoch } from '../utils'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
@@ -119,9 +120,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     // Algorithm is pinned from options — rejects alg:none and algorithm-confusion attacks.
     let payload: DashboardJwtPayload
     try {
-      payload = this.jwtService.verify<DashboardJwtPayload>(token, {
-        algorithms: [this.options.jwt.algorithm]
-      })
+      payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }

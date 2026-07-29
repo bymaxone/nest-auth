@@ -147,6 +147,7 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  previousHmacKeys: [],
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
@@ -212,6 +213,31 @@ describe('MfaService', () => {
 
     service = module.get(MfaService)
   })
+
+  /**
+   * Build a second service over the same doubles with `mockOptions` overridden.
+   *
+   * Used by the rotation cases, which need a different `previousHmacKeys` than the suite-wide
+   * fixture without disturbing every other test in the file.
+   */
+  async function buildService(overrides: Record<string, unknown>): Promise<MfaService> {
+    const module = await Test.createTestingModule({
+      providers: [
+        MfaService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: { ...mockOptions, ...overrides } },
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: TokenManagerService, useValue: mockTokenManager },
+        { provide: BruteForceService, useValue: mockBruteForce },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+      ]
+    }).compile()
+    return module.get(MfaService)
+  }
 
   // ---------------------------------------------------------------------------
   // setup
@@ -355,6 +381,7 @@ describe('MfaService', () => {
       const optionsWithoutCount = {
         jwt: { secret: JWT_SECRET },
         hmacKey: HMAC_KEY,
+        previousHmacKeys: [],
         mfa: {
           encryptionKey: VALID_ENCRYPTION_KEY,
           issuer: 'TestApp',
@@ -871,6 +898,60 @@ describe('MfaService', () => {
       // The keyed MAC replaces the KDF entirely on this path.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
       expect(result).toBe(MOCK_AUTH_RESULT)
+    })
+
+    // Scenario: a recovery code whose digest was written under a secret since retired, with the
+    // rotation configured. Expected: accepted and consumed. Why: the digest is keyed by an HMAC
+    // derived from `jwt.secret`, so a rotation without this invalidates every code a user
+    // printed and filed — and they discover it at the moment they most need it, locked out of
+    // an account they cannot reach any other way.
+    it('should accept a recovery code digested under a retired secret', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const retiredKey = 'f'.repeat(64)
+      const plainRecovery = '1234-5678-9012'
+      const otherDigest = 'a'.repeat(64)
+      // Written under the OLD key: nothing in the stored set matches the current one.
+      const hashedCodes = [otherDigest, hmacSha256(plainRecovery, retiredKey)]
+
+      const rotated = await buildService({ previousHmacKeys: [retiredKey] })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: hashedCodes
+      })
+
+      const result = await rotated.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+        mfaEnabled: true,
+        mfaSecret: expect.any(String),
+        mfaRecoveryCodes: [otherDigest]
+      })
+      expect(result).toBe(MOCK_AUTH_RESULT)
+    })
+
+    // Scenario: the same code, but the rotation NOT configured. Expected: refused. Why: this is
+    // the failure the test above prevents, and it has to be shown to be real — otherwise the
+    // dual read could be doing nothing and both tests would still pass.
+    it('should refuse a code digested under a secret that was not listed', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      const hashedCodes = ['a'.repeat(64), hmacSha256(plainRecovery, 'f'.repeat(64))]
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: hashedCodes
+      })
+
+      await expect(
+        service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+      ).rejects.toThrow()
     })
 
     // Scenario: the matching digest sits in the MIDDLE of the set. Expected: that entry is the
@@ -2202,6 +2283,7 @@ describe('MfaService', () => {
       const optionsWithoutCount = {
         jwt: { secret: JWT_SECRET },
         hmacKey: HMAC_KEY,
+        previousHmacKeys: [],
         mfa: {
           encryptionKey: VALID_ENCRYPTION_KEY,
           issuer: 'TestApp',

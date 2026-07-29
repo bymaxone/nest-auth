@@ -430,6 +430,21 @@ export class SessionService {
    * {@link revokeSession} for each session whose hash differs from
    * `currentSessionHash`. The current session is always preserved.
    *
+   * The user's token epoch is advanced as part of this, which is what makes the revocation
+   * take effect *now* rather than whenever each device's access token happens to expire.
+   * Deleting a refresh session stops that device rotating, but its already-issued access token
+   * is stateless and keeps verifying for the rest of its lifetime — up to `jwt.accessExpiresIn`
+   * of continued access on a device the user just told the system to sign out. Someone who
+   * clicks "sign out my other devices" because they think one is compromised is making a
+   * statement about right now.
+   *
+   * The caller's own access token is invalidated too — the epoch is per user, not per session —
+   * but the caller is the one party who can recover instantly: their refresh session is
+   * deliberately preserved, so the next request refreshes and continues. The revoked devices
+   * cannot, having lost the refresh token that would let them. Clients using the library's
+   * silent-refresh flow absorb this without the user noticing; a client that does not will see
+   * one 401 and must refresh.
+   *
    * @param userId - Internal user ID whose other sessions are being revoked.
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
    * @throws {unknown} Propagates any error thrown by `revokeSession` — including
@@ -459,6 +474,11 @@ export class SessionService {
         throw err
       }
     }
+
+    // Last, and only once every refresh session is gone: a bump before the loop would be
+    // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
+    // rather than logging the user out of a device the loop never got to revoke.
+    await this.redis.bumpUserTokenEpoch(userId)
   }
 
   /**

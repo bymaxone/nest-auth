@@ -75,7 +75,8 @@ const mockOptions = {
     algorithm: 'HS256',
     secret: JWT_SECRET
   },
-  hmacKey: HMAC_KEY
+  hmacKey: HMAC_KEY,
+  previousHmacKeys: []
 }
 
 const SAFE_USER = {

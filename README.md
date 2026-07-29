@@ -632,13 +632,13 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | Group             | Key Options                                                                                                                     | Default                            |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`                      | `15m`, `7d`, off, `HS256`          |
-| **password**      | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁵, r=8, p=1             |
+| **password**      | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁷, r=8, p=1             |
 | **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                         |
 | **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section) |
 | **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                                    | —                                  |
 | **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`          |
 | **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                         |
-| **rateLimit**     | `enabled` — per-IP limits enforced by the library over Redis                                                                    | `true`                             |
+| **rateLimit**     | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                          | `true`, `'peer'`                   |
 | **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                   | `'token'`                          |
 | **platform**      | `enabled`                                                                                                                       | `false`                            |
 | **invitations**   | `enabled`, `tokenTtlSeconds`                                                                                                    | `false`                            |
@@ -648,6 +648,25 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
+
+> [!IMPORTANT]
+> **`rateLimit.clientIpSource` defaults to `'peer'`** — the socket address, read from the
+> connection and never from a forwarding header. Behind a proxy with Express's `trust proxy`
+> set, `req.ip` is whatever the client wrote in `X-Forwarded-For` unless the hop count is
+> configured exactly right, and an attacker who can pick their own key is not rate-limited at
+> all. Keying on the peer address instead over-counts — every request behind one proxy shares a
+> bucket — which is visible and recoverable. Switch to `'trusted-proxy'` once `trust proxy` is
+> configured for your real hop count.
+
+> [!TIP]
+> **Rotating the signing secret.** `jwt.previousSecrets` lists secrets retired by a rotation,
+> accepted for verification only. Without it, changing `jwt.secret` signs every user out the
+> moment the new configuration rolls out **and** invalidates every stored recovery-code digest —
+> those are keyed by an HMAC derived from the secret, so users lose the codes they printed and
+> filed. With it, both keep working while tokens issued under the old secret drain, and a
+> rotation becomes a rollout. Remove the entry once the longest-lived token signed under it has
+> expired: every entry is a key that still opens the door. `mfa.encryptionKey` is a separate key
+> and is **not** covered — rotating it requires re-encrypting the stored TOTP secrets.
 
 > [!IMPORTANT]
 > `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token
@@ -769,7 +788,7 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 
 | Layer              | Implementation                                                                                         |
 | ------------------ | ------------------------------------------------------------------------------------------------------ |
-| Password Hashing   | `node:crypto` scrypt (N=2¹⁵, r=8, p=1, keyLen=64)                                                      |
+| Password Hashing   | `node:crypto` scrypt (N=2¹⁷, r=8, p=1, keyLen=64) — OWASP's recommended minimum                        |
 | MFA Encryption     | AES-256-GCM with 12-byte random IV per call                                                            |
 | TOTP               | HMAC-SHA1 per RFC 4226/6238, ±1 step window                                                            |
 | Token Generation   | `crypto.randomBytes(32)` — 256 bits of entropy                                                         |

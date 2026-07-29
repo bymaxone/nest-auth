@@ -13,6 +13,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { readStampedEpoch } from '../utils'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
@@ -66,9 +67,7 @@ export class JwtAuthGuard implements CanActivate {
     // Verify signature and expiry. Algorithm is pinned from options — rejects alg:none and RS256.
     let payload: DashboardJwtPayload
     try {
-      payload = this.jwtService.verify<DashboardJwtPayload>(token, {
-        algorithms: [this.options.jwt.algorithm]
-      })
+      payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }

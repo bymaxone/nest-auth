@@ -39,7 +39,7 @@ export const DEFAULT_OPTIONS = {
   },
 
   password: {
-    costFactor: 32_768,
+    costFactor: 131_072,
     blockSize: 8,
     parallelization: 1
   },
@@ -73,7 +73,12 @@ export const DEFAULT_OPTIONS = {
   rateLimit: {
     // On by default: the numbers existed before this and did nothing unless the host wired a
     // throttler, which is the kind of default that reads as protection and is not.
-    enabled: true
+    enabled: true,
+    // The socket address, never a forwarding header. Behind a misconfigured `trust proxy`,
+    // `req.ip` is attacker-chosen, and a limiter whose key the caller picks enforces nothing.
+    // Over-counting behind a proxy is the safer failure: it is visible, and it is recoverable
+    // by setting this to 'trusted-proxy' once the hop count is right.
+    clientIpSource: 'peer' as const
   },
   mfa: {
     recoveryCodeCount: 8,

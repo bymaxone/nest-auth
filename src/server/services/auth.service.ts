@@ -119,9 +119,21 @@ export class AuthService {
       }
     }
 
-    // Check uniqueness before hashing password (cheaper than scrypt on conflict).
+    // Uniqueness before hashing — but the conflict path still pays the KDF.
+    //
+    // Skipping it is the cheaper thing to do and it leaks: a taken address answers in
+    // single-digit milliseconds while a free one spends ~100 ms deriving, which enumerates
+    // accounts by clock even for a caller who ignores the status code. The response itself
+    // cannot be made uniform here — registration issues tokens, and there are none to issue for
+    // an account the caller does not own — so the timing is the part that can be fixed, and it
+    // is. What bounds the disclosure that remains is the route's own limit (10/hour), now keyed
+    // to an address the caller cannot choose.
+    //
+    // The dummy derivation is the same one the login path spends on an unknown address, so this
+    // adds no amplification a login could not already be used for.
     const existing = await this.userRepo.findByEmail(dto.email, tenantId)
     if (existing) {
+      await this.passwordService.compareDummy(dto.password)
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 

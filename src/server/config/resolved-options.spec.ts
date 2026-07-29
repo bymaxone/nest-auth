@@ -71,7 +71,10 @@ describe('resolveOptions — success', () => {
   // Verifies that default scrypt cost parameters are applied when password config is omitted.
   it('should apply default password scrypt parameters', () => {
     const resolved = resolveOptions(MINIMAL_OPTIONS)
-    expect(resolved.password.costFactor).toBe(32_768)
+    // OWASP's recommended minimum for scrypt at r=8, p=1. Pinned to the literal rather than
+    // read from DEFAULT_OPTIONS: a default that changed by accident would round-trip through
+    // its own constant and this assertion would never notice.
+    expect(resolved.password.costFactor).toBe(131_072)
     expect(resolved.password.blockSize).toBe(8)
     expect(resolved.password.parallelization).toBe(1)
   })
@@ -2017,6 +2020,82 @@ describe('resolveOptions — jwt.accessExpiresIn validation', () => {
       jwt: { secret: VALID_SECRET }
     }
     expect(() => resolveOptions(options)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Validation failures — jwt.previousSecrets
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — jwt.previousSecrets validation', () => {
+  // A retired secret has to clear the same entropy bar as the current one, so it is a real
+  // random-looking value rather than a padded placeholder.
+  const OTHER_SECRET = 'kR7pQw9zTr4XmVn2PsB6yLdG3hJ8fCxZ5aNeU1oIqW0M'
+
+  // Scenario: no rotation in progress. Expected: accepted, and no derived keys. Why: the field
+  // is absent in every deployment that has never rotated, which is most of them.
+  it('should accept an absent list and derive no previous keys', () => {
+    const resolved = resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret: VALID_SECRET } })
+    expect(resolved.previousHmacKeys).toEqual([])
+  })
+
+  // Scenario: a rotation in progress. Expected: one derived HMAC key per retired secret, in
+  // order, and none equal to the current one. Why: those keys are what keep recovery-code
+  // digests written before the rotation readable — the digests are keyed by an HMAC derived
+  // from the secret, so without them a rotation silently invalidates every code a user filed.
+  it('should derive one HMAC key per retired secret', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, previousSecrets: [OTHER_SECRET] }
+    })
+
+    expect(resolved.previousHmacKeys).toHaveLength(1)
+    expect(resolved.previousHmacKeys[0]).toMatch(/^[0-9a-f]{64}$/)
+    expect(resolved.previousHmacKeys[0]).not.toBe(resolved.hmacKey)
+  })
+
+  // Scenario: a retired secret that would not have been accepted as the current one. Expected:
+  // rejected. Why: it still verifies tokens, so a weak entry is as forgeable as a weak current
+  // secret — the rotation list is not a place where the bar drops.
+  it.each([
+    ['too short', 'short'],
+    ['low entropy', 'a'.repeat(40)]
+  ])('should reject a %s retired secret', (_label, secret) => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: [secret] }
+      })
+    ).toThrow(/jwt\.secret/)
+  })
+
+  // Scenario: a non-string entry, and a non-array value. Expected: rejected by shape.
+  it('should reject a malformed list', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: [42 as unknown as string] }
+      })
+    ).toThrow(/previousSecrets\[0\] must be a string/)
+
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: 'not-an-array' as unknown as string[] }
+      })
+    ).toThrow(/must be an array of strings/)
+  })
+
+  // Scenario: the current secret repeated in the retired list, and a duplicate entry. Expected:
+  // rejected. Why: a configuration that reads as rotated while nothing changed is worse than
+  // one that never claimed to — an operator would believe the old key was retired.
+  it.each([
+    ['the current secret', [VALID_SECRET]],
+    ['a duplicate entry', [OTHER_SECRET, OTHER_SECRET]]
+  ])('should reject %s in the list', (_label, previousSecrets) => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret: VALID_SECRET, previousSecrets } })
+    ).toThrow(/repeats jwt\.secret or an earlier entry/)
   })
 })
 

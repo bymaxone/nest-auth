@@ -47,6 +47,12 @@ const MS_PER_SECOND = 1_000
  *
  * @layer Guard
  */
+/**
+ * The bucket requests with no readable address share. A constant, not a per-request value: an
+ * unreadable address must not mean an unlimited budget.
+ */
+const UNKNOWN_CLIENT = 'unknown'
+
 @Injectable()
 export class AuthRateLimitGuard implements CanActivate {
   constructor(
@@ -89,7 +95,30 @@ export class AuthRateLimitGuard implements CanActivate {
    */
   private counterKey(request: Request, context: ExecutionContext): string {
     const route = `${context.getClass().name}.${context.getHandler().name}`
-    const ip = typeof request.ip === 'string' ? request.ip : 'unknown'
-    return `rl:${route}:${hmacSha256(ip, this.options.hmacKey)}`
+    return `rl:${route}:${hmacSha256(this.clientIp(request), this.options.hmacKey)}`
+  }
+
+  /**
+   * The address this request is counted against.
+   *
+   * `'peer'` — the default — reads the socket directly, so `X-Forwarded-For` cannot influence
+   * it. `'trusted-proxy'` uses `req.ip`, which honours the app's `trust proxy` setting and the
+   * forwarding headers it admits.
+   *
+   * The default is the strict one because the two failure modes are not symmetric: keying on
+   * the peer address behind a proxy over-counts, which is visible and recoverable, while
+   * trusting a header the caller controls means the limiter reports success and enforces
+   * nothing. An address that cannot be read at all falls back to a constant, so those requests
+   * share one bucket rather than each getting an unlimited one.
+   *
+   * @param request - The incoming request.
+   * @returns The address to key on.
+   */
+  private clientIp(request: Request): string {
+    if (this.options.rateLimit.clientIpSource === 'trusted-proxy') {
+      return typeof request.ip === 'string' && request.ip !== '' ? request.ip : UNKNOWN_CLIENT
+    }
+    const peer = request.socket?.remoteAddress
+    return typeof peer === 'string' && peer !== '' ? peer : UNKNOWN_CLIENT
   }
 }

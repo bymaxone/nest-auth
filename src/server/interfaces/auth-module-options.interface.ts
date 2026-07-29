@@ -62,6 +62,24 @@ export interface BymaxAuthModuleOptions {
     secret: string
 
     /**
+     * Secrets retired by a rotation, accepted for **verification only**. Default: none.
+     *
+     * Rotating `jwt.secret` without this signs every outstanding token out at once, and
+     * invalidates every stored recovery-code digest — those are keyed by an HMAC derived from
+     * the secret, so a rotation would lock users out of the codes they printed and filed.
+     * Listing the previous secret here keeps both readable while tokens issued under it drain,
+     * so a rotation is a rollout rather than a mass logout.
+     *
+     * Signing always uses `jwt.secret`. Entries here are only ever tried after it, and only to
+     * verify, so a rotation is one-way: nothing new is ever produced under a retired secret.
+     *
+     * Remove an entry once the longest-lived thing signed under it has expired — every entry is
+     * a key that still opens the door. Each is validated exactly like `jwt.secret`: a weak
+     * previous secret is as forgeable as a weak current one.
+     */
+    previousSecrets?: string[]
+
+    /**
      * Access token expiration expressed as a time string (e.g. `'15m'`, `'1h'`).
      * Default: `'15m'`
      */
@@ -124,8 +142,15 @@ export interface BymaxAuthModuleOptions {
   password?: {
     /**
      * scrypt CPU/memory cost factor (N). Must be a power of 2.
-     * Default: `32768` (2^15). Minimum enforced by `resolveOptions()`: `16384` (2^14).
-     * Values below `16384` are rejected at startup — do not lower this for production workloads.
+     * Default: `131072` (2^17), the minimum OWASP recommends for scrypt alongside `r=8, p=1`.
+     * Minimum enforced by `resolveOptions()`: `16384` (2^14). Values below that are rejected at
+     * startup — do not lower this for production workloads.
+     *
+     * The default costs roughly 128 MiB and ~100 ms per hash on a modern core. That is the
+     * point: it is what makes an offline attack on a leaked hash expensive. Budget for it —
+     * every login and registration pays it once, and a host that cannot afford the memory
+     * should lower `costFactor` deliberately, having read what it is buying, rather than
+     * inherit a weaker default that never announced itself.
      *
      * @throws {Error} When the value fails validation at module initialisation.
      */
@@ -295,6 +320,27 @@ export interface BymaxAuthModuleOptions {
      * WAF, or a host-side `ThrottlerModule`) and counting twice is not wanted.
      */
     enabled?: boolean
+
+    /**
+     * How the client IP that keys the per-route limit is derived. Default: `'peer'`.
+     *
+     * - `'peer'` — the socket peer address, read directly from the connection. Never consults
+     *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
+     * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting
+     *   and therefore the forwarding headers it admits.
+     *
+     * The default is `'peer'` because the failure modes are not symmetric. Behind a proxy with
+     * `trust proxy` set, `req.ip` is whatever the client put in `X-Forwarded-For` unless the
+     * hop count is configured exactly right — and an attacker who can pick their own key is not
+     * rate-limited at all. Keying on the peer address instead over-counts (every request behind
+     * one proxy shares a bucket), which is visible and recoverable; the other direction is a
+     * control that reports success while enforcing nothing.
+     *
+     * Set `'trusted-proxy'` once `trust proxy` is configured for the real hop count. rust-auth
+     * draws the same distinction (`ClientIpSource::PeerAddr` / `TrustedForwardedFor`) with the
+     * same default.
+     */
+    clientIpSource?: 'peer' | 'trusted-proxy'
   }
 
   /**

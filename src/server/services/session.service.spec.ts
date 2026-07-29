@@ -65,7 +65,8 @@ const mockRedis = {
   del: jest.fn<Promise<void>, [string]>(),
   srem: jest.fn<Promise<number>, [string, string]>(),
   smembers: jest.fn<Promise<string[]>, [string]>(),
-  eval: jest.fn<Promise<unknown>, [string, string[], string[]]>()
+  eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockUserRepo = {
@@ -1592,6 +1593,34 @@ describe('SessionService', () => {
 
       // Should resolve (not throw) because SESSION_NOT_FOUND is swallowed
       await expect(service.revokeAllExceptCurrent('attacker', currentHash)).resolves.toBeUndefined()
+    })
+
+    // Scenario: the user signs out their other devices. Expected: the token epoch advances.
+    // Why: deleting a refresh session stops that device ROTATING, but its already-issued access
+    // token is stateless and keeps verifying for the rest of its lifetime — up to
+    // `jwt.accessExpiresIn` of continued access on a device the user just revoked. Someone who
+    // clicks this because they think a device is compromised means now.
+    it('should advance the token epoch so the revocation is immediate', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${'a'.repeat(64)}`, `rt:${'b'.repeat(64)}`])
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeAllExceptCurrent(userId, 'a'.repeat(64))
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith(userId)
+    })
+
+    // Scenario: a revocation in the loop fails with something other than SESSION_NOT_FOUND.
+    // Expected: the error propagates and the epoch is NOT advanced. Why: bumping would sign the
+    // caller out of a device the loop never managed to revoke — the worst of both outcomes, and
+    // it would report success by leaving no trace of the failure.
+    it('should not advance the epoch when a revocation fails', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${'b'.repeat(64)}`])
+      mockRedis.eval.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.revokeAllExceptCurrent(userId, 'a'.repeat(64))).rejects.toThrow(
+        'redis down'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
   })
 

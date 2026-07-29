@@ -288,7 +288,15 @@ export class MfaService {
    * @returns Index of the matching digest, or `-1` if none match.
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
-    const candidate = this.digestRecoveryCode(code)
+    // One candidate per key in play: the current one, then any retired by a rotation. The
+    // digest is keyed by an HMAC derived from `jwt.secret`, so without the retired keys a
+    // rotation would silently invalidate every code a user has printed and filed — they would
+    // discover it at the moment they most need it. Retired keys verify only; a code that
+    // matches one is consumed and the set is regenerated under the current key.
+    const candidates = [
+      this.digestRecoveryCode(code),
+      ...this.options.previousHmacKeys.map((key) => hmacSha256(code, key))
+    ]
     const macMatches: boolean[] = []
 
     for (const [index, hashedCode] of hashedCodes.entries()) {
@@ -298,7 +306,12 @@ export class MfaService {
         continue
       }
 
-      macMatches.push(timingSafeCompare(candidate, hashedCode))
+      // Every candidate is compared, never short-circuited: stopping at the first hit would
+      // make the scan's duration report how many keys were tried before the match.
+      const hit = candidates
+        .map((candidate) => timingSafeCompare(candidate, hashedCode))
+        .includes(true)
+      macMatches.push(hit)
     }
 
     // Recording every comparison and picking the first hit afterwards, rather than tracking

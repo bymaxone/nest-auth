@@ -132,6 +132,7 @@ const mockRedis = {
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  previousHmacKeys: [],
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED']
 }
 

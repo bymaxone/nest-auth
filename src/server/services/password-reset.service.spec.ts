@@ -68,7 +68,8 @@ const mockOptions = {
   },
   blockedStatuses: ['banned', 'suspended'],
   jwt: { secret: JWT_SECRET, accessCookieMaxAgeMs: 900_000 },
-  hmacKey: HMAC_KEY
+  hmacKey: HMAC_KEY,
+  previousHmacKeys: []
 }
 
 const mockUserRepo = {

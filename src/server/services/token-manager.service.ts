@@ -22,6 +22,7 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
 const MFA_TEMP_TOKEN_TTL_SECONDS = 300
@@ -990,9 +991,7 @@ export class TokenManagerService {
   async verifyMfaTempToken(
     token: string
   ): Promise<{ userId: string; context: 'dashboard' | 'platform'; jti: string }> {
-    const payload = this.jwtService.verify<MfaTempPayload>(token, {
-      algorithms: [this.options.jwt.algorithm]
-    })
+    const payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
 
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
     // retry under the same token. consumeMfaTempToken deletes it once
