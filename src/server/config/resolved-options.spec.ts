@@ -951,6 +951,73 @@ describe('resolveOptions — security-parameter bounds', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation failures — the grace window and the lockout knobs
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — grace window and brute-force bounds', () => {
+  // Scenario: a 6-day grace window under a 7-day refresh lifetime. Expected: refused. Why: the
+  // existing bound is relative ("< refresh lifetime"), which this passes — but the window is
+  // the span in which an ALREADY-CONSUMED refresh token still recovers a session, so it is
+  // precisely the replay window for a stolen one. It exists to cover a client that rotated and
+  // never received the response: a network retry, measured in seconds.
+  it('should refuse a grace window past the absolute ceiling', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: {
+          ...MINIMAL_OPTIONS.jwt,
+          refreshGraceWindowSeconds: 6 * 86_400,
+          refreshExpiresInDays: 7
+        }
+      })
+    ).toThrow(/refreshGraceWindowSeconds must be between 0 and 300/)
+  })
+
+  // Scenario: the boundary values. Expected: accepted. Why: 0 disables grace recovery outright
+  // (a legitimate hardening choice) and 300 is the ceiling itself; a bound that rejects either
+  // would be an outage rather than a guard.
+  it('should accept every grace window inside the range', () => {
+    for (const refreshGraceWindowSeconds of [0, 30, 300]) {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          jwt: { ...MINIMAL_OPTIONS.jwt, refreshGraceWindowSeconds }
+        })
+      ).not.toThrow()
+    }
+  })
+
+  // Scenario: `bruteForce.windowSeconds: 0`. Expected: refused. Why: the value is handed
+  // straight to Redis as the counter's EXPIRE, and Redis DELETES a key on `EXPIRE key 0` — so
+  // every failure counter is destroyed at the moment it is created, the count never exceeds
+  // one, `isLockedOut` is permanently false, and credential stuffing is bounded only by the
+  // per-IP limiter a distributed caller sidesteps. Nothing about that is visible: the config
+  // still reads as an enabled lockout.
+  it('should refuse a zero or negative brute-force window', () => {
+    for (const windowSeconds of [0, -1, 1.5]) {
+      expect(() => resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { windowSeconds } })).toThrow(
+        /windowSeconds must be a whole number of at least 1/
+      )
+    }
+  })
+
+  // Scenario: `maxAttempts` at both extremes. Expected: refused. Why: 0 locks out every account
+  // permanently (a fresh counter already satisfies "attempts >= 0"), and a huge threshold
+  // disables the lockout as effectively as switching it off.
+  it('should refuse a brute-force threshold outside the range', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 0 } })).toThrow(
+      /maxAttempts must be a whole number of at least 1/
+    )
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 1_000_000 } })
+    ).toThrow(/maxAttempts must not exceed 100/)
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 5, windowSeconds: 900 } })
+    ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — mfa.previousEncryptionKeys
 // ---------------------------------------------------------------------------
 

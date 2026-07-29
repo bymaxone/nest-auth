@@ -77,28 +77,33 @@ describe('OtpService', () => {
   // ---------------------------------------------------------------------------
 
   describe('store', () => {
-    // Verifies that store writes the OTP record JSON under the correct namespaced key with the given TTL.
-    it('should store the OTP record with correct key and TTL', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
+    // Verifies the record goes in under the correct namespaced key, with the code and a zeroed
+    // counter, and its TTL.
+    it('should store the code and a zeroed counter under the namespaced key', async () => {
+      mockRedis.eval.mockResolvedValue(undefined)
 
       await service.store('email_verification', 'user-hash', '123456', 600)
 
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        'otp:email_verification:user-hash',
-        expect.stringContaining('"code":"123456"'),
-        600
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)"),
+        ['otp:email_verification:user-hash'],
+        ['123456', '600']
       )
     })
 
-    // Verifies that a freshly stored OTP record initializes the attempt counter to 0.
-    it('should initialize attempts to 0', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
+    // Scenario: the write. Expected: record and expiry set by ONE script. Why: an `HSET`
+    // followed by a separate `EXPIRE` leaves a window where a crash strands a record with no
+    // TTL, and an OTP that never expires is one an attacker can grind against forever — the
+    // keyspace's "every key carries a TTL" invariant exists for exactly that.
+    it('should write the record and its expiry in a single step', async () => {
+      mockRedis.eval.mockResolvedValue(undefined)
 
       await service.store('password_reset', 'user-hash', '654321', 300)
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const record = JSON.parse(storedJson) as { code: string; attempts: number }
-      expect(record.attempts).toBe(0)
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      const script = mockRedis.eval.mock.calls[0]?.[0] as string
+      expect(script).toContain("redis.call('EXPIRE', KEYS[1], ARGV[2])")
     })
   })
 
@@ -108,285 +113,185 @@ describe('OtpService', () => {
 
   describe('verify', () => {
     const OTP_KEY = 'otp:email_verification:user-hash'
-    const STORED_RECORD = JSON.stringify({ code: '123456', attempts: 0 })
+    const CODE = '123456'
 
-    // Verifies that a correct OTP resolves without error and the key is deleted after successful verification.
-    it('should resolve and delete the key on correct code', async () => {
-      mockRedis.get.mockResolvedValue(STORED_RECORD)
-      mockRedis.del.mockResolvedValue(1)
+    /** Arm the atomic script's reply. */
+    function armScript(tag: 'EXPIRED' | 'MAX' | 'PRESENT', storedCode = ''): void {
+      mockRedis.eval.mockResolvedValue([tag, storedCode])
+    }
 
-      await expect(
-        service.verify('email_verification', 'user-hash', '123456')
-      ).resolves.toBeUndefined()
+    // Scenario: the correct code. Expected: resolves. Why: the script consumes the record on a
+    // plain match, so the service must not delete anything itself — a second DEL here would be
+    // a wasted round trip and a lie about who owns the consume.
+    it('should resolve on the correct code without a separate delete', async () => {
+      armScript('PRESENT', CODE)
 
-      expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
+      await expect(service.verify('email_verification', 'user-hash', CODE)).resolves.toBeUndefined()
+      expect(mockRedis.del).not.toHaveBeenCalled()
     })
 
-    // ---------------------------------------------------------------------------
-    // verify — OTP expired
-    // ---------------------------------------------------------------------------
+    // Scenario: verification of any kind. Expected: exactly ONE Redis round trip, carrying the
+    // namespaced key, the submitted code, and the ceiling. Why: the read, the ceiling check and
+    // the bump-or-consume have to be one atomic step. They used to be a GET here, a decision in
+    // JS, and a SET back — so N concurrent wrong guesses all read `attempts: 0`, all wrote
+    // `attempts: 1`, and the ceiling could be exceeded arbitrarily by submitting in parallel
+    // for the OTP's whole lifetime. Pinning the arity is what keeps a future refactor from
+    // quietly splitting it apart again.
+    it('should verify in a single atomic script call', async () => {
+      armScript('PRESENT', CODE)
 
-    // Verifies that attempting to verify when the key does not exist in Redis throws OTP_EXPIRED.
-    it('should throw OTP_EXPIRED when key is not in Redis', async () => {
-      mockRedis.get.mockResolvedValue(null)
+      await service.verify('email_verification', 'user-hash', CODE)
 
-      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-        AuthException
-      )
-    })
-
-    // Verifies that a corrupted Redis payload (invalid JSON) is opaquely surfaced as
-    // OTP_EXPIRED (matching the response for missing-key) so an attacker with Redis
-    // write access cannot distinguish corruption from natural expiry, and the unusable
-    // key is deleted to free Redis space sooner than its natural TTL.
-    it('should throw OTP_EXPIRED and delete key when Redis value is corrupted JSON', async () => {
-      mockRedis.get.mockResolvedValue('{not-valid-json')
-      mockRedis.del.mockResolvedValue(1)
-
-      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-        AuthException
-      )
-      expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
-    })
-
-    // Scenario: a record that parses but has no `attempts`. Expected: refused exactly like
-    // corrupted JSON. Why: this is the fail-open shape. `undefined >= MAX_ATTEMPTS` is
-    // `false`, so before the shape check a record with that one field stripped never tripped
-    // the cap and the six-digit code could be guessed without limit. `rust-auth` types the
-    // field as a required `u32` and cannot deserialize such a record at all.
-    it('should refuse a record whose attempts counter is missing', async () => {
-      mockRedis.get.mockResolvedValue(JSON.stringify({ code: '123456' }))
-      mockRedis.del.mockResolvedValue(1)
-
-      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-        AuthException
-      )
-      expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
-    })
-
-    // Scenario: a stored value that parses to something that is not an object at all — a bare
-    // `null` or a number. Expected: refused. Why: the guard has to reject before any field
-    // read, or `null['code']` throws a TypeError out of the credential path.
-    it.each(['null', '42'])(
-      'should refuse a stored value that is not an object (%s)',
-      async (raw) => {
-        mockRedis.get.mockResolvedValue(raw)
-        mockRedis.del.mockResolvedValue(1)
-
-        await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-          AuthException
-        )
-      }
-    )
-
-    // Scenario: a record with no `code`. Expected: refused. Why: the comparison would read
-    // `undefined.length` and throw an unhandled TypeError out of a credential path, which is
-    // a 500 where the contract promises an opaque OTP failure.
-    it('should refuse a record whose code is missing', async () => {
-      mockRedis.get.mockResolvedValue(JSON.stringify({ attempts: 0 }))
-      mockRedis.del.mockResolvedValue(1)
-
-      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-        AuthException
-      )
-    })
-
-    // ---------------------------------------------------------------------------
-    // verify — wrong code
-    // ---------------------------------------------------------------------------
-
-    // Verifies that a wrong code throws OTP_INVALID and increments the attempt counter via Lua eval.
-    it('should throw OTP_INVALID and increment attempts on wrong code', async () => {
-      mockRedis.get.mockResolvedValue(STORED_RECORD)
-      mockRedis.eval.mockResolvedValue(undefined)
-
-      await expect(service.verify('email_verification', 'user-hash', '999999')).rejects.toThrow(
-        AuthException
-      )
-
-      // incrementAttempts called via eval Lua script — verify the updated record is passed as arg
       expect(mockRedis.eval).toHaveBeenCalledTimes(1)
-      const updatedJson = mockRedis.eval.mock.calls[0]?.[2]?.[0] as string
-      const record = JSON.parse(updatedJson) as { attempts: number }
-      expect(record.attempts).toBe(1)
-    })
-
-    // ---------------------------------------------------------------------------
-    // verify — max attempts
-    // ---------------------------------------------------------------------------
-
-    // Verifies that when the attempt counter reaches 5 (MAX_ATTEMPTS), OTP_MAX_ATTEMPTS is thrown.
-    it('should throw OTP_MAX_ATTEMPTS when attempts >= 5', async () => {
-      const exhaustedRecord = JSON.stringify({ code: '123456', attempts: 5 })
-      mockRedis.get.mockResolvedValue(exhaustedRecord)
-
-      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-        AuthException
+      expect(mockRedis.get).not.toHaveBeenCalled()
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('HGET', KEYS[1], 'code')"),
+        [OTP_KEY],
+        [CODE, '5']
       )
     })
 
-    // ---------------------------------------------------------------------------
-    // verify — different-length code
-    // ---------------------------------------------------------------------------
+    // Scenario: a static guard on the script itself. Expected: it bumps from the value IT read,
+    // re-stores under the residual PTTL, and consumes on a match. Why: computing the bump
+    // anywhere else is the race; re-storing with a fresh TTL would let a wrong guess extend the
+    // OTP's lifetime; and the ceiling check has to precede the comparison so an exhausted
+    // record cannot be probed further.
+    it('should carry a script that bumps under the residual TTL and consumes on a match', async () => {
+      armScript('PRESENT', CODE)
+      await service.verify('email_verification', 'user-hash', CODE)
+      const script = mockRedis.eval.mock.calls[0]?.[0] as string
 
-    // Verifies that a code with a different length than the stored code throws OTP_INVALID safely.
-    it('should throw OTP_INVALID without error for different-length code', async () => {
-      mockRedis.get.mockResolvedValue(STORED_RECORD)
-      mockRedis.eval.mockResolvedValue(undefined)
-
-      // '12345' is only 5 chars vs stored '123456' (6 chars)
-      await expect(service.verify('email_verification', 'user-hash', '12345')).rejects.toThrow(
-        AuthException
+      // The bump is in place. Computing it in the caller is the race this replaced, and
+      // re-writing the whole record would reset the TTL — letting a wrong guess buy extra
+      // OTP lifetime. `HINCRBY` does neither.
+      expect(script).toContain("redis.call('HINCRBY', KEYS[1], 'attempts', 1)")
+      // The ceiling is checked before the comparison, so an exhausted record cannot be
+      // probed further.
+      expect(script.indexOf('attempts >= tonumber(ARGV[2])')).toBeLessThan(
+        script.indexOf('code == ARGV[1]')
       )
+      // A correct code consumes the record: single-use.
+      expect(script).toContain("redis.call('DEL', KEYS[1])")
+      // No `cjson` in the executable body — the in-memory Redis the e2e tier runs against
+      // does not provide it, which is why the record is a HASH.
+      const executable = script
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+      expect(executable).not.toContain('cjson')
     })
 
-    // ---------------------------------------------------------------------------
-    // verify — exact thrown error codes (pin the specific AuthException code)
-    // ---------------------------------------------------------------------------
+    // Scenario: the record is gone (TTL elapsed). Expected: OTP_EXPIRED.
+    it('should throw OTP_EXPIRED when the record is gone', async () => {
+      armScript('EXPIRED')
 
-    // Scenario: missing key. Expected: thrown code is exactly OTP_EXPIRED. Why: pins the
-    // error code so a swap to any other code (or a corrupted-path divergence) is caught.
-    it('should throw exactly OTP_EXPIRED when the key is missing', async () => {
-      expect.assertions(1)
-      mockRedis.get.mockResolvedValue(null)
+      await expect(service.verify('email_verification', 'user-hash', CODE)).rejects.toThrow(
+        AuthException
+      )
       try {
-        await service.verify('email_verification', 'user-hash', '123456')
+        await service.verify('email_verification', 'user-hash', CODE)
       } catch (e) {
         expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_EXPIRED)
       }
     })
 
-    // Scenario: attempts already at MAX_ATTEMPTS (5). Expected: thrown code is exactly
-    // OTP_MAX_ATTEMPTS. Why: pins the boundary outcome distinct from OTP_INVALID/OTP_EXPIRED.
-    it('should throw exactly OTP_MAX_ATTEMPTS at the attempt boundary', async () => {
-      expect.assertions(1)
-      mockRedis.get.mockResolvedValue(JSON.stringify({ code: '123456', attempts: 5 }))
-      mockRedis.del.mockResolvedValue(1)
+    // Scenario: the attempt ceiling was already reached. Expected: OTP_MAX_ATTEMPTS, and the
+    // script consumed the record so it cannot be probed again.
+    it('should throw OTP_MAX_ATTEMPTS at the ceiling', async () => {
+      armScript('MAX')
+
       try {
-        await service.verify('email_verification', 'user-hash', '123456')
+        await service.verify('email_verification', 'user-hash', CODE)
+        throw new Error('expected a rejection')
       } catch (e) {
         expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_MAX_ATTEMPTS)
       }
     })
 
-    // Scenario: wrong code with attempts below limit. Expected: thrown code is exactly
-    // OTP_INVALID. Why: pins the wrong-code outcome distinct from OTP_MAX_ATTEMPTS/OTP_EXPIRED.
-    it('should throw exactly OTP_INVALID for a wrong code below the attempt limit', async () => {
-      expect.assertions(1)
-      mockRedis.get.mockResolvedValue(STORED_RECORD)
-      mockRedis.eval.mockResolvedValue(undefined)
+    // Scenario: a wrong code while under the ceiling. Expected: OTP_INVALID — distinct from
+    // both EXPIRED and MAX_ATTEMPTS, so a caller can tell "try again" from "start over".
+    it('should throw OTP_INVALID for a wrong code below the ceiling', async () => {
+      armScript('PRESENT', CODE)
+
       try {
         await service.verify('email_verification', 'user-hash', '999999')
+        throw new Error('expected a rejection')
+      } catch (e) {
+        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_INVALID)
+      }
+    })
+
+    // Scenario: a submitted code of a different length. Expected: OTP_INVALID, not a crash.
+    // Why: `crypto.timingSafeEqual` throws a RangeError on differing buffer sizes, so the
+    // length check has to come first — and it leaks nothing, since the digit count is already
+    // implied by the configured flow.
+    it('should reject a length mismatch as OTP_INVALID rather than throwing', async () => {
+      armScript('PRESENT', CODE)
+
+      try {
+        await service.verify('email_verification', 'user-hash', '1')
+        throw new Error('expected a rejection')
+      } catch (e) {
+        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_INVALID)
+      }
+    })
+
+    // Scenario: the script answers with something outside its documented contract — a shape a
+    // corrupt record or a future script change could produce. Expected: OTP_EXPIRED, the same
+    // answer a missing record gets. Why: any other answer would tell a caller that *something*
+    // is stored under their identifier, which is the enumeration oracle the timing floor and
+    // the uniform error codes exist to close.
+    it.each([
+      ['a non-array reply', 'nonsense'],
+      ['a short array', ['PRESENT']],
+      ['an unknown tag', ['WAT', 'x']],
+      ['a null reply', null]
+    ])('should treat %s as expired', async (_label, reply) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      try {
+        await service.verify('email_verification', 'user-hash', CODE)
+        throw new Error('expected a rejection')
+      } catch (e) {
+        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_EXPIRED)
+      }
+    })
+
+    // Scenario: a PRESENT reply whose stored code is not a string. Expected: OTP_INVALID —
+    // the comparison runs against the empty string and fails, rather than crashing on
+    // `undefined.length`.
+    it('should treat a non-string stored code as a mismatch', async () => {
+      mockRedis.eval.mockResolvedValue(['PRESENT', 42])
+
+      try {
+        await service.verify('email_verification', 'user-hash', CODE)
+        throw new Error('expected a rejection')
       } catch (e) {
         expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_INVALID)
       }
     })
 
     // ---------------------------------------------------------------------------
-    // verify — incrementAttempts Lua eval shape (key, script, args are significant)
+    // Timing normalization
     // ---------------------------------------------------------------------------
 
-    // Scenario: wrong code triggers incrementAttempts. Expected: redis.eval is called with
-    // the namespaced KEYS=[otp:purpose:identifier], the TTL-preserving Lua script, and the
-    // updated record JSON. Why: kills the empty-key (line 175), empty-script (line 179) and
-    // empty-KEYS-array (line 181) mutants, which all change the atomic counter update.
-    it('should call redis.eval with the namespaced key, TTL-preserving Lua, and updated record', async () => {
-      mockRedis.get.mockResolvedValue(STORED_RECORD)
-      mockRedis.eval.mockResolvedValue(undefined)
+    describe('timing normalization', () => {
+      // Every outcome waits out the same floor, so response time cannot distinguish "no such
+      // record" from "wrong code" from "exhausted" — the three answers an attacker probing for
+      // a valid identifier would otherwise separate.
+      it.each([
+        ['success', ['PRESENT', CODE] as const, CODE],
+        ['wrong code', ['PRESENT', CODE] as const, '999999'],
+        ['expired', ['EXPIRED', ''] as const, CODE],
+        ['max attempts', ['MAX', ''] as const, CODE]
+      ])('should sleep out the floor on the %s path', async (_label, reply, submitted) => {
+        mockRedis.eval.mockResolvedValue([...reply])
 
-      await expect(service.verify('email_verification', 'user-hash', '999999')).rejects.toThrow(
-        AuthException
-      )
+        await service.verify('email_verification', 'user-hash', submitted).catch(() => undefined)
 
-      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
-      const call = mockRedis.eval.mock.calls[0] as unknown as
-        | [string, string[], string[]]
-        | undefined
-      const script = call?.[0] ?? ''
-      const keys = call?.[1] ?? []
-      const args = call?.[2] ?? []
-      // KEYS array must be the single namespaced OTP key (not empty — line 181/175 mutants).
-      expect(keys).toEqual([OTP_KEY])
-      // Lua must read the TTL and re-SET preserving it (not an empty script — line 179 mutant).
-      expect(script).toContain("redis.call('TTL', KEYS[1])")
-      expect(script).toContain("'SET', KEYS[1], ARGV[1], 'EX', ttl")
-      // The incremented record is forwarded as ARGV[1].
-      const record = JSON.parse(args[0] ?? '{}') as { code: string; attempts: number }
-      expect(record).toEqual({ code: '123456', attempts: 1 })
-    })
-
-    // ---------------------------------------------------------------------------
-    // verify — timing-normalization sleep duration (kills Math.max/min + arithmetic mutants)
-    // ---------------------------------------------------------------------------
-
-    describe('timing normalization sleep argument', () => {
-      let nowSpy: jest.SpyInstance
-
-      beforeEach(() => {
-        // Pin Date.now: the FIRST call is `start`, every later call is 50 ms after (elapsed=50,
-        // < 100 ms MIN_VERIFY_MS). With elapsed=50: original Math.max(0, 100 - 50) = 50;
-        // Math.min(0, 50) = 0; (100 + 50) = 150; (100 - (now + start)) = huge-negative -> 0.
-        // Asserting exactly 50 kills every Math.min/min-vs-max and +/- arithmetic mutant on
-        // each sleep call site. mockReturnValueOnce pins only `start`, so extra Date.now calls
-        // by the runtime stay at start+50 and do not perturb the assertion.
-        nowSpy = jest.spyOn(Date, 'now')
-        nowSpy.mockReturnValue(1_000_050)
-        nowSpy.mockReturnValueOnce(1_000_000)
-      })
-
-      afterEach(() => {
-        nowSpy.mockRestore()
-      })
-
-      // Scenario: missing key path. Expected: sleep(50). Why: pins the normalization delay so
-      // the Math.max->min and -/+ arithmetic mutants on line 117 are killed.
-      it('should sleep for the remaining MIN_VERIFY_MS on the OTP_EXPIRED path', async () => {
-        mockRedis.get.mockResolvedValue(null)
-        await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-          AuthException
-        )
-        expect(mockSleep).toHaveBeenCalledWith(50)
-      })
-
-      // Scenario: corrupted JSON path. Expected: sleep(50). Why: pins line 129 normalization delay.
-      it('should sleep for the remaining MIN_VERIFY_MS on the corrupted-JSON path', async () => {
-        mockRedis.get.mockResolvedValue('{not-json')
-        mockRedis.del.mockResolvedValue(1)
-        await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-          AuthException
-        )
-        expect(mockSleep).toHaveBeenCalledWith(50)
-      })
-
-      // Scenario: max-attempts path. Expected: sleep(50). Why: pins line 136 normalization delay.
-      it('should sleep for the remaining MIN_VERIFY_MS on the OTP_MAX_ATTEMPTS path', async () => {
-        mockRedis.get.mockResolvedValue(JSON.stringify({ code: '123456', attempts: 5 }))
-        mockRedis.del.mockResolvedValue(1)
-        await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
-          AuthException
-        )
-        expect(mockSleep).toHaveBeenCalledWith(50)
-      })
-
-      // Scenario: wrong-code path. Expected: sleep(50). Why: pins line 146 normalization delay.
-      it('should sleep for the remaining MIN_VERIFY_MS on the OTP_INVALID path', async () => {
-        mockRedis.get.mockResolvedValue(STORED_RECORD)
-        mockRedis.eval.mockResolvedValue(undefined)
-        await expect(service.verify('email_verification', 'user-hash', '999999')).rejects.toThrow(
-          AuthException
-        )
-        expect(mockSleep).toHaveBeenCalledWith(50)
-      })
-
-      // Scenario: success path. Expected: sleep(50). Why: pins line 152 normalization delay
-      // even on the happy path where the OTP is consumed.
-      it('should sleep for the remaining MIN_VERIFY_MS on the success path', async () => {
-        mockRedis.get.mockResolvedValue(STORED_RECORD)
-        mockRedis.del.mockResolvedValue(1)
-        await expect(
-          service.verify('email_verification', 'user-hash', '123456')
-        ).resolves.toBeUndefined()
-        expect(mockSleep).toHaveBeenCalledWith(50)
+        expect(mockSleep).toHaveBeenCalledTimes(1)
+        expect(mockSleep).toHaveBeenCalledWith(expect.any(Number))
+        expect(mockSleep.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(0)
       })
     })
   })

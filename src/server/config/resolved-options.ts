@@ -172,6 +172,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validatePasswordCostFactor(userOptions.password)
   validatePasswordMemoryParameters(userOptions.password)
   validateMfaVerificationParameters(userOptions.mfa)
+  validateBruteForce(userOptions.bruteForce)
   validateOAuthProviders(userOptions.oauth)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
@@ -529,6 +530,58 @@ function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']
 }
 
 /**
+ * Bounds the two values that decide whether the account lockout exists at all.
+ *
+ * `windowSeconds` is handed straight to Redis as the counter's `EXPIRE`. Redis **deletes** a
+ * key on `EXPIRE key 0`, so a zero window destroys every failure counter at the moment it is
+ * created: the count never exceeds one, `isLockedOut` is permanently false, and the only
+ * remaining defence against credential stuffing is the per-IP limiter — which a distributed
+ * caller sidesteps. Nothing about that failure is visible; the configuration reads as "5
+ * attempts per 0 seconds" and the library reports no problem.
+ *
+ * `maxAttempts` fails in both directions: `0` locks every account out permanently (the count
+ * is always `>= 0`), and a very large value disables the lockout as thoroughly as the zero
+ * window does. The ceiling is generous — it exists to catch `1_000_000`, not to second-guess
+ * a deployment that wants 20.
+ *
+ * @param bruteForce - The configured brute-force group, if any.
+ * @throws If either value falls outside its range.
+ */
+function validateBruteForce(bruteForce: BymaxAuthModuleOptions['bruteForce']): void {
+  const windowSeconds = bruteForce?.windowSeconds
+  if (windowSeconds !== undefined && (!Number.isInteger(windowSeconds) || windowSeconds < 1)) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.windowSeconds must be a whole number of at least 1 ` +
+        `(current: ${windowSeconds}). Redis deletes a key on \`EXPIRE key 0\`, so a zero or ` +
+        `negative window destroys each failure counter as it is created and the account ` +
+        `lockout never engages — silently, with the configuration still reading as enabled.`
+    )
+  }
+
+  const maxAttempts = bruteForce?.maxAttempts
+  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.maxAttempts must be a whole number of at least 1 ` +
+        `(current: ${maxAttempts}). Zero locks out every account permanently, because a ` +
+        `freshly created counter already satisfies "attempts >= 0".`
+    )
+  }
+  if (maxAttempts !== undefined && maxAttempts > MAX_BRUTE_FORCE_ATTEMPTS) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.maxAttempts must not exceed ${MAX_BRUTE_FORCE_ATTEMPTS} ` +
+        `(current: ${maxAttempts}). A threshold this high disables the lockout as effectively ` +
+        `as switching it off, while the configuration still reads as enabled.`
+    )
+  }
+}
+
+/**
+ * Ceiling on `bruteForce.maxAttempts`. Generous by design: it catches a value that disables
+ * the control, not a deployment that prefers a looser threshold than the default 5.
+ */
+const MAX_BRUTE_FORCE_ATTEMPTS = 100
+
+/**
  * Bounds the scrypt parameters that carry its memory hardness.
  *
  * `costFactor` has a floor, but scrypt's memory cost is `128 * N * r` — `blockSize` is a
@@ -846,6 +899,14 @@ function isAbsoluteOrigin(value: string): boolean {
   }
 }
 
+/**
+ * Hard ceiling on `jwt.refreshGraceWindowSeconds`, in seconds (five minutes).
+ *
+ * Deliberately far above the 30-second default and far below anything that could be mistaken
+ * for a session policy. `rust-auth` enforces the identical bound.
+ */
+const MAX_REFRESH_GRACE_WINDOW_SECONDS = 300
+
 function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   const graceSeconds =
     jwt.refreshGraceWindowSeconds ?? DEFAULT_OPTIONS.jwt.refreshGraceWindowSeconds
@@ -866,6 +927,20 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
         `the refresh token lifetime jwt.refreshExpiresInDays * 86400 (${refreshLifetimeSeconds} s). ` +
         `A grace window equal to or longer than the token lifetime would allow grace pointers ` +
         `to outlive the refresh session they protect.`
+    )
+  }
+
+  // The relative bound above is not enough on its own: a 6-day window under a 7-day refresh
+  // passes it. This window is the span in which an already-consumed refresh token still buys a
+  // session, so it is the replay window for a stolen one — it exists to cover a single network
+  // retry, measured in seconds, not a policy knob measured in days.
+  if (graceSeconds < 0 || graceSeconds > MAX_REFRESH_GRACE_WINDOW_SECONDS) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.refreshGraceWindowSeconds must be between 0 and ` +
+        `${MAX_REFRESH_GRACE_WINDOW_SECONDS} inclusive (current: ${graceSeconds}). The window is ` +
+        `how long an already-consumed refresh token still recovers a session, so it is exactly ` +
+        `the replay window for a stolen one. It covers a client that rotated but never received ` +
+        `the response — a retry, not a policy. 0 disables grace recovery entirely.`
     )
   }
 }
