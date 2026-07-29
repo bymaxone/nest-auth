@@ -318,10 +318,40 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      // After sanitisation, the spoofed headers must no longer be
-      // on the forwarded request. We check the override hint to see
-      // that the proxy explicitly deletes them (the middleware
-      // override protocol records deletions with an empty value).
+      // The override hint proves the proxy forwarded a REBUILT header set rather than passing
+      // the caller's through untouched. Asserting only "the value is not the spoofed one"
+      // would also pass for a bare `NextResponse.next()`, which sets no hint at all and
+      // forwards the caller's headers verbatim — the exact bug this guards against.
+      const injected = response.headers.get('x-middleware-override-headers')
+      expect(injected).not.toBeNull()
+      expect(injected).not.toContain('x-user-id')
+      expect(response.headers.get('x-middleware-request-x-user-id')).not.toBe('spoofed-admin')
+    })
+
+    // The `/api/auth/*` arm returned before sanitisation ran, so a client-forged
+    // `x-user-id: admin` reached whatever the consumer mounts there — in direct contradiction
+    // of this module's own promise that a forged header cannot reach a server component via
+    // ANY response path. The three handlers this library ships do not read them, so the gap
+    // was one a consumer inherited by trusting the documented invariant.
+    it('strips client-spoofed identity headers on /api/auth routes too', async () => {
+      const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+      const request = makeMockRequest({
+        url: 'https://app.example.com/api/auth/silent-refresh',
+        headers: {
+          'x-user-id': 'spoofed-admin',
+          'x-user-role': 'admin'
+        }
+      })
+
+      const response = await proxy(request as never)
+
+      // The override hint proves the proxy forwarded a REBUILT header set rather than passing
+      // the caller's through untouched — a bare `NextResponse.next()` sets no hint at all, so
+      // asserting only "the value is not the spoofed one" would pass either way.
+      const injected = response.headers.get('x-middleware-override-headers')
+      expect(injected).not.toBeNull()
+      expect(injected).not.toContain('x-user-id')
+      expect(injected).not.toContain('x-user-role')
       expect(response.headers.get('x-middleware-request-x-user-id')).not.toBe('spoofed-admin')
     })
   })

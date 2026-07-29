@@ -48,6 +48,17 @@ const VERIFIED_TOKEN_TTL_SECONDS = 300
  */
 const PASSWORD_RESET_PURPOSE = 'password_reset'
 
+/**
+ * Seconds one account must wait between reset sends, shared by `initiateReset` and
+ * `resendOtp`.
+ *
+ * It is not only about mail volume. Every issuance rewrites the OTP record with `attempts: 0`,
+ * so an entry point that can be called freely converts the 5-attempt ceiling into 5 attempts
+ * *per call*, and a six-digit code stops being a secret. Both doors therefore draw on one
+ * budget under one key.
+ */
+const RESEND_COOLDOWN_SECONDS = 60
+
 // ---------------------------------------------------------------------------
 // Private types
 // ---------------------------------------------------------------------------
@@ -137,6 +148,21 @@ export class PasswordResetService {
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
     dto = { ...dto, tenantId }
     const start = Date.now()
+
+    // The SAME cooldown key `resendOtp` uses, so the two entry points share one budget rather
+    // than one throttling itself while the other hands out fresh sends for free. Two things
+    // depended on that: every issuance re-writes the OTP record with `attempts: 0`, so an
+    // untimed initiate turns the 5-attempt ceiling into 5 attempts *per call* — an unbounded
+    // supply of guesses at a six-digit code — and each call also mails the victim, which is a
+    // mail bomb aimed at an address the caller merely has to know. Silent success on a
+    // cooldown hit, with the same anti-enumeration floor as every other exit, so the throttle
+    // does not itself answer whether the account exists.
+    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(dto.tenantId, dto.email)}`
+    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
+    if (!wasSet) {
+      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+      return
+    }
 
     try {
       const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
@@ -297,8 +323,9 @@ export class PasswordResetService {
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
     const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${identifier}`
 
-    // Atomic NX: only one send allowed per 60 seconds.
-    const wasSet = await this.redis.setnx(cooldownKey, 60)
+    // Atomic NX: one send per cooldown window, shared with `initiateReset` — see the note
+    // there for why both doors have to draw on the same budget.
+    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
     if (!wasSet) {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
       return // Cooldown active — silently succeed.

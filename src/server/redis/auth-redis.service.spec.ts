@@ -787,6 +787,35 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe(String(30 * 24 * 60 * 60))
     })
 
+    // The expiry is applied on EVERY increment, not only the first. Under a first-increment-only
+    // TTL — which is what `incrWithFixedTtl` does, and what this used to call — the retention
+    // window would be anchored to the first bump a user ever took: a password reset on day 0
+    // and a "sign out everywhere" on day 29 would share one expiry, the key would vanish on day
+    // 30 while the tokens the second bump revoked were still inside their lifetime, and
+    // `getUserTokenEpoch` would answer 0 — under which `stamped < epoch` is false for every
+    // token and the revocation quietly stops applying. rust-auth issues the unconditional
+    // `EXPIRE`; a shared Redis cannot have the two libs disagree about when the key dies.
+    it('should re-apply the lifetime on every bump, not only the first', async () => {
+      mockRedis.eval.mockResolvedValue(7)
+
+      await service.bumpUserTokenEpoch('user-1')
+
+      const script = (mockRedis.eval.mock.calls[0] as unknown[])[0] as string
+      expect(script).toContain("redis.call('EXPIRE'")
+      // No `if v == 1` guard around the EXPIRE — that guard is what makes the fixed-window
+      // limiter refuse to extend, and it is exactly wrong here.
+      expect(script).not.toContain('v == 1')
+    })
+
+    // A non-numeric reply falls back to 0. Redis returns an integer for INCR, so this is the
+    // shape guard for a mock, a proxy, or a future script edit — and 0 is the safe answer:
+    // it reads as "no epoch", which refuses nothing rather than revoking everything.
+    it('should answer 0 when the script returns a non-numeric reply', async () => {
+      mockRedis.eval.mockResolvedValue('not-a-number')
+
+      expect(await service.bumpUserTokenEpoch('user-1')).toBe(0)
+    })
+
     // Verifies the platform bump targets the platform counter.
     it('should increment the platform epoch in its own keyspace', async () => {
       mockRedis.eval.mockResolvedValue(2)

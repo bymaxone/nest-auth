@@ -36,6 +36,27 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/refresh — 10 requests per minute per IP. */
   refresh: { default: { limit: 10, ttl: 60_000 } },
 
+  /**
+   * POST /auth/logout — 20 requests per minute per IP.
+   *
+   * The route is public: it has to be, or a user whose 15-minute access token expired could
+   * not sign out and the refresh session would live out its full week on a device they had
+   * just abandoned. Public and unlimited is a different thing, though — each call costs a
+   * SHA-256 and several Redis round trips, and nothing about the caller is known. The ceiling
+   * is deliberately loose: a browser with several tabs can legitimately fire a handful at
+   * once, and being rate-limited out of signing out would be its own security problem.
+   */
+  logout: { default: { limit: 20, ttl: 60_000 } },
+
+  /**
+   * POST /auth/ws-ticket — 20 requests per minute per IP.
+   *
+   * Authenticated, but every call writes a fresh single-use ticket key to Redis, so an
+   * authenticated caller could otherwise mint them without bound. A reconnecting client needs
+   * only one per socket; 20 covers a flapping connection without covering a loop.
+   */
+  wsTicket: { default: { limit: 20, ttl: 60_000 } },
+
   /** POST /auth/password/forgot-password — 3 requests per 5 minutes per IP. */
   forgotPassword: { default: { limit: 3, ttl: 300_000 } },
 

@@ -20,6 +20,7 @@ import { join } from 'node:path'
 
 import type { Redis } from 'ioredis'
 
+import { AuthController } from './controllers/auth.controller'
 import { encrypt } from './crypto/aes-gcm'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
@@ -66,6 +67,7 @@ interface WireContract {
   responseBodies: {
     login: { cookie: string[]; bearer: string[] }
     platformLogin: { bearer: string[] }
+    me: { envelope: string }
     mfaChallenge: string[]
     wsTicket: string[]
   }
@@ -579,6 +581,24 @@ describe('cross-implementation conformance', () => {
         [...contract.responseBodies.login.bearer].sort()
       )
       expect((body as { refreshToken: string }).refreshToken).toBe('opaque')
+    })
+
+    // Scenario: `GET /auth/me`. Expected: the bare user, no envelope. Why: the contract had no
+    // entry for this route, and that gap is what let the sibling backend change the shape while
+    // its client kept unwrapping `.user` — the client returned `undefined` while every other
+    // signal said authenticated, and the test that should have caught it mocked the old
+    // envelope. Pinned here so neither side can move it alone again.
+    it('answers /me with the bare user and no envelope', async () => {
+      expect(contract.responseBodies.me.envelope).toBe('none')
+
+      const authService = { getMe: jest.fn().mockResolvedValue({ id: 'u1', email: 'a@e.com' }) }
+      const controller = new AuthController(authService as never, {} as never, {} as never)
+
+      const body = await controller.me({ sub: 'u1' } as never)
+
+      // A `{ user }` wrapper would show up as exactly one key named `user`.
+      expect(Object.keys(body)).not.toEqual(['user'])
+      expect(body).toEqual({ id: 'u1', email: 'a@e.com' })
     })
 
     // Scenario: the platform login body. Expected: the account under `admin`. Why: this is the

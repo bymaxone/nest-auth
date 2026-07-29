@@ -146,6 +146,8 @@ export class AuthController {
    * @param res - Response object (passthrough — used to clear cookies).
    */
   @Public()
+  @Throttle(AUTH_THROTTLE_CONFIGS.logout)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
@@ -222,6 +224,8 @@ export class AuthController {
    * @returns The raw ticket and its lifetime in seconds.
    */
   @UseGuards(JwtAuthGuard, UserStatusGuard)
+  @Throttle(AUTH_THROTTLE_CONFIGS.wsTicket)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.wsTicket)
   @Post('ws-ticket')
   @HttpCode(HttpStatus.OK)
   async wsTicket(

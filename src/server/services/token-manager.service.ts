@@ -521,6 +521,14 @@ export class TokenManagerService {
     refreshTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
+    // The cap is measured again here, against the RECOVERED record. The check at the top of
+    // `reissueTokens` ran against the seed — and on this path the seed is the placeholder
+    // `readSeedSession` returns when the live key is already gone, whose `familyCreatedAt` is
+    // `now`, so the cap it applied was `now - now`, i.e. none at all. Without this second
+    // check, a lineage that had just passed its absolute cap could still mint a fresh access
+    // token and a full-length refresh session by presenting a token inside its grace window:
+    // the one path where the cap is easiest to reach is the one where it did not apply.
+    this.assertWithinAbsoluteLifetime(graceSession)
     const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(

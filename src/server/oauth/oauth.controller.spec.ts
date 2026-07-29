@@ -17,6 +17,7 @@
  * All tests follow the AAA pattern and use jest.resetAllMocks() in beforeEach.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
@@ -255,6 +256,54 @@ describe('OAuthController', () => {
       expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', expect.anything())
     })
 
+    // Neither value may reach the log verbatim. `error` is a query parameter with only a
+    // length bound and `provider` is a percent-decoded path segment logged before the plugin
+    // shape check runs, so a newline in either forges whole log records — a fabricated "login
+    // success userId=admin" line sitting in the operator's SIEM.
+    it.each([
+      ['a newline in the provider error', { error: 'a\nFAKE LOG LINE' }],
+      ['a carriage return in the provider error', { error: 'a\rFAKE' }],
+      ['an uppercase value', { error: 'ACCESS_DENIED' }],
+      ['an over-long value', { error: 'a'.repeat(65) }]
+    ])('should not let %s reach the log verbatim', async (_label, extra) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', ...extra } as never,
+        mockReq,
+        mockRes
+      )
+
+      const logged = warn.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(logged).toContain('<malformed>')
+      expect(logged).not.toContain('FAKE')
+      expect(logged).not.toContain('ACCESS_DENIED')
+      warn.mockRestore()
+    })
+
+    // A recognisable code is logged as-is — the point is to keep the useful signal, not to
+    // blank every value.
+    it('should log a well-formed provider error code verbatim', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', error: 'access_denied' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain('access_denied')
+      warn.mockRestore()
+    })
+
     // The provider's own string never reaches the redirect. It is provider-chosen text landing
     // in a URL the browser follows, and `oauth_failed` already tells the caller everything the
     // library is willing to vouch for.
@@ -399,6 +448,28 @@ describe('OAuthController', () => {
         sameSite: 'lax',
         path: '/'
       })
+    })
+
+    // The clear only fires when the browser actually sent the cookie. This route is a GET, so
+    // `SameSite=Lax` withholds the cookie from a cross-site subresource — an `<img
+    // src=…/callback>` on any page the victim loads carries none — but a `Set-Cookie` deleting
+    // it would take effect anyway. Clearing unconditionally let any page kill an OAuth login
+    // that was still at the consent screen, repeatably, from anywhere.
+    it('should not clear the state cookie when the request did not carry one', async () => {
+      const mockReq = makeReq('1.2.3.4', 'UA', {}, {})
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback(
+        'google',
+        { code: 'code', state: 'csrf-state-abc' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(mockRes.clearCookie).not.toHaveBeenCalled()
     })
 
     // Same clearing on the failure path: a callback that the service refused must not leave

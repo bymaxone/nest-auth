@@ -813,6 +813,56 @@ describe('TokenManagerService', () => {
       warnSpy.mockRestore()
     })
 
+    // The cap must hold on the GRACE path too. The check at the top of `reissueTokens` runs
+    // against the seed, and on this path the seed is the placeholder returned when the live key
+    // is already gone — its `familyCreatedAt` is `now`, so that check compares `now - now` and
+    // always passes. Without a second check against the RECOVERED record, a lineage that had
+    // just passed its cap could still mint a fresh access token and a full-length refresh
+    // session by presenting a token inside its grace window: the cap ends normal rotation and
+    // the one remaining door stays open.
+    it('refuses a grace recovery for a family that has outlived the absolute cap', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+
+      // The live key is gone — exactly the state grace exists to serve — so the seed is the
+      // placeholder and the first cap check is a no-op.
+      mockRedis.get.mockResolvedValue(null)
+      const bornAt = new Date(Date.now() - 31 * 86_400_000).toISOString()
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'grace',
+        sessionJson: JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          mfaEnabled: false,
+          createdAt: new Date().toISOString(),
+          familyId: FAMILY,
+          familyCreatedAt: bornAt
+        })
+      })
+
+      await expect(
+        capped.get(TokenManagerService).reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      // Nothing was minted: no replacement session, no family membership.
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockRedis.sadd).not.toHaveBeenCalled()
+    })
+
     // Scenario: the same session, one day inside the cap. Expected: it rotates. The boundary
     // matters — an off-by-one here signs users out a day early, every time.
     it('rotates a family that is still inside the absolute cap', async () => {

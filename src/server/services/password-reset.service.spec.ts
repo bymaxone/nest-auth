@@ -178,6 +178,50 @@ describe('PasswordResetService', () => {
   describe('initiateReset', () => {
     const dto = { email: 'user@example.com', tenantId: 'tenant1' }
 
+    // The cooldown is shared with `resendOtp`, under the same key, and this is the door that
+    // matters more: every issuance rewrites the OTP record with `attempts: 0`, so an untimed
+    // initiate turns the 5-attempt ceiling into 5 attempts PER CALL — an unbounded supply of
+    // guesses at a six-digit code — and each call also mails an address the caller merely has
+    // to know.
+    it('claims the shared resend cooldown before sending anything', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+
+      await service.initiateReset(dto, mockReq)
+
+      const [key, ttl] = mockRedis.setnx.mock.calls[0] as [string, number]
+      expect(key.startsWith('resend:password_reset:')).toBe(true)
+      expect(ttl).toBe(60)
+    })
+
+    // A second call inside the window sends nothing at all: no repository read, no OTP write,
+    // no mail. Silent success, so the throttle does not answer whether the account exists.
+    it('sends nothing when the cooldown is already claimed', async () => {
+      mockRedis.setnx.mockResolvedValue(false)
+      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+
+      await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
+
+      expect(mockUserRepo.findByEmail).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendPasswordResetToken).not.toHaveBeenCalled()
+      expect(mockOtpService.store).not.toHaveBeenCalled()
+    })
+
+    // Both entry points must draw on ONE budget: a per-endpoint cooldown lets a caller
+    // alternate between them and halve the effective wait.
+    it('uses the same cooldown key as resendOtp', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+
+      await service.initiateReset(dto, mockReq)
+      const initiateKey = (mockRedis.setnx.mock.calls[0] as [string, number])[0]
+
+      mockRedis.setnx.mockClear()
+      await service.resendOtp(dto, mockReq)
+      const resendKey = (mockRedis.setnx.mock.calls[0] as [string, number])[0]
+
+      expect(initiateKey).toBe(resendKey)
+    })
+
     // Verifies that does NOT throw when user is not found (anti-enumeration).
     it('does NOT throw when user is not found (anti-enumeration)', async () => {
       // Arrange

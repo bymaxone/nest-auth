@@ -131,6 +131,20 @@ function readOAuthStateCookie(req: Request): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+/**
+ * Renders an untrusted value for a log line, or `<malformed>` when it is not a plain code.
+ *
+ * Anything that reaches a log must not be able to end the record. The allowed shape —
+ * lowercase letters, digits, `_` and `-`, up to 64 characters — covers every code RFC 6749
+ * §4.1.2.1 defines and every provider name this library accepts, and admits no newline,
+ * carriage return, or control character. A value outside it is replaced wholesale rather than
+ * escaped: an operator reading `<malformed>` learns the useful thing, which is that the
+ * provider sent something this library does not recognise.
+ */
+function logSafe(value: string): string {
+  return /^[a-z0-9_-]{1,64}$/.test(value) ? value : '<malformed>'
+}
+
 // ---------------------------------------------------------------------------
 // OAuthController
 // ---------------------------------------------------------------------------
@@ -244,10 +258,20 @@ export class OAuthController {
     const ip = (req.ip ?? '').slice(0, 64)
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
 
+    const stateCookie = readOAuthStateCookie(req)
+
     // The state cookie is single-use: it is spent the moment the callback is handled, whatever
     // the outcome. Clearing it up front keeps a failed attempt from leaving a stale cookie
     // behind for the next flow, whose freshly minted state would then never match.
-    this.clearOAuthStateCookie(res)
+    //
+    // Only when the browser actually sent it, though. This route is a `GET`, so `SameSite=Lax`
+    // withholds the cookie from a cross-site *subresource* — an `<img src=…/callback>` on any
+    // page the victim loads carries no cookie — but a `Set-Cookie` deleting it would take
+    // effect all the same. Clearing unconditionally therefore let any page kill an OAuth login
+    // that was still at the consent screen, repeatably, from anywhere.
+    if (stateCookie !== undefined) {
+      this.clearOAuthStateCookie(res)
+    }
 
     // The provider refused before it ever minted a code (RFC 6749 §4.1.2.1) — most often
     // because the user clicked "Cancel" at the consent screen. That is a normal outcome of a
@@ -256,9 +280,15 @@ export class OAuthController {
     // echoed back: it would otherwise be provider-chosen text landing in a URL the browser
     // follows, and the caller learns nothing from it that `oauth_failed` does not already say.
     if (query.error !== undefined) {
+      // Both values are attacker-controlled and reach the log verbatim otherwise: `error` is a
+      // query parameter with only a length bound, and `provider` is a path segment Express has
+      // already percent-decoded, logged here before `resolvePlugin` ever applies its
+      // `^[a-z0-9-]{1,64}$` shape check. A newline in either forges whole log records — a
+      // fabricated "login success userId=admin" line sitting in the operator's SIEM. So the
+      // log carries the value only when it is recognisably a code, and says so when it is not.
+      // `error_description` is free-form prose by definition and is never logged at all.
       this.logger.warn(
-        `callback: provider '${provider}' returned error=${query.error}` +
-          (query.error_description === undefined ? '' : ` description=${query.error_description}`)
+        `callback: provider ${logSafe(provider)} returned error=${logSafe(query.error)}`
       )
       return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
     }
@@ -277,7 +307,7 @@ export class OAuthController {
         provider,
         query.code,
         query.state,
-        readOAuthStateCookie(req),
+        stateCookie,
         ip,
         userAgent,
         req.headers as Record<string, string | string[] | undefined>

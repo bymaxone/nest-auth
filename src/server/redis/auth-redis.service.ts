@@ -775,9 +775,10 @@ export class AuthRedisService {
    * Atomically advances the user's token epoch and returns the new value, invalidating every
    * outstanding access token for that user at once.
    *
-   * The TTL is deliberately far longer than any access token lives, so a bump stays in force
-   * for the whole window a pre-bump token could still be presented. Once it lapses the counter
-   * restarts at zero, which is safe: by then every token stamped below it has expired anyway.
+   * The TTL is re-applied on every bump and is deliberately far longer than any access token
+   * lives, so a bump stays in force for the whole window a pre-bump token could still be
+   * presented. Once it lapses the counter restarts at zero, which is safe *because* the window
+   * runs from the latest bump: by then every token stamped below it has expired anyway.
    *
    * @param userId - Internal user or admin ID whose outstanding access tokens are revoked.
    * @param kind - Which identity plane to bump. Defaults to `'dashboard'`.
@@ -787,10 +788,23 @@ export class AuthRedisService {
     userId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<number> {
-    return this.incrWithFixedTtl(
-      `${kind === 'platform' ? 'pep' : 'ep'}:${userId}`,
-      EPOCH_TTL_SECONDS
+    const key = `${kind === 'platform' ? 'pep' : 'ep'}:${userId}`
+    // `EXPIRE` on EVERY increment, not only the first — which is why this cannot reuse
+    // `incrWithFixedTtl`, whose refusal to extend is the whole point of a fixed rate-limit
+    // window. Here that behaviour would anchor the retention window to the *first* bump a user
+    // ever took: a password reset on day 0 and a "sign out everywhere" on day 29 would share
+    // one expiry, the key would vanish on day 30 while the tokens the second bump revoked were
+    // still inside their lifetime, and `getUserTokenEpoch` would answer 0 — under which
+    // `stamped < epoch` is false for every token and the revocation quietly stops applying.
+    // rust-auth has always issued the unconditional `EXPIRE`; this is the same contract.
+    const result = await this.eval(
+      `local v = redis.call('INCR', KEYS[1])
+       redis.call('EXPIRE', KEYS[1], ARGV[1])
+       return v`,
+      [key],
+      [String(EPOCH_TTL_SECONDS)]
     )
+    return typeof result === 'number' ? result : 0
   }
 
   // ---------------------------------------------------------------------------
