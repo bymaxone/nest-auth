@@ -61,7 +61,18 @@ interface LogoutCookieConfig {
     readonly refresh: string
     readonly hasSession: string
   }
-  /** Path attribute for the refresh-cookie clear. Defaults to `/api/auth`. */
+  /**
+   * Path attribute for the refresh-cookie clear. Defaults to `/api/auth`.
+   *
+   * **This is not the server's default**, which is `/auth`. It is the value the *proxy*
+   * topology needs: the browser addresses the Next.js route, so the cookie must be scoped to
+   * the Next.js path, which means the upstream module has to be configured with
+   * `cookies.refreshCookiePath: '/api/auth'` to plant it there in the first place — the proxy
+   * forwards `Set-Cookie` verbatim and never rewrites `Path`. A deployment that leaves the
+   * server on `/auth` must set this to `/auth` too: a browser matches a deletion on name,
+   * domain and path, so a mismatch means the clear silently does nothing and the refresh
+   * cookie outlives the logout (the session itself is revoked server-side either way).
+   */
   readonly refreshCookiePath?: string
 }
 

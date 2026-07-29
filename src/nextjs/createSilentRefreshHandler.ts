@@ -105,7 +105,8 @@ export interface SilentRefreshHandlerConfig {
    * match the upstream NestJS auth module's configuration. On
    * failure the handler clears:
    *   - `access` at path `/`
-   *   - `refresh` at `refreshCookiePath` (default `/api/auth`)
+   *   - `refresh` at `refreshCookiePath` (default `/api/auth`; see the field's note — it
+   *     must match the scope the upstream module planted the cookie with)
    *   - `hasSession` at path `/`
    */
   readonly cookieNames: {
@@ -115,9 +116,16 @@ export interface SilentRefreshHandlerConfig {
   }
 
   /**
-   * Path attribute for the refresh cookie clear. Defaults to
-   * `/api/auth` — matches the default scope of the NestJS auth
-   * module's refresh cookie.
+   * Path attribute for the refresh-cookie clear. Defaults to `/api/auth`.
+   *
+   * **This is not the server's default**, which is `/auth`. It is the value the *proxy*
+   * topology needs: the browser addresses the Next.js route, so the cookie must be scoped to
+   * the Next.js path, which means the upstream module has to be configured with
+   * `cookies.refreshCookiePath: '/api/auth'` to plant it there in the first place — the proxy
+   * forwards `Set-Cookie` verbatim and never rewrites `Path`. A deployment that leaves the
+   * server on `/auth` must set this to `/auth` too: a browser matches a deletion on name,
+   * domain and path, so a mismatch means the clear silently does nothing and the refresh
+   * cookie outlives the logout (the session itself is revoked server-side either way).
    */
   readonly refreshCookiePath?: string
 }

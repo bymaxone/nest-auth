@@ -226,9 +226,9 @@ export function buildAuthRefreshSkipSuffixes(routePrefix: string = 'auth'): read
 /**
  * Default pathname-suffix skip list for the canonical `'auth'` prefix.
  *
- * Exported for backwards compatibility and for consumers who know they
- * use the default prefix. Non-default deployments should call
- * {@link buildAuthRefreshSkipSuffixes} directly or pass `routePrefix`
- * to `createAuthFetch`/`createAuthClient`.
+ * A convenience for the overwhelmingly common case — the default `routePrefix: 'auth'` —
+ * so a consumer on it does not have to call the builder to get the same array. Any other
+ * prefix must call {@link buildAuthRefreshSkipSuffixes} or pass `routePrefix` to
+ * `createAuthFetch` / `createAuthClient`: this list would silently skip the wrong paths.
  */
 export const AUTH_REFRESH_SKIP_PATH_SUFFIXES = buildAuthRefreshSkipSuffixes()
