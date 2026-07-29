@@ -7,9 +7,11 @@ import {
   UsePipes,
   ValidationPipe,
   UseGuards,
-  UseInterceptors
+  UseInterceptors,
+  Req
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
+import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
@@ -70,8 +72,8 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.forgotPassword)
   @HttpCode(HttpStatus.OK)
   @Post('forgot-password')
-  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
-    await this.passwordResetService.initiateReset(dto)
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request): Promise<void> {
+    await this.passwordResetService.initiateReset(dto, req)
   }
 
   // ---------------------------------------------------------------------------
@@ -94,8 +96,8 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resetPassword)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('reset-password')
-  async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
-    await this.passwordResetService.resetPassword(dto)
+  async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request): Promise<void> {
+    await this.passwordResetService.resetPassword(dto, req)
   }
 
   // ---------------------------------------------------------------------------
@@ -119,8 +121,11 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyOtp)
   @HttpCode(HttpStatus.OK)
   @Post('verify-otp')
-  async verifyOtp(@Body() dto: VerifyOtpDto): Promise<{ verifiedToken: string }> {
-    const verifiedToken = await this.passwordResetService.verifyOtp(dto)
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
+    @Req() req: Request
+  ): Promise<{ verifiedToken: string }> {
+    const verifiedToken = await this.passwordResetService.verifyOtp(dto, req)
     return { verifiedToken }
   }
 
@@ -140,7 +145,7 @@ export class PasswordResetController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendPasswordOtp)
   @HttpCode(HttpStatus.OK)
   @Post('resend-otp')
-  async resendOtp(@Body() dto: ResendOtpDto): Promise<void> {
-    await this.passwordResetService.resendOtp(dto)
+  async resendOtp(@Body() dto: ResendOtpDto, @Req() req: Request): Promise<void> {
+    await this.passwordResetService.resendOtp(dto, req)
   }
 }

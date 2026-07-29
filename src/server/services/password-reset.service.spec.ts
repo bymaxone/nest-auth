@@ -31,6 +31,7 @@ import { OtpService } from './otp.service'
 import { PasswordResetService } from './password-reset.service'
 import { PasswordService } from './password.service'
 import { sleep } from '../utils/sleep'
+import type { Request } from 'express'
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
@@ -134,6 +135,12 @@ async function buildModule(
 // Suite setup
 // ---------------------------------------------------------------------------
 
+/** A minimal request double — the reset flows only hand it to the tenant resolver. */
+const mockReq = {
+  ip: '1.2.3.4',
+  headers: { 'user-agent': 'TestBrowser' }
+} as unknown as Request
+
 describe('PasswordResetService', () => {
   let service: PasswordResetService
 
@@ -177,7 +184,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       // Act & Assert
-      await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+      await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT throw when user is blocked (anti-enumeration).
@@ -186,7 +193,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
 
       // Act & Assert
-      await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+      await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT throw when user is suspended (blocked status).
@@ -195,7 +202,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'suspended' })
 
       // Act & Assert
-      await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+      await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT throw even when email provider throws.
@@ -213,7 +220,7 @@ describe('PasswordResetService', () => {
         mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
 
         // Act & Assert
-        await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+        await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
         await flushMicrotasks()
 
         // Rollback: the pw_reset:{hash} key written before the email send must be
@@ -233,7 +240,7 @@ describe('PasswordResetService', () => {
         mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
         mockRedis.del.mockRejectedValueOnce(new Error('Redis down'))
 
-        await expect(service.initiateReset(dto)).resolves.toBeUndefined()
+        await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
         await flushMicrotasks()
 
         // Both errors must be logged: the original email failure AND the rollback failure.
@@ -251,7 +258,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await service.initiateReset(dto)
+      await service.initiateReset(dto, mockReq)
       await flushMicrotasks()
 
       // Assert
@@ -272,7 +279,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await noEmailService.initiateReset(dto)
+      await noEmailService.initiateReset(dto, mockReq)
 
       // Assert
       expect(mockEmailProvider.sendPasswordResetToken).not.toHaveBeenCalled()
@@ -287,7 +294,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       // Act
-      await service.initiateReset(dto)
+      await service.initiateReset(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledTimes(1)
@@ -306,7 +313,7 @@ describe('PasswordResetService', () => {
       nowSpy.mockReturnValueOnce(1_000_000)
 
       // Act
-      await service.initiateReset(dto)
+      await service.initiateReset(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledWith(200)
@@ -321,7 +328,7 @@ describe('PasswordResetService', () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await service.initiateReset(dto)
+      await service.initiateReset(dto, mockReq)
 
       // Assert
       expect(errorSpy).toHaveBeenCalledWith('initiateReset: unexpected error', unexpectedError)
@@ -335,7 +342,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
 
       // Act
-      await service.initiateReset(dto)
+      await service.initiateReset(dto, mockReq)
       await flushMicrotasks()
 
       // Assert
@@ -372,7 +379,7 @@ describe('PasswordResetService', () => {
         mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
         // Act
-        await otpMethodService.initiateReset(dto)
+        await otpMethodService.initiateReset(dto, mockReq)
         await flushMicrotasks()
 
         // Assert
@@ -391,7 +398,7 @@ describe('PasswordResetService', () => {
         mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
         // Act
-        await otpMethodService.initiateReset(dto)
+        await otpMethodService.initiateReset(dto, mockReq)
         await flushMicrotasks()
 
         // Assert
@@ -406,7 +413,7 @@ describe('PasswordResetService', () => {
         mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
 
         // Act
-        await otpMethodService.initiateReset(dto)
+        await otpMethodService.initiateReset(dto, mockReq)
         await flushMicrotasks()
 
         // Assert
@@ -442,7 +449,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -465,7 +472,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -484,7 +491,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -501,7 +508,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -518,7 +525,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -536,7 +543,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -559,7 +566,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -582,7 +589,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -601,7 +608,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -623,7 +630,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -639,7 +646,7 @@ describe('PasswordResetService', () => {
       const dto = { ...baseDto, token: 'mytoken' }
 
       // Act
-      await service.resetPassword(dto)
+      await service.resetPassword(dto, mockReq)
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
@@ -660,7 +667,7 @@ describe('PasswordResetService', () => {
       const dto = { ...baseDto, token: 'mytoken' }
 
       // Act
-      await service.resetPassword(dto)
+      await service.resetPassword(dto, mockReq)
 
       // Assert
       const [key] = mockRedis.getdel.mock.calls[0] as [string]
@@ -683,7 +690,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -699,7 +706,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -719,7 +726,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -739,7 +746,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -758,7 +765,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -776,7 +783,7 @@ describe('PasswordResetService', () => {
 
       let caught: unknown
       try {
-        await service.resetPassword(dto)
+        await service.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -824,7 +831,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -845,7 +852,7 @@ describe('PasswordResetService', () => {
       const dto = { ...baseDto, verifiedToken: 'a'.repeat(64) }
 
       // Act
-      await otpMethodService.resetPassword(dto)
+      await otpMethodService.resetPassword(dto, mockReq)
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
@@ -865,7 +872,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -885,7 +892,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -905,7 +912,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -922,7 +929,7 @@ describe('PasswordResetService', () => {
       const dto = { ...baseDto, otp: '654321' }
 
       // Act
-      await otpMethodService.resetPassword(dto)
+      await otpMethodService.resetPassword(dto, mockReq)
 
       // Assert
       expect(mockOtpService.verify).toHaveBeenCalledTimes(1)
@@ -946,7 +953,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -964,7 +971,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -983,7 +990,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await otpMethodService.resetPassword(dto)
+        await otpMethodService.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -1008,7 +1015,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.verifyOtp(dto)
+        await service.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -1026,7 +1033,7 @@ describe('PasswordResetService', () => {
       // Act
       let caught: unknown
       try {
-        await service.verifyOtp(dto)
+        await service.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -1042,7 +1049,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      const result = await service.verifyOtp(dto)
+      const result = await service.verifyOtp(dto, mockReq)
 
       // Assert
       expect(typeof result).toBe('string')
@@ -1057,7 +1064,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await service.verifyOtp(dto)
+      await service.verifyOtp(dto, mockReq)
 
       // Assert
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
@@ -1073,7 +1080,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await service.verifyOtp(dto)
+      await service.verifyOtp(dto, mockReq)
 
       // Assert
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
@@ -1123,7 +1130,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       // Act & Assert
-      await expect(otpMethodService.resendOtp(dto)).resolves.toBeUndefined()
+      await expect(otpMethodService.resendOtp(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT throw when user is blocked.
@@ -1133,7 +1140,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
 
       // Act & Assert
-      await expect(otpMethodService.resendOtp(dto)).resolves.toBeUndefined()
+      await expect(otpMethodService.resendOtp(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT throw when cooldown is active (setnx returns false).
@@ -1142,7 +1149,7 @@ describe('PasswordResetService', () => {
       mockRedis.setnx.mockResolvedValue(false)
 
       // Act & Assert
-      await expect(otpMethodService.resendOtp(dto)).resolves.toBeUndefined()
+      await expect(otpMethodService.resendOtp(dto, mockReq)).resolves.toBeUndefined()
     })
 
     // Verifies that does NOT send OTP when cooldown is active.
@@ -1151,7 +1158,7 @@ describe('PasswordResetService', () => {
       mockRedis.setnx.mockResolvedValue(false)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockOtpService.generate).not.toHaveBeenCalled()
@@ -1170,7 +1177,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
       // Assert
@@ -1189,7 +1196,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       const [key, ttl] = mockRedis.setnx.mock.calls[0] as [string, number]
@@ -1205,7 +1212,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
       // Assert
@@ -1221,7 +1228,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledTimes(1)
@@ -1233,7 +1240,7 @@ describe('PasswordResetService', () => {
       mockRedis.setnx.mockResolvedValue(false)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledTimes(1)
@@ -1250,7 +1257,7 @@ describe('PasswordResetService', () => {
       nowSpy.mockReturnValueOnce(2_000_000)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledWith(200)
@@ -1269,7 +1276,7 @@ describe('PasswordResetService', () => {
       nowSpy.mockReturnValueOnce(3_000_000)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockSleep).toHaveBeenCalledWith(200)
@@ -1285,7 +1292,7 @@ describe('PasswordResetService', () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
       expect(errorSpy).toHaveBeenCalledWith('resendOtp: unexpected error', unexpectedError)
@@ -1317,7 +1324,7 @@ describe('PasswordResetService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
 
       // Act
-      await noEmailOtpService.resendOtp(dto)
+      await noEmailOtpService.resendOtp(dto, mockReq)
 
       // Assert
       expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
@@ -1334,7 +1341,7 @@ describe('PasswordResetService', () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await otpMethodService.resendOtp(dto)
+      await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
       // Assert
@@ -1381,12 +1388,15 @@ describe('PasswordResetService', () => {
       mockUserRepo.findById.mockResolvedValue(FULL_USER)
 
       // Act
-      await hookedService.resetPassword({
-        email: 'user@example.com',
-        tenantId: 'tenant1',
-        newPassword: 'NewPass123!',
-        token: 'tok'
-      })
+      await hookedService.resetPassword(
+        {
+          email: 'user@example.com',
+          tenantId: 'tenant1',
+          newPassword: 'NewPass123!',
+          token: 'tok'
+        },
+        mockReq
+      )
       await flushMicrotasks()
 
       // Assert
@@ -1412,12 +1422,15 @@ describe('PasswordResetService', () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
       // Act
-      await hookedService.resetPassword({
-        email: 'user@example.com',
-        tenantId: 'tenant1',
-        newPassword: 'NewPass123!',
-        token: 'tok'
-      })
+      await hookedService.resetPassword(
+        {
+          email: 'user@example.com',
+          tenantId: 'tenant1',
+          newPassword: 'NewPass123!',
+          token: 'tok'
+        },
+        mockReq
+      )
       await flushMicrotasks()
 
       // Assert
@@ -1440,12 +1453,15 @@ describe('PasswordResetService', () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       // Act
-      await hookedService.resetPassword({
-        email: 'user@example.com',
-        tenantId: 'tenant1',
-        newPassword: 'NewPass123!',
-        token: 'tok'
-      })
+      await hookedService.resetPassword(
+        {
+          email: 'user@example.com',
+          tenantId: 'tenant1',
+          newPassword: 'NewPass123!',
+          token: 'tok'
+        },
+        mockReq
+      )
       await flushMicrotasks()
 
       // Assert

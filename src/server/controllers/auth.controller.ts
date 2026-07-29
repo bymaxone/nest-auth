@@ -237,8 +237,8 @@ export class AuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyEmail)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-email')
-  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
-    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp)
+  async verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request): Promise<void> {
+    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp, req)
   }
 
   /**
@@ -253,7 +253,7 @@ export class AuthController {
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendVerification)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('resend-verification')
-  async resendVerification(@Body() dto: ResendVerificationDto): Promise<void> {
-    await this.authService.resendVerificationEmail(dto.tenantId, dto.email)
+  async resendVerification(@Body() dto: ResendVerificationDto, @Req() req: Request): Promise<void> {
+    await this.authService.resendVerificationEmail(dto.tenantId, dto.email, req)
   }
 }

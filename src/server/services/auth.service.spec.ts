@@ -1305,6 +1305,69 @@ describe('AuthService', () => {
   // verifyEmail
   // ---------------------------------------------------------------------------
 
+  describe('tenant resolution across every tenant-scoped flow', () => {
+    /** An AuthService whose resolver always answers `resolved-tenant`. */
+    async function serviceWithResolver(): Promise<AuthService> {
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, tenantIdResolver: () => 'resolved-tenant' }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      return module.get(AuthService)
+    }
+
+    // Scenario: a deployment resolves the tenant from the request, and a caller names a
+    // different one in the body. Expected: the resolved tenant is what the OTP identifier is
+    // derived from. Why: the option documents itself as ignoring the body value "to prevent
+    // tenant spoofing", but only login and register honoured it — email verification read the
+    // body verbatim, so a caller could probe for accounts in a tenant they have no
+    // relationship with, and a verification issued under the resolved tenant could never be
+    // completed because the two steps derived different identifiers.
+    it('should resolve the tenant on verifyEmail rather than trusting the body', async () => {
+      const svc = await serviceWithResolver()
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await svc
+        .verifyEmail('attacker-tenant', 'user@example.com', '123456', mockReq)
+        .catch(() => undefined)
+
+      expect(mockOtpService.verify).toHaveBeenCalledWith(
+        expect.any(String),
+        hmacSha256('resolved-tenant:user@example.com', HMAC_KEY),
+        '123456'
+      )
+    })
+
+    // Scenario: the same, for the resend path — the one an attacker can drive without any
+    // credential at all.
+    it('should resolve the tenant on resendVerificationEmail rather than trusting the body', async () => {
+      const svc = await serviceWithResolver()
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await svc
+        .resendVerificationEmail('attacker-tenant', 'user@example.com', mockReq)
+        .catch(() => undefined)
+
+      const cooldownKey = `resend:email_verification:${hmacSha256('resolved-tenant:user@example.com', HMAC_KEY)}`
+      expect(mockRedis.setnx).toHaveBeenCalledWith(cooldownKey, expect.any(Number))
+    })
+  })
+
   describe('verifyEmail', () => {
     // Verifies that verifyEmail resolves the user from (tenantId, email) and updates the flag.
     it('should verify OTP and update emailVerified for the resolved user', async () => {
@@ -1314,7 +1377,7 @@ describe('AuthService', () => {
       mockHooks.afterEmailVerified.mockResolvedValue(undefined)
 
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.verifyEmail('tenant-1', 'user@example.com', '123456')
+      await service.verifyEmail('tenant-1', 'user@example.com', '123456', mockReq)
 
       // The OTP identifier must be the exact HMAC of '{tenant}:{email}' — kills the empty
       // hmac input mutant (line 397:35).
@@ -1336,9 +1399,9 @@ describe('AuthService', () => {
     // Verifies that OTP verification errors from otpService propagate to the caller.
     it('should propagate OTP errors', async () => {
       mockOtpService.verify.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.OTP_INVALID))
-      await expect(service.verifyEmail('tenant-1', 'user@example.com', 'wrong')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.verifyEmail('tenant-1', 'user@example.com', 'wrong', mockReq)
+      ).rejects.toThrow(AuthException)
     })
 
     // Defends against the ownership-bypass path: valid OTP but user not found → OTP_INVALID.
@@ -1346,9 +1409,9 @@ describe('AuthService', () => {
       mockOtpService.verify.mockResolvedValue(undefined)
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
-      await expect(service.verifyEmail('tenant-1', 'ghost@example.com', '123456')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.verifyEmail('tenant-1', 'ghost@example.com', '123456', mockReq)
+      ).rejects.toThrow(AuthException)
       expect(mockUserRepo.updateEmailVerified).not.toHaveBeenCalled()
     })
 
@@ -1360,7 +1423,7 @@ describe('AuthService', () => {
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
       mockHooks.afterEmailVerified.mockRejectedValue(new Error('hook error'))
 
-      await service.verifyEmail('tenant-1', 'user@example.com', '123456')
+      await service.verifyEmail('tenant-1', 'user@example.com', '123456', mockReq)
 
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
@@ -1383,7 +1446,7 @@ describe('AuthService', () => {
       mockOtpService.store.mockResolvedValue(undefined)
       mockEmailProvider.sendEmailVerificationOtp.mockResolvedValue(undefined)
 
-      await service.resendVerificationEmail('tenant-1', 'user@example.com')
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
 
       expect(mockOtpService.generate).toHaveBeenCalled()
       // The cooldown SET NX key must be 'resend:email_verification:' + HMAC('{tenant}:{email}').
@@ -1405,7 +1468,7 @@ describe('AuthService', () => {
     it('should silently succeed when cooldown is active (anti-enumeration)', async () => {
       mockRedis.setnx.mockResolvedValue(false) // key already existed — cooldown active
 
-      await service.resendVerificationEmail('tenant-1', 'user@example.com')
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
 
       expect(mockOtpService.generate).not.toHaveBeenCalled()
       // The early `return` inside `if (!wasSet)` must short-circuit BEFORE the user lookup —
@@ -1440,7 +1503,7 @@ describe('AuthService', () => {
       // on the early-return branch (line 436).
       it('should sleep the remaining anti-enumeration delay when cooldown is active', async () => {
         mockRedis.setnx.mockResolvedValue(false)
-        await service.resendVerificationEmail('tenant-1', 'user@example.com')
+        await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
         expect(mockSleep).toHaveBeenCalledWith(250)
       })
 
@@ -1452,7 +1515,7 @@ describe('AuthService', () => {
         mockOtpService.generate.mockReturnValue('654321')
         mockOtpService.store.mockResolvedValue(undefined)
         mockEmailProvider.sendEmailVerificationOtp.mockResolvedValue(undefined)
-        await service.resendVerificationEmail('tenant-1', 'user@example.com')
+        await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
         expect(mockSleep).toHaveBeenCalledWith(250)
       })
     })
@@ -1466,7 +1529,7 @@ describe('AuthService', () => {
       mockOtpService.store.mockResolvedValue(undefined)
       mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('email error'))
 
-      await service.resendVerificationEmail('tenant-1', 'user@example.com')
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
 
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
@@ -1799,7 +1862,7 @@ describe('AuthService', () => {
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
 
       await expect(
-        noHooksService.verifyEmail('tenant-1', 'user@example.com', '123456')
+        noHooksService.verifyEmail('tenant-1', 'user@example.com', '123456', mockReq)
       ).resolves.toBeUndefined()
       expect(mockHooks.afterEmailVerified).not.toHaveBeenCalled()
     })
@@ -1817,7 +1880,7 @@ describe('AuthService', () => {
       mockRedis.setnx.mockResolvedValue(true)
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
-      await service.resendVerificationEmail('tenant-1', 'ghost@example.com')
+      await service.resendVerificationEmail('tenant-1', 'ghost@example.com', mockReq)
 
       expect(mockOtpService.generate).not.toHaveBeenCalled()
     })
@@ -1829,7 +1892,7 @@ describe('AuthService', () => {
       mockRedis.setnx.mockResolvedValue(true)
       mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: true })
 
-      await service.resendVerificationEmail('tenant-1', 'user@example.com')
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
 
       expect(mockOtpService.generate).not.toHaveBeenCalled()
     })

@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import type { Request } from 'express'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -24,6 +25,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
@@ -126,7 +128,14 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO containing `email` and `tenantId`.
    */
-  async initiateReset(dto: ForgotPasswordDto): Promise<void> {
+  async initiateReset(dto: ForgotPasswordDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId }
     const start = Date.now()
 
     try {
@@ -168,7 +177,14 @@ export class PasswordResetService {
    * @throws {@link AuthException} `OTP_INVALID` / `OTP_EXPIRED` / `OTP_MAX_ATTEMPTS` for
    *   OTP-path failures.
    */
-  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+  async resetPassword(dto: ResetPasswordDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId }
     const { method } = this.options.passwordReset
 
     // Mutual exclusivity: exactly one proof field must be present.
@@ -227,7 +243,14 @@ export class PasswordResetService {
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` when the user is not
    *   found after OTP verification (prevents issuing tokens for non-existent accounts).
    */
-  async verifyOtp(dto: VerifyOtpDto): Promise<string> {
+  async verifyOtp(dto: VerifyOtpDto, req: Request): Promise<string> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId }
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, dto.otp)
 
@@ -261,7 +284,14 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    */
-  async resendOtp(dto: ResendOtpDto): Promise<void> {
+  async resendOtp(dto: ResendOtpDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId }
     const start = Date.now()
 
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)

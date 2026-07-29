@@ -17,6 +17,7 @@ import { PasswordResetService } from '../services/password-reset.service'
 import { PasswordResetController } from './password-reset.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import type { Request } from 'express'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -42,6 +43,12 @@ function getErrorCode(err: unknown): string {
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
+
+/** A minimal request double — the controller only forwards it to the service. */
+const mockReq = {
+  ip: '1.2.3.4',
+  headers: { 'user-agent': 'TestBrowser' }
+} as unknown as Request
 
 describe('PasswordResetController', () => {
   let controller: PasswordResetController
@@ -93,9 +100,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.initiateReset with the dto', async () => {
       mockPasswordResetService.initiateReset.mockResolvedValue(undefined)
 
-      await controller.forgotPassword(dto)
+      await controller.forgotPassword(dto, mockReq)
 
-      expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledTimes(1)
     })
   })
@@ -115,9 +122,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.resetPassword with the dto', async () => {
       mockPasswordResetService.resetPassword.mockResolvedValue(undefined)
 
-      await controller.resetPassword(dto)
+      await controller.resetPassword(dto, mockReq)
 
-      expect(mockPasswordResetService.resetPassword).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.resetPassword).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.resetPassword).toHaveBeenCalledTimes(1)
     })
 
@@ -129,7 +136,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword(dto)
+        await controller.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -145,7 +152,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -161,7 +168,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -177,7 +184,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -197,9 +204,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.verifyOtp with the dto', async () => {
       mockPasswordResetService.verifyOtp.mockResolvedValue('a'.repeat(64))
 
-      await controller.verifyOtp(dto)
+      await controller.verifyOtp(dto, mockReq)
 
-      expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledTimes(1)
     })
 
@@ -208,7 +215,7 @@ describe('PasswordResetController', () => {
       const rawToken = 'c'.repeat(64)
       mockPasswordResetService.verifyOtp.mockResolvedValue(rawToken)
 
-      const result = await controller.verifyOtp(dto)
+      const result = await controller.verifyOtp(dto, mockReq)
 
       expect(result).toEqual({ verifiedToken: rawToken })
       expect(Object.keys(result)).toEqual(['verifiedToken'])
@@ -222,7 +229,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -238,7 +245,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -254,7 +261,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -274,9 +281,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.resendOtp with the dto', async () => {
       mockPasswordResetService.resendOtp.mockResolvedValue(undefined)
 
-      await controller.resendOtp(dto)
+      await controller.resendOtp(dto, mockReq)
 
-      expect(mockPasswordResetService.resendOtp).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.resendOtp).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.resendOtp).toHaveBeenCalledTimes(1)
     })
   })

@@ -32,6 +32,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 
@@ -563,7 +564,13 @@ export class AuthService {
    *   or the user does not exist (response shape is identical to prevent
    *   account enumeration via this endpoint).
    */
-  async verifyEmail(tenantId: string, email: string, otp: string): Promise<void> {
+  async verifyEmail(tenantId: string, email: string, otp: string, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this, a caller could name any tenant and probe for accounts
+    // in it — and a verification issued under the resolved tenant could never be completed,
+    // because the OTP identifier here would be derived from a different one.
+    tenantId = await this.resolveTenantId(tenantId, req)
     const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
     await this.otpService.verify('email_verification', identifier, otp)
 
@@ -596,7 +603,9 @@ export class AuthService {
    * @param tenantId - Tenant scope.
    * @param email - The email address to re-send to (not validated — always succeeds).
    */
-  async resendVerificationEmail(tenantId: string, email: string): Promise<void> {
+  async resendVerificationEmail(tenantId: string, email: string, req: Request): Promise<void> {
+    // See `verifyEmail`: the resolver decides the tenant whenever one is configured.
+    tenantId = await this.resolveTenantId(tenantId, req)
     const start = Date.now()
     const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)}`
 
@@ -620,10 +629,7 @@ export class AuthService {
   // ---------------------------------------------------------------------------
 
   private async resolveTenantId(dtoTenantId: string, req: Request): Promise<string> {
-    if (this.options.tenantIdResolver) {
-      return this.options.tenantIdResolver(req)
-    }
-    return dtoTenantId
+    return await resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver)
   }
 
   private buildHookContext(opts: {

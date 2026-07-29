@@ -365,16 +365,21 @@ describe('AuthController', () => {
     it('should call verifyEmail without accepting a client-supplied userId', async () => {
       mockAuthService.verifyEmail.mockResolvedValue(undefined)
 
-      await controller.verifyEmail(body as never)
+      await controller.verifyEmail(body as never, mockReq)
 
-      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(body.tenantId, body.email, body.otp)
+      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(
+        body.tenantId,
+        body.email,
+        body.otp,
+        mockReq
+      )
     })
 
     // Verifies that OTP validation errors from the service are propagated to the caller.
     it('should propagate OTP errors from the service', async () => {
       mockAuthService.verifyEmail.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.OTP_INVALID))
 
-      await expect(controller.verifyEmail(body as never)).rejects.toThrow(AuthException)
+      await expect(controller.verifyEmail(body as never, mockReq)).rejects.toThrow(AuthException)
     })
   })
 
@@ -389,11 +394,12 @@ describe('AuthController', () => {
     it('should call resendVerificationEmail with tenantId and email', async () => {
       mockAuthService.resendVerificationEmail.mockResolvedValue(undefined)
 
-      await controller.resendVerification(body as never)
+      await controller.resendVerification(body as never, mockReq)
 
       expect(mockAuthService.resendVerificationEmail).toHaveBeenCalledWith(
         body.tenantId,
-        body.email
+        body.email,
+        mockReq
       )
     })
 
@@ -401,7 +407,7 @@ describe('AuthController', () => {
     it('should always resolve regardless of whether email exists (anti-enumeration)', async () => {
       mockAuthService.resendVerificationEmail.mockResolvedValue(undefined)
 
-      await expect(controller.resendVerification(body as never)).resolves.toBeUndefined()
+      await expect(controller.resendVerification(body as never, mockReq)).resolves.toBeUndefined()
     })
   })
 })
