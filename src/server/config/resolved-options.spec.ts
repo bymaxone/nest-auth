@@ -877,6 +877,80 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation failures — the bounds on the parameters that carry a control's strength
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — security-parameter bounds', () => {
+  const KEY = Buffer.alloc(32, 1).toString('base64')
+
+  /** Options with the given mfa overrides on top of a valid group. */
+  function withMfa(overrides: Record<string, unknown>): BymaxAuthModuleOptions {
+    return {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: KEY, issuer: 'App', ...overrides } as NonNullable<
+        BymaxAuthModuleOptions['mfa']
+      >
+    }
+  }
+
+  // Scenario: a TOTP window far past any clock skew. Expected: refused at startup. Why: the
+  // window is counted in 30-second steps on both sides, so `2n + 1` codes are valid at once —
+  // at 60 that is 121, and the six-digit code an attacker has to guess is a hundred times
+  // weaker than its length suggests. Every sibling security parameter has a bound; this one
+  // decides how much the second factor is worth and had none.
+  it('should refuse a TOTP window past the ceiling', () => {
+    expect(() => resolveOptions(withMfa({ totpWindow: 60 }))).toThrow(
+      /totpWindow must be between 0 and 10/
+    )
+    expect(() => resolveOptions(withMfa({ totpWindow: -1 }))).toThrow(/totpWindow/)
+  })
+
+  // Scenario: the boundary values and the default. Expected: accepted. Why: a bound that
+  // rejects a legitimate tolerance is an outage, and 0 (no tolerance at all) is a valid
+  // hardening choice, not an error.
+  it('should accept every window inside the range', () => {
+    for (const totpWindow of [0, 1, 10]) {
+      expect(() => resolveOptions(withMfa({ totpWindow }))).not.toThrow()
+    }
+  })
+
+  // Scenario: enrolment configured to mint zero recovery codes. Expected: refused. Why: the
+  // account then has no way back if the authenticator is lost, and nothing in the flow reports
+  // anything wrong — the user finds out at the worst moment.
+  it('should refuse a recovery-code count outside the range', () => {
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 0 }))).toThrow(
+      /recoveryCodeCount must be between 1 and 50/
+    )
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 51 }))).toThrow(/recoveryCodeCount/)
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 1 }))).not.toThrow()
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 50 }))).not.toThrow()
+  })
+
+  // Scenario: a scrypt block size below 8. Expected: refused. Why: the memory cost is
+  // 128 * N * r, so `costFactor`'s floor only guarantees what it claims while r holds. At
+  // r = 1 the same N buys an eighth of the memory and the floor quietly stops meaning
+  // anything — the weakening is invisible because the parameter that was bounded is intact.
+  it('should refuse a block size that divides the memory hardness', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { blockSize: 1 } })).toThrow(
+      /blockSize must be at least 8/
+    )
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { blockSize: 8 } })).not.toThrow()
+  })
+
+  // Scenario: a non-positive parallelization. Expected: refused at startup rather than at the
+  // first hash. Why: `crypto.scrypt` rejects it either way; the only question is whether the
+  // deployment learns at boot or a user learns at login.
+  it('should refuse a parallelization below one', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { parallelization: 0 } })).toThrow(
+      /parallelization must be at least 1/
+    )
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { parallelization: 1 } })
+    ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — mfa.previousEncryptionKeys
 // ---------------------------------------------------------------------------
 

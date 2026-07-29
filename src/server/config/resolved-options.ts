@@ -170,6 +170,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
   validatePasswordResetOtpLength(userOptions.passwordReset)
   validatePasswordCostFactor(userOptions.password)
+  validatePasswordMemoryParameters(userOptions.password)
+  validateMfaVerificationParameters(userOptions.mfa)
   validateOAuthProviders(userOptions.oauth)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
@@ -522,6 +524,73 @@ function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']
   if ((costFactor & (costFactor - 1)) !== 0) {
     throw new Error(
       `[BymaxAuthModule] password.costFactor must be a power of 2 (current: ${costFactor}).`
+    )
+  }
+}
+
+/**
+ * Bounds the scrypt parameters that carry its memory hardness.
+ *
+ * `costFactor` has a floor, but scrypt's memory cost is `128 * N * r` — `blockSize` is a
+ * multiplier on it, so `r = 1` cuts the memory an `N` floor is there to guarantee by eight
+ * and the floor stops meaning what it says. `parallelization` below 1 is not a weaker
+ * setting but an invalid one: `crypto.scrypt` rejects it at the first hash, which is a
+ * credential path failing at runtime over something startup could have caught.
+ *
+ * @param password - The configured password group, if any.
+ * @throws If either parameter is below its floor.
+ */
+function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['password']): void {
+  const blockSize = password?.blockSize
+  if (blockSize !== undefined && blockSize < 8) {
+    throw new Error(
+      `[BymaxAuthModule] password.blockSize must be at least 8 (current: ${blockSize}). ` +
+        `scrypt's memory cost is 128 * N * r, so a smaller block size divides the memory ` +
+        `hardness that password.costFactor's floor exists to guarantee.`
+    )
+  }
+
+  const parallelization = password?.parallelization
+  if (parallelization !== undefined && parallelization < 1) {
+    throw new Error(
+      `[BymaxAuthModule] password.parallelization must be at least 1 ` +
+        `(current: ${parallelization}).`
+    )
+  }
+}
+
+/**
+ * Bounds the two MFA parameters that decide how much a second factor is worth.
+ *
+ * `totpWindow` is counted in 30-second steps on either side of now, so the number of codes
+ * valid at any moment is `2 * totpWindow + 1`. At the default of 1 that is three; at 60 it
+ * is 121, and a six-digit code is then a hundred times easier to guess than the digits
+ * suggest. The ceiling here is deliberately generous — it is not a recommendation, it is the
+ * line past which the value is a mistake rather than a tolerance for clock skew.
+ *
+ * `recoveryCodeCount` of zero enrols an account with no recovery path at all: lose the
+ * authenticator and the account is gone, with the library reporting nothing wrong.
+ *
+ * @param mfa - The configured MFA group, if any.
+ * @throws If either value falls outside its range.
+ */
+function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): void {
+  const totpWindow = mfa?.totpWindow
+  if (totpWindow !== undefined && (totpWindow < 0 || totpWindow > 10)) {
+    throw new Error(
+      `[BymaxAuthModule] mfa.totpWindow must be between 0 and 10 inclusive ` +
+        `(current: ${totpWindow}). The window is counted in 30-second steps on either side ` +
+        `of now, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 recommends ` +
+        `at most one step of tolerance; the default of 1 accepts three codes.`
+    )
+  }
+
+  const recoveryCodeCount = mfa?.recoveryCodeCount
+  if (recoveryCodeCount !== undefined && (recoveryCodeCount < 1 || recoveryCodeCount > 50)) {
+    throw new Error(
+      `[BymaxAuthModule] mfa.recoveryCodeCount must be between 1 and 50 inclusive ` +
+        `(current: ${recoveryCodeCount}). Zero enrols an account with no way back if the ` +
+        `authenticator is lost.`
     )
   }
 }

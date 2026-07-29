@@ -681,6 +681,18 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > enrolled users have had time to authenticate at least once.
 
 > [!IMPORTANT]
+> **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow`
+> must be `0..=10`: the window counts 30-second steps on _either_ side of now, so `2n + 1`
+> codes are valid at once — three at the default of 1, but 121 at 60, which makes a six-digit
+> code a hundred times easier to guess while the configuration still reads as "MFA enabled".
+> `mfa.recoveryCodeCount` must be `1..=50`, because zero enrols an account with no way back
+> if the authenticator is lost. `password.blockSize` must be at least 8 and
+> `password.parallelization` at least 1: scrypt's memory cost is `128 * N * r`, so a smaller
+> block size divides the hardness that `password.costFactor`'s floor exists to guarantee —
+> invisibly, since the bounded parameter is still intact. `rust-auth` enforces the identical
+> ranges.
+
+> [!IMPORTANT]
 > `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token
 > epoch readable. The epoch is what makes a stateless access token revocable: a password reset
 > advances it and every token stamped below it stops verifying — but only while the bumped value
