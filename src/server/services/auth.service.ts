@@ -331,26 +331,47 @@ export class AuthService {
   /**
    * Logs out a dashboard user by revoking the access token and deleting the refresh session.
    *
-   * @param accessToken - Raw JWT access token (used to extract `jti` for revocation).
+   * The route is deliberately **not** behind the access-token guard. The overwhelmingly
+   * common case is a user who comes back after the 15-minute access token expired and clicks
+   * "sign out": refusing that request leaves the refresh session — the long-lived credential
+   * logout exists to kill — alive for its full lifetime, on a device the user just told the
+   * system to sign out. The refresh token is the credential that authorizes this operation,
+   * and possession of it is what the caller proves.
+   *
+   * The owner is read from the stored session rather than from the access token's claims, so
+   * an absent, expired or forged access token cannot name a different user's session. The
+   * access token is still *verified* (signature and pinned algorithm) before its `jti` is
+   * blacklisted, only skipping the expiry check — reading it unverified would let a caller
+   * blacklist someone else's access token by naming its id.
+   *
+   * @param accessToken - Raw JWT access token. Optional in practice: absent or expired is the
+   *   normal case, and only a signature-valid token contributes a blacklist entry.
    * @param rawRefreshToken - Raw opaque refresh token (session key is derived from its hash).
-   * @param userId - The authenticated user's ID (for hook context).
+   * @returns The id of the user whose session was revoked, or `''` when no live session
+   *   matched the presented refresh token (already logged out, or expired).
    */
-  async logout(accessToken: string, rawRefreshToken: string, userId: string): Promise<void> {
-    this.logger.log(`logout: userId=${userId}`)
-    // Decode without verifying — the token may be expired at logout time.
+  async logout(accessToken: string, rawRefreshToken: string): Promise<string> {
+    // The stored session names its owner. Presenting the refresh token proves possession;
+    // the record proves whose it is. Claims from an unverified token would not.
+    const sessionHash = sha256(rawRefreshToken)
+    const userId = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    this.logger.log(`logout: userId=${userId || '(no live session)'}`)
+
+    // Verify signature and algorithm but not expiry: an expired token is the normal case here,
+    // a forged one must not be able to blacklist an id it does not own.
     try {
-      const payload = this.tokenManager.decodeToken(accessToken)
+      const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
       const now = Math.floor(Date.now() / 1000)
       const remainingTtl = payload.exp - now
       if (remainingTtl > 0) {
         await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
       }
     } catch {
-      // Malformed token — no revocation entry needed.
+      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
+      // The refresh session below is revoked either way, which is the part that matters.
     }
 
     // Delete the refresh token key — always required for auth security.
-    const sessionHash = sha256(rawRefreshToken)
     await this.redis.del(`rt:${sessionHash}`)
 
     // …and the rotation grace pointer for the same hash. A token presented at logout may
@@ -367,7 +388,7 @@ export class AuthService {
     // internal DEL will be a no-op (Redis DEL is idempotent when key is absent).
     // SESSION_NOT_FOUND: session was evicted, already revoked, or the refresh token
     // does not belong to this user — in all cases authentication is already invalidated.
-    if (this.options.sessions.enabled) {
+    if (this.options.sessions.enabled && userId) {
       await this.sessionService.revokeSession(userId, sessionHash).catch((err: unknown) => {
         const errCode =
           err instanceof AuthException
@@ -379,13 +400,17 @@ export class AuthService {
       })
     }
 
-    if (this.hooks?.afterLogout) {
+    // The hook names the user who was signed out, so it only fires when the session told us
+    // who that was. A logout for an already-gone session has nobody to name.
+    if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
           this.logger.error('afterLogout hook threw', err)
         }
       )
     }
+
+    return userId
   }
 
   // ---------------------------------------------------------------------------

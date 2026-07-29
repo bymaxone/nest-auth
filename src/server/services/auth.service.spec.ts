@@ -105,7 +105,8 @@ const mockTokenManager = {
   issueTokens: jest.fn(),
   issueMfaTempToken: jest.fn(),
   reissueTokens: jest.fn(),
-  decodeToken: jest.fn()
+  decodeToken: jest.fn(),
+  verifyIgnoringExpiry: jest.fn()
 }
 
 const mockBruteForce = {
@@ -119,7 +120,8 @@ const mockRedis = {
   get: jest.fn(),
   set: jest.fn(),
   del: jest.fn(),
-  setnx: jest.fn()
+  setnx: jest.fn(),
+  readSessionOwner: jest.fn()
 }
 
 const mockOtpService = {
@@ -843,16 +845,22 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('logout', () => {
+    beforeEach(() => {
+      // The stored session names its owner — logout reads it from there rather than from the
+      // access token's claims, so an absent or expired token cannot name someone else's.
+      mockRedis.readSessionOwner.mockResolvedValue(USER.id)
+    })
+
     // Verifies that logout revokes the JWT jti in Redis with the correct key and a positive TTL.
     it('should blacklist the JWT jti and delete the refresh session', async () => {
       const jti = 'some-jti'
       const exp = Math.floor(Date.now() / 1000) + 900
-      mockTokenManager.decodeToken.mockReturnValue({ jti, sub: 'user-1', exp })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti, sub: 'user-1', exp })
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       expect(mockRedis.set).toHaveBeenCalledWith(`rv:${jti}`, '1', expect.any(Number))
       const ttl = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
@@ -863,7 +871,7 @@ describe('AuthService', () => {
 
     // Verifies that redis.set is NOT called when the access token is already expired at logout time.
     it('should skip the revocation redis.set when the token is already expired', async () => {
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'expired-jti',
         sub: 'user-1',
         exp: Math.floor(Date.now() / 1000) - 10 // expired 10 s ago
@@ -871,7 +879,7 @@ describe('AuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:/))
@@ -883,7 +891,7 @@ describe('AuthService', () => {
     it('should NOT write a revocation entry when remainingTtl is exactly zero', async () => {
       const fixedNowMs = 1_700_000_000_000
       const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(fixedNowMs)
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'edge-jti',
         sub: 'user-1',
         exp: Math.floor(fixedNowMs / 1000) // remainingTtl = exp - now = 0
@@ -891,7 +899,7 @@ describe('AuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       expect(mockRedis.set).not.toHaveBeenCalled()
       nowSpy.mockRestore()
@@ -904,7 +912,7 @@ describe('AuthService', () => {
     // still mint a fresh session for the rest of its window. The platform plane already clears
     // its `prp:` twin, and rust-auth clears the same pointer.
     it('should delete the rotation grace pointer alongside the refresh key', async () => {
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'jti-grace',
         sub: 'user-1',
         exp: Math.floor(Date.now() / 1000) + 300
@@ -913,7 +921,7 @@ describe('AuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       const hash = createHash('sha256').update('raw-refresh').digest('hex')
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hash}`)
@@ -923,7 +931,7 @@ describe('AuthService', () => {
     // Scenario: any logout. Expected: an info log carrying the userId. Why: pins the log
     // template (line 276) so blanking it to '' is caught.
     it('should log the userId on logout', async () => {
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'some-jti',
         sub: 'user-1',
         exp: Math.floor(Date.now() / 1000) + 900
@@ -933,26 +941,87 @@ describe('AuthService', () => {
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       expect(logSpy).toHaveBeenCalledWith('logout: userId=user-1')
       logSpy.mockRestore()
     })
 
     // Verifies that logout resolves successfully even when the access token is malformed.
-    it('should not throw when decodeToken fails (malformed token)', async () => {
-      mockTokenManager.decodeToken.mockImplementation(() => {
+    // Scenario: the common one — the user comes back after their 15-minute access token
+    // expired and clicks "sign out". Expected: the refresh session is revoked. Why: the route
+    // used to sit behind the access-token guard, so this request answered 401 and `logout`
+    // never ran — the refresh token, the long-lived credential logout exists to kill, stayed
+    // valid for its full seven days on a device the user had just signed out. The access
+    // token here is verified but its expiry waived, so its `jti` is still blacklisted.
+    it('should revoke the session when the access token has expired', async () => {
+      const expiredButSigned = { jti: 'jti-expired', sub: USER.id, exp: 1 }
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue(expiredButSigned)
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await expect(service.logout('expired.jwt', 'raw-refresh')).resolves.toBe(USER.id)
+
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:[0-9a-f]{64}$/))
+      // Nothing to blacklist: the token's remaining lifetime is already zero.
+      expect(mockRedis.set).not.toHaveBeenCalledWith('rv:jti-expired', '1', expect.any(Number))
+    })
+
+    // Scenario: the owner is taken from the STORED session, never from the token's claims.
+    // Expected: the session revoked is the one the refresh token names, whatever `sub` says.
+    // Why: the route is public now, so `sub` is only as trustworthy as the signature — and
+    // the whole point of allowing an expired token is that it may be missing entirely.
+    it('should take the session owner from the stored record, not the token claims', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('real-owner')
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        jti: 'j',
+        sub: 'someone-else',
+        exp: Math.floor(Date.now() / 1000) + 900
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await expect(service.logout('access.jwt', 'raw-refresh')).resolves.toBe('real-owner')
+      expect(mockHooks.afterLogout).toHaveBeenCalledWith('real-owner', expect.anything())
+    })
+
+    // Scenario: an access token that is absent, malformed, or signed by a secret nobody holds.
+    // Expected: logout still completes and still revokes the refresh session. Why: the access
+    // token only contributes a blacklist entry; the refresh session is the credential logout
+    // exists to kill, and refusing over an unusable access token is what left it alive.
+    it('should still revoke the session when the access token cannot be verified', async () => {
+      mockTokenManager.verifyIgnoringExpiry.mockImplementation(() => {
         throw new Error('Malformed')
       })
       mockRedis.del.mockResolvedValue(undefined)
 
-      await expect(service.logout('bad.token', 'refresh', 'user-1')).resolves.toBeUndefined()
+      await expect(service.logout('bad.token', 'refresh')).resolves.toBe(USER.id)
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:[0-9a-f]{64}$/))
+      // …and nothing was blacklisted, since no verified jti was available.
+      expect(mockRedis.set).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^rv:/),
+        '1',
+        expect.any(Number)
+      )
+    })
+
+    // Scenario: a refresh token that matches no live session — already logged out, or expired
+    // while the user was away. Expected: no throw, no hook, and the caller learns nothing.
+    it('should complete quietly when no live session matches the refresh token', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('')
+      mockTokenManager.verifyIgnoringExpiry.mockImplementation(() => {
+        throw new Error('Malformed')
+      })
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await expect(service.logout('', 'refresh')).resolves.toBe('')
+      expect(mockHooks.afterLogout).not.toHaveBeenCalled()
     })
 
     // Verifies that an error thrown by the afterLogout hook is logged and does not propagate (fire-and-forget).
     it('should log and swallow afterLogout hook errors (fire-and-forget)', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'some-jti',
         sub: 'user-1',
         exp: Math.floor(Date.now() / 1000) + 900
@@ -961,7 +1030,7 @@ describe('AuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockRejectedValue(new Error('hook error'))
 
-      await service.logout('access.token', 'raw-refresh', 'user-1')
+      await service.logout('access.token', 'raw-refresh')
 
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
@@ -1633,12 +1702,12 @@ describe('AuthService', () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
-      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
       mockSessionService.revokeSession.mockResolvedValue(undefined)
       mockHooks.afterLogout.mockResolvedValue(undefined)
 
       // Act
-      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert
       expect(mockSessionService.revokeSession).toHaveBeenCalledTimes(1)
@@ -1653,7 +1722,7 @@ describe('AuthService', () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
-      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti2', exp: 9_999_999_999 })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti2', exp: 9_999_999_999 })
       mockSessionService.revokeSession.mockRejectedValue(
         new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
       )
@@ -1662,7 +1731,7 @@ describe('AuthService', () => {
 
       // Act & Assert
       await expect(
-        sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+        sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
       ).resolves.not.toThrow()
 
       // SESSION_NOT_FOUND must be swallowed silently — the cleanup-failed warning must NOT fire.
@@ -1677,14 +1746,14 @@ describe('AuthService', () => {
       // Arrange
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
-      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti3', exp: 9_999_999_999 })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti3', exp: 9_999_999_999 })
       const otherError = new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       mockSessionService.revokeSession.mockRejectedValue(otherError)
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       // Act
-      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert — warning is logged but logout still completes without throwing
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
@@ -1696,13 +1765,13 @@ describe('AuthService', () => {
       // Arrange — plain Error covers the `err instanceof AuthException` false branch
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.set.mockResolvedValue(undefined)
-      mockTokenManager.decodeToken.mockReturnValue({ jti: 'jti4', exp: 9_999_999_999 })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti4', exp: 9_999_999_999 })
       mockSessionService.revokeSession.mockRejectedValue(new Error('unexpected redis failure'))
       mockHooks.afterLogout.mockResolvedValue(undefined)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       // Act
-      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token', USER.id)
+      await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
 
       // Assert — warning is logged for any non-SESSION_NOT_FOUND rejection
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session cleanup failed'))
@@ -1839,17 +1908,16 @@ describe('AuthService', () => {
     // the afterLogout hook. Why: covers the `this.hooks?.afterLogout` short-circuit branch
     // (line 312) where `this.hooks` is null.
     it('should logout without invoking the afterLogout hook when hooks is null', async () => {
-      mockTokenManager.decodeToken.mockReturnValue({
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'some-jti',
         sub: 'user-1',
         exp: Math.floor(Date.now() / 1000) + 900
       })
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.readSessionOwner.mockResolvedValue('user-1')
 
-      await expect(
-        noHooksService.logout('access.token', 'raw-refresh', 'user-1')
-      ).resolves.toBeUndefined()
+      await expect(noHooksService.logout('access.token', 'raw-refresh')).resolves.toBe('user-1')
       expect(mockHooks.afterLogout).not.toHaveBeenCalled()
     })
 

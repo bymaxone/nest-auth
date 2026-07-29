@@ -743,6 +743,35 @@ export class AuthRedisService {
   }
 
   /**
+   * Reads the owner recorded on a stored refresh session, or `''` when there is none.
+   *
+   * Logout uses this instead of the access token's `sub`: presenting the refresh token proves
+   * possession, and the stored record proves whose session it is. An access token's claims
+   * cannot serve that purpose when the token is allowed to be absent or expired — and taking
+   * the owner from an unverified token would let a caller aim the revocation at someone else.
+   *
+   * A record that is missing, unparseable, or carries no string `userId` answers `''`: there
+   * is nothing to attribute the logout to, which the caller treats as "no live session".
+   *
+   * @param key - The un-namespaced session key (`rt:{hash}` or `prt:{hash}`).
+   * @returns The recorded user id, or `''`.
+   */
+  async readSessionOwner(key: string): Promise<string> {
+    const raw = await this.get(key)
+    if (raw === null) return ''
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed !== 'object' || parsed === null) return ''
+      const userId = (parsed as Record<string, unknown>)['userId']
+      return typeof userId === 'string' ? userId : ''
+    } catch {
+      // A malformed record names nobody. The session parser reports it on the paths that
+      // need to fail loudly; here the caller only wants an owner or the absence of one.
+      return ''
+    }
+  }
+
+  /**
    * Atomically advances the user's token epoch and returns the new value, invalidating every
    * outstanding access token for that user at once.
    *

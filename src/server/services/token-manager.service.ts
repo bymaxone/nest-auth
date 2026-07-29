@@ -895,6 +895,27 @@ export class TokenManagerService {
    * @throws {@link AuthException} with `TOKEN_INVALID` if the payload is not an
    *   object or lacks required `jti` (string) and `sub` (string) claims.
    */
+  /**
+   * Verifies an access token's signature under the pinned algorithm while **ignoring its
+   * expiry**, returning the payload.
+   *
+   * Exactly one caller wants this: logout. An access token that expired while the user was
+   * away is the normal case there, and refusing the request would leave the refresh session —
+   * the long-lived credential logout exists to kill — alive for its whole lifetime. But the
+   * signature still has to hold: the payload's `jti` decides which token gets blacklisted, so
+   * reading it unverified would let a caller revoke an access token they do not own by naming
+   * its id. Retired signing secrets are accepted, as everywhere else.
+   *
+   * @param token - The raw access token.
+   * @returns The verified payload, expiry aside.
+   * @throws Whatever the verifier throws when no configured secret accepts the token.
+   */
+  verifyIgnoringExpiry(token: string): DashboardJwtPayload {
+    return verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token, {
+      ignoreExpiration: true
+    })
+  }
+
   decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload {
     const raw = this.jwtService.decode(token)
 

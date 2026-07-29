@@ -285,6 +285,36 @@ describe('AuthRedisService', () => {
   // rotateRefreshSession
   // ---------------------------------------------------------------------------
 
+  describe('readSessionOwner', () => {
+    // Scenario: a live session record. Expected: its `userId`. Why: logout reads the owner
+    // from here rather than from the access token's claims — the route accepts an absent or
+    // expired token, so its `sub` is either missing or only as trustworthy as its signature,
+    // and taking the owner from it would let a caller aim a revocation at someone else.
+    it('should return the owner recorded on the session', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', role: 'member' }))
+
+      await expect(service.readSessionOwner('rt:abc')).resolves.toBe('user-1')
+      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('rt:abc'))
+    })
+
+    // Scenario: every shape that names nobody. Expected: the empty string, never a throw.
+    // Why: the caller treats it as "no live session" and completes the logout quietly — a
+    // throw here would turn a missing session into a 500 on a route that must always answer
+    // the same way, and an exception would also tell the caller a record existed.
+    it.each([
+      ['a missing key', null],
+      ['unparseable JSON', '{not-json'],
+      ['a non-object record', '42'],
+      ['a null record', 'null'],
+      ['a record with no userId', '{"role":"member"}'],
+      ['a record whose userId is not a string', '{"userId":123}']
+    ])('should answer the empty string for %s', async (_label, stored) => {
+      mockRedis.get.mockResolvedValue(stored)
+
+      await expect(service.readSessionOwner('rt:abc')).resolves.toBe('')
+    })
+  })
+
   describe('rotateRefreshSession', () => {
     const BUNDLE = {
       kind: 'dashboard' as const,

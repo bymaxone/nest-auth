@@ -230,15 +230,13 @@ describe('AuthController', () => {
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 
-      await controller.logout(JWT_PAYLOAD as never, mockReq, mockRes)
+      await controller.logout(mockReq, mockRes)
 
       expect(mockTokenDelivery.extractAccessToken).toHaveBeenCalledWith(mockReq)
       expect(mockTokenDelivery.extractRefreshToken).toHaveBeenCalledWith(mockReq)
-      expect(mockAuthService.logout).toHaveBeenCalledWith(
-        'access.jwt',
-        'raw-refresh-token',
-        JWT_PAYLOAD.sub
-      )
+      // No user id: the service reads the session's owner from the stored record, because
+      // this route no longer requires a valid access token to carry one.
+      expect(mockAuthService.logout).toHaveBeenCalledWith('access.jwt', 'raw-refresh-token')
       expect(mockTokenDelivery.clearAuthSession).toHaveBeenCalledWith(mockRes, mockReq)
     })
 
@@ -249,9 +247,9 @@ describe('AuthController', () => {
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 
-      await controller.logout(JWT_PAYLOAD as never, mockReq, mockRes)
+      await controller.logout(mockReq, mockRes)
 
-      expect(mockAuthService.logout).toHaveBeenCalledWith('', '', JWT_PAYLOAD.sub)
+      expect(mockAuthService.logout).toHaveBeenCalledWith('', '')
     })
   })
 

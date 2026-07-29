@@ -130,23 +130,28 @@ export class AuthController {
   }
 
   /**
-   * Logs out the authenticated user by revoking tokens and clearing the session.
+   * Logs out the caller by revoking their refresh session and clearing the auth cookies.
    *
-   * @param user - JWT payload from the verified access token.
+   * Deliberately **not** behind the access-token guard. The common case is a user returning
+   * after the 15-minute access token expired and clicking "sign out" — under the guard that
+   * request answered 401, so `logout` never ran and the refresh session stayed live for its
+   * full seven days on a device the user had just told the system to sign out. The refresh
+   * token is the credential that authorizes this, and the service reads the session's owner
+   * from the stored record rather than from the access token's claims.
+   *
+   * Always 204: a caller presenting a token for an already-gone session gets their cookies
+   * cleared and learns nothing about whether a session existed.
+   *
    * @param req - Incoming request (used to extract tokens).
    * @param res - Response object (passthrough — used to clear cookies).
    */
-  @UseGuards(JwtAuthGuard)
+  @Public()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
-  async logout(
-    @CurrentUser() user: DashboardJwtPayload,
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response
-  ): Promise<void> {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
     const accessToken = this.tokenDelivery.extractAccessToken(req) ?? ''
     const rawRefreshToken = this.tokenDelivery.extractRefreshToken(req) ?? ''
-    await this.authService.logout(accessToken, rawRefreshToken, user.sub)
+    await this.authService.logout(accessToken, rawRefreshToken)
     this.tokenDelivery.clearAuthSession(res, req)
   }
 

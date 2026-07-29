@@ -1273,7 +1273,11 @@ describe('TokenManagerService', () => {
 
       await service.verifyMfaTempToken(FIXED_JWT)
 
-      expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, { algorithms: ['HS256'] })
+      expect(mockJwtService.verify).toHaveBeenCalledWith(FIXED_JWT, {
+        algorithms: ['HS256'],
+        // Expiry IS checked here — only logout waives it, and only for the access token.
+        ignoreExpiration: false
+      })
     })
 
     // Scenario: Redis returns null (token consumed/expired) AND the JWT sub is also null.

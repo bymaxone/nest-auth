@@ -98,13 +98,13 @@ describe('mfa flow (E2E)', () => {
       // Capture the verify response separately for assertions.
       ;(setupResponseBody as { verifyStatus: number }).verifyStatus = verify.status
 
-      // Step 5 — logout. The access token used here remains valid up to its TTL
-      // for the consumer's perspective but the refresh session is revoked.
-      const logout = await request(app.getHttpServer())
-        .post('/logout')
+      // Step 5 — probe the PRE-ENABLE access token against a route that still requires a live
+      // one. `/logout` is deliberately public (a user whose token expired must still be able
+      // to sign out), so it is no longer a probe for token validity — `/me` is.
+      const probe = await request(app.getHttpServer())
+        .get('/me')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ refreshToken })
-      logoutStatus = logout.status
+      logoutStatus = probe.status
     })
 
     afterAll(async () => {
@@ -163,9 +163,8 @@ describe('mfa flow (E2E)', () => {
     // Verifies that the PRE-enable access token is refused once MFA is enabled. Enabling a
     // second factor advances the token epoch: every token issued before that moment is
     // stamped `mfaEnabled: false` and would clear the MFA gate for its remaining lifetime —
-    // at the exact moment the user enabled MFA because they suspected that theft. The logout
-    // attempted with the old token therefore gets 401, not 204; the session it referenced is
-    // already gone with the rest.
+    // at the exact moment the user enabled MFA because they suspected that theft. Probed with
+    // `/me`, which requires a live access token; `/logout` no longer does, by design.
     it('should refuse the pre-enable access token after MFA is enabled', () => {
       // Arrange — performed in beforeAll.
 

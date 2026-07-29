@@ -28,23 +28,32 @@ import type { ResolvedOptions } from '../config/resolved-options'
  * @param jwtService - The Nest JWT service, configured with the current secret.
  * @param options - Resolved module options, for the algorithm and the retired secrets.
  * @param token - The compact JWT to verify.
+ * @param options.ignoreExpiration - Accept a token whose `exp` has passed, while still
+ *   requiring a valid signature under the pinned algorithm. Exactly one caller wants this:
+ *   logout, which must work for a session whose access token expired while the user was away
+ *   — the point of logging out is to kill the long-lived refresh credential, and refusing the
+ *   request leaves it alive for its full lifetime. Reading such a token unverified instead
+ *   would be worse: `jti` would be attacker-chosen, so a caller could blacklist someone
+ *   else's access token by naming its id.
  * @returns The verified payload.
  * @throws Whatever `JwtService.verify` throws when no secret accepts the token.
  */
 export function verifyWithRotation<T extends object>(
   jwtService: JwtService,
   options: ResolvedOptions,
-  token: string
+  token: string,
+  { ignoreExpiration = false }: { ignoreExpiration?: boolean } = {}
 ): T {
   const algorithms = [options.jwt.algorithm]
+  const base = { algorithms, ignoreExpiration }
 
   try {
-    return jwtService.verify<T>(token, { algorithms })
+    return jwtService.verify<T>(token, base)
   } catch (currentFailure: unknown) {
     const previous = options.jwt.previousSecrets ?? []
     for (const secret of previous) {
       try {
-        return jwtService.verify<T>(token, { algorithms, secret })
+        return jwtService.verify<T>(token, { ...base, secret })
       } catch {
         // Try the next retired secret. A token nobody accepts falls out of the loop and the
         // original failure is rethrown, so the caller sees the same error it always did.
