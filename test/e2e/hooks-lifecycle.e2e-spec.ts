@@ -311,6 +311,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
         const setup = await request(fixture.app.getHttpServer())
           .post('/mfa/setup')
           .set('Authorization', `Bearer ${accessToken}`)
+          .send({ password: 'MfaHookPass1!' })
         const secret = (setup.body as { secret: string }).secret
 
         const verify = await request(fixture.app.getHttpServer())

@@ -99,6 +99,7 @@ async function enableMfa(): Promise<MfaEnabledFixture> {
   const setup = await request(boot.app.getHttpServer())
     .post('/mfa/setup')
     .set('Authorization', `Bearer ${registerAccess}`)
+    .send({ password: password })
   expect([200, 201]).toContain(setup.status)
   const secret = (setup.body as { secret: string }).secret
 
@@ -196,6 +197,7 @@ describe('mfa disable flow (E2E)', () => {
       const setup = await request(boot.app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${registerAccess}`)
+        .send({ password: password })
       const secret = (setup.body as { secret: string }).secret
       await request(boot.app.getHttpServer())
         .post('/mfa/verify-enable')

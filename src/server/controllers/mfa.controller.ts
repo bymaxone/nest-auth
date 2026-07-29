@@ -26,6 +26,7 @@ import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
+import { MfaSetupDto } from '../dto/mfa-setup.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -178,8 +179,11 @@ export class MfaController {
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
-  async setup(@CurrentUser() user: DashboardJwtPayload): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub)
+  async setup(
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: MfaSetupDto
+  ): Promise<MfaSetupResult> {
+    return this.mfaService.setup(user.sub, 'dashboard', dto.password)
   }
 
   /**

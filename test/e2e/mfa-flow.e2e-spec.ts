@@ -78,6 +78,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${accessToken}`)
+        .send({ password: 'SetupSecret123!' })
       setupResponseBody = setup.body as Record<string, unknown>
       secret = setupResponseBody['secret'] as string
       // Recovery codes are returned at the SETUP step (single-use display per the
@@ -211,6 +212,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${initialAccessToken}`)
+        .send({ password: 'TotpSecret456!' })
       secret = setup.body.secret as string
 
       // Use the current step's TOTP for the enable step.
@@ -335,6 +337,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${initialAccessToken}`)
+        .send({ password: 'RecoverySecret789!' })
       const secret = setup.body.secret as string
       // Step 2 — save the first recovery code for use in the challenge.
       const recoveryCodes = setup.body.recoveryCodes as string[]

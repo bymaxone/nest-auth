@@ -162,9 +162,9 @@ describe('MfaController', () => {
     it('should call mfaService.setup with the user sub and return the setup result', async () => {
       mockMfaService.setup.mockResolvedValue(MFA_SETUP_RESULT)
 
-      const result = await controller.setup(JWT_PAYLOAD as never)
+      const result = await controller.setup(JWT_PAYLOAD as never, { password: 'pw' })
 
-      expect(mockMfaService.setup).toHaveBeenCalledWith(JWT_PAYLOAD.sub)
+      expect(mockMfaService.setup).toHaveBeenCalledWith(JWT_PAYLOAD.sub, 'dashboard', 'pw')
       expect(result).toBe(MFA_SETUP_RESULT)
     })
 
@@ -174,7 +174,9 @@ describe('MfaController', () => {
         new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
       )
 
-      await expect(controller.setup(JWT_PAYLOAD as never)).rejects.toThrow(AuthException)
+      await expect(controller.setup(JWT_PAYLOAD as never, { password: 'pw' })).rejects.toThrow(
+        AuthException
+      )
     })
   })
 

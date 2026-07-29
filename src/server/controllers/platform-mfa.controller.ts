@@ -18,6 +18,7 @@ import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
+import { MfaSetupDto } from '../dto/mfa-setup.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
@@ -81,8 +82,11 @@ export class PlatformMfaController {
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
-  async setup(@CurrentUser() user: PlatformJwtPayload): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'platform')
+  async setup(
+    @CurrentUser() user: PlatformJwtPayload,
+    @Body() dto: MfaSetupDto
+  ): Promise<MfaSetupResult> {
+    return this.mfaService.setup(user.sub, 'platform', dto.password)
   }
 
   /**

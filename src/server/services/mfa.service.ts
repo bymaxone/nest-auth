@@ -471,7 +471,8 @@ export class MfaService {
    */
   async setup(
     userId: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    password?: string
   ): Promise<MfaSetupResult> {
     if (context === 'platform' && !this.platformUserRepo) {
       // Misconfiguration: caller asked for a platform setup but the host
@@ -484,6 +485,21 @@ export class MfaService {
 
     const user = await this.fetchUserForContext(context, userId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
+
+    // Re-authenticate before minting a factor. Enabling MFA is a change to how the account
+    // authenticates, and an access token alone is not proof of who is asking: a token lifted
+    // by XSS or a shared machine could enrol an authenticator the attacker holds, and the
+    // enable then invalidates the sessions and bumps the epoch — locking the real owner out
+    // of the account they still know the password to, with the recovery codes displayed only
+    // to the attacker. ASVS requires re-authentication before changing an authentication
+    // factor; `disable` already honours that by demanding a TOTP code. Gating `setup` rather
+    // than `verify-enable` means the attacker cannot even obtain a secret they control, and
+    // it costs the user one prompt at the natural moment.
+    //
+    // An account with no local password — provisioned purely through OAuth — has nothing to
+    // re-authenticate against here, and refusing it would make MFA unreachable for those
+    // users. Their credential is the provider's, which this library cannot re-verify inline.
+    await this.assertReauthenticated(user.passwordHash, password)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
     const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
@@ -1150,6 +1166,31 @@ export class MfaService {
     if (!isNew) return false
 
     return true
+  }
+
+  /**
+   * Requires the caller to re-prove the account password before a factor is changed.
+   *
+   * @param passwordHash - The account's stored hash, or `null` for an OAuth-only account.
+   * @param password - The password the caller submitted, if any.
+   * @throws {@link AuthException} `INVALID_CREDENTIALS` when the account has a password and
+   *   the submitted one is absent or wrong. The code is deliberately the same one a failed
+   *   login returns: an attacker holding a stolen token learns nothing from it beyond what
+   *   they already knew.
+   */
+  private async assertReauthenticated(
+    passwordHash: string | null,
+    password?: string
+  ): Promise<void> {
+    if (passwordHash === null) return
+
+    // A missing password still pays the KDF, so "no password sent" and "wrong password" take
+    // the same time — otherwise the response separates them for free.
+    const supplied = password ?? ''
+    const matches = await this.passwordService.compare(supplied, passwordHash)
+    if (!matches) {
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
   }
 
   /**

@@ -106,6 +106,7 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   const setup = await request(boot.app.getHttpServer())
     .post('/mfa/setup')
     .set('Authorization', `Bearer ${registerAccess}`)
+    .send({ password: password })
   // NestJS default `@Post` status is 201; the route does not override it
   // via `@HttpCode`, so the assertion is exact rather than the looser
   // `[200, 201].toContain(...)` we previously had.
@@ -388,6 +389,7 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         // NestJS default `@Post` status is 201; the route does not override it
         // via `@HttpCode`, so the assertion is exact rather than the looser
         // `[200, 201].toContain(...)` we previously had.
@@ -453,6 +455,7 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         const secret = (setup.body as { secret: string }).secret
         // ONE captured base for every code below — see the shared helper for why a per-call
         // clock read makes this flow flaky across a 30-second step boundary.
@@ -510,6 +513,7 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         const secret = (setup.body as { secret: string }).secret
         // ONE captured base for every code below — see the shared helper for why a per-call
         // clock read makes this flow flaky across a 30-second step boundary.

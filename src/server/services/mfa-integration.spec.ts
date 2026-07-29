@@ -161,6 +161,9 @@ const mockHooks = {}
 // Suite bootstrap
 // ---------------------------------------------------------------------------
 
+/** The account password every enrolment test re-proves. */
+const PASSWORD = 'correct horse battery staple'
+
 describe('MFA — integration smoke tests', () => {
   let service: MfaService
 
@@ -203,10 +206,12 @@ describe('MFA — integration smoke tests', () => {
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
         {
+          // `compare` answers true: enrolment re-proves the account password, and these
+          // smoke tests drive the flow with the correct one.
           provide: PasswordService,
           useValue: {
             hash: jest.fn().mockResolvedValue('$scrypt$hashed'),
-            compare: jest.fn().mockResolvedValue(false)
+            compare: jest.fn().mockResolvedValue(true)
           }
         },
         { provide: SessionService, useValue: mockSessionService },
@@ -242,7 +247,7 @@ describe('MFA — integration smoke tests', () => {
     // setup() then reads back the data it just stored
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
-    const setupResult = await service.setup('user-1')
+    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD)
     expect(setupResult.secret).toBeDefined()
     expect(setupResult.qrCodeUri).toContain('TestApp')
     expect(setupResult.recoveryCodes).toHaveLength(2)
@@ -305,7 +310,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setIfAbsent.mockResolvedValue(false)
     mockRedis.get.mockResolvedValue(JSON.stringify(storedSetupData))
 
-    const result = await service.setup('user-1')
+    const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
     // Result must reflect the STORED secret — not a freshly generated one.
     expect(result.secret).toBe(storedBase32)

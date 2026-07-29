@@ -169,6 +169,9 @@ const mockSessionService = {
 // Suite
 // ---------------------------------------------------------------------------
 
+/** The account password every enrolment test re-proves. */
+const PASSWORD = 'correct horse battery staple'
+
 describe('MfaService', () => {
   let service: MfaService
 
@@ -196,7 +199,9 @@ describe('MfaService', () => {
     mockBruteForce.recordFailure.mockResolvedValue(undefined)
     mockBruteForce.resetFailures.mockResolvedValue(undefined)
     mockPasswordService.hash.mockResolvedValue('$scrypt$hashed')
-    mockPasswordService.compare.mockResolvedValue(false)
+    // The ordinary case for the flows under test: the caller re-proved their password.
+    // The negative case arms `false` per test.
+    mockPasswordService.compare.mockResolvedValue(true)
     mockEmailProvider.sendMfaEnabledNotification.mockResolvedValue(undefined)
     mockEmailProvider.sendMfaDisabledNotification.mockResolvedValue(undefined)
 
@@ -248,10 +253,69 @@ describe('MfaService', () => {
   // setup
   // ---------------------------------------------------------------------------
 
+  describe('setup — re-authentication', () => {
+    // Scenario: an attacker holding a stolen access token starts enrolment without the
+    // password. Expected: refused before any secret is minted. Why: enabling MFA changes how
+    // the account authenticates, and a token alone is not proof of who is asking. Without
+    // this, a token lifted by XSS or from a shared machine could enrol an authenticator the
+    // attacker holds — and the enable then invalidates every session and bumps the epoch,
+    // locking the real owner out of an account they still know the password to, with the
+    // recovery codes displayed only to the attacker. ASVS requires re-authentication before
+    // an authentication factor changes; `disable` already demanded a TOTP code.
+    it('should refuse enrolment without the account password', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.setup('user-1')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+      // Nothing was minted or claimed — the refusal happens before the setup record exists.
+      expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the wrong password. Expected: the same refusal, with the same code a failed
+    // login returns — an attacker holding a stolen token learns nothing they did not know.
+    it('should refuse enrolment with the wrong password', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.setup('user-1', 'dashboard', 'wrong')).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: a missing password still pays the KDF. Expected: `compare` is called either
+    // way. Why: returning early on an absent password would make "no password sent" faster
+    // than "wrong password", separating the two for free.
+    it('should spend the KDF even when no password is supplied', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await service.setup('user-1').catch(() => undefined)
+
+      expect(mockPasswordService.compare).toHaveBeenCalledWith(
+        '',
+        AUTH_USER_MFA_DISABLED.passwordHash
+      )
+    })
+
+    // Scenario: an account provisioned purely through OAuth, which has no local password.
+    // Expected: enrolment proceeds. Why: there is nothing to re-authenticate against, and
+    // refusing would make MFA unreachable for those users — their credential belongs to the
+    // provider, which this library cannot re-verify inline.
+    it('should allow enrolment for an account with no password', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
+      mockRedis.setIfAbsent.mockResolvedValue(true)
+
+      await expect(service.setup('user-1')).resolves.toMatchObject({
+        secret: expect.any(String)
+      })
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+    })
+  })
+
   describe('setup', () => {
     // Verifies that setup returns a valid Base32 TOTP secret, QR URI, and recovery codes.
     it('should return a Base32 secret, qrCodeUri, and recoveryCodes on first call', async () => {
-      const result = await service.setup('user-1')
+      const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
       expect(result.secret).toMatch(/^[A-Z2-7]+$/)
       expect(result.qrCodeUri).toMatch(/^otpauth:\/\/totp\//)
@@ -264,7 +328,7 @@ describe('MfaService', () => {
     // the slice argument mutants (line 242), the '-' join separator (line 244:32) and the
     // toUpperCase->toLowerCase mutant (line 244:20) — all break the canonical format.
     it('should format every recovery code as 6 groups of 4 uppercase hex chars', async () => {
-      const result = await service.setup('user-1')
+      const result = await service.setup('user-1', 'dashboard', PASSWORD)
       for (const code of result.recoveryCodes) {
         expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){5}$/)
       }
@@ -274,7 +338,7 @@ describe('MfaService', () => {
     // exactly 2 hashedCodes. Why: kills the hashedCodes=["Stryker"] prefill (line 232), which
     // would persist 3 hashes instead of 2.
     it('should persist exactly recoveryCodeCount hashed codes in the setup payload', async () => {
-      await service.setup('user-1')
+      await service.setup('user-1', 'dashboard', PASSWORD)
       const payload = mockRedis.setIfAbsent.mock.calls[0]?.[1] as string
       const parsed = JSON.parse(payload) as { hashedCodes: string[] }
       expect(parsed.hashedCodes).toHaveLength(2)
@@ -282,7 +346,7 @@ describe('MfaService', () => {
 
     // Verifies that setup stores the pending setup data in Redis with a 600s TTL.
     it('should store setup data in Redis via setIfAbsent', async () => {
-      await service.setup('user-1')
+      await service.setup('user-1', 'dashboard', PASSWORD)
 
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(
         expect.stringMatching(/^mfa_setup:/),
@@ -297,7 +361,7 @@ describe('MfaService', () => {
     // setup log template (line 385).
     it('should not call redis.set and should log when setIfAbsent succeeds', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.setup('user-1')
+      await service.setup('user-1', 'dashboard', PASSWORD)
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(logSpy).toHaveBeenCalledWith(
         'setup: MFA setup initiated userId=user-1 context=dashboard'
@@ -308,7 +372,7 @@ describe('MfaService', () => {
     // Scenario: setup for a known user. Expected: the Redis setup key is exactly
     // 'mfa_setup:' + HMAC(userId). Why: pins the key template so a blanked key would diverge.
     it('should claim the mfa_setup key derived from the HMAC of the userId', async () => {
-      await service.setup('user-1')
+      await service.setup('user-1', 'dashboard', PASSWORD)
       const expectedKey = `mfa_setup:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
@@ -319,7 +383,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: true })
 
       try {
-        await service.setup('user-1')
+        await service.setup('user-1', 'dashboard', PASSWORD)
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_ALREADY_ENABLED })
@@ -331,7 +395,9 @@ describe('MfaService', () => {
     it('should throw TOKEN_INVALID when user is not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.setup('unknown-user')).rejects.toThrow(AuthException)
+      await expect(service.setup('unknown-user', 'dashboard', PASSWORD)).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Verifies the rare race-condition branch: the fast-path GET returns null
@@ -343,7 +409,7 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(null) // both fast-path and post-setIfAbsent GETs return null
       mockRedis.setIfAbsent.mockResolvedValue(false) // racing request claimed the key first
 
-      const result = await service.setup('user-1')
+      const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
       // Service regenerates and stores new setup data via set()
       expect(mockRedis.set).toHaveBeenCalledWith(
@@ -372,7 +438,7 @@ describe('MfaService', () => {
         .mockResolvedValueOnce(JSON.stringify(winnerSetupData)) // post-setIfAbsent — winner wrote it
       mockRedis.setIfAbsent.mockResolvedValue(false)
 
-      const result = await service.setup('user-1')
+      const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
       expect(result.secret).toBe(winningSecret)
       expect(result.recoveryCodes).toEqual(winningCodes)
@@ -412,7 +478,7 @@ describe('MfaService', () => {
 
       const svc = module.get(MfaService)
       // mockPasswordService.hash is already configured to return '$scrypt$hashed'
-      const result = await svc.setup('user-1')
+      const result = await svc.setup('user-1', 'dashboard', PASSWORD)
 
       // The default count is 8 — verify the service produces the default number of codes
       expect(result.recoveryCodes).toHaveLength(8)
@@ -435,7 +501,7 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       mockPasswordService.hash.mockClear()
 
-      const result = await service.setup('user-1')
+      const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
       expect(result.recoveryCodes).toEqual(existingCodes)
       expect(result.secret).toBe(existingSecret)
@@ -450,9 +516,9 @@ describe('MfaService', () => {
     it('should throw MFA_SETUP_REQUIRED when fast-path Redis payload is corrupted JSON', async () => {
       mockRedis.get.mockResolvedValue('{not-valid-json')
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
       try {
-        await service.setup('user-1')
+        await service.setup('user-1', 'dashboard', PASSWORD)
       } catch (err) {
         expect(err).toBeInstanceOf(AuthException)
         const code = (err as AuthException).getResponse() as { error: { code: string } }
@@ -473,7 +539,7 @@ describe('MfaService', () => {
 
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
     })
 
     // Scenario: a pending-setup record that parses but carries no `hashedCodes`. Expected:
@@ -491,7 +557,7 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
     })
 
     // Scenario: a stored pending-setup value that parses to something that is not an object —
@@ -501,7 +567,7 @@ describe('MfaService', () => {
       async (raw) => {
         mockRedis.get.mockResolvedValue(raw)
 
-        await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+        await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
       }
     )
 
@@ -519,7 +585,7 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
     })
 
     // Scenario: the decrypted plain-code payload is valid JSON but not an array of strings.
@@ -536,7 +602,7 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
     })
   })
 
@@ -1988,7 +2054,7 @@ describe('MfaService', () => {
         mfaRecoveryCodes: []
       })
 
-      const result = await service.setup('admin-1', 'platform')
+      const result = await service.setup('admin-1', 'platform', PASSWORD)
 
       expect(mockPlatformUserRepo.findById).toHaveBeenCalledWith('admin-1')
       expect(mockUserRepo.findById).not.toHaveBeenCalled()
@@ -2021,7 +2087,7 @@ describe('MfaService', () => {
 
       expect.assertions(1)
       try {
-        await serviceWithoutRepo.setup('admin-1', 'platform')
+        await serviceWithoutRepo.setup('admin-1', 'platform', PASSWORD)
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
@@ -2040,7 +2106,7 @@ describe('MfaService', () => {
       })
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
-      await service.setup('admin-1', 'platform')
+      await service.setup('admin-1', 'platform', PASSWORD)
 
       expect(logSpy).toHaveBeenCalledWith(
         'setup: MFA setup initiated userId=admin-1 context=platform'
@@ -2548,7 +2614,7 @@ describe('MfaService', () => {
     // misconfiguration code specifically. Asserting merely "some AuthException" would not
     // distinguish this guard from a later failure on the fall-through path.
     it('should refuse setup for the platform context', async () => {
-      await expect(unwired.setup('admin-1', 'platform')).rejects.toMatchObject({
+      await expect(unwired.setup('admin-1', 'platform', PASSWORD)).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
       })
 
@@ -2584,7 +2650,7 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(null)
       mockRedis.setIfAbsent.mockResolvedValue(true)
 
-      await expect(unwired.setup('user-1', 'dashboard')).resolves.toMatchObject({
+      await expect(unwired.setup('user-1', 'dashboard', PASSWORD)).resolves.toMatchObject({
         secret: expect.any(String)
       })
     })
