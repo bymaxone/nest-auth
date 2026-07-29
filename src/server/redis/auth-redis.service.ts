@@ -284,8 +284,12 @@ export class AuthRedisService {
    *
    * @param key - Application key (namespace prefix is applied automatically).
    */
-  async del(key: string): Promise<void> {
-    await this.redis.del(this.prefix(key))
+  async del(key: string): Promise<boolean> {
+    // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
+    // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
+    // from "someone else already had". Callers that only want the key gone can ignore it.
+    const removed = await this.redis.del(this.prefix(key))
+    return typeof removed === 'number' && removed > 0
   }
 
   /**

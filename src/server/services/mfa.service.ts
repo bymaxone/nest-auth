@@ -751,12 +751,16 @@ export class MfaService {
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
-    // Step 5a: Atomically consume the MFA temp token now that the code is
-    // confirmed valid. Idempotent — concurrent successful submissions
-    // collapse to a benign duplicate (two valid sessions for the same
-    // legitimate user). See TokenManagerService.consumeMfaTempToken for
-    // the security rationale of the split verify/consume design.
-    await this.tokenManager.consumeMfaTempToken(tempTokenJti)
+    // Step 5a: consume the MFA temp token now that the code is confirmed valid — and the
+    // consume must WIN. Two concurrent submissions both observe the marker and both delete
+    // it; without gating on which delete actually removed it, both issue a full session. That
+    // was previously reasoned about as "a benign duplicate for the same legitimate user", but
+    // it is not benign on the recovery-code path: a recovery code's whole security model is
+    // that it is single-use, and this is one code and one token minting two sessions. The
+    // loser is reported as an invalid temp token, which is what it now is.
+    if (!(await this.tokenManager.consumeMfaTempToken(tempTokenJti))) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
 
     // Step 5b: Consume the used recovery code (branch on context to use the correct repo).
     if (usedRecoveryIndex >= 0) {

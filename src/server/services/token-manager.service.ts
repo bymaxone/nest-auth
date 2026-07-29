@@ -1026,7 +1026,7 @@ export class TokenManagerService {
    *
    * @param jti - The `jti` claim returned by {@link verifyMfaTempToken}.
    */
-  async consumeMfaTempToken(jti: string): Promise<void> {
-    await this.redis.del(`mfa:${sha256(jti)}`)
+  async consumeMfaTempToken(jti: string): Promise<boolean> {
+    return await this.redis.del(`mfa:${sha256(jti)}`)
   }
 }

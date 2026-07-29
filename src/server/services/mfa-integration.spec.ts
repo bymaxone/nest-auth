@@ -172,7 +172,11 @@ describe('MFA — integration smoke tests', () => {
     // Default safe returns
     mockRedis.get.mockResolvedValue(null)
     mockRedis.set.mockResolvedValue(undefined)
-    mockRedis.del.mockResolvedValue(undefined)
+    mockRedis.del.mockResolvedValue(true)
+    // The temp-token consume reports whether THIS call removed the marker — the
+    // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
+    // raced us.
+    mockTokenManager.consumeMfaTempToken.mockResolvedValue(true)
     mockRedis.sadd.mockResolvedValue(1)
     mockRedis.srem.mockResolvedValue(1)
     mockRedis.expire.mockResolvedValue(undefined)

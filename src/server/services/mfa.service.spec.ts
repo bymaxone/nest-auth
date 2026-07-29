@@ -180,7 +180,11 @@ describe('MfaService', () => {
     // Default safe mocks — override per-test as needed
     mockRedis.get.mockResolvedValue(null)
     mockRedis.set.mockResolvedValue(undefined)
-    mockRedis.del.mockResolvedValue(undefined)
+    mockRedis.del.mockResolvedValue(true)
+    // The temp-token consume reports whether THIS call removed the marker — the
+    // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
+    // raced us.
+    mockTokenManager.consumeMfaTempToken.mockResolvedValue(true)
     mockRedis.sadd.mockResolvedValue(1)
     mockRedis.srem.mockResolvedValue(1)
     mockRedis.expire.mockResolvedValue(undefined)
@@ -894,6 +898,36 @@ describe('MfaService', () => {
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
         expect.stringMatching(/^[a-f0-9]{64}$/)
       )
+    })
+
+    // Scenario: the temp-token consume loses — another request removed the marker first.
+    // Expected: no session, reported as an invalid temp token. Why: two concurrent challenges
+    // both observe the marker and both delete it. Before this gate both "succeeded", which was
+    // reasoned about as a benign duplicate for the same legitimate user — but on the
+    // recovery-code path it is one code and one token minting TWO sessions, and a recovery
+    // code's whole security model is that it is single-use. `rust-auth` gates the same point.
+    it('should issue no session when the temp-token consume is lost to a concurrent request', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      // The code is valid and the marker was there when we read it — only the delete lost.
+      mockTokenManager.consumeMfaTempToken.mockResolvedValue(false)
+
+      try {
+        await service.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+        throw new Error('expected a rejection')
+      } catch (e) {
+        expect((e as AuthException).getResponse()).toMatchObject({
+          error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID }
+        })
+      }
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
     })
 
     // Scenario: a deployment configured at the widest accepted drift window. Expected: the
