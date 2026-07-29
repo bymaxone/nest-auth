@@ -43,6 +43,15 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Tests
 
+- **The conformance tier now covers every section of the shared contract.**
+  `credentialFormats` was read as prose — the assertions checked that the agreement still said
+  what it said, which a drift in the implementation leaves green — and `errorEnvelope` was not
+  asserted at all. Both are now pinned against what the code actually does: a minted refresh
+  token, a TOTP secret prepared the way `MfaService` prepares it, and a real serialized
+  exception. The envelope assertion is what surfaced a live divergence: `rust-auth` was omitting
+  `error.details` where this library sends `null`, so a client reading both backends saw two
+  shapes for one meaning.
+
 - **100% mutation score** ([docs/mutation_testing_results.md](docs/mutation_testing_results.md)) — 3,474 seeded faults killed, no survivors and nothing left uncovered, against a `break` threshold of 95. The pass closed 57 open mutants across 19 files; not one was a bug in the library, and every one was a test that could not see its own subject.
 - **2,458 tests** at 100% coverage on all four metrics, including a conformance tier that reads `conformance/wire-contract.json` — the same file `rust-auth` reads — and an adversarial suite for the credential paths.
 

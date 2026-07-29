@@ -17,9 +17,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { hmacSha256 } from './crypto/secure-token'
+import { encrypt } from './crypto/aes-gcm'
+import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
+import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
+import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
+import { AuthException } from './errors/auth-exception'
 
 interface WireContract {
   hmacKeyDerivation: {
@@ -41,6 +45,7 @@ interface WireContract {
   credentialFormats: Record<string, string>
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
+  errorEnvelope: { shape: { error: Record<string, string> } }
 }
 
 const contract = JSON.parse(
@@ -361,6 +366,81 @@ describe('cross-implementation conformance', () => {
     // rejects every code the user's authenticator produces.
     it('declares the TOTP secret at rest as encrypted Base32 text', () => {
       expect(contract.credentialFormats['totpSecretAtRest']).toContain('BASE32')
+    })
+
+    // Scenario: the token this library actually mints. Expected: 64 lowercase hex characters.
+    // Why: the two assertions above read the contract's prose, which proves only that the
+    // agreement still says what it said — a drift in the implementation would leave them green.
+    // This one puts a real token next to the declaration.
+    it('mints a refresh token in the declared shape', () => {
+      for (let i = 0; i < 32; i++) {
+        expect(generateSecureToken(32)).toMatch(/^[0-9a-f]{64}$/)
+      }
+    })
+
+    // Scenario: a TOTP secret prepared the way `MfaService` prepares it. Expected: what goes
+    // under AES-256-GCM is the Base32 TEXT, and decoding that text yields the bytes the HMAC
+    // uses as its key. Why: this is the divergence that would make every code the user's
+    // authenticator produces fail against one backend while working on the other — and it is
+    // not visible in any type, only in what was encrypted.
+    it('encrypts the Base32 text of the TOTP secret, not the raw bytes', () => {
+      const key = Buffer.alloc(32, 7).toString('base64')
+      const { raw, base32 } = generateTotpSecret()
+
+      // The Base32 alphabet, and a round trip back to the HMAC key.
+      expect(base32).toMatch(/^[A-Z2-7]+$/)
+      expect(fromBase32(base32).equals(raw)).toBe(true)
+
+      // The ciphertext is over the text: a stored record differs from one over the raw bytes.
+      expect(encrypt(base32, key)).not.toBe(encrypt(raw.toString('binary'), key))
+    })
+
+    // Scenario: a stored recovery-code digest. Expected: 64 lowercase hex characters — a keyed
+    // HMAC-SHA-256 — and never the legacy `scrypt:` form, which is verified but no longer
+    // written. Why: the sibling backend verifies these digests directly.
+    it('stores a recovery code as a hex HMAC-SHA-256 under the identifier key', () => {
+      expect(contract.credentialFormats['recoveryCodeDigest']).toContain('hex hmac-sha256')
+      expect(contract.credentialFormats['recoveryCodeDigestLegacy']).toContain('scrypt:')
+
+      const digest = hmacSha256('A1B2-C3D4-E5F6', 'a'.repeat(64))
+      expect(digest).toMatch(/^[0-9a-f]{64}$/)
+      expect(digest.startsWith('scrypt:')).toBe(false)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Error envelope
+  // -------------------------------------------------------------------------
+
+  describe('error envelope', () => {
+    // Scenario: an error thrown with no structured details. Expected: `details` is PRESENT and
+    // null, not omitted. Why: one client library decodes both backends, and `undefined` is not
+    // `null` to it — a key that is sometimes absent forces every reader to handle two shapes
+    // for one meaning. The rust side omitted it until this assertion existed on both.
+    it('serializes details as null rather than omitting the key', () => {
+      const body = new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS).getResponse() as {
+        error: Record<string, unknown>
+      }
+
+      expect(Object.keys(body.error).sort()).toEqual(
+        Object.keys(contract.errorEnvelope.shape.error).sort()
+      )
+      expect(body.error).toHaveProperty('details', null)
+      expect(typeof body.error['code']).toBe('string')
+      expect(typeof body.error['message']).toBe('string')
+      // `object|null`, not `object?` — the union the contract declares is what pins the key's
+      // presence, so it is asserted rather than assumed.
+      expect(contract.errorEnvelope.shape.error['details']).toBe('object|null')
+    })
+
+    // Scenario: an error that does carry details. Expected: an object under the same key, so
+    // the declared union is pinned in both directions.
+    it('serializes structured details as an object under the same key', () => {
+      const body = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
+        retryAfterSeconds: 300
+      }).getResponse() as { error: { details: unknown } }
+
+      expect(body.error.details).toEqual({ retryAfterSeconds: 300 })
     })
   })
 })
