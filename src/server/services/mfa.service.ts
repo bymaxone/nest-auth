@@ -486,7 +486,7 @@ export class MfaService {
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
-    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
 
     // Fast-path idempotency check: if a setup payload already exists for this user,
     // return it without performing the expensive scrypt + AES work. This prevents a
@@ -584,7 +584,7 @@ export class MfaService {
     const user = await this.fetchUserForContext(context, userId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
-    const setupKey = `mfa_setup:${hmacSha256(userId, this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
@@ -594,7 +594,13 @@ export class MfaService {
     const totpWindow = this.mfaOptions.totpWindow
     // Use anti-replay even on MFA enable to prevent a racing/intercepted code
     // from being reused via the challenge endpoint within the acceptance window.
-    const codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
+    const codeValid = await this.verifyTotpWithAntiReplay(
+      context,
+      userId,
+      secretBase32,
+      code,
+      totpWindow
+    )
     if (!codeValid) {
       this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
@@ -697,7 +703,10 @@ export class MfaService {
     // The 'challenge:' prefix namespaces this counter away from the 'disable' counter —
     // preventing a pre-auth attacker (who only has a mfaTempToken) from exhausting the
     // lockout threshold and blocking the authenticated user's ability to call disable().
-    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.hmacKey)
+    // The context namespaces it away from the OTHER identity plane: the two id spaces come
+    // from different consumer repositories and may collide, so a counter keyed on the id
+    // alone lets either party exhaust — or clear — the other's lockout budget.
+    const bfIdentifier = hmacSha256(`challenge:${context}:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`challenge: account locked userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -729,7 +738,13 @@ export class MfaService {
     let usedRecoveryIndex = -1
 
     if (isTotpCode) {
-      codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
+      codeValid = await this.verifyTotpWithAntiReplay(
+        context,
+        userId,
+        secretBase32,
+        code,
+        totpWindow
+      )
     } else {
       // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
       // account with no stored codes, and any content it could hold fails the constant-time
@@ -881,7 +896,7 @@ export class MfaService {
     // 'disable:' prefix namespaces this counter away from the 'challenge' counter —
     // preventing a pre-auth attacker from exhausting the lockout threshold via the
     // challenge endpoint and blocking the authenticated user from disabling MFA.
-    const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.hmacKey)
+    const bfIdentifier = hmacSha256(`disable:${context}:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`disable: account locked userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -895,7 +910,13 @@ export class MfaService {
     const secretBase32 = this.decryptSecret(user.mfaSecret)
     const totpWindow = this.mfaOptions.totpWindow
 
-    const codeValid = await this.verifyTotpWithAntiReplay(userId, secretBase32, code, totpWindow)
+    const codeValid = await this.verifyTotpWithAntiReplay(
+      context,
+      userId,
+      secretBase32,
+      code,
+      totpWindow
+    )
     if (!codeValid) {
       await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`disable: invalid MFA code userId=${userId} context=${context}`)
@@ -1015,7 +1036,7 @@ export class MfaService {
     // changes from an authenticated user, so they share the same lockout pool.
     // The 'disable:' prefix already isolates this from the public 'challenge:'
     // counter exhaustion vector.
-    const bfIdentifier = hmacSha256(`disable:${userId}`, this.options.hmacKey)
+    const bfIdentifier = hmacSha256(`disable:${context}:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(
         `regenerateRecoveryCodes: account locked userId=${userId} context=${context}`
@@ -1032,6 +1053,7 @@ export class MfaService {
     const totpWindow = this.mfaOptions.totpWindow
 
     const codeValid = await this.verifyTotpWithAntiReplay(
+      context,
       userId,
       secretBase32,
       totpCode,
@@ -1111,6 +1133,7 @@ export class MfaService {
    * @returns `true` if the code is valid and has not been replayed, `false` otherwise.
    */
   private async verifyTotpWithAntiReplay(
+    context: 'dashboard' | 'platform',
     userId: string,
     secretBase32: string,
     code: string,
@@ -1118,9 +1141,11 @@ export class MfaService {
   ): Promise<boolean> {
     if (!verifyTotp(secretBase32, code, window)) return false
 
-    // The HMAC ties the replay key to both the user identity and the specific code,
-    // preventing cross-user replay and avoiding plaintext code storage in Redis.
-    const replayKey = `tu:${hmacSha256(`${userId}:${code}`, this.options.hmacKey)}`
+    // The HMAC ties the replay key to the identity plane, the user, and the specific code —
+    // preventing cross-user AND cross-plane replay, and avoiding plaintext code storage in
+    // Redis. Without the plane, a dashboard user and a platform admin sharing an id share the
+    // marker, so one burns the other's code.
+    const replayKey = `tu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
     const isNew = await this.redis.setnx(replayKey, totpAntiReplayTtlSeconds(window))
     if (!isNew) return false
 

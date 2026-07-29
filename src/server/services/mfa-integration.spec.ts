@@ -519,15 +519,20 @@ describe('MFA — integration smoke tests', () => {
       AuthException
     )
 
-    const expectedBfId = hmacSha256(`challenge:user-1`, HMAC_KEY)
+    const expectedBfId = hmacSha256('challenge:dashboard:user-1', HMAC_KEY)
     const plainBfId = hmacSha256('user-1', HMAC_KEY) // login-style identifier
-    const disableBfId = hmacSha256('disable:user-1', HMAC_KEY) // disable-style identifier
+    const disableBfId = hmacSha256('disable:dashboard:user-1', HMAC_KEY) // disable-style identifier
+    // The SAME id on the other identity plane. The two id spaces come from different consumer
+    // repositories and may collide, so a counter keyed on the id alone lets a platform admin
+    // exhaust — or clear — this user's lockout budget, and vice versa.
+    const otherPlaneBfId = hmacSha256('challenge:platform:user-1', HMAC_KEY)
 
     expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedBfId)
     expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(expectedBfId)
-    // Must NOT use the plain (login) or disable-namespaced identifiers
+    // Must NOT use the plain (login), disable-namespaced, or other-plane identifiers
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(plainBfId)
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(disableBfId)
+    expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(otherPlaneBfId)
   })
 
   // ---------------------------------------------------------------------------

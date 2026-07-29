@@ -309,7 +309,7 @@ describe('MfaService', () => {
     // 'mfa_setup:' + HMAC(userId). Why: pins the key template so a blanked key would diverge.
     it('should claim the mfa_setup key derived from the HMAC of the userId', async () => {
       await service.setup('user-1')
-      const expectedKey = `mfa_setup:${hmacSha256('user-1', HMAC_KEY)}`
+      const expectedKey = `mfa_setup:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
 
@@ -656,11 +656,13 @@ describe('MfaService', () => {
       )
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
       // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(userId): kills line 420 blanking.
-      expect(mockRedis.get).toHaveBeenCalledWith(`mfa_setup:${hmacSha256('user-1', HMAC_KEY)}`)
+      expect(mockRedis.get).toHaveBeenCalledWith(
+        `mfa_setup:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
+      )
       // The anti-replay key must be 'tu:' + HMAC('{userId}:{code}') with a 90s TTL: kills the
       // empty hmac input on the replay key (line 730).
       expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `tu:${hmacSha256(`user-1:${validCode}`, HMAC_KEY)}`,
+        `tu:${hmacSha256(`dashboard:user-1:${validCode}`, HMAC_KEY)}`,
         90
       )
       // The afterMfaEnabled hook must be invoked (kills the BlockStatement emptying at line 461)
@@ -897,6 +899,59 @@ describe('MfaService', () => {
       // Brute-force identifier is an HMAC — verify it is hash-shaped (not the raw user ID).
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
         expect.stringMatching(/^[a-f0-9]{64}$/)
+      )
+    })
+
+    // Scenario: the same id on both identity planes. Expected: every derived key differs. Why:
+    // the two id spaces come from different consumer repositories and may collide —
+    // sequential integers make it certain. Keyed on the id alone, a dashboard user and a
+    // platform admin shared the pending-enrolment record (so whoever called verify-enable
+    // second adopted the FIRST party's secret and recovery digests), the TOTP anti-replay
+    // marker, and both brute-force counters. Everything else about the two planes is already
+    // separate — Redis prefixes, token types, session indexes; this was the leak.
+    it('should namespace every MFA key by identity plane', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const code = generateTotp(base32)
+      const sharedId = '1'
+
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: sharedId,
+        context: 'platform',
+        jti: 'jti-plane'
+      })
+      mockTokenManager.issuePlatformTokens.mockResolvedValue({
+        admin: SAFE_ADMIN,
+        accessToken: 'platform.jwt',
+        rawRefreshToken: 'refresh-plane'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        id: sharedId,
+        passwordHash: 'hash',
+        mfaEnabled: true,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      await service.challenge('mfa.temp', code, '1.2.3.4', 'Browser')
+
+      // The platform challenge must key on the PLATFORM plane, never the dashboard one.
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256(`challenge:platform:${sharedId}`, HMAC_KEY)
+      )
+      expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(
+        hmacSha256(`challenge:dashboard:${sharedId}`, HMAC_KEY)
+      )
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `tu:${hmacSha256(`platform:${sharedId}:${code}`, HMAC_KEY)}`,
+        expect.any(Number)
+      )
+      expect(mockRedis.setnx).not.toHaveBeenCalledWith(
+        `tu:${hmacSha256(`dashboard:${sharedId}:${code}`, HMAC_KEY)}`,
+        expect.any(Number)
       )
     })
 
@@ -1754,7 +1809,7 @@ describe('MfaService', () => {
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
       // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
-        hmacSha256('disable:user-1', HMAC_KEY)
+        hmacSha256('disable:dashboard:user-1', HMAC_KEY)
       )
       // Pin the success log including the context (line 686).
       expect(logSpy).toHaveBeenCalledWith('disable: MFA disabled userId=user-1 context=dashboard')
@@ -2206,7 +2261,7 @@ describe('MfaService', () => {
         service.regenerateRecoveryCodes('user-1', '000000', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
-        hmacSha256('disable:user-1', HMAC_KEY)
+        hmacSha256('disable:dashboard:user-1', HMAC_KEY)
       )
       expect(warnSpy).toHaveBeenCalledWith(
         'regenerateRecoveryCodes: invalid MFA code userId=user-1 context=dashboard'
