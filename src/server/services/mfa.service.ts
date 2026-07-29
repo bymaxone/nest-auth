@@ -57,12 +57,6 @@ const TOTP_ANTI_REPLAY_TTL_SECONDS = 90
 /** Number of recovery codes generated when MFA is enabled. */
 const DEFAULT_RECOVERY_CODE_COUNT = 8
 
-/**
- * Marker of a recovery digest written before the move to a keyed MAC. `PasswordService`
- * emits `scrypt:{salt}:{hash}`, so the prefix identifies the format unambiguously.
- */
-const LEGACY_RECOVERY_DIGEST_PREFIX = 'scrypt:'
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -299,13 +293,7 @@ export class MfaService {
     ]
     const macMatches: boolean[] = []
 
-    for (const [index, hashedCode] of hashedCodes.entries()) {
-      if (hashedCode.startsWith(LEGACY_RECOVERY_DIGEST_PREFIX)) {
-        if (await this.passwordService.compare(code, hashedCode)) return index
-        macMatches.push(false)
-        continue
-      }
-
+    for (const hashedCode of hashedCodes) {
       // Every candidate is compared, never short-circuited: stopping at the first hit would
       // make the scan's duration report how many keys were tried before the match.
       const hit = candidates

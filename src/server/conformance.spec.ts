@@ -29,6 +29,7 @@ import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
 import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
+import { PasswordService } from './services/password.service'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 
@@ -380,7 +381,9 @@ describe('cross-implementation conformance', () => {
     // backend keeps a parsing allowance for it, which only makes sense while such tokens live.
     it('declares the 256-bit refresh token and the legacy allowance', () => {
       expect(contract.credentialFormats['refreshToken']).toContain('64 lowercase hex')
-      expect(contract.credentialFormats['refreshTokenLegacy']).toContain('uuid-v4')
+      // No legacy shape is declared, and none is accepted: the libraries are new, so a
+      // parsing allowance for a corpus that does not exist is a widened input for nothing.
+      expect(contract.credentialFormats['refreshTokenLegacy']).toBeUndefined()
     })
 
     // Verifies the at-rest TOTP form is the Base32 text. Both backends read the same stored
@@ -389,6 +392,22 @@ describe('cross-implementation conformance', () => {
     it('declares the TOTP secret at rest as encrypted Base32 text', () => {
       expect(contract.credentialFormats['totpSecretAtRest']).toContain('BASE32')
     })
+
+    // Scenario: a stored password hash. Expected: it carries the parameters it was written
+    // under. Why: a hash that records nothing can only be verified by assuming the cost
+    // configured today, which makes that cost unchangeable — raise it and every stored hash
+    // becomes unreproducible, every user locked out, irreversibly.
+    it('records the parameters in the stored password hash', async () => {
+      expect(contract.credentialFormats['passwordHash']).toContain('self-describing')
+
+      const service = new PasswordService(
+        { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
+        { isBreached: async () => false } as never
+      )
+      const stored = await service.hash('a-password')
+
+      expect(stored.split(':').slice(0, 4)).toEqual(['scrypt', '16384', '8', '1'])
+    }, 30_000)
 
     // Scenario: the token this library actually mints. Expected: 64 lowercase hex characters.
     // Why: the two assertions above read the contract's prose, which proves only that the
@@ -422,7 +441,7 @@ describe('cross-implementation conformance', () => {
     // written. Why: the sibling backend verifies these digests directly.
     it('stores a recovery code as a hex HMAC-SHA-256 under the identifier key', () => {
       expect(contract.credentialFormats['recoveryCodeDigest']).toContain('hex hmac-sha256')
-      expect(contract.credentialFormats['recoveryCodeDigestLegacy']).toContain('scrypt:')
+      expect(contract.credentialFormats['recoveryCodeDigestLegacy']).toBeUndefined()
 
       const digest = hmacSha256('A1B2-C3D4-E5F6', 'a'.repeat(64))
       expect(digest).toMatch(/^[0-9a-f]{64}$/)

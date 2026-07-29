@@ -330,8 +330,9 @@ describe('MFA — integration smoke tests', () => {
       ...DASHBOARD_USER,
       mfaEnabled: true,
       mfaSecret: encryptedSecret,
-      // Real legacy digest format, so the KDF-backed path this test drives still applies.
-      mfaRecoveryCodes: ['scrypt:0011223344556677:8899aabbccddeeff']
+      // The stored digest of the code this test presents: a keyed MAC under the identifier
+      // key, which is the only recovery-digest format there is.
+      mfaRecoveryCodes: [hmacSha256(plainCode, HMAC_KEY)]
     })
     mockRedis.setnx.mockResolvedValue(true) // TOTP anti-replay
     // passwordService.compare returns true when the plain recovery code matches the hash

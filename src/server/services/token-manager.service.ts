@@ -571,15 +571,22 @@ export class TokenManagerService {
     ) {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    // Older sessions written before `mfaEnabled` was added to RefreshSession will
-    // have an absent key. Build a new object with the defaulted field rather than
-    // mutating the parsed value to keep the function side-effect free.
-    const mfaEnabled = typeof rec['mfaEnabled'] === 'boolean' ? rec['mfaEnabled'] : false
-    // Same defensive read for the family: a session written before families existed carries
-    // no `familyId`, which reads as "no family" and skips all family bookkeeping.
+    // `mfaEnabled` is required, deliberately. Defaulting a missing value to `false` would turn
+    // a truncated or corrupt record into a silent second-factor bypass: the gate refuses only a
+    // token whose claims say `mfaEnabled && !mfaVerified`, so an absent field reads as "no
+    // second factor here" and the rotated token clears every MFA-gated route. Refusing the
+    // record costs the holder a login; defaulting it costs the account.
+    if (typeof rec['mfaEnabled'] !== 'boolean') {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    const mfaEnabled = rec['mfaEnabled']
+    // The family, by contrast, is genuinely optional: the placeholder record a replay produces
+    // carries none, and the contract omits the key rather than writing an empty string. Absent
+    // reads as "no family", which skips the family bookkeeping — a real state, not a missing
+    // one.
     const familyId = typeof rec['familyId'] === 'string' ? rec['familyId'] : ''
-    // A record written before the family birth time existed carries none, which reads as "not
-    // capped" — it still ages out under the refresh lifetime like any other.
+    // Same for the birth time: no family means no cap to measure from, and the session still
+    // ages out under the refresh lifetime like any other.
     const familyCreatedAt = typeof rec['familyCreatedAt'] === 'string' ? rec['familyCreatedAt'] : ''
     return { ...(parsed as RefreshSession), mfaEnabled, familyId, familyCreatedAt }
   }

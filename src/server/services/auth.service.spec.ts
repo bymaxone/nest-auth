@@ -75,7 +75,8 @@ const mockUserRepo = {
   findById: jest.fn(),
   create: jest.fn(),
   updateLastLogin: jest.fn(),
-  updateEmailVerified: jest.fn()
+  updateEmailVerified: jest.fn(),
+  updatePassword: jest.fn()
 }
 
 const mockEmailProvider = {
@@ -96,7 +97,8 @@ const mockPasswordService = {
   hash: jest.fn(),
   compare: jest.fn(),
   compareDummy: jest.fn().mockResolvedValue(false),
-  assertNotCompromised: jest.fn().mockResolvedValue(undefined)
+  assertNotCompromised: jest.fn().mockResolvedValue(undefined),
+  needsRehash: jest.fn().mockReturnValue(false)
 }
 
 const mockTokenManager = {
@@ -1830,6 +1832,68 @@ describe('AuthService', () => {
       await service.resendVerificationEmail('tenant-1', 'user@example.com')
 
       expect(mockOtpService.generate).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Password hash upgrade on login
+  // ---------------------------------------------------------------------------
+
+  describe('password hash upgrade on login', () => {
+    const dto = { email: 'user@example.com', password: 'correct', tenantId: 'tenant-1' }
+
+    beforeEach(() => {
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
+      mockPasswordService.compare.mockResolvedValue(true)
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+    })
+
+    // Scenario: a successful login whose stored hash was written under weaker parameters.
+    // Expected: it is re-derived at the current cost and stored, without the user doing
+    // anything. Why: this is what makes `password.costFactor` raisable at all — without it the
+    // only route to stronger parameters would be to invalidate every stored hash, which is to
+    // say lock every user out.
+    it('should upgrade a stale password hash after a successful login', async () => {
+      mockPasswordService.needsRehash.mockReturnValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
+      mockUserRepo.updatePassword.mockResolvedValue(undefined)
+
+      await service.login(dto, mockReq)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockPasswordService.needsRehash).toHaveBeenCalledWith(USER.passwordHash)
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(USER.id, 'scrypt:131072:8:1:aa:bb')
+    })
+
+    // Scenario: the same login with a current hash. Expected: nothing written. Why: a rewrite
+    // on every login is a write on the hot path for no gain, and it would leave the staleness
+    // check deciding nothing.
+    it('should not touch a hash already at the current parameters', async () => {
+      mockPasswordService.needsRehash.mockReturnValue(false)
+
+      await service.login(dto, mockReq)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the upgrade write fails. Expected: the login still succeeds, and the failure is
+    // logged. Why: the user is already authenticated and the old hash keeps working — failing a
+    // login over a housekeeping write would turn an optimisation into an outage.
+    it('should not fail the login when the upgrade write fails', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      mockPasswordService.needsRehash.mockReturnValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
+      mockUserRepo.updatePassword.mockRejectedValue(new Error('write failed'))
+
+      await expect(service.login(dto, mockReq)).resolves.toBeDefined()
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        'rehash on verify failed — the stored hash is unchanged',
+        expect.any(Error)
+      )
+      errorSpy.mockRestore()
     })
   })
 })

@@ -410,6 +410,7 @@ describe('TokenManagerService', () => {
       role: 'member',
       device: 'Browser',
       ip: '1.2.3.4',
+      mfaEnabled: false,
       createdAt: '2026-01-01T00:00:00.000Z',
       familyId: FAMILY
     })
@@ -502,6 +503,7 @@ describe('TokenManagerService', () => {
           role: 'member',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: '2026-01-01T00:00:00.000Z'
         })
       )
@@ -529,6 +531,7 @@ describe('TokenManagerService', () => {
           role: 'member',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: '2026-01-01T00:00:00.000Z',
           familyId: FAMILY
         })
@@ -637,6 +640,7 @@ describe('TokenManagerService', () => {
           role: 'member',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: '2026-01-01T00:00:00.000Z'
         })
       )
@@ -787,6 +791,7 @@ describe('TokenManagerService', () => {
           role: 'member',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: new Date().toISOString(),
           familyId: FAMILY,
           familyCreatedAt: bornAt
@@ -832,6 +837,7 @@ describe('TokenManagerService', () => {
         role: 'member',
         device: 'Browser',
         ip: '1.2.3.4',
+        mfaEnabled: false,
         createdAt: new Date().toISOString(),
         familyId: FAMILY,
         familyCreatedAt: bornAt
@@ -873,6 +879,7 @@ describe('TokenManagerService', () => {
         role: 'member',
         device: 'Browser',
         ip: '1.2.3.4',
+        mfaEnabled: false,
         createdAt: new Date(nowMs).toISOString(),
         familyId: FAMILY,
         familyCreatedAt: new Date(nowMs - 30 * 86_400_000).toISOString()
@@ -915,6 +922,7 @@ describe('TokenManagerService', () => {
         role: 'member',
         device: 'Browser',
         ip: '1.2.3.4',
+        mfaEnabled: false,
         createdAt: new Date().toISOString(),
         familyId: FAMILY,
         ...(familyCreatedAt === '' ? {} : { familyCreatedAt })
@@ -951,6 +959,7 @@ describe('TokenManagerService', () => {
           role: 'member',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: '2026-01-01T00:00:00.000Z'
         })
       )
@@ -1585,6 +1594,7 @@ describe('TokenManagerService', () => {
           role: 'super-admin',
           device: 'Browser',
           ip: '1.2.3.4',
+          mfaEnabled: false,
           createdAt: '2026-01-01T00:00:00.000Z'
         })
       )
@@ -1618,6 +1628,36 @@ describe('TokenManagerService', () => {
         'reissuePlatformTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
       )
       warnSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // The MFA flag is required on a stored session
+  // ---------------------------------------------------------------------------
+
+  describe('stored session integrity', () => {
+    // Scenario: a session record with no `mfaEnabled`. Expected: the rotation refuses it.
+    // Why: defaulting the missing value to `false` would turn a truncated or corrupt record
+    // into a silent second-factor bypass — the gate refuses only a token whose claims say
+    // `mfaEnabled && !mfaVerified`, so an absent field reads as "no second factor here" and the
+    // rotated token clears every MFA-gated route. Refusing costs the holder a login; defaulting
+    // costs the account.
+    it('should refuse a session record with no mfaEnabled flag', async () => {
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: JSON.stringify({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          role: 'member',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      })
+
+      await expect(
+        service.reissueTokens('raw-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
     })
   })
 })

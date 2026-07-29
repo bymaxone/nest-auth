@@ -35,19 +35,22 @@ const SCRYPT_KEY_LEN = 64
 const SALT_BYTES = 16
 
 /**
- * A fixed, well-formed decoy hash in the canonical `scrypt:{salt}:{derived}` wire
- * format. Used only by {@link PasswordService.compareDummy} to run a real scrypt
- * derivation (with the module's configured cost parameters) on the "user not
- * found" login branch, so that an unknown e-mail is indistinguishable by response
- * time from a known e-mail with a wrong password. The `timingSafeEqual` inside
- * `compare` always fails against this constant, so `compareDummy` always resolves
- * `false`. The value corresponds to no real password — it is a random 64-byte
- * derived key over a random 16-byte salt.
+ * A fixed salt for the decoy derivation, so the "user not found" branch spends the same work
+ * as a real verify without needing a stored hash to read parameters from.
+ *
+ * Deliberately not a decoy *hash*: a hash records the parameters it was written under, and a
+ * constant one would record whatever they were the day it was generated. The moment a
+ * deployment configured a different cost, the decoy would stop taking the same time as a real
+ * verify and the timing oracle it exists to close would reopen. Deriving under the CONFIGURED
+ * parameters is what keeps the two paths equal.
  */
-const DUMMY_PASSWORD_HASH =
-  'scrypt:d6732149f98b3938274691d8c2f3ee63:' +
-  'a369f696467efdf018a1e7a83da79abfae7b1f8258eb9855ed0dffdce47d5940' +
-  '517c4aeff18824bdfdfb3f32303c519634da4756657915f3cb1c948e11ae2564'
+const DUMMY_SALT = Buffer.from('d6732149f98b3938274691d8c2f3ee63', 'hex')
+
+/**
+ * A value no derivation will produce, compared against so the decoy path ends in the same
+ * constant-time comparison a real verify does.
+ */
+const DUMMY_EXPECTED = Buffer.alloc(SCRYPT_KEY_LEN, 0x5a)
 
 /**
  * Password hashing and verification service using `node:crypto` scrypt.
@@ -76,6 +79,50 @@ const DUMMY_PASSWORD_HASH =
  *
  * @layer Service
  */
+/** A stored hash, decomposed into the parameters it was written under, its salt and its key. */
+type ParsedHash = {
+  N: number
+  r: number
+  p: number
+  salt: Buffer
+  derived: Buffer
+}
+
+/**
+ * Decompose a stored hash into its parameters, salt and derived key.
+ *
+ * The format is `scrypt:N:r:p:salt:derived`: the cost travels with the hash, so it can be
+ * verified years later regardless of what the deployment is configured to write today. That is
+ * what makes `password.costFactor` changeable at all — a hash that did not record its cost can
+ * only be verified by guessing it, and guessing wrong is every password on the system becoming
+ * unverifiable at once.
+ *
+ * A malformed value returns `null` rather than throwing, so the caller answers "wrong password"
+ * without a branch whose timing distinguishes a corrupt record from a wrong one.
+ *
+ * @param hash - The stored hash string.
+ * @returns The decomposition, or `null` when the value is not a hash this library wrote.
+ */
+function parseStoredHash(hash: string): ParsedHash | null {
+  const parts = hash.split(':')
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return null
+
+  const [, nRaw, rRaw, pRaw, saltHex, derivedHex] = parts
+  if (saltHex === undefined || derivedHex === undefined || saltHex === '' || derivedHex === '') {
+    return null
+  }
+
+  const derived = Buffer.from(derivedHex, 'hex')
+  // Guard the length before `timingSafeEqual`, which throws on a mismatch.
+  if (derived.length !== SCRYPT_KEY_LEN) return null
+
+  const [N, r, p] = [Number(nRaw), Number(rRaw), Number(pRaw)]
+  if (!(Number.isInteger(N) && Number.isInteger(r) && Number.isInteger(p))) return null
+  if (N <= 0 || r <= 0 || p <= 0) return null
+
+  return { N, r, p, salt: Buffer.from(saltHex, 'hex'), derived }
+}
+
 @Injectable()
 export class PasswordService {
   private readonly N: number
@@ -137,7 +184,28 @@ export class PasswordService {
       p: this.p,
       maxmem: this.maxmem
     })
-    return `scrypt:${salt.toString('hex')}:${derived.toString('hex')}`
+    // The parameters travel WITH the hash. Without them a verify has to assume the currently
+    // configured cost, which makes `password.costFactor` unchangeable: raise it and every
+    // stored hash becomes unreproducible — every user locked out, irreversibly, because the
+    // value they were derived under is gone. rust-auth has always carried them (PHC strings);
+    // this is the same guarantee in the shape this library already writes.
+    return `scrypt:${this.N}:${this.r}:${this.p}:${salt.toString('hex')}:${derived.toString('hex')}`
+  }
+
+  /**
+   * Whether a stored hash was written under weaker parameters than the ones configured now.
+   *
+   * A `true` here is what drives the transparent upgrade on the login path: the password has
+   * just been proven, so it can be re-derived at the current cost and the stronger hash stored,
+   * without the user doing anything.
+   *
+   * @param hash - The stored hash.
+   * @returns `true` when the hash should be rewritten at the current parameters.
+   */
+  needsRehash(hash: string): boolean {
+    const parsed = parseStoredHash(hash)
+    if (parsed === null) return false
+    return parsed.N < this.N || parsed.r < this.r || parsed.p < this.p
   }
 
   /**
@@ -154,28 +222,23 @@ export class PasswordService {
    * without revealing the reason (invalid hash vs. wrong password).
    */
   async compare(plain: string, hash: string): Promise<boolean> {
-    const parts = hash.split(':')
-    if (parts.length !== 3 || parts[0] !== 'scrypt') return false
+    const parsed = parseStoredHash(hash)
+    if (parsed === null) return false
 
-    const saltHex = parts[1]
-    const derivedHex = parts[2]
+    // Verified under the parameters the hash RECORDS, never under whatever is configured
+    // today. Getting this wrong is not a failed login — it is every password on the system
+    // becoming unverifiable the moment someone raises the cost factor.
+    const { N, r, p } = parsed
 
-    if (!saltHex || !derivedHex) return false
-
-    const salt = Buffer.from(saltHex, 'hex')
-    const storedDerived = Buffer.from(derivedHex, 'hex')
-
-    // Guard against buffers of unexpected length to avoid timingSafeEqual throwing.
-    if (storedDerived.length !== SCRYPT_KEY_LEN) return false
-
-    const candidate = await scrypt(plain, salt, SCRYPT_KEY_LEN, {
-      N: this.N,
-      r: this.r,
-      p: this.p,
-      maxmem: this.maxmem
+    const candidate = await scrypt(plain, parsed.salt, SCRYPT_KEY_LEN, {
+      N,
+      r,
+      p,
+      // Sized for the parameters actually being used, which may exceed the configured ones.
+      maxmem: Math.max(N * r * 128 * 2, this.maxmem)
     })
 
-    return cryptoTimingSafeEqual(candidate, storedDerived)
+    return cryptoTimingSafeEqual(candidate, parsed.derived)
   }
 
   /**
@@ -197,6 +260,14 @@ export class PasswordService {
    * password request already costs; pair it with route-level rate limiting.
    */
   async compareDummy(plain: string): Promise<boolean> {
-    return this.compare(plain, DUMMY_PASSWORD_HASH)
+    const candidate = await scrypt(plain, DUMMY_SALT, SCRYPT_KEY_LEN, {
+      N: this.N,
+      r: this.r,
+      p: this.p,
+      maxmem: this.maxmem
+    })
+    // Always false — the comparison is here so the branch ends the same way a real verify
+    // does, not because the result carries information.
+    return cryptoTimingSafeEqual(candidate, DUMMY_EXPECTED)
   }
 }

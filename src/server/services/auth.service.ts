@@ -71,6 +71,24 @@ export class AuthService {
     private readonly sessionService: SessionService
   ) {}
 
+  /**
+   * Re-derive a proven password at the current parameters and store it.
+   *
+   * Detached from the login it follows: the user is already authenticated, and a failure here
+   * costs nothing but the upgrade — the old hash keeps working. Errors are logged rather than
+   * propagated for that reason.
+   *
+   * @param userId - The account whose stored hash is being upgraded.
+   * @param plain - The plaintext just verified against the old hash.
+   */
+  private async rehashPassword(userId: string, plain: string): Promise<void> {
+    try {
+      await this.userRepo.updatePassword(userId, await this.passwordService.hash(plain))
+    } catch (err: unknown) {
+      this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Register
   // ---------------------------------------------------------------------------
@@ -264,6 +282,16 @@ export class AuthService {
 
     // Reset brute-force counter on success.
     await this.bruteForce.resetFailures(bfIdentifier)
+
+    // Transparent upgrade: the password has just been proven, so a hash written under weaker
+    // parameters — or under the legacy form that recorded none — can be re-derived at the
+    // current cost and stored, without the user doing anything. This is what makes
+    // `password.costFactor` raisable at all: without it the only way to move to stronger
+    // parameters would be to invalidate every stored hash. Fire-and-forget, so a slow or
+    // failing write never delays or breaks a login that has already succeeded.
+    if (this.passwordService.needsRehash(user.passwordHash)) {
+      void this.rehashPassword(user.id, dto.password)
+    }
 
     // MFA challenge path.
     if (user.mfaEnabled) {

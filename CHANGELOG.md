@@ -32,12 +32,29 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Changed
 
+- **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.
+- **Rehash on verify** ([`src/server/services/auth.service.ts`](src/server/services/auth.service.ts)). A hash written under weaker parameters is re-derived at the current cost after a successful login and stored, fire-and-forget. This is what makes raising the cost factor a migration rather than a mass invalidation — `rust-auth` had it, this side did not.
+- **`mfaEnabled` is required on a stored session record.** It used to default to `false` when absent, which turns a truncated or corrupt record into a silent second-factor bypass: the gate refuses only a token whose claims say `mfaEnabled && !mfaVerified`, so a missing field reads as "no second factor here" and the rotated token clears every MFA-gated route. Refusing the record costs the holder a login; defaulting it costs the account. Same change on both sides.
+- **The decoy derivation no longer reads a stored hash.** With parameters recorded per hash, a constant decoy would carry whatever they were the day it was generated, and the moment a deployment configured a different cost it would stop taking the same time as a real verify — reopening the timing oracle it exists to close. It derives under the configured parameters instead.
+
 - **`OAuthProfile.emailVerified` is now required** ([`src/server/oauth/oauth.service.ts`](src/server/oauth/oauth.service.ts)). `createWithOAuth` was called with `emailVerified: true` unconditionally. There is no bug today — the one shipped plugin is Google's, and it refuses an unverified profile before building one — but the roadmap opens `oauth.plugins` for GitHub, Microsoft and Apple, and GitHub hands back unverified addresses. The field cannot be defaulted to `true` without reintroducing exactly that assumption. **Breaking** for anyone implementing a custom OAuth plugin.
 - **`cookies.sameSite: 'none'` now requires `cookies.trustedOrigins`**, and the allowlist is refused under any other posture ([`src/server/config/resolved-options.ts`](src/server/config/resolved-options.ts)). Both halves fail quietly on their own: `'none'` with no list rejects every cross-site call, a list under `'lax'` is never consulted. **Breaking** for a deployment already on `SameSite=None`.
 - **Signing out other devices now advances the token epoch** ([`src/server/services/session.service.ts`](src/server/services/session.service.ts)). Deleting a refresh session stops that device rotating, but its already-issued access token is stateless and kept verifying for the rest of its lifetime — up to `jwt.accessExpiresIn` of continued access on a device the user had just revoked. Someone doing that because they believe a device is compromised means now. The caller's own access token is invalidated too, and the caller is the one party who recovers instantly: their refresh session is the one deliberately preserved. **Behavioural** for a client without silent refresh, which sees one 401 after the call.
 - **The default scrypt cost is `131072` (2¹⁷)**, OWASP's recommended minimum at `r=8, p=1`, up from `32768`. **Behavioural**: roughly 128 MiB and ~100 ms per hash. Lower `password.costFactor` deliberately if the memory is not there.
 - **A duplicate registration now spends the same derivation as a new one** ([`src/server/services/auth.service.ts`](src/server/services/auth.service.ts)). Skipping it was cheaper and leaked: a taken address answered in single-digit milliseconds against ~100 ms for a free one, which enumerates accounts by clock regardless of the status code.
 - **`revokeAllUserTokens` is removed** ([`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts)). The password reset names its two steps directly. **Breaking** for a consumer calling it.
+
+### Removed
+
+- **Every legacy-compatibility path in the credential surface.** The libraries are new and
+  unreleased into production, so a parsing allowance for a corpus that does not exist is a
+  widened input for nothing — and each of these sat in the credential-verification core, which
+  is exactly where an unused branch is most expensive:
+  - the parameterless `scrypt:{salt}:{hash}` password form,
+  - the `scrypt:`-prefixed recovery-code digest, which cost one key derivation **per stored
+    code** on every wrong submission — an amplifier reachable by anyone holding a temp token,
+  - the UUID-v4 refresh-token shape,
+  - and the corresponding `refreshTokenLegacy` / `recoveryCodeDigestLegacy` contract entries.
 
 ### Fixed
 

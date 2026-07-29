@@ -1005,54 +1005,26 @@ describe('MfaService', () => {
       )
     })
 
-    // Verifies a recovery code stored in the pre-MAC format still authenticates. A recovery
-    // digest is one-way, so an upgrade cannot rewrite existing codes — they have to keep
-    // verifying with the KDF that produced them or every enrolled user loses their codes.
-    it('should still accept a legacy scrypt recovery digest', async () => {
+    // Scenario: a stored digest in the pre-MAC `scrypt:` shape. Expected: refused, and no key
+    // derivation spent on it. Why: the format is gone, not deprecated. Keeping a reader for it
+    // meant one scrypt derivation per stored entry on every wrong submission — an amplifier
+    // anyone holding a temp token could reach — and the libraries are new, so there is no
+    // corpus of such digests to keep readable.
+    it('should refuse a digest in the removed scrypt format without spending a derivation', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
-      const legacy = 'scrypt:0011223344556677:8899aabbccddeeff'
 
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: [legacy]
+        mfaRecoveryCodes: ['scrypt:0011223344556677:8899aabbccddeeff']
       })
-      mockPasswordService.compare.mockResolvedValue(true)
 
-      await service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
-
-      expect(mockPasswordService.compare).toHaveBeenCalledWith('1234-5678-9012', legacy)
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
-        'user-1',
-        expect.objectContaining({ mfaRecoveryCodes: [] })
-      )
-    })
-
-    // Verifies a legacy digest short-circuits the scan on a match. Each legacy entry costs a
-    // full scrypt derivation, so letting the loop run would hand an attacker one derivation
-    // per remaining code on every challenge — the CPU amplifier the MAC format removes.
-    it('should stop scanning legacy digests at the first match', async () => {
-      const { encrypt } = await import('../crypto/aes-gcm')
-      const { generateTotpSecret } = await import('../crypto/totp')
-      const { base32 } = generateTotpSecret()
-      const legacy = ['scrypt:aa:bb', 'scrypt:cc:dd', 'scrypt:ee:ff']
-
-      mockUserRepo.findById.mockResolvedValue({
-        ...AUTH_USER_MFA_ENABLED,
-        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        mfaRecoveryCodes: legacy
-      })
-      mockPasswordService.compare.mockResolvedValueOnce(true).mockResolvedValue(false)
-
-      await service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
-
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(1)
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
-        'user-1',
-        expect.objectContaining({ mfaRecoveryCodes: ['scrypt:cc:dd', 'scrypt:ee:ff'] })
-      )
+      await expect(
+        service.challenge('mfa.temp', '1234-5678-9012', '1.2.3.4', 'Browser')
+      ).rejects.toThrow()
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Verifies a wrong code costs no key derivation at all once the codes are in the MAC
@@ -1109,17 +1081,17 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({
         ...AUTH_USER_MFA_ENABLED,
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
-        // Legacy-format digests, so the recovery branch stays observable through the KDF.
-        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
+        // The digest of the empty string under the identifier key. If the branch routes to
+        // recovery, this matches and the challenge succeeds — which is the observation, since
+        // the MAC comparison spends no service call to watch.
+        mfaRecoveryCodes: [hmacSha256('', HMAC_KEY)]
       })
-      // All comparisons return false — malformed code never matches
-      mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.challenge('mfa.temp', '', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
+      await expect(service.challenge('mfa.temp', '', '1.2.3.4', 'Browser')).resolves.toBe(
+        MOCK_AUTH_RESULT
       )
-      // The service should still call compare for all stored codes (constant-time)
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
+      // …and no key derivation was spent getting there.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
     })
 
     // Scenario: a 6-digit prefix followed by a non-digit suffix ('123456X'). The canonical
@@ -1137,15 +1109,13 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
         // Legacy-format digests, so the recovery branch is observable through the KDF call
         // the MAC format no longer needs.
-        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
+        mfaRecoveryCodes: [hmacSha256('123456X', HMAC_KEY)]
       })
-      mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.challenge('mfa.temp', '123456X', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
+      // Routing to recovery is what lets this match; the TOTP path would reject it outright.
+      await expect(service.challenge('mfa.temp', '123456X', '1.2.3.4', 'Browser')).resolves.toBe(
+        MOCK_AUTH_RESULT
       )
-      // Recovery path was taken -> compare ran for every stored code.
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
     })
 
     // Scenario: a non-digit prefix followed by 6 digits ('X123456'). The canonical /^\d{6}$/
@@ -1162,14 +1132,12 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
         // Legacy-format digests, so the recovery branch is observable through the KDF call
         // the MAC format no longer needs.
-        mfaRecoveryCodes: ['scrypt:aa:bb', 'scrypt:cc:dd']
+        mfaRecoveryCodes: [hmacSha256('X123456', HMAC_KEY)]
       })
-      mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.challenge('mfa.temp', 'X123456', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
+      await expect(service.challenge('mfa.temp', 'X123456', '1.2.3.4', 'Browser')).resolves.toBe(
+        MOCK_AUTH_RESULT
       )
-      expect(mockPasswordService.compare).toHaveBeenCalledTimes(2)
     })
 
     // Verifies that TOKEN_INVALID is thrown when the stored mfaSecret is corrupted (decrypt fails).
@@ -1266,7 +1234,12 @@ describe('MfaService', () => {
       const { generateTotpSecret } = await import('../crypto/totp')
       const { base32 } = generateTotpSecret()
       const plainRecovery = '1234-5678-9012'
-      const hashedCodes = ['scrypt:aa:bb', 'scrypt:cc:dd']
+      // MAC digests: the first is another code's, the second is the one being presented, so
+      // the assertion below proves the MATCHED entry is the one spliced out.
+      const hashedCodes = [
+        hmacSha256('0000-0000-0000', HMAC_KEY),
+        hmacSha256(plainRecovery, HMAC_KEY)
+      ]
 
       const PLATFORM_AUTH_RESULT = {
         admin: SAFE_ADMIN,
@@ -1286,10 +1259,9 @@ describe('MfaService', () => {
         mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
         mfaRecoveryCodes: hashedCodes
       })
-      mockTokenManager.issuePlatformTokens.mockResolvedValue(PLATFORM_AUTH_RESULT)
-      // First code doesn't match, second does
-      mockPasswordService.compare
-        .mockResolvedValueOnce(false)
+      mockTokenManager.issuePlatformTokens
+        .mockResolvedValue(PLATFORM_AUTH_RESULT)
+        // First code doesn't match, second does
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false)
 
@@ -1297,7 +1269,7 @@ describe('MfaService', () => {
 
       expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
         'admin-1',
-        expect.objectContaining({ mfaRecoveryCodes: ['scrypt:aa:bb'] })
+        expect.objectContaining({ mfaRecoveryCodes: [hmacSha256('0000-0000-0000', HMAC_KEY)] })
       )
     })
 
