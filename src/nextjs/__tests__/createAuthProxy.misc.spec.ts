@@ -239,7 +239,7 @@ describe('createAuthProxy — classifier branches', () => {
   // `:segment` single-segment placeholder matches any ONE segment.
   it('matches a :segment placeholder for exactly one segment', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -269,7 +269,7 @@ describe('createAuthProxy — classifier branches', () => {
   // NOT match — exercises the "path too short" branch.
   it('does not match when the path is shorter than the pattern', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -303,7 +303,7 @@ describe('createAuthProxy — protected-route authorised response', () => {
   // NextResponse.rewrite so server components see a clean URL.
   it('strips the _r param via NextResponse.rewrite on a successful authorised request', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -372,7 +372,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // fast-path in matchesRoutePattern).
   it('matches a protected route by exact string equality', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -432,7 +432,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // falls back to `/`.
   it('falls back to / when getDefaultDashboard returns a protocol-relative URL', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -455,7 +455,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // getDefaultDashboard returning an empty string → falls back to `/`.
   it('falls back to / when getDefaultDashboard returns an empty string', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -477,7 +477,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // back to `/`.
   it('falls back to / when getDefaultDashboard returns a path without a leading slash', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -499,7 +499,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // the RBAC check (empty string never in allowedRoles).
   it('rejects a valid token that has no role claim', async () => {
     const token = await signHs256Token(
-      { sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -529,7 +529,7 @@ describe('createAuthProxy — decode-only mode', () => {
     try {
       // Use a real token (shape is what matters in decode-only mode).
       const token = await signHs256Token(
-        { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       // Omit jwtSecret entirely — `exactOptionalPropertyTypes` forbids

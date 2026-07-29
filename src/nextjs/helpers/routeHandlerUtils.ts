@@ -39,8 +39,14 @@ export function serializeClearCookie(name: string, path: string): string {
  *   - non-empty,
  *   - starts with `/`,
  *   - does NOT start with `//` (protocol-relative URL),
- *   - does NOT contain CR / LF / NUL / backslash (header-smuggling
- *     and Windows-path normalisation traps).
+ *   - does NOT contain a backslash (Windows-path normalisation trap),
+ *   - does NOT contain any C0 control character or DEL.
+ *
+ * The control-character rule is stated as a range rather than the CR / LF / NUL
+ * trio it started as. Those three are the ones that smuggle a header, but the
+ * others have no business in a path either, and enumerating the dangerous
+ * characters is the kind of allowlist-by-omission that only looks complete until
+ * someone finds the character nobody thought of.
  *
  * @param candidate - The path string to validate.
  * @returns `true` when `candidate` is a safe, same-origin relative path.
@@ -52,7 +58,8 @@ export function isSafeSameOriginPath(candidate: string): boolean {
     candidate.length > 0 &&
     candidate.startsWith('/') &&
     !candidate.startsWith('//') &&
-    !/[\\\r\n\0]/.test(candidate)
+    // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+    !/[\\\u0000-\u001f\u007f]/.test(candidate)
   )
 }
 

@@ -74,7 +74,10 @@ describe('createAuthProxy — sanitised-header forwarding on next() exits', () =
   // `ObjectLiteral` mutants on the authenticated-on-public return
   // (line 117) and confirms `.some(...)` returns false for `/about`.
   it('forwards sanitised request headers for an authenticated user on a non-redirect public route', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
     const request = makeMockRequest({
       url: 'https://app.example.com/about',
@@ -94,7 +97,10 @@ describe('createAuthProxy — publicRoutesRedirectIfAuthenticated matching', () 
   // redirected to their dashboard. Kills the `.some(...)`→`.every(...)`
   // mutant, which would require the path to match every entry.
   it('redirects via .some when only one configured route matches', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy({
       ...DEFAULT_PROXY_CONFIG,
       publicRoutes: ['/', '/auth/login', '/about'],
@@ -117,7 +123,10 @@ describe('createAuthProxy — empty-role default', () => {
   // `?? ''`→`?? 'Stryker was here!'` mutant: the dashboard function
   // must receive the empty string, routing to the empty-role branch.
   it('feeds an empty-string role to getDefaultDashboard on the RBAC-denied fallback', async () => {
-    const token = await signHs256Token({ sub: 'u', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy({
       ...DEFAULT_PROXY_CONFIG,
       protectedRoutes: [{ pattern: '/dashboard/:path*', allowedRoles: ['admin'] }],
@@ -198,7 +207,7 @@ describe('createAuthProxy — empty-status skip guard', () => {
   // admin to the login page.
   it('does not block an authorised user whose status claim is the empty string', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', status: '', exp: futureExp() },
+      { type: 'dashboard', sub: 'u', role: 'admin', status: '', exp: futureExp() },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({ ...DEFAULT_PROXY_CONFIG, blockedUserStatuses: [''] })
@@ -219,7 +228,10 @@ describe('createAuthProxy — authorised response _r fast path', () => {
   // would force the rewrite path and emit an `x-middleware-rewrite`
   // header even when there is nothing to strip.
   it('does not rewrite when there is no _r param to strip', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
     const request = makeMockRequest({
       url: 'https://app.example.com/dashboard',

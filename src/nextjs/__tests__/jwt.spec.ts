@@ -68,6 +68,7 @@ describe('decodeJwtToken', () => {
   it('decodes a well-formed token and computes isValid from exp', async () => {
     const token = await signHs256Token(
       {
+        type: 'dashboard',
         sub: 'user-1',
         role: 'admin',
         tenantId: 'tenant-a',
@@ -94,7 +95,9 @@ describe('decodeJwtToken', () => {
     Date.now = () => nowSeconds * 1000
     try {
       const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-      const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: nowSeconds }))
+      const payload = base64UrlEncode(
+        JSON.stringify({ type: 'dashboard', sub: 'u', exp: nowSeconds })
+      )
       expect(decodeJwtToken(`${header}.${payload}.sig`).isValid).toBe(false)
     } finally {
       Date.now = realNow
@@ -106,7 +109,7 @@ describe('decodeJwtToken', () => {
   // (retry via silent-refresh) from "malformed" (log the user out).
   it('returns isValid false for an expired token', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'member', exp: Math.floor(Date.now() / 1000) - 60 },
+      { type: 'dashboard', sub: 'u', role: 'member', exp: Math.floor(Date.now() / 1000) - 60 },
       SECRET
     )
     const decoded = decodeJwtToken(token)
@@ -147,7 +150,9 @@ describe('decodeJwtToken', () => {
   // `isValid: true`.
   it('rejects a structurally valid 2-segment token (no signature segment)', () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     const decoded = decodeJwtToken(`${header}.${payload}`)
     expect(decoded.isValid).toBe(false)
     expect(decoded.sub).toBeUndefined()
@@ -161,7 +166,9 @@ describe('decodeJwtToken', () => {
   // would let the valid payload decode to `isValid: true` with the
   // claims populated.
   it('rejects a token with an empty header segment but a valid payload', () => {
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     const decoded = decodeJwtToken(`.${payload}.sig`)
     expect(decoded.isValid).toBe(false)
     expect(decoded.sub).toBeUndefined()
@@ -172,7 +179,9 @@ describe('decodeJwtToken', () => {
   // operand. A mutated guard would surface `null` as the header.
   it('leaves header undefined when the header JSON is null', () => {
     const header = base64UrlEncode(JSON.stringify(null))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
   })
 
@@ -182,7 +191,9 @@ describe('decodeJwtToken', () => {
   // the number as the header.
   it('leaves header undefined when the header JSON is a number', () => {
     const header = base64UrlEncode(JSON.stringify(42))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
   })
 
@@ -193,7 +204,9 @@ describe('decodeJwtToken', () => {
   // block inside the guard.
   it('leaves header undefined when the header JSON is an array', () => {
     const header = base64UrlEncode(JSON.stringify(['HS256']))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     expect(decodeJwtToken(`${header}.${payload}.sig`).header).toBeUndefined()
   })
 
@@ -203,7 +216,9 @@ describe('decodeJwtToken', () => {
   // would always yield `iat: undefined`.
   it('exposes the iat claim from the payload', () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', iat: 1700000000, exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', iat: 1700000000, exp: 9999999999 })
+    )
     expect(decodeJwtToken(`${header}.${payload}.sig`).iat).toBe(1700000000)
   })
 
@@ -248,7 +263,7 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
   // Verify with the correct secret succeeds.
   it('verifies a correctly-signed HS256 token', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     const decoded = await verifyJwtToken(token, SECRET)
@@ -259,7 +274,7 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
   // Wrong secret rejects — signature verification fails.
   it('rejects an HS256 token signed with a different secret', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     const decoded = await verifyJwtToken(token, 'wrong-secret')
@@ -271,7 +286,7 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
   // that delegate verification to the upstream API.
   it('falls back to decode-only when secret is undefined', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     const decoded = await verifyJwtToken(token, undefined)
@@ -284,7 +299,7 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
   // rather than silently degrade.
   it('fails closed when secret is an empty string', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     const decoded = await verifyJwtToken(token, '')
@@ -298,7 +313,7 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
   // ignore the extra segment and accept the token.
   it('rejects a correctly-signed token with a trailing 4th segment', async () => {
     const valid = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     const decoded = await verifyJwtToken(`${valid}.extra`, SECRET)
@@ -313,7 +328,12 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   it('rejects a token with alg: none', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'none', typ: 'JWT' }))
     const payload = base64UrlEncode(
-      JSON.stringify({ sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 })
+      JSON.stringify({
+        type: 'dashboard',
+        sub: 'admin',
+        role: 'admin',
+        exp: Math.floor(Date.now() / 1000) + 600
+      })
     )
     // `none` tokens traditionally have an empty signature segment.
     const token = `${header}.${payload}.`
@@ -325,7 +345,7 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   // equality on `'HS256'` covers this.
   it('rejects a token with alg: None (case variant)', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'None', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'admin' }))
+    const payload = base64UrlEncode(JSON.stringify({ type: 'dashboard', sub: 'admin' }))
     const token = `${header}.${payload}.x`
     const decoded = await verifyJwtToken(token, SECRET)
     expect(decoded.isValid).toBe(false)
@@ -339,7 +359,12 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   it('rejects a token with alg: RS256 (RS256→HS256 confusion)', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
     const payload = base64UrlEncode(
-      JSON.stringify({ sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 })
+      JSON.stringify({
+        type: 'dashboard',
+        sub: 'admin',
+        role: 'admin',
+        exp: Math.floor(Date.now() / 1000) + 600
+      })
     )
     // Fake signature — doesn't matter, the algorithm check fires first.
     const token = `${header}.${payload}.AAAAAA`
@@ -350,7 +375,7 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   // HS384 / HS512 must also be rejected — only HS256 is accepted.
   it('rejects a token with alg: HS384', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'HS384', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u' }))
+    const payload = base64UrlEncode(JSON.stringify({ type: 'dashboard', sub: 'u' }))
     const token = `${header}.${payload}.x`
     const decoded = await verifyJwtToken(token, SECRET)
     expect(decoded.isValid).toBe(false)
@@ -359,7 +384,7 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   // Whitespace / NUL suffix must not bypass strict equality.
   it('rejects a token with alg: "HS256 " (trailing space)', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'HS256 ', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u' }))
+    const payload = base64UrlEncode(JSON.stringify({ type: 'dashboard', sub: 'u' }))
     const token = `${header}.${payload}.x`
     const decoded = await verifyJwtToken(token, SECRET)
     expect(decoded.isValid).toBe(false)
@@ -376,13 +401,23 @@ describe('verifyJwtToken — algorithm confusion defences', () => {
   it('rejects a non-HS256 alg even with a valid HMAC-SHA-256 signature', async () => {
     const token = await signWithHeaderAlg(
       'HS384',
-      { sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      {
+        type: 'dashboard',
+        sub: 'admin',
+        role: 'admin',
+        exp: Math.floor(Date.now() / 1000) + ONE_HOUR
+      },
       SECRET
     )
     // Sanity: the same payload/secret under an HS256 header verifies,
     // proving the signature material itself is valid.
     const honest = await signHs256Token(
-      { sub: 'admin', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      {
+        type: 'dashboard',
+        sub: 'admin',
+        role: 'admin',
+        exp: Math.floor(Date.now() / 1000) + ONE_HOUR
+      },
       SECRET
     )
     expect((await verifyJwtToken(honest, SECRET)).isValid).toBe(true)
@@ -401,7 +436,7 @@ describe('isTokenExpired', () => {
   // Past exp → expired.
   it('returns true for a past exp', async () => {
     const token = await signHs256Token(
-      { sub: 'u', exp: Math.floor(Date.now() / 1000) - 60 },
+      { type: 'dashboard', sub: 'u', exp: Math.floor(Date.now() / 1000) - 60 },
       SECRET
     )
     expect(isTokenExpired(decodeJwtToken(token))).toBe(true)
@@ -410,7 +445,7 @@ describe('isTokenExpired', () => {
   // Future exp → not expired.
   it('returns false for a future exp', async () => {
     const token = await signHs256Token(
-      { sub: 'u', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
+      { type: 'dashboard', sub: 'u', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
     expect(isTokenExpired(decodeJwtToken(token))).toBe(false)
@@ -429,7 +464,9 @@ describe('isTokenExpired', () => {
       // Build the decoded token under the same frozen clock so its
       // fields are stable, then assert the expiry boundary.
       const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-      const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: nowSeconds }))
+      const payload = base64UrlEncode(
+        JSON.stringify({ type: 'dashboard', sub: 'u', exp: nowSeconds })
+      )
       const decoded = decodeJwtToken(`${header}.${payload}.sig`)
       expect(isTokenExpired(decoded)).toBe(true)
     } finally {
@@ -443,7 +480,7 @@ describe('claim accessors', () => {
   // `.includes(role)` checks fail closed.
   it('returns empty string for getUserRole when role is absent', async () => {
     const token = await signHs256Token(
-      { sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
       SECRET
     )
     expect(getUserRole(decodeJwtToken(token))).toBe('')
@@ -459,7 +496,12 @@ describe('claim accessors', () => {
   // platform-vs-tenant distinction is preserved.
   it('returns undefined for getTenantId when tenantId is absent (platform token)', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'super_admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      {
+        type: 'dashboard',
+        sub: 'u',
+        role: 'super_admin',
+        exp: Math.floor(Date.now() / 1000) + 600
+      },
       SECRET
     )
     expect(getTenantId(decodeJwtToken(token))).toBeUndefined()
@@ -469,6 +511,7 @@ describe('claim accessors', () => {
   it('returns the tenantId string when present', async () => {
     const token = await signHs256Token(
       {
+        type: 'dashboard',
         sub: 'u',
         role: 'member',
         tenantId: 'tenant-42',
