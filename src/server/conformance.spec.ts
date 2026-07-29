@@ -14,16 +14,22 @@
  * fixed by editing the assertion.
  */
 
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import type { Redis } from 'ioredis'
 
 import { encrypt } from './crypto/aes-gcm'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
+import type { ResolvedOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
 import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
+import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
+import { AuthRedisService } from './redis/auth-redis.service'
 
 interface WireContract {
   hmacKeyDerivation: {
@@ -40,7 +46,14 @@ interface WireContract {
   rotationSemantics: Record<string, string>
   recordEncodings: Record<
     string,
-    { fields?: string[]; createdAt?: string; familyId?: string; familyCreatedAt?: string }
+    {
+      key?: string
+      fields?: string[]
+      createdAt?: string
+      familyId?: string
+      familyCreatedAt?: string
+      tenantId?: string
+    }
   >
   credentialFormats: Record<string, string>
   accessTokenClaims: Record<string, unknown>
@@ -405,6 +418,78 @@ describe('cross-implementation conformance', () => {
       const digest = hmacSha256('A1B2-C3D4-E5F6', 'a'.repeat(64))
       expect(digest).toMatch(/^[0-9a-f]{64}$/)
       expect(digest.startsWith('scrypt:')).toBe(false)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // WebSocket upgrade tickets
+  // -------------------------------------------------------------------------
+
+  describe('websocket upgrade ticket', () => {
+    // Scenario: the prefix and record shape a ticket is stored under. Expected: `wst:` keyed by
+    // the ticket's sha256, with the six snapshot fields. Why: a ticket minted by one backend is
+    // redeemed by whichever one receives the upgrade, so the two must agree on both.
+    it('declares the wst prefix and the snapshot shape', () => {
+      expect(contract.redisKeyPrefixes['wsTicket']).toBe('wst')
+      expect(contract.recordEncodings['wsTicket']?.key).toBe('wst:{sha256(ticket)}')
+      expect(contract.recordEncodings['wsTicket']?.fields).toEqual([
+        'sub',
+        'tenantId',
+        'role',
+        'status',
+        'mfaEnabled',
+        'mfaVerified'
+      ])
+    })
+
+    // Scenario: what this library actually mints and stores. Expected: the raw ticket is the
+    // declared 64 hex characters, only its hash is a key, and the stored value carries exactly
+    // the declared fields. Why: reading the contract's prose proves only that the agreement
+    // still says what it said.
+    it('mints and stores in the declared form', async () => {
+      const redis = { set: jest.fn(), eval: jest.fn() }
+      const service = new AuthRedisService(
+        redis as unknown as Redis,
+        { redisNamespace: 'auth' } as unknown as ResolvedOptions
+      )
+      const snapshot = {
+        sub: 'u1',
+        tenantId: 't1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false
+      }
+
+      const ticket = await service.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)
+
+      expect(ticket).toMatch(/^[0-9a-f]{64}$/)
+      expect(contract.credentialFormats['wsTicket']).toContain('64 lowercase hex')
+      const [key, value] = redis.set.mock.calls[0] as [string, string]
+      expect(key).toBe(`auth:wst:${createHash('sha256').update(ticket).digest('hex')}`)
+      expect(Object.keys(JSON.parse(value) as object).sort()).toEqual(
+        [...(contract.recordEncodings['wsTicket']?.fields ?? [])].sort()
+      )
+    })
+
+    // Scenario: a ticket with no tenant scope. Expected: `tenantId` absent from the record, not
+    // null. Why: the contract says omitted, and the sibling backend omits it — a null would be
+    // a field the other side's parser has to learn about.
+    it('omits the tenant scope rather than writing null', async () => {
+      const redis = { set: jest.fn(), eval: jest.fn() }
+      const service = new AuthRedisService(
+        redis as unknown as Redis,
+        { redisNamespace: 'auth' } as unknown as ResolvedOptions
+      )
+
+      await service.mintWsTicket(
+        { sub: 'a1', role: 'SUPER_ADMIN', status: 'ACTIVE', mfaEnabled: true, mfaVerified: true },
+        WS_TICKET_TTL_SECONDS
+      )
+
+      const [, value] = redis.set.mock.calls[0] as [string, string]
+      expect(contract.recordEncodings['wsTicket']?.tenantId).toContain('omitted')
+      expect(value).not.toContain('tenantId')
     })
   })
 

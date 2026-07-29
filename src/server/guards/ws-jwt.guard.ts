@@ -8,12 +8,19 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 import { readStampedEpoch } from '../utils'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
 type WsClient = {
-  handshake: { headers: Record<string, string | undefined> }
+  handshake: {
+    headers: Record<string, string | undefined>
+    /** Parsed upgrade query string, when the transport exposes one (Socket.IO does). */
+    query?: Record<string, string | string[] | undefined>
+    /** Raw upgrade URL, the fallback for transports that do not parse the query. */
+    url?: string
+  }
   data: Record<string, unknown>
 }
 
@@ -25,11 +32,22 @@ type WsClient = {
  * Redis revocation checks mirror the HTTP guard exactly.
  *
  * @remarks
- * **Header-only extraction** — query-string tokens are deliberately unsupported.
- * Tokens passed via query strings are trivially captured in server access logs,
- * browser history, and proxy caches, making them equivalent to transmitting the
- * token in plaintext. The handshake `Authorization: Bearer <token>` header is the
- * only accepted delivery channel.
+ * **Two credential channels, and only two** — the handshake
+ * `Authorization: Bearer <token>` header, or a single-use ticket in the upgrade
+ * query string.
+ *
+ * An access **token** in the query string stays unsupported, and for the original
+ * reason: it is trivially captured in access logs, browser history and proxy
+ * caches, which makes it equivalent to sending the credential in plaintext. But
+ * the browser `WebSocket` API cannot set handshake headers, so header-only left
+ * browser clients with no supported path at all — and a library that offers none
+ * gets the query-string token anyway, written by the consumer.
+ *
+ * A ticket is the answer to that: minted by `POST {prefix}/ws-ticket` from a
+ * session that is already authenticated, in good standing and MFA-satisfied;
+ * opaque; ~30 seconds; and consumed by the first redemption, so a captured
+ * upgrade URL is worthless by the time it reaches a log. rust-auth authenticates
+ * its upgrades the same way.
  *
  * **Algorithm pinning** — `algorithms: [this.options.jwt.algorithm]` is forwarded
  * to `JwtService.verify()` to prevent algorithm-confusion attacks (CVE-2015-9235).
@@ -60,6 +78,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
   constructor(
     private readonly jwtService: JwtService,
     private readonly redis: AuthRedisService,
+    private readonly wsTickets: WsTicketService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 
@@ -77,6 +96,19 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const client = context.switchToWs().getClient<WsClient>()
+
+    // The ticket path first: a client that presents one has no header to fall back to, and a
+    // client that presents both is authenticated by the stronger, single-use credential.
+    const ticket = readUpgradeTicket(client)
+    if (ticket !== undefined) {
+      const snapshot = await this.wsTickets.redeem(ticket)
+      // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
+      // what the access token proved at mint time. It is deliberately not a token: it carries
+      // no `jti` to revoke and no signature to re-verify, and it cannot be presented to the
+      // REST surface. Its authority ends when the socket closes.
+      client.data.user = snapshot
+      return true
+    }
 
     const authHeader = client.handshake.headers['authorization']
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined
@@ -125,4 +157,31 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     client.data.user = payload
     return true
   }
+}
+
+/**
+ * Reads the single-use `ticket` parameter from the upgrade request.
+ *
+ * This is the only place the library reads a credential from a query string, and what it reads
+ * is a one-shot ~30-second opaque ticket, never a JWT. Two shapes are accepted because
+ * transports differ: Socket.IO parses the query for you, a raw `ws` server hands over the URL.
+ *
+ * @param client - The connecting client as seen during the handshake.
+ * @returns The ticket, or `undefined` when the upgrade carries none.
+ */
+function readUpgradeTicket(client: WsClient): string | undefined {
+  const fromQuery = client.handshake.query?.['ticket']
+  // A repeated parameter arrives as an array. Taking the first would let a caller smuggle a
+  // second value past whatever inspected the first, so the whole request is treated as
+  // ticketless and falls through to the header path.
+  if (typeof fromQuery === 'string' && fromQuery !== '') return fromQuery
+  if (fromQuery !== undefined) return undefined
+
+  const url = client.handshake.url
+  if (typeof url !== 'string' || url === '') return undefined
+  // `URL` needs an absolute input; the base is a placeholder and never used for anything but
+  // parsing the relative upgrade path.
+  const params = new URL(url, 'http://ws.invalid').searchParams
+  const all = params.getAll('ticket')
+  return all.length === 1 && all[0] !== '' ? all[0] : undefined
 }

@@ -4,6 +4,8 @@
  * string, set, counter, expiry, Lua eval, and atomic compound operations.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
@@ -732,6 +734,123 @@ describe('AuthRedisService', () => {
 
       expect(await service.bumpUserTokenEpoch('admin-1', 'platform')).toBe(2)
       expect((mockRedis.eval.mock.calls[0] as unknown[])[2]).toBe(prefixed('pep:admin-1'))
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // WebSocket upgrade tickets
+  // ---------------------------------------------------------------------------
+
+  describe('WebSocket upgrade tickets', () => {
+    // Scenario: minting a ticket. Expected: the raw ticket is 64 lowercase hex, only its
+    // sha256 becomes a key, and the value is the snapshot under the agreed TTL. Why: the raw
+    // ticket appears in a URL by design, so a store that keyed on it would turn one access log
+    // into a set of live credentials.
+    it('should key on the hash and never on the raw ticket', async () => {
+      mockRedis.set.mockResolvedValue('OK')
+      const snapshot = {
+        sub: 'user-1',
+        tenantId: 'tenant-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false
+      }
+
+      const ticket = await service.mintWsTicket(snapshot, 30)
+
+      expect(ticket).toMatch(/^[0-9a-f]{64}$/)
+      const hashed = createHash('sha256').update(ticket).digest('hex')
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        prefixed(`wst:${hashed}`),
+        JSON.stringify(snapshot),
+        'EX',
+        30
+      )
+      // The raw ticket must appear in no argument of the write.
+      expect(JSON.stringify(mockRedis.set.mock.calls[0])).not.toContain(ticket)
+    })
+
+    // Scenario: two mints. Expected: different tickets. Why: a ticket derived from anything
+    // stable — the user, the clock — would be predictable by whoever knows that input.
+    it('should mint a distinct ticket every time', async () => {
+      mockRedis.set.mockResolvedValue('OK')
+      const snapshot = {
+        sub: 'user-1',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false
+      }
+
+      const seen = new Set<string>()
+      for (let i = 0; i < 16; i++) {
+        seen.add(await service.mintWsTicket(snapshot, 30))
+      }
+      expect(seen.size).toBe(16)
+    })
+
+    // Scenario: redeeming a live ticket. Expected: the snapshot, read through GETDEL so the
+    // ticket is consumed in the same round trip. Why: a read-then-delete would let two
+    // concurrent upgrades both win the race with one ticket.
+    it('should redeem through getdel so the ticket is single-use', async () => {
+      const snapshot = {
+        sub: 'user-2',
+        tenantId: 't',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        mfaEnabled: true,
+        mfaVerified: true
+      }
+      mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
+
+      await expect(service.redeemWsTicket('raw')).resolves.toStrictEqual(snapshot)
+      const evalArgs = mockRedis.eval.mock.calls[0] as unknown[]
+      expect(String(evalArgs[0])).toContain('DEL')
+      expect(evalArgs[2]).toBe(prefixed(`wst:${createHash('sha256').update('raw').digest('hex')}`))
+    })
+
+    // Scenario: a ticket that is absent, expired, or already consumed. Expected: null.
+    it('should return null when there is nothing to redeem', async () => {
+      mockRedis.eval.mockResolvedValue(null)
+      await expect(service.redeemWsTicket('gone')).resolves.toBeNull()
+    })
+
+    // Scenario: a stored value that is not valid JSON, and one that parses but is missing a
+    // required field. Expected: null for both. Why: the record is written by whichever backend
+    // minted it, so it is parsed defensively — a snapshot without `mfaVerified` would otherwise
+    // authorize a socket as second-factor-satisfied through an absent field read as false.
+    it.each([
+      ['not json at all', 'not-json'],
+      ['a JSON scalar', '"just-a-string"'],
+      ['null', 'null'],
+      ['a record missing mfaVerified', '{"sub":"u","role":"r","status":"s","mfaEnabled":true}'],
+      [
+        'a record whose mfaEnabled is a string',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":"true","mfaVerified":true}'
+      ],
+      [
+        'a record whose tenantId is a number',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"tenantId":1}'
+      ]
+    ])('should refuse %s', async (_label, stored) => {
+      mockRedis.eval.mockResolvedValue(stored)
+      await expect(service.redeemWsTicket('raw')).resolves.toBeNull()
+    })
+
+    // Scenario: a tenant-less (platform-shaped) snapshot. Expected: accepted. Why: the contract
+    // omits `tenantId` entirely rather than writing null, so requiring it would reject a record
+    // the sibling backend writes.
+    it('should accept a snapshot with no tenant scope', async () => {
+      const snapshot = {
+        sub: 'admin-1',
+        role: 'SUPER_ADMIN',
+        status: 'ACTIVE',
+        mfaEnabled: true,
+        mfaVerified: true
+      }
+      mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
+      await expect(service.redeemWsTicket('raw')).resolves.toStrictEqual(snapshot)
     })
   })
 })

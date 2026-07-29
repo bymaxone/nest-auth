@@ -25,6 +25,7 @@ import { VerifyEmailDto } from '../dto/verify-email.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
@@ -35,6 +36,7 @@ import type {
   CookieAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 
 /**
  * Narrows `AuthResult | MfaChallengeResult` to `MfaChallengeResult` using the
@@ -69,7 +71,8 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-    private readonly tokenDelivery: TokenDeliveryService
+    private readonly tokenDelivery: TokenDeliveryService,
+    private readonly wsTicketService: WsTicketService
   ) {}
 
   /**
@@ -188,6 +191,35 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() user: DashboardJwtPayload): Promise<SafeAuthUser> {
     return this.authService.getMe(user.sub)
+  }
+
+  /**
+   * Mints a single-use ticket for authenticating a WebSocket upgrade.
+   *
+   * The browser `WebSocket` API cannot set handshake headers, so a browser client cannot send
+   * `Authorization: Bearer <token>` at the upgrade. Putting the access token in the query
+   * string instead writes a long-lived credential into access logs, browser history and proxy
+   * caches — which is why {@link WsJwtGuard} refuses it. The ticket is the supported path: it
+   * is opaque, lives ~30 seconds, and is consumed by the first redemption.
+   *
+   * The guard stack is the point. `UserStatusGuard` re-checks the account is in good standing:
+   * a token stays valid for its whole lifetime, and an account suspended in the meantime must
+   * not still be able to open a socket. The second-factor check lives in the service rather
+   * than in `MfaRequiredGuard`, which is only registered when MFA is configured — a route that
+   * named it would fail to resolve on a deployment without MFA, and this endpoint has to work
+   * on both. The rule applied is the guard's, unchanged. rust-auth composes the identical
+   * three checks.
+   *
+   * @param user - JWT payload from the verified access token.
+   * @returns The raw ticket and its lifetime in seconds.
+   */
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
+  @Post('ws-ticket')
+  @HttpCode(HttpStatus.OK)
+  async wsTicket(
+    @CurrentUser() user: DashboardJwtPayload
+  ): Promise<{ ticket: string; expiresIn: number }> {
+    return this.wsTicketService.issue(user)
   }
 
   /**

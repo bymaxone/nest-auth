@@ -9,8 +9,10 @@ import type { Request, Response } from 'express'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import { AuthService } from '../services/auth.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 import { AuthController } from './auth.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
@@ -75,6 +77,11 @@ const mockTokenDelivery = {
   clearAuthSession: jest.fn()
 }
 
+/** The ticket service — the controller only delegates, so the mock is the whole surface. */
+const mockWsTickets = {
+  issue: jest.fn()
+}
+
 const mockReq = {
   ip: '1.2.3.4',
   headers: { 'user-agent': 'TestBrowser' },
@@ -100,7 +107,8 @@ describe('AuthController', () => {
       controllers: [AuthController],
       providers: [
         { provide: AuthService, useValue: mockAuthService },
-        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+        { provide: WsTicketService, useValue: mockWsTickets }
       ]
     })
       // Override guards applied via @UseGuards() — unit tests should not instantiate guard deps.
@@ -109,6 +117,8 @@ describe('AuthController', () => {
       .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .compile()
 
@@ -296,6 +306,30 @@ describe('AuthController', () => {
   // ---------------------------------------------------------------------------
   // me
   // ---------------------------------------------------------------------------
+
+  describe('wsTicket', () => {
+    // Scenario: an authenticated request to the mint endpoint. Expected: the controller hands
+    // the verified payload to the service and returns what it produces, unmodified. Why: the
+    // controller must stay a delegation — a ticket assembled here would be a second place the
+    // snapshot's contents are decided, and the two would drift.
+    it('should mint from the verified payload and return the ticket', async () => {
+      mockWsTickets.issue.mockResolvedValue({ ticket: 'a'.repeat(64), expiresIn: 30 })
+
+      const result = await controller.wsTicket(JWT_PAYLOAD as never)
+
+      expect(mockWsTickets.issue).toHaveBeenCalledWith(JWT_PAYLOAD)
+      expect(result).toStrictEqual({ ticket: 'a'.repeat(64), expiresIn: 30 })
+    })
+
+    // Scenario: the service refuses (an unsatisfied second factor, a store failure). Expected:
+    // the refusal propagates untouched. Why: a controller that swallowed it would answer 200
+    // with no ticket, and the client would open a socket that cannot authenticate.
+    it('should propagate a refusal from the service', async () => {
+      mockWsTickets.issue.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED))
+
+      await expect(controller.wsTicket(JWT_PAYLOAD as never)).rejects.toThrow(AuthException)
+    })
+  })
 
   describe('me', () => {
     // Verifies that the me endpoint returns the safe user object for the authenticated user.

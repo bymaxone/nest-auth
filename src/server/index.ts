@@ -187,6 +187,9 @@ export type { SessionInfo as ActiveSessionInfo } from './services/session.servic
 // (or another password-less path) and needs to deliver them to the browser
 // with the canonical attribute set.
 export { TokenDeliveryService } from './services/token-delivery.service'
+export { WsTicketService } from './services/ws-ticket.service'
+export { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
+export type { WsTicketSnapshot } from './interfaces/ws-ticket.interface'
 export type {
   BearerAuthResponse,
   BothAuthResponse,

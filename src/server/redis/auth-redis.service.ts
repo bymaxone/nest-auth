@@ -9,6 +9,8 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 
 /**
  * Lifetime of a token-epoch key, in seconds.
@@ -20,6 +22,12 @@ import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
  * per reset-affected user is negligible.
  */
 const EPOCH_TTL_SECONDS = TOKEN_EPOCH_RETENTION_SECONDS
+
+/**
+ * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
+ * token). rust-auth mints the same width, so neither backend issues the weaker ticket.
+ */
+const WS_TICKET_ENTROPY_BYTES = 32
 
 /** Tag the rotation script prepends to a session recovered from the grace window. */
 const GRACE_TAG = 'GRACE:'
@@ -730,4 +738,78 @@ export class AuthRedisService {
       EPOCH_TTL_SECONDS
     )
   }
+
+  // ---------------------------------------------------------------------------
+  // WebSocket upgrade tickets
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Mints a single-use WebSocket upgrade ticket holding a verified-identity snapshot.
+   *
+   * The browser `WebSocket` API cannot set handshake headers, which leaves a browser client
+   * with no way to present an `Authorization` header at the upgrade. The alternative most
+   * codebases reach for — the access token in the query string — puts a long-lived credential
+   * into access logs, browser history and proxy caches. This is the other answer: an opaque,
+   * ~30-second, single-use ticket that is worthless the moment it is redeemed.
+   *
+   * Only `sha256(ticket)` becomes a key, so a Redis dump never yields a usable ticket, and the
+   * access token is never echoed into the value — the snapshot carries the identity the socket
+   * is authorized as, nothing that could be replayed against the REST surface.
+   *
+   * @param snapshot - The verified-identity snapshot to bind to the ticket.
+   * @param ttlSeconds - Lifetime of the ticket in seconds.
+   * @returns The raw ticket to hand to the client — never persisted in this form.
+   */
+  async mintWsTicket(snapshot: WsTicketSnapshot, ttlSeconds: number): Promise<string> {
+    const ticket = generateSecureToken(WS_TICKET_ENTROPY_BYTES)
+    await this.set(`wst:${sha256(ticket)}`, JSON.stringify(snapshot), ttlSeconds)
+    return ticket
+  }
+
+  /**
+   * Redeems a WebSocket upgrade ticket, consuming it in the same round trip.
+   *
+   * `GETDEL` is what makes the ticket single-use: the first redemption wins, and a second
+   * presentation of a captured upgrade URL finds nothing. A ticket that is unknown, expired or
+   * already redeemed is indistinguishable here by design — all three return `null`.
+   *
+   * @param ticket - The raw ticket presented at the handshake.
+   * @returns The bound snapshot, or `null` when the ticket cannot be redeemed.
+   */
+  async redeemWsTicket(ticket: string): Promise<WsTicketSnapshot | null> {
+    const raw = await this.getdel(`wst:${sha256(ticket)}`)
+    if (raw === null) return null
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      return isWsTicketSnapshot(parsed) ? parsed : null
+    } catch {
+      // A stored value that will not parse is a corrupted record, not a valid ticket. It has
+      // already been consumed by the GETDEL above, which is the right outcome either way.
+      return null
+    }
+  }
+}
+
+/**
+ * Whether an unknown value is a well-formed {@link WsTicketSnapshot}.
+ *
+ * The record is read back from Redis, which the sibling implementation also writes, so it is
+ * parsed defensively rather than cast: a snapshot missing `mfaVerified` would otherwise
+ * authorize a socket as MFA-satisfied through an `undefined` that reads as false only by luck
+ * of the comparison used downstream.
+ *
+ * @param value - The parsed JSON read back from the store.
+ * @returns `true` when every required field is present and correctly typed.
+ */
+function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record['sub'] === 'string' &&
+    typeof record['role'] === 'string' &&
+    typeof record['status'] === 'string' &&
+    typeof record['mfaEnabled'] === 'boolean' &&
+    typeof record['mfaVerified'] === 'boolean' &&
+    (record['tenantId'] === undefined || typeof record['tenantId'] === 'string')
+  )
 }

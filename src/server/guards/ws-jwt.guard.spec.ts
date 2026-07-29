@@ -19,9 +19,11 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 import { WsJwtGuard } from './ws-jwt.guard'
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,11 @@ const mockJwtService = {
 const mockRedis = {
   get: jest.fn(),
   getUserTokenEpoch: jest.fn()
+}
+
+/** The ticket service, so the guard's redemption path can be driven without Redis. */
+const mockWsTickets = {
+  redeem: jest.fn()
 }
 
 const mockOptions = {
@@ -99,6 +106,8 @@ describe('WsJwtGuard', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // Default: no ticket is ever redeemable, so the existing header-path tests are unaffected.
+    mockWsTickets.redeem.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
     // Default: no per-user cutoff, so the bulk-revocation check is a no-op for the
     // existing tests. Cutoff-specific tests override this.
     mockRedis.getUserTokenEpoch.mockResolvedValue(0)
@@ -108,6 +117,7 @@ describe('WsJwtGuard', () => {
         WsJwtGuard,
         { provide: JwtService, useValue: mockJwtService },
         { provide: AuthRedisService, useValue: mockRedis },
+        { provide: WsTicketService, useValue: mockWsTickets },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
     }).compile()
@@ -137,6 +147,7 @@ describe('WsJwtGuard', () => {
       const freshGuard = new FreshGuard(
         mockJwtService as unknown as JwtService,
         mockRedis as unknown as AuthRedisService,
+        mockWsTickets as unknown as WsTicketService,
         mockOptions as unknown as ResolvedOptions
       )
 
@@ -359,6 +370,78 @@ describe('WsJwtGuard', () => {
       // Assert
       expect(result).toBe(true)
       expect(clientData['user']).toEqual(VALID_PAYLOAD)
+    })
+  })
+
+  // ----------------- Single-use upgrade ticket -----------------
+
+  describe('upgrade ticket', () => {
+    const snapshot = {
+      sub: 'user-7',
+      tenantId: 'tenant-7',
+      role: 'MEMBER',
+      status: 'ACTIVE',
+      mfaEnabled: true,
+      mfaVerified: true
+    }
+
+    /** A handshake carrying a parsed query, the shape Socket.IO provides. */
+    function ticketContext(query: Record<string, string | string[] | undefined>, url?: string) {
+      const client = {
+        handshake: { headers: {}, query, ...(url === undefined ? {} : { url }) },
+        data: {} as Record<string, unknown>
+      }
+      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
+    }
+
+    // Scenario: a valid ticket in the parsed query. Expected: the socket is authorized as the
+    // snapshot, and no JWT verification is attempted. Why: the ticket is the browser's only
+    // path — a guard that still demanded a header would leave it unusable.
+    it('should authorize the socket from a redeemed ticket', async () => {
+      mockWsTickets.redeem.mockResolvedValue(snapshot)
+      const { client, context } = ticketContext({ ticket: 'raw-ticket' })
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
+      expect(mockWsTickets.redeem).toHaveBeenCalledWith('raw-ticket')
+      expect(client.data['user']).toStrictEqual(snapshot)
+      expect(mockJwtService.verify).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a ticket the service refuses. Expected: the refusal propagates. Why: a guard
+    // that fell through to the header path on a bad ticket would let a client retry with a
+    // token the ticket flow exists to avoid putting on the wire.
+    it('should propagate a refused ticket rather than falling back', async () => {
+      mockWsTickets.redeem.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
+      const { context } = ticketContext({ ticket: 'stale' })
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+      expect(mockJwtService.verify).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the ticket only in the raw upgrade URL, as a bare `ws` server exposes it.
+    it('should read the ticket from the raw upgrade URL', async () => {
+      mockWsTickets.redeem.mockResolvedValue(snapshot)
+      const { context } = ticketContext({}, '/socket?ticket=from-url')
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
+      expect(mockWsTickets.redeem).toHaveBeenCalledWith('from-url')
+    })
+
+    // Scenario: the parameter repeated. Expected: treated as ticketless, so the request falls
+    // through to the header path and is refused there. Why: taking the first of two values
+    // lets a caller smuggle a second past whatever inspected the first.
+    it.each([
+      ['a repeated query parameter', { ticket: ['a', 'b'] }, undefined],
+      ['a repeated URL parameter', {}, '/socket?ticket=a&ticket=b'],
+      ['an empty query parameter', { ticket: '' }, undefined],
+      ['an empty URL parameter', {}, '/socket?ticket='],
+      ['no ticket at all', {}, '/socket'],
+      ['an empty URL', {}, '']
+    ])('should ignore %s', async (_label, query, url) => {
+      const { context } = ticketContext(query as Record<string, string | string[]>, url)
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+      expect(mockWsTickets.redeem).not.toHaveBeenCalled()
     })
   })
 })

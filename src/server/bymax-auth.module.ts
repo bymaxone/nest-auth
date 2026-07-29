@@ -54,6 +54,7 @@ import { PlatformAuthService } from './services/platform-auth.service'
 import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
+import { WsTicketService } from './services/ws-ticket.service'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -390,6 +391,7 @@ export class BymaxAuthModule {
         PasswordService,
         TokenManagerService,
         TokenDeliveryService,
+        WsTicketService,
         BruteForceService,
         OtpService,
         // SessionService is always registered (not gated on includeSessions) because

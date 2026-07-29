@@ -594,6 +594,37 @@ export const POST = createLogoutHandler({
 
 ---
 
+### WebSocket upgrades
+
+The browser `WebSocket` API cannot set handshake headers, so a browser client cannot send
+`Authorization: Bearer <token>` at the upgrade. The usual workaround puts the access token in the
+query string, where it lands in access logs, browser history and proxy caches — a long-lived
+credential in plaintext. `WsJwtGuard` refuses it.
+
+The supported path is a single-use ticket:
+
+```typescript
+// 1. Mint from an authenticated session (POST, cookies or bearer as usual).
+const { ticket, expiresIn } = await fetch('/auth/ws-ticket', {
+  method: 'POST',
+  credentials: 'include'
+}).then((r) => r.json())
+
+// 2. Open the socket with it. The ticket is consumed by the first redemption.
+const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
+```
+
+The ticket is opaque, 32 bytes of CSPRNG output, and lives 30 seconds. Only `sha256(ticket)` is
+ever a Redis key, and the stored value is a verified-identity **snapshot** — no `jti`, no
+signature, no expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned
+back into a session. Minting requires an authenticated session in good standing that has already
+satisfied MFA, so a ticket never carries more authority than the request that asked for it.
+
+Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
+both channels are accepted, and a ticket wins when both are present.
+
+---
+
 ## ⚙️ Configuration
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
