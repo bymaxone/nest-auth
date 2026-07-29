@@ -629,22 +629,23 @@ both channels are accepted, and a ticket wins when both are present.
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group             | Key Options                                                                                                                     | Default                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| **jwt**           | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`   | `15m`, `7d`, off, `HS256`          |
-| **password**      | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁷, r=8, p=1             |
-| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                         |
-| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section) |
-| **mfa**           | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                          | —                                  |
-| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`          |
-| **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                         |
-| **rateLimit**     | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                          | `true`, `'peer'`                   |
-| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                   | `'token'`                          |
-| **platform**      | `enabled`                                                                                                                       | `false`                            |
-| **invitations**   | `enabled`, `tokenTtlSeconds`                                                                                                    | `false`                            |
-| **roles**         | `hierarchy` (required), `platformHierarchy`                                                                                     | —                                  |
-| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                                                                               | —                                  |
-| **controllers**   | Toggle individual controllers on/off                                                                                            | All enabled                        |
+| Group                 | Key Options                                                                                                                     | Default                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`   | `15m`, `7d`, off, `HS256`               |
+| **password**          | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁷, r=8, p=1                  |
+| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                              |
+| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section)      |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                          | —                                       |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`               |
+| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                              |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                          | `true`, `'peer'`                        |
+| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                   | `'token'`                               |
+| **platform**          | `enabled`                                                                                                                       | `false`                                 |
+| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                    | `false`                                 |
+| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                     | —                                       |
+| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                               | —                                       |
+| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                     | `true`, `600`                           |
+| **controllers**       | Toggle individual controllers on/off                                                                                            | `auth`, `passwordReset` on; rest opt-in |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.

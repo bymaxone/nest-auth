@@ -444,7 +444,8 @@ export interface BymaxAuthModuleOptions {
   bruteForce?: {
     /**
      * Maximum number of failed login attempts before lockout.
-     * Default: `10`
+     * Default: `5` — aligned with the per-IP throttle default; raising it widens the
+     * credential brute-force window. Bounded to `1..=100` at startup.
      */
     maxAttempts?: number
 
@@ -470,7 +471,8 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * TTL for reset tokens in seconds.
-     * Default: `3600` (1 hour)
+     * Default: `600` (10 minutes), matching OWASP guidance for time-sensitive credential
+     * recovery. Values beyond 1800 meaningfully widen the window for stolen-email replay.
      */
     tokenTtlSeconds?: number
 
@@ -498,7 +500,8 @@ export interface BymaxAuthModuleOptions {
   emailVerification?: {
     /**
      * When `true`, users must verify their email before they can log in.
-     * Default: `false`
+     * Default: `true` — secure by default. A deployment that accepts unverified addresses
+     * must opt out explicitly with `emailVerification.required: false`.
      */
     required?: boolean
 
@@ -781,10 +784,16 @@ export interface BymaxAuthModuleOptions {
     /** Enables `PasswordResetController`. Default: `true` */
     passwordReset?: boolean
 
-    /** Enables `SessionController`. Default: `true` when `sessions.enabled = true`. */
+    /**
+     * Enables `SessionController`. **Opt-in** — `Default: false`. Also requires
+     * `sessions.enabled: true`; setting one without the other is a startup error.
+     */
     sessions?: boolean
 
-    /** Enables `PlatformAuthController`. Default: `true` when `platform.enabled = true`. */
+    /**
+     * Enables `PlatformAuthController`. **Opt-in** — `Default: false`. Also requires
+     * `platform.enabled: true`; setting one without the other is a startup error.
+     */
     platform?: boolean
 
     /**
@@ -797,7 +806,10 @@ export interface BymaxAuthModuleOptions {
      */
     oauth?: boolean
 
-    /** Enables `InvitationController`. Default: `true` when `invitations.enabled = true`. */
+    /**
+     * Enables `InvitationController`. **Opt-in** — `Default: false`. Also requires
+     * `invitations.enabled: true`; setting one without the other is a startup error.
+     */
     invitations?: boolean
   }
 
