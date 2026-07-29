@@ -903,6 +903,12 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | GET    | `/oauth/:provider`          | Public + `@SkipMfa()`             | Initiate OAuth authorization redirect                       |
 | GET    | `/oauth/:provider/callback` | Public + `@SkipMfa()`             | Handle OAuth callback, exchange code, issue tokens          |
 
+> **The OAuth routes require `cookie-parser`.** `GET /oauth/:provider` plants an HttpOnly
+> `oauth_state` cookie carrying the flow's `state`, and the callback refuses any request that
+> does not send it back — the binding RFC 6749 §10.12 requires, without which an attacker can
+> hand a victim a callback URL and have the victim's browser complete the attacker's login.
+> Mount `app.use(cookieParser())` before the module's routes or every callback answers 401.
+
 ### Server Guards
 
 | Guard                | Decorator                       | Purpose                                                     |

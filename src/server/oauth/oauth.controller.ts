@@ -38,6 +38,10 @@ import { OAuthService } from './oauth.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { MFA_TEMP_COOKIE_MAX_AGE_SECONDS, MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
+import {
+  OAUTH_STATE_COOKIE_NAME,
+  OAUTH_STATE_COOKIE_SAME_SITE
+} from '../constants/oauth-state-cookie'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { Public } from '../decorators/public.decorator'
@@ -109,6 +113,20 @@ function appendErrorQueryParam(url: string, errorCode: string): string {
   const parsed = new URL(url)
   parsed.searchParams.set('error', errorCode)
   return parsed.toString()
+}
+
+/**
+ * Reads the `oauth_state` cookie planted by {@link OAuthService.initiateOAuth}.
+ *
+ * Returns `undefined` when the browser sent no cookie, when `cookie-parser` is not mounted,
+ * or when the value is absent or empty. The service treats all of those the same as a
+ * mismatch — a callback that cannot prove it belongs to this browser is refused.
+ */
+function readOAuthStateCookie(req: Request): string | undefined {
+  const cookies = req.cookies as { oauth_state?: unknown } | undefined
+  if (cookies === undefined) return undefined
+  const { oauth_state: value } = cookies
+  return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -221,12 +239,18 @@ export class OAuthController {
     const ip = (req.ip ?? '').slice(0, 64)
     const userAgent = String(req.headers['user-agent'] ?? '').slice(0, 512)
 
+    // The state cookie is single-use: it is spent the moment the callback is handled, whatever
+    // the outcome. Clearing it up front keeps a failed attempt from leaving a stale cookie
+    // behind for the next flow, whose freshly minted state would then never match.
+    this.clearOAuthStateCookie(res)
+
     let result: AuthResult | OAuthMfaChallengeResult
     try {
       result = await this.oauthService.handleCallback(
         provider,
         query.code,
         query.state,
+        readOAuthStateCookie(req),
         ip,
         userAgent,
         req.headers as Record<string, string | string[] | undefined>
@@ -278,17 +302,31 @@ export class OAuthController {
   // ---------------------------------------------------------------------------
 
   /**
-   * Plants the short-lived `mfa_temp_token` HttpOnly cookie on the response.
+   * Clears the `oauth_state` cookie once its callback has been handled.
+   *
+   * The attributes must match those used to plant it in
+   * {@link OAuthService.initiateOAuth} — a browser matches a deletion against name, domain,
+   * and path, so a `path` of anything but `/` would leave the original cookie in place and
+   * the next flow would arrive carrying a state that can no longer match.
+   */
+  private clearOAuthStateCookie(res: Response): void {
+    res.clearCookie(OAUTH_STATE_COOKIE_NAME, {
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+      path: '/'
+    })
+  }
+
+  /**
+   * Plants the short-lived `mfa_temp_token` cookie after an MFA-gated OAuth callback.
    *
    * Cookie attributes:
-   * - `HttpOnly`: not readable from JavaScript. The cookie is consumed by the
-   *   server-side challenge route, not by any client code.
-   * - `Secure`: derived from `secureCookies` (true in production by default).
-   * - `SameSite`: derived from `cookies.sameSite` (defaults to `'lax'`).
-   * - `Path`: `cookies.mfaTempCookiePath` (default `/auth/mfa`). Consumers
-   *   that call `app.setGlobalPrefix(...)` MUST override this — the lib
-   *   cannot observe the global prefix at module construction time, and
-   *   a mismatched path makes the browser silently drop the cookie per
+   * - `httpOnly`: always — the token is a bearer credential for the challenge route.
+   * - `secure`: mirrors `options.secureCookies`.
+   * - `sameSite`: the deployment's configured value.
+   * - `path`: `options.cookies.mfaTempCookiePath`, so the browser only sends it
+   *   on the challenge route. Trailing-slash semantics follow the standard
    *   RFC 6265 prefix-match.
    * - `Max-Age`: 300 seconds — exactly matches the underlying MFA temp JWT
    *   TTL (`MFA_TEMP_TOKEN_TTL_SECONDS` in `token-manager.service.ts`).

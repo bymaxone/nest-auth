@@ -29,7 +29,12 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import {
+  OAUTH_STATE_COOKIE_MAX_AGE_SECONDS,
+  OAUTH_STATE_COOKIE_NAME,
+  OAUTH_STATE_COOKIE_SAME_SITE
+} from '../constants/oauth-state-cookie'
+import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
@@ -160,6 +165,22 @@ export class OAuthService {
     const stored: StoredOAuthState = { tenantId, codeVerifier }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
 
+    // Bind the flow to THIS browser. The `state` parameter alone proves only that somebody
+    // started a flow: an attacker can begin their own authorization, complete consent at the
+    // provider, capture the resulting callback URL without visiting it, and lure the victim
+    // there — the victim's browser then receives the attacker's session, and everything they
+    // do next lands in the attacker's account. PKCE does not help, because the verifier lives
+    // server-side and is replayed for whoever presents the state. RFC 6749 §10.12 requires
+    // this binding. `SameSite` is forced to `lax`: the callback is a cross-site top-level GET
+    // and `strict` would withhold the cookie on exactly that hop.
+    res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+      path: '/',
+      maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
+    })
+
     const authUrl = plugin.authorizeUrl(state, codeChallenge)
     res.redirect(authUrl)
   }
@@ -193,6 +214,8 @@ export class OAuthService {
    * @param provider - Provider name matching a registered plugin.
    * @param code - Authorization code received on the callback URL.
    * @param state - CSRF nonce received on the callback URL (must match the stored value).
+   * @param stateCookie - Value of the `oauth_state` cookie planted by `initiateOAuth()`, or
+   *   `undefined` when the browser sent none. Must equal `state`; see the binding check below.
    * @param ip - Client IP for session audit (truncated to 64 chars).
    * @param userAgent - User-Agent string for session audit.
    * @param headers - Raw request headers passed to the `onOAuthLogin` hook context.
@@ -206,6 +229,7 @@ export class OAuthService {
     provider: string,
     code: string,
     state: string,
+    stateCookie: string | undefined,
     ip: string,
     userAgent: string,
     headers: Record<string, string | string[] | undefined>
@@ -215,6 +239,20 @@ export class OAuthService {
     // for an invalid provider — a user who encounters a misconfigured provider would
     // otherwise need to restart the entire flow.
     const plugin = this.resolvePlugin(provider)
+
+    // Bind the callback to the browser that started the flow (RFC 6749 §10.12). A `state`
+    // that merely exists in Redis proves only that *somebody* started a flow: an attacker can
+    // run their own authorization to the point of holding a valid `?code=…&state=…` URL, never
+    // visit it, and lure the victim there instead — the victim's browser would then be logged
+    // into the attacker's account, and anything they added afterwards would be the attacker's
+    // to read. Only the cookie distinguishes the two, so a missing one is as fatal as a wrong
+    // one. Checked before `getdel` so a callback that fails the binding cannot burn a state
+    // the legitimate browser is still entitled to complete. Hashes are compared rather than
+    // the raw values so the constant-time path is not skipped by a length mismatch.
+    if (stateCookie === undefined || !timingSafeCompare(sha256(state), sha256(stateCookie))) {
+      this.logger.warn(`handleCallback: OAuth state not bound to this browser provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
 
     // Atomically read and delete the CSRF state — single-use enforcement.
     const stateKey = `os:${sha256(state)}`
