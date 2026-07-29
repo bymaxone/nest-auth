@@ -30,6 +30,9 @@ import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { AuthRedisService } from './redis/auth-redis.service'
+import { TokenDeliveryService } from './services/token-delivery.service'
+
+import type { MfaChallengeResult, PlatformAuthResult } from './interfaces/auth-result.interface'
 
 interface WireContract {
   hmacKeyDerivation: {
@@ -59,6 +62,12 @@ interface WireContract {
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
   errorEnvelope: { shape: { error: Record<string, string> } }
+  responseBodies: {
+    login: { cookie: string[]; bearer: string[] }
+    platformLogin: { bearer: string[] }
+    mfaChallenge: string[]
+    wsTicket: string[]
+  }
 }
 
 const contract = JSON.parse(
@@ -490,6 +499,95 @@ describe('cross-implementation conformance', () => {
       const [, value] = redis.set.mock.calls[0] as [string, string]
       expect(contract.recordEncodings['wsTicket']?.tenantId).toContain('omitted')
       expect(value).not.toContain('tenantId')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Response bodies
+  // -------------------------------------------------------------------------
+
+  describe('response bodies', () => {
+    /** A delivery service over the given mode, with a response double that records nothing. */
+    function delivery(mode: 'cookie' | 'bearer' | 'both'): TokenDeliveryService {
+      return new TokenDeliveryService({
+        tokenDelivery: mode,
+        cookies: {
+          accessTokenName: 'access_token',
+          refreshTokenName: 'refresh_token',
+          sessionSignalName: 'has_session',
+          refreshCookiePath: '/auth/refresh',
+          sameSite: 'lax',
+          accessTokenMaxAgeMs: 900_000,
+          refreshTokenMaxAgeMs: 604_800_000,
+          trustedOrigins: []
+        },
+        secureCookies: true,
+        jwt: { accessCookieMaxAgeMs: 900_000 }
+      } as unknown as ResolvedOptions)
+    }
+
+    const authResult = {
+      user: { id: 'u1', email: 'u@e.com' },
+      accessToken: 'jwt',
+      rawRefreshToken: 'opaque'
+    }
+
+    /** A minimal Express response: only the cookie/header calls the service makes. */
+    function response(): { res: unknown } {
+      return { res: { cookie: jest.fn(), clearCookie: jest.fn(), setHeader: jest.fn() } }
+    }
+
+    // Scenario: cookie mode, the default. Expected: the body carries the user and NOTHING else.
+    // Why: the tokens are in `Set-Cookie` precisely so script cannot read them. Repeating a
+    // refresh token in the JSON payload hands it to any XSS on the page and makes the HttpOnly
+    // flag decorative.
+    it('keeps the tokens out of the body in cookie mode', () => {
+      const { res } = response()
+      const body = delivery('cookie').deliverAuthResponse(res as never, authResult as never)
+
+      expect(Object.keys(body as object)).toEqual(contract.responseBodies.login.cookie)
+      expect(JSON.stringify(body)).not.toContain('opaque')
+      expect(JSON.stringify(body)).not.toContain('jwt')
+    })
+
+    // Scenario: bearer mode. Expected: exactly the declared keys, with the internal
+    // `rawRefreshToken` surfacing as `refreshToken` — the name the contract and the sibling
+    // backend both use.
+    it('returns the declared keys in bearer mode', () => {
+      const { res } = response()
+      const body = delivery('bearer').deliverAuthResponse(res as never, authResult as never)
+
+      expect(Object.keys(body as object).sort()).toEqual(
+        [...contract.responseBodies.login.bearer].sort()
+      )
+      expect((body as { refreshToken: string }).refreshToken).toBe('opaque')
+    })
+
+    // Scenario: the platform login body. Expected: the account under `admin`. Why: this is the
+    // one payload where the two implementations name the same thing differently if nobody is
+    // watching — rust-auth's own generated TypeScript said `user` while its adapter emitted
+    // `admin`, so a consumer reading `result.user` got undefined at runtime.
+    it('names the platform account admin, never user', () => {
+      expect(contract.responseBodies.platformLogin.bearer).toContain('admin')
+      expect(contract.responseBodies.platformLogin.bearer).not.toContain('user')
+
+      const platformResult: PlatformAuthResult = {
+        admin: { id: 'a1' } as never,
+        accessToken: 'jwt',
+        rawRefreshToken: 'opaque'
+      }
+      expect(Object.keys(platformResult).sort()).toEqual(
+        ['accessToken', 'admin', 'rawRefreshToken'].sort()
+      )
+    })
+
+    // Scenario: the MFA challenge and ws-ticket payloads. Expected: exactly the declared keys.
+    it('returns the declared keys for the challenge and ticket payloads', () => {
+      const challenge: MfaChallengeResult = { mfaRequired: true, mfaTempToken: 't' }
+      expect(Object.keys(challenge).sort()).toEqual(
+        [...contract.responseBodies.mfaChallenge].sort()
+      )
+      expect(contract.responseBodies.wsTicket.sort()).toEqual(['expiresIn', 'ticket'])
     })
   })
 

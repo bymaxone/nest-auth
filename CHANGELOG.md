@@ -45,6 +45,14 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Tests
 
+- **`responseBodies` joins the contract, and it caught a real one.** The tier covered stored
+  records, claims and prefixes but never the client-facing payloads — the shapes a consumer's
+  TypeScript actually describes. `rust-auth`'s generated type named the platform account `user`
+  while its own adapter emitted `admin`, so a consumer reading `result.user` got `undefined` at
+  runtime. Both sides now assert the login body per delivery mode, the platform body, the
+  challenge and the ws-ticket against what each serializes. The cookie-mode entry is the
+  load-bearing one: the tokens are in `Set-Cookie` so script cannot read them, and a refresh
+  token repeated in the JSON body would make the HttpOnly flag decorative.
 - **The conformance tier now covers every section of the shared contract.**
   `credentialFormats` was read as prose — the assertions checked that the agreement still said
   what it said, which a drift in the implementation leaves green — and `errorEnvelope` was not
