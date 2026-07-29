@@ -297,7 +297,7 @@ describe('AuthRedisService', () => {
     }
 
     // Verifies the script receives the five keys and six arguments it documents, in order.
-    it('passes the five rotation keys and six arguments to the script', async () => {
+    it('passes the five rotation keys and seven arguments to the script', async () => {
       mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
 
       await service.rotateRefreshSession(BUNDLE)
@@ -315,7 +315,10 @@ describe('AuthRedisService', () => {
         '30',
         'fam-1',
         'old-hash',
-        'new-hash'
+        'new-hash',
+        // The namespaced live-session prefix, so the grace branch can probe whether the
+        // session a rotation produced is still alive before honouring the pointer.
+        prefixed('rt')
       )
     })
 
@@ -371,6 +374,40 @@ describe('AuthRedisService', () => {
       mockRedis.exists.mockResolvedValue(0)
 
       await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({ kind: 'invalid' })
+    })
+
+    // Scenario: a static guard on the rotation script itself. Expected: the grace pointer is
+    // written with the successor hash prefixed, and the grace branch probes that successor
+    // before honouring the pointer. Why: a grace pointer exists to cover the one retry where
+    // the old token was consumed but the client never received the new one. Without the probe,
+    // a session revoked from the session list — or swept by "log out everywhere" — could be
+    // rebuilt from its own predecessor's pointer inside the grace window, handing back a fresh
+    // full-lifetime session built from the record the user had just revoked. The pointer is
+    // keyed by the OLD hash, so a revoke acting on the new hash cannot find it; gating on the
+    // successor is what closes that, and it closes the bulk path and the single-session path
+    // with one rule.
+    it('gates grace recovery on the successor session still being live', async () => {
+      // The script text as the service actually sends it — read from the eval call rather
+      // than restated here, so the guard cannot drift from what runs.
+      mockRedis.eval.mockResolvedValue(null)
+      await service.rotateRefreshSession(BUNDLE)
+      const script = mockRedis.eval.mock.calls[0]?.[0] as string
+
+      // The pointer carries `{successorHash}:{json}` — ARGV[6] is sha256(new).
+      expect(script).toContain(
+        "redis.call('SET', KEYS[3], ARGV[6] .. ':' .. ARGV[1], 'EX', ARGV[3])"
+      )
+      // …and the grace branch only returns when that successor key still exists.
+      expect(script).toContain("redis.call('EXISTS', ARGV[7] .. ':' .. successor)")
+      // The record is recovered by splitting on the FIRST colon — a fixed width would
+      // mis-split any hash that is not exactly sha256-hex.
+      expect(script).toContain("string.find(grace, ':', 1, true)")
+      expect(script).toContain('string.sub(grace, sep + 1)')
+      // The pointer is consumed regardless of the probe's answer, so a dead successor cannot
+      // leave a pointer behind for a later attempt.
+      expect(script.indexOf("redis.call('DEL', KEYS[3])")).toBeLessThan(
+        script.indexOf("redis.call('EXISTS', ARGV[7]")
+      )
     })
 
     // Verifies a record naming no lineage still recovers: there is nothing to check, so no

@@ -114,10 +114,16 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   const secret = setupBody.secret
   const originalRecoveryCodes = setupBody.recoveryCodes
 
+  // ONE captured base for every code in this flow. Reading the clock per call lets a
+  // 30-second step boundary pass mid-flow, so two codes computed for "distinct" steps land on
+  // the same one, the anti-replay marker rejects the second, and the failure surfaces far
+  // downstream as a 401 from `Bearer undefined`.
+  const base = Date.now()
+
   const enable = await request(boot.app.getHttpServer())
     .post('/mfa/verify-enable')
     .set('Authorization', `Bearer ${registerAccess}`)
-    .send({ code: generateTotp(secret) })
+    .send({ code: generateTotp(secret, base) })
   expect(enable.status).toBe(204)
 
   // Re-login → challenge to obtain a token with `mfaVerified: true`.
@@ -129,7 +135,7 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   expect(mfaTempToken).toBeTruthy()
 
   // Step ahead to bypass the anti-replay marker from verify-enable.
-  const nextStepTime = Date.now() + TOTP_STEP_SECONDS * 1000
+  const nextStepTime = base + TOTP_STEP_SECONDS * 1000
   const challenge = await request(boot.app.getHttpServer())
     .post('/mfa/challenge')
     .send({ mfaTempToken, code: generateTotp(secret, nextStepTime) })
@@ -448,10 +454,13 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
         const secret = (setup.body as { secret: string }).secret
+        // ONE captured base for every code below — see the shared helper for why a per-call
+        // clock read makes this flow flaky across a 30-second step boundary.
+        const base = Date.now()
         await request(boot.app.getHttpServer())
           .post('/platform/mfa/verify-enable')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
-          .send({ code: generateTotp(secret) })
+          .send({ code: generateTotp(secret, base) })
 
         // Challenge with T+1 to obtain an mfaVerified access token.
         const loginAfter = await request(boot.app.getHttpServer())
@@ -462,7 +471,7 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/challenge')
           .send({
             mfaTempToken,
-            code: generateTotp(secret, Date.now() + TOTP_STEP_SECONDS * 1000)
+            code: generateTotp(secret, base + TOTP_STEP_SECONDS * 1000)
           })
         const mfaVerifiedAccess = (challenge.body as { accessToken: string }).accessToken
 
@@ -471,7 +480,7 @@ describe('platform MFA flow (E2E)', () => {
         const regen = await request(boot.app.getHttpServer())
           .post('/platform/mfa/recovery-codes')
           .set('Authorization', `Bearer ${mfaVerifiedAccess}`)
-          .send({ code: generateTotp(secret, Date.now() - TOTP_STEP_SECONDS * 1000) })
+          .send({ code: generateTotp(secret, base - TOTP_STEP_SECONDS * 1000) })
         expect(regen.status).toBe(200)
         const regenBody = regen.body as { recoveryCodes: string[] }
         expect(regenBody.recoveryCodes).toHaveLength(8)
@@ -502,10 +511,13 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
         const secret = (setup.body as { secret: string }).secret
+        // ONE captured base for every code below — see the shared helper for why a per-call
+        // clock read makes this flow flaky across a 30-second step boundary.
+        const base = Date.now()
         await request(boot.app.getHttpServer())
           .post('/platform/mfa/verify-enable')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
-          .send({ code: generateTotp(secret) })
+          .send({ code: generateTotp(secret, base) })
 
         // Challenge with T+1.
         const loginAfter = await request(boot.app.getHttpServer())
@@ -516,7 +528,7 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/challenge')
           .send({
             mfaTempToken,
-            code: generateTotp(secret, Date.now() + TOTP_STEP_SECONDS * 1000)
+            code: generateTotp(secret, base + TOTP_STEP_SECONDS * 1000)
           })
         const mfaVerifiedAccess = (challenge.body as { accessToken: string }).accessToken
 
@@ -524,7 +536,7 @@ describe('platform MFA flow (E2E)', () => {
         const disable = await request(boot.app.getHttpServer())
           .post('/platform/mfa/disable')
           .set('Authorization', `Bearer ${mfaVerifiedAccess}`)
-          .send({ code: generateTotp(secret, Date.now() - TOTP_STEP_SECONDS * 1000) })
+          .send({ code: generateTotp(secret, base - TOTP_STEP_SECONDS * 1000) })
         expect(disable.status).toBe(204)
         const adminRow = boot.platformRepo.users.get(boot.adminId)
         expect(adminRow?.mfaEnabled).toBe(false)
