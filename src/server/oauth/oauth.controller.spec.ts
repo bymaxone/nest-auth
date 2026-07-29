@@ -230,6 +230,87 @@ describe('OAuthController', () => {
       expect(ipArg).toBe('')
     })
 
+    // A provider that refuses before minting a code (RFC 6749 §4.1.2.1) — the response Google
+    // sends when the user clicks "Cancel". It carries `error` and no `code`, which the
+    // ValidationPipe used to 400 for the missing required field: a user who simply changed
+    // their mind saw a raw validation envelope instead of the configured error redirect.
+    it('should route a provider error callback to the error redirect', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const result = await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', error: 'access_denied' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(result).toBeUndefined()
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+      // The provider never reaches the exchange: there is no code to exchange, and calling
+      // the service would burn the state on a flow that is already over.
+      expect(mockOAuthService.handleCallback).not.toHaveBeenCalled()
+      // The single-use state cookie is spent either way.
+      expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', expect.anything())
+    })
+
+    // The provider's own string never reaches the redirect. It is provider-chosen text landing
+    // in a URL the browser follows, and `oauth_failed` already tells the caller everything the
+    // library is willing to vouch for.
+    it('should not echo the provider error code into the redirect', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        {
+          state: 'csrf-state-abc',
+          error: 'temporarily_unavailable',
+          error_description: 'try later'
+        } as never,
+        mockReq,
+        mockRes
+      )
+
+      const redirectTo = (mockRes.redirect as jest.Mock).mock.calls[0]?.[0] as string
+      expect(redirectTo).not.toContain('temporarily_unavailable')
+      expect(redirectTo).not.toContain('try later')
+    })
+
+    // A callback carrying neither `code` nor `error` — the ValidationPipe rejects it before
+    // the handler in production, so this pins the handler's own refusal. Defaulting the
+    // missing code to an empty string instead would send it to the provider's token endpoint
+    // and surface their error rather than ours.
+    it('should refuse a callback carrying neither code nor error', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback('google', { state: 'csrf-state-abc' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+      expect(mockOAuthService.handleCallback).not.toHaveBeenCalled()
+    })
+
+    // With no error redirect configured the refusal propagates as the library's own
+    // AuthException — the same shape any other OAuth failure takes on that deployment.
+    it('should throw OAUTH_FAILED for a provider error when no error redirect is configured', async () => {
+      const { AuthException } = await import('../errors/auth-exception')
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.callback(
+          'google',
+          { state: 'csrf-state-abc', error: 'access_denied' } as never,
+          mockReq,
+          mockRes
+        )
+      ).rejects.toThrow(AuthException)
+    })
+
     // Verifies the controller reads the `oauth_state` cookie and hands it to the service —
     // the service does the comparison, but it can only do so if the controller forwards what
     // the browser sent. Pinned separately because a controller that silently forwards

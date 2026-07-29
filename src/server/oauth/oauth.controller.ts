@@ -22,6 +22,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   Param,
   Query,
   Req,
@@ -48,6 +49,7 @@ import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { OAuthCallbackQueryDto } from '../dto/oauth-callback-query.dto'
 import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
@@ -149,6 +151,9 @@ function readOAuthStateCookie(req: Request): string | undefined {
   new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
 )
 export class OAuthController {
+  /** Records provider-side refusals; never carries a token, a code, or the state. */
+  private readonly logger = new Logger(OAuthController.name)
+
   constructor(
     private readonly oauthService: OAuthService,
     private readonly tokenDelivery: TokenDeliveryService,
@@ -244,6 +249,28 @@ export class OAuthController {
     // behind for the next flow, whose freshly minted state would then never match.
     this.clearOAuthStateCookie(res)
 
+    // The provider refused before it ever minted a code (RFC 6749 §4.1.2.1) — most often
+    // because the user clicked "Cancel" at the consent screen. That is a normal outcome of a
+    // normal flow, and it used to answer a raw `ValidationPipe` 400 for the missing `code`
+    // instead of the configured error redirect. The provider's value is logged and never
+    // echoed back: it would otherwise be provider-chosen text landing in a URL the browser
+    // follows, and the caller learns nothing from it that `oauth_failed` does not already say.
+    if (query.error !== undefined) {
+      this.logger.warn(
+        `callback: provider '${provider}' returned error=${query.error}` +
+          (query.error_description === undefined ? '' : ` description=${query.error_description}`)
+      )
+      return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
+    }
+
+    // `code` is optional on the DTO only so the provider's error response can validate; the
+    // early return above means the pipe has already required it here. Refusing outright beats
+    // defaulting to an empty string, which would travel to the provider's token endpoint and
+    // come back as their error rather than ours.
+    if (query.code === undefined) {
+      return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
+    }
+
     let result: AuthResult | OAuthMfaChallengeResult
     try {
       result = await this.oauthService.handleCallback(
@@ -256,16 +283,7 @@ export class OAuthController {
         req.headers as Record<string, string | string[] | undefined>
       )
     } catch (err) {
-      // Only AuthException is converted to a redirect — programmer/infra errors
-      // propagate so monitoring tooling can surface them. Without this guard the
-      // error redirect would swallow real bugs.
-      if (err instanceof AuthException && this.options.oauth?.errorRedirectUrl !== undefined) {
-        const errorCode = extractErrorCode(err)
-        const redirectTo = appendErrorQueryParam(this.options.oauth.errorRedirectUrl, errorCode)
-        res.redirect(redirectTo)
-        return undefined
-      }
-      throw err
+      return this.handleCallbackFailure(res, err)
     }
 
     // MFA branch — issue the temp token cookie and either redirect or return JSON.
@@ -300,6 +318,27 @@ export class OAuthController {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Routes a failed callback to the configured error redirect, or rethrows.
+   *
+   * Only an `AuthException` becomes a redirect — a programmer or infrastructure error
+   * propagates so monitoring tooling surfaces it. Without that guard the error redirect would
+   * swallow real bugs behind a tidy `?error=oauth_failed`.
+   *
+   * Shared by the two ways a callback fails: the provider's own error response, and an
+   * exception out of `handleCallback`. One path means one policy — the redirect, the status,
+   * and the code cannot drift between them.
+   */
+  private handleCallbackFailure(res: Response, err: unknown): undefined {
+    if (err instanceof AuthException && this.options.oauth?.errorRedirectUrl !== undefined) {
+      const errorCode = extractErrorCode(err)
+      const redirectTo = appendErrorQueryParam(this.options.oauth.errorRedirectUrl, errorCode)
+      res.redirect(redirectTo)
+      return undefined
+    }
+    throw err
+  }
 
   /**
    * Clears the `oauth_state` cookie once its callback has been handled.
