@@ -28,7 +28,8 @@ import {
   Res,
   UsePipes,
   ValidationPipe,
-  UseGuards
+  UseGuards,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
@@ -46,6 +47,7 @@ import { OAuthInitiateQueryDto } from '../dto/oauth-initiate-query.dto'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type {
   BearerAuthResponse,
@@ -122,6 +124,7 @@ function appendErrorQueryParam(url: string, errorCode: string): string {
  */
 @Public()
 @SkipMfa()
+@UseInterceptors(NoStoreInterceptor)
 @Controller('oauth')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(

@@ -244,13 +244,21 @@ export class PlatformAuthService {
    * Revokes all active platform sessions for the given admin.
    *
    * Delegates to {@link AuthRedisService.invalidateUserSessions} which uses an atomic
-   * Lua script to read the `sess:{userId}` SET, delete all session and grace-pointer
+   * Lua script to read the `psess:{userId}` SET, delete all session and grace-pointer
    * keys, and remove the SET itself in a single Redis round-trip. This prevents the
    * TOCTOU race that would arise from a non-atomic SMEMBERS + loop + DEL approach.
+   *
+   * The token epoch is then advanced, so outstanding platform **access** tokens die with
+   * the refresh sessions rather than working on to expiry — "log out everywhere" that
+   * leaves every access token alive is not what those words promise. Bumped after the
+   * sweep for the same reason the dashboard flow bumps last: a failure in the sweep
+   * leaves the epoch untouched and the operation visibly incomplete, instead of the
+   * reverse, which would read as done while the sessions live on.
    *
    * @param userId - The platform admin's internal ID.
    */
   async revokeAllPlatformSessions(userId: string): Promise<void> {
     await this.redis.invalidateUserSessions(userId, 'platform')
+    await this.redis.bumpUserTokenEpoch(userId, 'platform')
   }
 }

@@ -105,7 +105,8 @@ const mockRedis = {
   srem: jest.fn(),
   expire: jest.fn(),
   setIfAbsent: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockTokenManager = {
@@ -1743,6 +1744,11 @@ describe('MfaService', () => {
         mfaRecoveryCodes: null
       })
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      // Revocation is scoped to the PLATFORM plane, sessions and epoch alike: the two id
+      // spaces come from different repositories and may collide, so the dashboard variants
+      // here would log out — and un-revoke — the wrong account.
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
       // The afterMfaDisabled hook must receive the PLATFORM projection: the
       // `context === 'platform' ? platformUserAsSafeUser(...) : ...` ternary (line 690) takes the
       // platform branch, so tenantId is the '' sentinel. Kills the `false` and `!==` mutants on
@@ -1935,6 +1941,10 @@ describe('MfaService', () => {
       mockRedis.getdel.mockResolvedValue(JSON.stringify(setupData))
 
       await service.verifyAndEnable('admin-1', validCode, '1.2.3.4', 'Browser', 'platform')
+
+      // Revocation scoped to the platform plane — see the disable counterpart for why.
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
 
       expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
         'admin-1',

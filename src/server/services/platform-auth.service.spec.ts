@@ -126,7 +126,8 @@ const mockRedis = {
   set: jest.fn(),
   del: jest.fn(),
   srem: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockOptions = {
@@ -613,10 +614,29 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
     })
 
-    // Verifies that errors from invalidateUserSessions propagate so the caller can handle them.
-    it('should propagate errors from redis.invalidateUserSessions', async () => {
+    // Scenario: the same call, watching the token epoch. Expected: bumped, on the PLATFORM
+    // plane, after the sweep. Why: "log out everywhere" that leaves every outstanding access
+    // token working to expiry is not what those words promise — the epoch is the only thing
+    // that reaches stateless tokens. Bumped last so a failed sweep leaves the operation
+    // visibly incomplete instead of reading as done while the sessions live on.
+    it('should bump the platform token epoch after the sweep', async () => {
+      mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+      mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
+
+      await service.revokeAllPlatformSessions('admin-1')
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      const sweepOrder = mockRedis.invalidateUserSessions.mock.invocationCallOrder[0] as number
+      const bumpOrder = mockRedis.bumpUserTokenEpoch.mock.invocationCallOrder[0] as number
+      expect(sweepOrder).toBeLessThan(bumpOrder)
+    })
+
+    // Verifies that errors from invalidateUserSessions propagate so the caller can handle
+    // them — and that the epoch is then NOT bumped, keeping the failure visible.
+    it('should propagate errors from redis.invalidateUserSessions and skip the bump', async () => {
       mockRedis.invalidateUserSessions.mockRejectedValue(new Error('Redis timeout'))
       await expect(service.revokeAllPlatformSessions('admin-1')).rejects.toThrow('Redis timeout')
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
   })
 })

@@ -133,7 +133,8 @@ const mockRedis = {
   srem: jest.fn(),
   expire: jest.fn(),
   setIfAbsent: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockTokenManager = {
@@ -177,6 +178,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.expire.mockResolvedValue(undefined)
     mockRedis.setIfAbsent.mockResolvedValue(true)
     mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+    mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
     mockUserRepo.findById.mockResolvedValue(DASHBOARD_USER)
     mockUserRepo.updateMfa.mockResolvedValue(undefined)
     mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)

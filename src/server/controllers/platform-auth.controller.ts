@@ -9,7 +9,8 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
@@ -25,6 +26,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type {
   AuthResult,
   MfaChallengeResult,
@@ -101,6 +103,7 @@ function isMfaChallenge(
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('platform')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

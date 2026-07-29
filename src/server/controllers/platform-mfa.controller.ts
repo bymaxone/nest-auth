@@ -7,7 +7,8 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
@@ -21,6 +22,7 @@ import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
@@ -56,6 +58,7 @@ import { MfaService } from '../services/mfa.service'
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('platform/mfa')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(

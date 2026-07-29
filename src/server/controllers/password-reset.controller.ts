@@ -6,7 +6,8 @@ import {
   Post,
   UsePipes,
   ValidationPipe,
-  UseGuards
+  UseGuards,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 
@@ -19,6 +20,7 @@ import { ResetPasswordDto } from '../dto/reset-password.dto'
 import { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import { PasswordResetService } from '../services/password-reset.service'
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,7 @@ import { PasswordResetService } from '../services/password-reset.service'
  * @layer Controller
  */
 @Public()
+@UseInterceptors(NoStoreInterceptor)
 @Controller('password')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

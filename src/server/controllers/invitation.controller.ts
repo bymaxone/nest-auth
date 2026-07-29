@@ -8,7 +8,8 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
@@ -22,6 +23,7 @@ import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { InvitationService } from '../services/invitation.service'
@@ -54,6 +56,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('invitations')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

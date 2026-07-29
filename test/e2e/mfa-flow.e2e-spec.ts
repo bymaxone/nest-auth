@@ -160,16 +160,19 @@ describe('mfa flow (E2E)', () => {
       expect((setupResponseBody as { verifyStatus: number }).verifyStatus).toBe(204)
     })
 
-    // Verifies that POST /logout returns 204 once MFA is enabled on the account.
-    it('should log out the user after MFA is enabled', () => {
+    // Verifies that the PRE-enable access token is refused once MFA is enabled. Enabling a
+    // second factor advances the token epoch: every token issued before that moment is
+    // stamped `mfaEnabled: false` and would clear the MFA gate for its remaining lifetime —
+    // at the exact moment the user enabled MFA because they suspected that theft. The logout
+    // attempted with the old token therefore gets 401, not 204; the session it referenced is
+    // already gone with the rest.
+    it('should refuse the pre-enable access token after MFA is enabled', () => {
       // Arrange — performed in beforeAll.
 
       // Act — performed in beforeAll.
 
-      // Assert — AuthController.logout is decorated with @HttpCode(NO_CONTENT).
-      // The task brief mentions 200 but the actual contract is 204; the test
-      // asserts the actual contract.
-      expect(logoutStatus).toBe(204)
+      // Assert — the pre-enable token is dead the moment the state changed.
+      expect(logoutStatus).toBe(401)
     })
   })
 

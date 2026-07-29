@@ -162,15 +162,16 @@ describe('mfa disable flow (E2E)', () => {
       expect(disableStatus).toBe(204)
     })
 
-    // Verifies that the user record now reports mfaEnabled = false. /me reads
-    // the current persisted state via the user repository, so this proves
-    // the disable operation actually flipped the column.
-    it('should reflect mfaEnabled === false on /me after disabling', async () => {
+    // Verifies that the PRE-disable access token is refused after disabling. An auth-state
+    // change advances the token epoch in both directions — everything issued under the
+    // previous state dies with the sessions, the same rule the password-reset flow applies —
+    // so the old token gets 401 and the flipped `mfaEnabled` column is observable only from
+    // the fresh session the user establishes next.
+    it('should refuse the pre-disable access token on /me after disabling', async () => {
       const me = await request(fixture.app.getHttpServer())
         .get('/me')
         .set('Authorization', `Bearer ${fixture.accessToken}`)
-      expect(me.status).toBe(200)
-      expect((me.body as { mfaEnabled: boolean }).mfaEnabled).toBe(false)
+      expect(me.status).toBe(401)
     })
   })
 

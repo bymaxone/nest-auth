@@ -35,6 +35,7 @@ import { RolesGuard } from './guards/roles.guard'
 import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
+import { NoStoreInterceptor } from './interceptors/no-store.interceptor'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
 import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
@@ -404,6 +405,9 @@ export class BymaxAuthModule {
         JwtAuthGuard,
         TrustedOriginGuard,
         AuthRateLimitGuard,
+        // Response-header interceptor — every library controller applies it, so it must be
+        // resolvable in this module's injector.
+        NoStoreInterceptor,
         RolesGuard,
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.

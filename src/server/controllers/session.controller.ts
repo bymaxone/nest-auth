@@ -8,7 +8,8 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
@@ -23,6 +24,7 @@ import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
@@ -56,6 +58,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('sessions')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UseGuards(JwtAuthGuard, UserStatusGuard)
