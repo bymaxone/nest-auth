@@ -59,9 +59,16 @@ interface StoredOAuthState {
   /**
    * PKCE `code_verifier` (RFC 7636), held server-side for the lifetime of the
    * authorization flow and forwarded to the provider's token endpoint on
-   * callback. Absent for legacy entries and plugins that do not support PKCE.
+   * callback.
+   *
+   * Required, deliberately. `getAuthorizationUrl` writes one on every flow regardless of
+   * provider, so a record without it is corrupt or forged — and treating it as "this flow
+   * had no PKCE" would hand an attacker a downgrade: present a state record with the field
+   * stripped and the exchange proceeds with no proof the caller started the flow.
+   * `rust-auth` types the field as a plain `String`, so a record missing it fails to
+   * deserialize there; refusing it here keeps the shared record readable by exactly one rule.
    */
-  codeVerifier?: string
+  codeVerifier: string
 }
 
 /** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
@@ -70,7 +77,7 @@ function isStoredOAuthState(value: unknown): value is StoredOAuthState {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   if (typeof v['tenantId'] !== 'string') return false
-  if (v['codeVerifier'] !== undefined && typeof v['codeVerifier'] !== 'string') return false
+  if (typeof v['codeVerifier'] !== 'string') return false
   return true
 }
 

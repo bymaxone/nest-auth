@@ -53,9 +53,9 @@ interface RefreshSession {
    * already-consumed refresh token past its grace window revokes the whole family, not the
    * user's other legitimate devices.
    *
-   * Empty on a legacy record written before families existed. Such a record carries no
-   * family, is never a reuse-revocation target, and is omitted from the wire when empty so
-   * the stored bytes match what rust-auth writes.
+   * Empty only on the placeholder a replayed token produces, which is never stored. Such a
+   * record is never a reuse-revocation target, and the field is omitted from the wire when
+   * empty so the stored bytes match what rust-auth writes.
    */
   familyId: string
   /**
@@ -427,8 +427,8 @@ export class TokenManagerService {
     const capDays = this.options.jwt.absoluteSessionLifetimeDays
     if (capDays <= 0) return
 
-    // An absent birth time parses to NaN, so the finite check covers both the legacy record
-    // and a malformed value with one guard. Neither is evidence the session is old, and
+    // An absent birth time parses to NaN, so the finite check covers both the family-less
+    // record and a malformed value with one guard. Neither is evidence the session is old, and
     // ending a session on a field that cannot be read would be a self-inflicted outage.
     const bornAt = Date.parse(session.familyCreatedAt)
     // Stryker disable next-line ConditionalExpression: equivalent — `NaN > cap` is false, so
@@ -596,7 +596,7 @@ export class TokenManagerService {
    *
    * rust-auth skips the field when empty (`skip_serializing_if`), so emitting `"familyId":""`
    * here would make the same session serialize to different bytes on each side and break the
-   * shared-Redis contract. A legacy record simply has no key.
+   * shared-Redis contract. A record with no family simply has no key.
    *
    * @param session - The record to store.
    * @returns The JSON string written under an `rt:`/`prt:` key.
@@ -616,7 +616,7 @@ export class TokenManagerService {
    * @param ip - Client IP address for session audit metadata.
    * @param device - Human-readable device description (parsed from User-Agent).
    * @param mfaEnabled - Whether MFA is enabled on the account at session creation time.
-   * @param familyId - Login lineage this session belongs to; `''` for a legacy record.
+   * @param familyId - Login lineage this session belongs to; `''` when it belongs to none.
    */
   private buildSession(
     userId: string,
@@ -785,10 +785,8 @@ export class TokenManagerService {
   ): Promise<RotatedTokenResult> {
     const old = this.parseSession(oldSessionJson)
 
-    // The rotated session is indexed under the platform-only `psess:` key. The SREM against
-    // the legacy `sess:` index prunes a session created before the move, so the old index
-    // drains as sessions rotate instead of holding stale members for a full refresh lifetime.
-    await this.redis.srem(`sess:${old.userId}`, `prt:${oldHash}`)
+    // The rotated session is indexed under the platform-only `psess:` key — the dashboard
+    // `sess:` index is a separate plane and is never touched from here.
     await this.redis.srem(`psess:${old.userId}`, `prt:${oldHash}`)
     await this.redis.sadd(`psess:${old.userId}`, `prt:${newHash}`)
     if (graceTtl > 0) {
@@ -837,7 +835,6 @@ export class TokenManagerService {
     // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
     // Remove the consumed grace pointer from the per-user SET — the key itself is still live
     // (the script leaves it for its remaining window); the SET entry is what a revoke-all uses.
-    await this.redis.srem(`sess:${graceSession.userId}`, `prp:${oldHash}`)
     await this.redis.srem(`psess:${graceSession.userId}`, `prp:${oldHash}`)
     await this.redis.sadd(`psess:${graceSession.userId}`, `prt:${anotherNewHash}`)
     await this.redis.expire(`psess:${graceSession.userId}`, refreshTtl)

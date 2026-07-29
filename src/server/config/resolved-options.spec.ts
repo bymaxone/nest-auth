@@ -877,6 +877,91 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation failures — mfa.previousEncryptionKeys
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — mfa.previousEncryptionKeys validation', () => {
+  const CURRENT = Buffer.alloc(32, 1).toString('base64')
+  const RETIRED = Buffer.alloc(32, 2).toString('base64')
+
+  /** The options with the given retired keys, on top of a valid mfa group. */
+  function withPrevious(previousEncryptionKeys: unknown): BymaxAuthModuleOptions {
+    return {
+      ...MINIMAL_OPTIONS,
+      mfa: {
+        encryptionKey: CURRENT,
+        issuer: 'App',
+        previousEncryptionKeys
+      } as NonNullable<BymaxAuthModuleOptions['mfa']>
+    }
+  }
+
+  // Scenario: a well-formed rotation. Expected: accepted, and the decoded keys are carried on
+  // the resolved options. Why: this is the whole point — a stored secret written under the old
+  // key has to keep opening while the rotation drains.
+  it('should accept a well-formed rotation and decode every entry', () => {
+    const resolved = resolveOptions(withPrevious([RETIRED]))
+
+    expect(resolved.mfa?.previousEncryptionKeys).toEqual([RETIRED])
+  })
+
+  // Scenario: the option absent. Expected: accepted, with no retired keys. Why: the ordinary
+  // deployment configures no rotation and must not pay for the feature.
+  it('should accept the mfa group with no rotation configured', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: CURRENT, issuer: 'App' }
+    })
+
+    expect(resolved.mfa?.previousEncryptionKeys).toBeUndefined()
+  })
+
+  // Scenario: a value that is not an array. Expected: refused at startup. Why: a single string
+  // would iterate character by character and every character would fail the key check with a
+  // message pointing at the wrong thing.
+  it('should refuse a value that is not an array', () => {
+    expect(() => resolveOptions(withPrevious(RETIRED))).toThrow(
+      /previousEncryptionKeys must be an array/
+    )
+  })
+
+  // Scenario: an entry that is not a string at all. Expected: refused with the same message the
+  // current key gets. Why: `null` reaching the decoder is a crash at the first challenge.
+  it('should refuse a non-string entry', () => {
+    expect(() => resolveOptions(withPrevious([null]))).toThrow(
+      /previousEncryptionKeys\[0\] must be a non-empty base64 string/
+    )
+  })
+
+  // Scenario: an entry that decodes to 16 bytes. Expected: refused at startup, naming its
+  // index. Why: a malformed retired key would otherwise throw at a user's first challenge —
+  // during an incident, on the path they most need.
+  it('should hold every entry to the 32-byte bar, naming the index', () => {
+    const short = Buffer.alloc(16).toString('base64')
+
+    expect(() => resolveOptions(withPrevious([RETIRED, short]))).toThrow(
+      /previousEncryptionKeys\[1\].*exactly 32 bytes/s
+    )
+  })
+
+  // Scenario: the current key listed as retired. Expected: refused. Why: a configuration that
+  // reads as rotated while nothing changed is worse than one that never claimed to.
+  it('should refuse an entry equal to the current key', () => {
+    expect(() => resolveOptions(withPrevious([CURRENT]))).toThrow(
+      /repeats mfa.encryptionKey or an earlier entry/
+    )
+  })
+
+  // Scenario: the same retired key twice. Expected: refused. Why: same reason — a duplicate
+  // describes a rotation that did not happen, and hides how many keys still open a secret.
+  it('should refuse a duplicated entry', () => {
+    expect(() => resolveOptions(withPrevious([RETIRED, RETIRED]))).toThrow(
+      /previousEncryptionKeys\[1\].*repeats/s
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — roles.hierarchy
 // ---------------------------------------------------------------------------
 

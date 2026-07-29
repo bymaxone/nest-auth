@@ -84,7 +84,7 @@ function prefixesFor(
  * KEYS[1] = rt:{sha256(old)}   KEYS[2] = rt:{sha256(new)}   KEYS[3] = rp:{sha256(old)}
  * KEYS[4] = cf:{sha256(old)}   KEYS[5] = fam:{family}
  * ARGV[1] = new session JSON   ARGV[2] = refresh TTL (s)    ARGV[3] = grace TTL (s; 0 skips)
- * ARGV[4] = family id ('' = legacy record, skip family work)
+ * ARGV[4] = family id ('' = no family, skip family work)
  * ARGV[5] = sha256(old)        ARGV[6] = sha256(new)
  * ```
  *
@@ -102,7 +102,7 @@ if old then
   end
   -- Plant the consumed-family marker (it outlives the much shorter grace window) and move the
   -- family membership onto the new hash, so a post-grace replay is detected as a reuse and the
-  -- whole lineage stays revocable. A legacy session with no family skips this bookkeeping.
+  -- whole lineage stays revocable. A session with no family skips this bookkeeping.
   if ARGV[4] ~= '' then
     redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[2])
     redis.call('SREM', KEYS[5], ARGV[5])
@@ -175,7 +175,7 @@ export interface RefreshRotationParams {
   newHash: string
   /** Serialized session record to store under the new hash. */
   newSessionJson: string
-  /** Family of the presented session; `''` for a legacy record written before families. */
+  /** Family of the presented session; `''` when it belongs to no lineage. */
   familyId: string
   /** Refresh-session lifetime in seconds. */
   refreshTtl: number
@@ -634,11 +634,8 @@ export class AuthRedisService {
   /**
    * Atomically deletes all refresh sessions for a user on the given identity plane.
    *
-   * A platform revoke also sweeps the legacy `sess:{id}` index, where platform sessions used
-   * to be indexed before they moved to their own `psess:` keyspace. It removes only the
-   * `prt:`/`prp:` members from there, so a dashboard user who happens to share the id keeps
-   * their sessions. That legacy pass can be dropped once every session predating the move has
-   * expired (one refresh lifetime, seven days by default).
+   * Each plane sweeps only its own index — `sess:` for dashboard, `psess:` for platform — so
+   * an admin and a user who happen to share an id never revoke each other's sessions.
    *
    * @param userId - Internal user or admin ID whose sessions will be invalidated.
    * @param kind - Which identity plane to revoke. Defaults to `'dashboard'`.
@@ -649,7 +646,6 @@ export class AuthRedisService {
   ): Promise<void> {
     if (kind === 'platform') {
       await this.sweepSessionIndex(`psess:${userId}`, 'prt:', 'prp:', 'psd:')
-      await this.sweepSessionIndex(`sess:${userId}`, 'prt:', 'prp:', 'psd:')
       return
     }
 

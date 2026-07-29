@@ -491,11 +491,11 @@ describe('TokenManagerService', () => {
       })
     })
 
-    // Scenario: a legacy session written before families existed rotates without inventing one.
-    // Expected: an empty family is threaded through, and the stored record omits the key
-    // entirely rather than emitting `"familyId":""` — rust-auth skips the field when empty, so
-    // emitting it would make the same session serialize to different bytes on each side.
-    it('rotates a legacy session with no family and omits the empty key from the record', async () => {
+    // Scenario: a session naming no family rotates without inventing one. Expected: an empty
+    // family is threaded through, and the stored record omits the key entirely rather than
+    // emitting `"familyId":""` — rust-auth skips the field when empty, so emitting it would
+    // make the same session serialize to different bytes on each side.
+    it('rotates a family-less session and omits the empty key from the record', async () => {
       armLiveRotation(
         JSON.stringify({
           userId: 'user-1',
@@ -629,10 +629,10 @@ describe('TokenManagerService', () => {
       expect(mockRedis.expire).toHaveBeenCalledWith(`fam:${FAMILY}`, 7 * 86_400)
     })
 
-    // Scenario: a legacy grace record carries no family, so there is no index to join.
-    // Expected: no `fam:` write at all. Why: kills the `familyId !== ''` guard mutant, which
-    // would otherwise create a `fam:` key with an empty id shared by every legacy session.
-    it('writes no family index when the recovered session is a legacy record', async () => {
+    // Scenario: a grace record carrying no family, so there is no index to join. Expected: no
+    // `fam:` write at all. Why: kills the `familyId !== ''` guard mutant, which would otherwise
+    // create a `fam:` key with an empty id shared by every family-less session.
+    it('writes no family index when the recovered session names no family', async () => {
       armGraceRotation(
         JSON.stringify({
           userId: 'user-1',
@@ -948,10 +948,11 @@ describe('TokenManagerService', () => {
       expect(signCall[0]['mfaVerified']).toBe(false)
     })
 
-    // Scenario: a stored session WITHOUT an mfaEnabled field must default mfaEnabled to false.
-    // Why: kills the BooleanLiteral mutant on the defaulting ternary, which would silently grant
-    // mfaEnabled to legacy sessions on rotation.
-    it('defaults mfaEnabled to false when the stored session omits it', async () => {
+    // Scenario: a stored session with `mfaEnabled: false` rotates into a token that says the
+    // same. Why: kills the BooleanLiteral mutant that would stamp `true` regardless, which
+    // turns every rotation into an MFA-gate trip for an account that has no second factor.
+    // (A record OMITTING the field is refused outright — see the parseSession suite.)
+    it('carries mfaEnabled: false from the stored session into the rotated token', async () => {
       armLiveRotation(
         JSON.stringify({
           userId: 'user-1',
@@ -1505,11 +1506,12 @@ describe('TokenManagerService', () => {
       expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
       expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
       expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
-      // The legacy index is pruned but never written to, so it drains as sessions rotate
-      // instead of holding stale members for a full refresh lifetime.
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prt:${oldHash}`)
-      const indexed = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
-      expect(indexed).not.toContain('sess:admin-1')
+      // The dashboard index is a different plane with a colliding id space: a platform
+      // rotation neither reads it nor writes it.
+      const touched = [...mockRedis.sadd.mock.calls, ...mockRedis.srem.mock.calls].map(
+        (call) => call[0] as string
+      )
+      expect(touched).not.toContain('sess:admin-1')
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
@@ -1564,7 +1566,7 @@ describe('TokenManagerService', () => {
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
       expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
       expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
       // The superseded detail record is dropped by its exact key; a wrong key would leak
       // the old record until TTL and leave a listing describing a token that no longer exists.
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
@@ -1585,8 +1587,8 @@ describe('TokenManagerService', () => {
       expect(session['tenantId']).toBe('')
     })
 
-    // Scenario: a legacy platform grace record carries no family, so there is no index to join.
-    it('writes no platform family index when the recovered session is a legacy record', async () => {
+    // Scenario: a platform grace record carrying no family, so there is no index to join.
+    it('writes no platform family index when the recovered session names no family', async () => {
       armPlatformGraceRotation(
         JSON.stringify({
           userId: 'admin-1',

@@ -253,7 +253,7 @@ describe('PasswordService', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Parameter recording, legacy reads, and the upgrade signal
+  // Parameter recording and the upgrade signal
   // ---------------------------------------------------------------------------
 
   describe('parameters recorded with the hash', () => {
@@ -290,10 +290,11 @@ describe('PasswordService', () => {
       expect(await strong.compare('wrong-horse', written)).toBe(false)
     }, 30_000)
 
-    // Scenario: hashes weaker than, equal to, and stronger than the configuration, plus the
-    // legacy form. Expected: only the weaker ones and the legacy one are stale. Why: this is
-    // the signal that drives the transparent upgrade, and a false positive here rewrites every
-    // user's hash on every login — a write on the hot path for nothing.
+    // Scenario: hashes weaker than, equal to, and stronger than the configuration, plus a
+    // value this library never writes. Expected: only the weaker ones and the unreadable one
+    // are stale. Why: this is the signal that drives the transparent upgrade, and a false
+    // positive here rewrites every user's hash on every login — a write on the hot path for
+    // nothing.
     it('should report staleness only for weaker recorded parameters', async () => {
       const service = await serviceAt(32_768)
       const at = (n: number, r = 8, p = 1) =>

@@ -373,9 +373,9 @@ describe('AuthRedisService', () => {
       await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({ kind: 'invalid' })
     })
 
-    // Verifies a record written before families existed still recovers: it names no lineage, so
-    // there is nothing to check and no `EXISTS` round trip is spent.
-    it('recovers a legacy grace record that carries no family', async () => {
+    // Verifies a record naming no lineage still recovers: there is nothing to check, so no
+    // `EXISTS` round trip is spent on it.
+    it('recovers a grace record that carries no family', async () => {
       mockRedis.eval.mockResolvedValue('GRACE:{"userId":"u1"}')
 
       await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
@@ -500,8 +500,8 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe('')
     })
 
-    // Verifies a legacy session's empty family short-circuits: `fam:` with no id is a key every
-    // familyless session would share, so revoking it would be an unbounded blast radius.
+    // Verifies an empty family id short-circuits: `fam:` with no id is a key every familyless
+    // session would share, so revoking it would be an unbounded blast radius.
     it('is a no-op for an empty family id', async () => {
       await expect(service.revokeFamily('')).resolves.toBe(0)
 
@@ -595,29 +595,21 @@ describe('AuthRedisService', () => {
       )
     })
 
-    // Scenario: a platform revoke on an id that a dashboard user also owns. Expected: the
-    // platform sweep passes only the prt:/prp: prefixes, and it also visits the legacy
-    // sess: index. Why: the two id spaces come from different repositories and may collide,
-    // so an unfiltered sweep would log the unrelated dashboard user out. The legacy pass
-    // covers platform sessions written before they moved to their own keyspace.
-    it('should sweep both indexes with platform-only prefixes for a platform revoke', async () => {
+    // Scenario: a platform revoke on an id that a dashboard user also owns. Expected: exactly
+    // one sweep, over `psess:` only, carrying only the prt:/prp: prefixes. Why: the two id
+    // spaces come from different repositories and may collide, so an unfiltered sweep — or a
+    // second pass over the dashboard index — would log the unrelated user out. `rust-auth`
+    // sweeps the one index too; a second pass here would also break that parity.
+    it('should sweep only the platform index, with platform-only prefixes', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
       await service.invalidateUserSessions('admin-1', 'platform')
 
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('SMEMBERS'),
         1,
         prefixed('psess:admin-1'),
-        NAMESPACE,
-        'prt:',
-        'prp:',
-        'psd:'
-      )
-      expect(mockRedis.eval).toHaveBeenCalledWith(
-        expect.stringContaining('SMEMBERS'),
-        1,
-        prefixed('sess:admin-1'),
         NAMESPACE,
         'prt:',
         'prp:',

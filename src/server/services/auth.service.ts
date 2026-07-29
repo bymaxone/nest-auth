@@ -284,8 +284,8 @@ export class AuthService {
     await this.bruteForce.resetFailures(bfIdentifier)
 
     // Transparent upgrade: the password has just been proven, so a hash written under weaker
-    // parameters — or under the legacy form that recorded none — can be re-derived at the
-    // current cost and stored, without the user doing anything. This is what makes
+    // parameters can be re-derived at the current cost and stored, without the user doing
+    // anything. This is what makes
     // `password.costFactor` raisable at all: without it the only way to move to stronger
     // parameters would be to invalidate every stored hash. Fire-and-forget, so a slow or
     // failing write never delays or breaks a login that has already succeeded.

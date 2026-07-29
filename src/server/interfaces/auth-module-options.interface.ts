@@ -361,6 +361,24 @@ export interface BymaxAuthModuleOptions {
     encryptionKey: string
 
     /**
+     * Keys retired by a rotation, accepted for **decryption only**. Default: none.
+     *
+     * A TOTP secret is stored encrypted under `encryptionKey` and the ciphertext records no key
+     * identifier, so changing that key without this makes every stored secret undecryptable —
+     * every enrolled user's authenticator stops matching, at once, with no way back. Listing
+     * the previous key keeps those secrets readable, and each one is re-encrypted under the
+     * current key the next time its owner passes a challenge, so the rotation drains on its own.
+     *
+     * Encryption always uses `encryptionKey`; entries here are only ever tried after it, and
+     * only to decrypt. AES-GCM authenticates, so a wrong key fails unambiguously rather than
+     * returning garbage — trying them in order is safe.
+     *
+     * Remove an entry once no stored secret is still under it. Each is validated exactly like
+     * the current key.
+     */
+    previousEncryptionKeys?: string[]
+
+    /**
      * Issuer name displayed in authenticator apps (e.g. `'My App'`, `'Acme Corp'`).
      * **Required if MFA is configured.**
      */

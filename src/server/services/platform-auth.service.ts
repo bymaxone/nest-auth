@@ -175,12 +175,10 @@ export class PlatformAuthService {
 
     const tokenHash = sha256(rawRefreshToken)
     // Delete the primary session key and its grace pointer (if it exists from the
-    // last rotation). Both are tracked in the per-user sess: SET so both must be
+    // last rotation). Both are tracked in the per-user psess: SET so both must be
     // removed from the SET to keep it accurate for future invalidateUserSessions calls.
     await this.redis.del('prt:' + tokenHash)
     await this.redis.del('prp:' + tokenHash)
-    await this.redis.srem('sess:' + userId, 'prt:' + tokenHash)
-    await this.redis.srem('sess:' + userId, 'prp:' + tokenHash)
     await this.redis.srem('psess:' + userId, 'prt:' + tokenHash)
     await this.redis.srem('psess:' + userId, 'prp:' + tokenHash)
     await this.redis.del('psd:' + tokenHash)

@@ -372,6 +372,41 @@ const BASE64_STANDARD_RE = /^[A-Za-z0-9+/]+={0,2}$/
  */
 const BASE64_URL_RE = /^[A-Za-z0-9_-]+={0,2}$/
 
+/**
+ * Assert a value is base64 for exactly 32 bytes — an AES-256 key.
+ *
+ * @param key - The configured value.
+ * @param label - The option path, for the error message.
+ * @throws If the value is not valid base64 or does not decode to 32 bytes.
+ */
+function assertAes256Key(key: unknown, label: string): void {
+  if (typeof key !== 'string' || key === '') {
+    throw new Error(`[BymaxAuthModule] ${label} must be a non-empty base64 string.`)
+  }
+
+  // Accept both standard base64 and base64url alphabets so consumers using
+  // `randomBytes(32).toString('base64url')` (which produces `-` and `_` in
+  // place of `+` and `/`) do not hit a confusing "invalid base64" error.
+  if (!BASE64_STANDARD_RE.test(key) && !BASE64_URL_RE.test(key)) {
+    throw new Error(
+      `[BymaxAuthModule] ${label} must be valid base64 — accepted alphabets: ` +
+        `standard (A-Z a-z 0-9 + /) or base64url (A-Z a-z 0-9 - _), padding optional. ` +
+        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
+    )
+  }
+
+  // Buffer's 'base64' decoder accepts both alphabets (treating `-` and `_` as `+` and `/`),
+  // so a single decode call works for both formats.
+  const decoded = Buffer.from(key, 'base64')
+  if (decoded.length !== 32) {
+    throw new Error(
+      `[BymaxAuthModule] ${label} must decode from base64 to exactly 32 bytes ` +
+        `for AES-256-GCM (decoded: ${decoded.length} bytes). ` +
+        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
+    )
+  }
+}
+
 function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
   if (mfa === undefined) return
 
@@ -382,29 +417,30 @@ function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
     )
   }
 
-  // Accept both standard base64 and base64url alphabets so consumers using
-  // `randomBytes(32).toString('base64url')` (which produces `-` and `_` in
-  // place of `+` and `/`) do not hit a confusing "invalid base64" error.
-  const isStandard = BASE64_STANDARD_RE.test(mfa.encryptionKey)
-  const isUrlSafe = BASE64_URL_RE.test(mfa.encryptionKey)
+  assertAes256Key(mfa.encryptionKey, 'mfa.encryptionKey')
 
-  if (!isStandard && !isUrlSafe) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.encryptionKey must be valid base64 — accepted alphabets: ` +
-        `standard (A-Z a-z 0-9 + /) or base64url (A-Z a-z 0-9 - _), padding optional. ` +
-        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
-    )
-  }
-
-  // Buffer's 'base64' decoder accepts both alphabets (treating `-` and `_` as `+` and `/`),
-  // so a single decode call works for both formats.
-  const decoded = Buffer.from(mfa.encryptionKey, 'base64')
-  if (decoded.length !== 32) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.encryptionKey must decode from base64 to exactly 32 bytes ` +
-        `for AES-256-GCM (decoded: ${decoded.length} bytes). ` +
-        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
-    )
+  // Retired keys still decrypt stored secrets, so each is held to the same bar as the current
+  // one — a 16-byte "key" here would throw at the first challenge, not at startup.
+  const previous = mfa.previousEncryptionKeys
+  if (previous !== undefined) {
+    if (!Array.isArray(previous)) {
+      throw new Error(
+        `[BymaxAuthModule] mfa.previousEncryptionKeys must be an array of base64 keys when set.`
+      )
+    }
+    const seen = new Set<string>([mfa.encryptionKey])
+    for (const [index, key] of previous.entries()) {
+      assertAes256Key(key, `mfa.previousEncryptionKeys[${index}]`)
+      if (seen.has(key)) {
+        throw new Error(
+          `[BymaxAuthModule] mfa.previousEncryptionKeys[${index}] repeats mfa.encryptionKey or ` +
+            `an earlier entry. A retired key equal to the current one means the rotation did ` +
+            `not happen, and a configuration that reads as rotated while nothing changed is ` +
+            `worse than one that never claimed to.`
+        )
+      }
+      seen.add(key)
+    }
   }
 
   if (!mfa.issuer) {

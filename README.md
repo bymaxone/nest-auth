@@ -631,11 +631,11 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 | Group             | Key Options                                                                                                                     | Default                            |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`                      | `15m`, `7d`, off, `HS256`          |
+| **jwt**           | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`   | `15m`, `7d`, off, `HS256`          |
 | **password**      | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁷, r=8, p=1             |
 | **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                         |
 | **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section) |
-| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                                    | —                                  |
+| **mfa**           | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                          | —                                  |
 | **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`          |
 | **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                         |
 | **rateLimit**     | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                          | `true`, `'peer'`                   |
@@ -665,8 +665,20 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > those are keyed by an HMAC derived from the secret, so users lose the codes they printed and
 > filed. With it, both keep working while tokens issued under the old secret drain, and a
 > rotation becomes a rollout. Remove the entry once the longest-lived token signed under it has
-> expired: every entry is a key that still opens the door. `mfa.encryptionKey` is a separate key
-> and is **not** covered — rotating it requires re-encrypting the stored TOTP secrets.
+> expired: every entry is a key that still opens the door. `mfa.encryptionKey` rotates the same
+> way, through its own list — see below.
+
+> [!TIP]
+> **Rotating the MFA encryption key.** `mfa.previousEncryptionKeys` lists AES-256 keys retired by
+> a rotation of `mfa.encryptionKey`. The stored ciphertext carries no key identifier, so without
+> the list a change of key makes every enrolled user's TOTP secret undecryptable at once, with no
+> way back — their authenticator simply stops matching. With it, a stored secret that opened
+> under a retired key is **re-encrypted under the current one** on the next successful challenge,
+> so the rotation drains on its own instead of requiring the retired key to stay configured
+> forever. Each entry is validated at startup exactly like the current key (base64, exactly 32
+> bytes, and never equal to the current key or to another entry), because a malformed one would
+> otherwise surface at a user's first challenge rather than at boot. Drop the entry once your
+> enrolled users have had time to authenticate at least once.
 
 > [!IMPORTANT]
 > `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token

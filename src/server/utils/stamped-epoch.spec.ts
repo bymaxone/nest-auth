@@ -13,9 +13,8 @@ describe('readStampedEpoch', () => {
     expect(readStampedEpoch({ epoch: 1 })).toBe(1)
   })
 
-  // A token issued before the claim existed is the legitimate legacy case: it reads as the
-  // lowest generation, so it passes while the user has never been bumped and stops the moment
-  // they are.
+  // A token carrying no claim reads as the lowest generation: it passes while the user has
+  // never been bumped and stops the moment they are — the fail-closed direction.
   it('reads an absent claim as generation zero', () => {
     expect(readStampedEpoch({})).toBe(0)
     expect(readStampedEpoch({ epoch: undefined })).toBe(0)

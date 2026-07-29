@@ -376,10 +376,9 @@ describe('cross-implementation conformance', () => {
   // -------------------------------------------------------------------------
 
   describe('credential formats', () => {
-    // Verifies the contract still describes the 256-bit refresh token this library mints, and
-    // that the legacy UUID shape is documented as accepted rather than minted — the sibling
-    // backend keeps a parsing allowance for it, which only makes sense while such tokens live.
-    it('declares the 256-bit refresh token and the legacy allowance', () => {
+    // Verifies the contract describes the 256-bit refresh token this library mints, and only
+    // that: no second shape is declared, so neither backend keeps a parsing allowance.
+    it('declares the 256-bit refresh token and no second accepted shape', () => {
       expect(contract.credentialFormats['refreshToken']).toContain('64 lowercase hex')
       // No legacy shape is declared, and none is accepted: the libraries are new, so a
       // parsing allowance for a corpus that does not exist is a widened input for nothing.
@@ -437,8 +436,8 @@ describe('cross-implementation conformance', () => {
     })
 
     // Scenario: a stored recovery-code digest. Expected: 64 lowercase hex characters — a keyed
-    // HMAC-SHA-256 — and never the legacy `scrypt:` form, which is verified but no longer
-    // written. Why: the sibling backend verifies these digests directly.
+    // HMAC-SHA-256 — and never a `scrypt:` KDF hash, a form neither library reads or writes.
+    // Why: the sibling backend verifies these digests directly.
     it('stores a recovery code as a hex HMAC-SHA-256 under the identifier key', () => {
       expect(contract.credentialFormats['recoveryCodeDigest']).toContain('hex hmac-sha256')
       expect(contract.credentialFormats['recoveryCodeDigestLegacy']).toBeUndefined()

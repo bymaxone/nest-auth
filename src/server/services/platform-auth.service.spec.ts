@@ -474,16 +474,17 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith('psd:' + tokenHash)
     })
 
-    // Scenario: the same logout against the legacy shared index. Expected: the pre-migration
-    // sess: members are pruned too. Why: sessions created before the platform plane got its
-    // own keyspace still live there, and logout has to reach them or they survive until TTL.
-    it('should also prune the legacy shared index on logout', async () => {
+    // Scenario: the same logout, watching the dashboard index. Expected: untouched. Why: the
+    // two planes have separate id spaces that may collide, so a platform logout reaching into
+    // `sess:` would prune a member belonging to an unrelated user. `rust-auth` never touches
+    // the other plane's index either.
+    it('should leave the dashboard index alone on a platform logout', async () => {
       const futureExp = Math.floor(Date.now() / 1000) + 3600
 
       await service.logout(userId, jti, futureExp, rawRefreshToken)
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
     })
 
     // Verifies that the primary platform refresh token key (prt:{hash}) is deleted from Redis.
@@ -510,17 +511,17 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith('prp:' + tokenHash)
     })
 
-    // Verifies that prt:{hash} is removed from the per-user sess: SET so that
+    // Verifies that prt:{hash} is removed from the per-user psess: SET so that
     // a future revokeAllPlatformSessions call does not try to delete an already-gone key.
-    it('should srem prt:{hash} from sess:{userId}', async () => {
+    it('should srem prt:{hash} from psess:{userId}', async () => {
       await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
     })
 
-    // Verifies that prp:{hash} is also removed from the per-user sess: SET.
-    it('should srem prp:{hash} from sess:{userId}', async () => {
+    // Verifies that prp:{hash} is also removed from the per-user psess: SET.
+    it('should srem prp:{hash} from psess:{userId}', async () => {
       await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
     })
   })
 

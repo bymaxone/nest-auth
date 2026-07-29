@@ -16,8 +16,9 @@
  * The guard cannot assume the claim came from this library's signer — any other holder of the
  * deployment secret (a sibling service, an older version) could emit one.
  *
- * A token with no `epoch` at all is the legitimate legacy case and also reads as `0`: it is
- * accepted while the user has never been bumped, and rejected the moment they are.
+ * A token with no `epoch` at all also reads as `0`: it is accepted while the user has never
+ * been bumped, and rejected the moment they are. That is the fail-closed direction — an
+ * unstamped token can never outlive a revocation.
  *
  * @param payload - The verified token payload.
  * @returns The stamped generation, or `0` when the claim is absent or unusable.

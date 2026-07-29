@@ -85,7 +85,7 @@ const AUTH_RESULT = {
 
 // Stored state payload JSON that would be stored in Redis.
 const STORED_STATE = JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 'verifier-xyz' })
-/** Legacy stored state without PKCE — used to exercise the backward-compatible branch. */
+/** A state record with the PKCE verifier stripped — corrupt, or a downgrade attempt. */
 const STORED_STATE_NO_PKCE = JSON.stringify({ tenantId: 'tenant-1' })
 
 // Mock plugin — implements the OAuthProviderPlugin interface.
@@ -436,13 +436,17 @@ describe('OAuthService', () => {
       expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', 'verifier-xyz')
     })
 
-    // Verifies backward compatibility: a legacy stored state without codeVerifier
-    // still completes the flow — exchangeCode receives `undefined` for the verifier.
-    it('should forward undefined verifier when the stored state predates PKCE', async () => {
+    // Scenario: a stored state with no `codeVerifier` at all. Expected: refused, and the
+    // exchange never runs. Why: every flow this library starts writes a verifier, so a record
+    // without one is corrupt or forged — accepting it is a PKCE downgrade, where stripping one
+    // field buys an attacker an exchange with no proof they started the flow. `rust-auth`
+    // types the field as a plain `String` and cannot even deserialize such a record.
+    it('should refuse a stored state carrying no codeVerifier', async () => {
       setupHappyPathCreate()
       mockRedis.getdel.mockResolvedValue(STORED_STATE_NO_PKCE)
-      await callCallback()
-      expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', undefined)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
     })
 
     // Verifies that a stored state whose `codeVerifier` is not a string is rejected

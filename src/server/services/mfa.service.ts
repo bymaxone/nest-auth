@@ -159,6 +159,39 @@ export class MfaService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Store the TOTP secret re-encrypted under the current key.
+   *
+   * Detached from the challenge it follows: the user is already authenticated and the retired
+   * key still opens the secret, so a failure here costs the migration and nothing else.
+   *
+   * @param userId - The account whose stored secret is being re-encrypted.
+   * @param context - Which identity plane the account belongs to.
+   * @param secretBase32 - The decrypted secret.
+   * @param recoveryCodes - The stored recovery digests, written back unchanged.
+   */
+  private async reencryptSecret(
+    userId: string,
+    context: 'dashboard' | 'platform',
+    secretBase32: string,
+    recoveryCodes: string[]
+  ): Promise<void> {
+    const update = {
+      mfaEnabled: true as const,
+      mfaSecret: this.encryptSecret(secretBase32),
+      mfaRecoveryCodes: recoveryCodes
+    }
+    try {
+      if (context === 'platform' && this.platformUserRepo) {
+        await this.platformUserRepo.updateMfa(userId, update as UpdatePlatformMfaData)
+      } else {
+        await this.userRepo.updateMfa(userId, update)
+      }
+    } catch (err: unknown) {
+      this.logger.error('re-encryption under the current MFA key failed', err)
+    }
+  }
+
+  /**
    * Encrypts a TOTP secret for storage in the database using AES-256-GCM.
    */
   private encryptSecret(secret: string): string {
@@ -166,15 +199,40 @@ export class MfaService {
   }
 
   /**
-   * Decrypts a stored TOTP secret.
+   * Decrypts a stored TOTP secret, falling back to keys retired by a rotation.
+   *
+   * The ciphertext records no key identifier, so without the retired keys, changing
+   * `mfa.encryptionKey` makes every stored secret undecryptable — every enrolled user's
+   * authenticator stops matching at once, with no way back. AES-GCM authenticates, so a wrong
+   * key fails unambiguously rather than returning garbage; trying them in order is safe.
    *
    * Re-throws any decryption failure as an opaque `TOKEN_INVALID` to prevent
    * error-type oracle attacks (callers cannot distinguish format vs. tamper errors).
    */
   private decryptSecret(encrypted: string): string {
+    return this.decryptWithRotation(encrypted).secret
+  }
+
+  /**
+   * Decrypt under the current key, then under each retired one.
+   *
+   * @param encrypted - The stored ciphertext.
+   * @returns The plaintext and whether a retired key produced it — the signal that the record
+   *   should be re-encrypted under the current key.
+   * @throws {@link AuthException} `TOKEN_INVALID` when no key decrypts it.
+   */
+  private decryptWithRotation(encrypted: string): { secret: string; stale: boolean } {
     try {
-      return decrypt(encrypted, this.mfaOptions.encryptionKey)
+      return { secret: decrypt(encrypted, this.mfaOptions.encryptionKey), stale: false }
     } catch {
+      for (const key of this.mfaOptions.previousEncryptionKeys ?? []) {
+        try {
+          return { secret: decrypt(encrypted, key), stale: true }
+        } catch {
+          // Try the next retired key. A ciphertext none of them opens is tampered, truncated,
+          // or from a key nobody holds any more — all the same opaque failure to the caller.
+        }
+      }
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
   }
@@ -268,16 +326,9 @@ export class MfaService {
   /**
    * Compares a submitted recovery code against every stored digest.
    *
-   * Handles both storage formats. Codes written before recovery digests moved to a keyed
-   * MAC carry the `scrypt:` prefix and are verified with the KDF that produced them; those
-   * short-circuit on a match, because letting the scan run would spend one scrypt
-   * derivation per remaining code on every attempt. Codes in the current format are
-   * compared in constant time and the scan always runs to completion, so neither the
-   * position of a match nor the number of legacy codes is observable in the response time.
-   *
-   * Existing codes therefore keep working and are never invalidated: a recovery digest is
-   * one-way, so there is nothing to migrate — the set converts naturally the next time it
-   * is regenerated.
+   * One storage format only: a keyed MAC over the code. Every digest is compared in constant
+   * time and the scan always runs to completion, so neither the position of a match nor the
+   * number of codes still unused is observable in the response time.
    *
    * @returns Index of the matching digest, or `-1` if none match.
    */
@@ -613,7 +664,9 @@ export class MfaService {
     }
 
     // Step 4: Decrypt TOTP secret and validate the submitted code.
-    const secretBase32 = this.decryptSecret(user.mfaSecret)
+    const { secret: secretBase32, stale: encryptedUnderRetiredKey } = this.decryptWithRotation(
+      user.mfaSecret
+    )
     const isTotpCode = /^\d{6}$/.test(code)
     const totpWindow = this.mfaOptions.totpWindow
     // Stryker disable next-line BooleanLiteral: `codeValid` is unconditionally reassigned in both branches before it is ever read, so its initializer is irrelevant
@@ -664,7 +717,9 @@ export class MfaService {
       updatedCodes.splice(usedRecoveryIndex, 1)
       const mfaUpdate = {
         mfaEnabled: true as const,
-        mfaSecret: user.mfaSecret,
+        // Re-encrypted here when the secret opened under a retired key: the write is already
+        // happening, so the rotation drains for free.
+        mfaSecret: encryptedUnderRetiredKey ? this.encryptSecret(secretBase32) : user.mfaSecret,
         mfaRecoveryCodes: updatedCodes
       }
       if (context === 'platform' && this.platformUserRepo) {
@@ -672,6 +727,11 @@ export class MfaService {
       } else {
         await this.userRepo.updateMfa(userId, mfaUpdate)
       }
+    } else if (encryptedUnderRetiredKey) {
+      // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
+      // Fire-and-forget: the challenge has already succeeded and the retired key still opens
+      // the secret, so a failure costs the migration and nothing else.
+      void this.reencryptSecret(userId, context, secretBase32, user.mfaRecoveryCodes ?? [])
     }
 
     this.logger.log(`challenge: MFA challenge passed userId=${userId} context=${context}`)

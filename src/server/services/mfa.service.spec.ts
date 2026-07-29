@@ -2369,4 +2369,229 @@ describe('MfaService', () => {
       })
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Rotating the MFA encryption key
+  // ---------------------------------------------------------------------------
+
+  describe('encryption key rotation', () => {
+    const RETIRED_KEY = Buffer.alloc(32, 3).toString('base64')
+    const ROTATION_AUTH_RESULT = { accessToken: 'at', rawRefreshToken: 'rt', user: {} }
+
+    beforeEach(() => {
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'user-1',
+        context: 'dashboard',
+        jti: 'jti-rotation'
+      })
+      mockTokenManager.issueTokens.mockResolvedValue(ROTATION_AUTH_RESULT)
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+    })
+
+    // Scenario: a TOTP secret encrypted under a key since retired, with the rotation
+    // configured. Expected: the challenge succeeds. Why: the ciphertext records no key
+    // identifier, so without the retired key every stored secret becomes undecryptable the
+    // moment `mfa.encryptionKey` changes — every enrolled user's authenticator stops matching
+    // at once, with no way back.
+    it('should decrypt a secret stored under a retired key', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        // Written under the OLD key: the current one cannot open it.
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      await expect(
+        rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      ).resolves.toBe(ROTATION_AUTH_RESULT)
+    })
+
+    // Scenario: the same secret, rotation NOT configured. Expected: refused. Why: this is the
+    // failure the test above prevents, and it has to be shown to be real — otherwise the
+    // fallback could be doing nothing and both tests would still pass.
+    it('should refuse a secret whose key was not listed', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+
+      await expect(
+        service.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: a successful challenge against a secret under a retired key. Expected: the
+    // secret is rewritten under the current one. Why: without it the rotation never drains and
+    // the retired key has to stay configured forever — a key that still opens every secret.
+    it('should re-encrypt the secret under the current key after a successful challenge', async () => {
+      const { encrypt, decrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.updateMfa.mockResolvedValue(undefined)
+
+      await rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      await new Promise((resolve) => setImmediate(resolve))
+
+      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [string, { mfaSecret: string }]
+      // Readable under the CURRENT key, and the plaintext is unchanged.
+      expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
+    })
+
+    // Scenario: the re-encryption write fails. Expected: the challenge still succeeded. Why:
+    // the retired key still opens the secret, so a failed migration costs nothing but the
+    // migration — failing the login over it would turn housekeeping into an outage.
+    it('should not fail the challenge when the re-encryption write fails', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.updateMfa.mockRejectedValue(new Error('write failed'))
+
+      await expect(
+        rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      ).resolves.toBe(ROTATION_AUTH_RESULT)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        're-encryption under the current MFA key failed',
+        expect.any(Error)
+      )
+      errorSpy.mockRestore()
+    })
+
+    // Scenario: the same rotation, but the account lives on the platform plane. Expected: the
+    // rewrite goes to the platform repository. Why: the two planes are separate stores, and a
+    // rewrite routed to the wrong one leaves the platform secret under the retired key forever
+    // while the log says the migration ran.
+    it('should re-encrypt a platform secret through the platform repository', async () => {
+      const { encrypt, decrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'admin-1',
+        context: 'platform',
+        jti: 'jti-rotation-platform'
+      })
+      mockTokenManager.issuePlatformTokens.mockResolvedValue(ROTATION_AUTH_RESULT)
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...SAFE_ADMIN,
+        passwordHash: 'hash',
+        mfaEnabled: true,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockPlatformUserRepo.updateMfa.mockResolvedValue(undefined)
+
+      await rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      const [, update] = mockPlatformUserRepo.updateMfa.mock.calls[0] as [
+        string,
+        { mfaSecret: string }
+      ]
+      expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
+    })
+
+    // Scenario: a RECOVERY-code challenge against a secret under a retired key. Expected: the
+    // splice write carries the re-encrypted secret. Why: that path already writes the record,
+    // so a separate write would be a second round trip — but it also means the re-encryption
+    // rides on a value that is easy to leave untouched, and then only recovery-code users never
+    // migrate.
+    it('should re-encrypt on the recovery-code path, in the write it already makes', async () => {
+      const { encrypt, decrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+      })
+      mockUserRepo.updateMfa.mockResolvedValue(undefined)
+
+      await rotated.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [
+        string,
+        { mfaSecret: string; mfaRecoveryCodes: string[] }
+      ]
+      expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
+      // …and the code that was used is still gone: the re-encryption rides along, it does not
+      // replace the write's own job.
+      expect(update.mfaRecoveryCodes).toEqual([])
+    })
+
+    // Scenario: a TOTP re-encryption for a record whose recovery-code list is absent, not
+    // empty. Expected: the rewrite still happens and stores an empty list. Why: a repository
+    // that returns `undefined` for a user who never generated codes would otherwise crash the
+    // migration — or, worse, write `undefined` over the column.
+    it('should re-encrypt a record that carries no recovery-code list', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const rotated = await buildService({
+        mfa: { ...mockOptions.mfa, previousEncryptionKeys: [RETIRED_KEY] }
+      })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: undefined
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.updateMfa.mockResolvedValue(undefined)
+
+      await rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      await new Promise((resolve) => setImmediate(resolve))
+
+      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [
+        string,
+        { mfaRecoveryCodes: string[] }
+      ]
+      expect(update.mfaRecoveryCodes).toEqual([])
+    })
+  })
 })

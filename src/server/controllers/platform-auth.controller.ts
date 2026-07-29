@@ -295,7 +295,7 @@ export class PlatformAuthController {
    * Revokes all active platform sessions for the authenticated administrator.
    *
    * Uses an atomic Lua script to delete all refresh session keys (primary `prt:`
-   * keys and grace-pointer `prp:` keys) tracked in the `sess:{userId}` Redis SET.
+   * keys and grace-pointer `prp:` keys) tracked in the `psess:{userId}` Redis SET.
    *
    * @param user - JWT payload from the verified platform access token.
    *
