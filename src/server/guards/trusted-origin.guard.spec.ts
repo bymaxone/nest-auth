@@ -24,7 +24,12 @@ import { TrustedOriginGuard } from './trusted-origin.guard'
 const TRUSTED = 'https://app.example.com'
 
 const mockOptions = {
-  cookies: { sameSite: 'none', trustedOrigins: [TRUSTED] }
+  cookies: {
+    sameSite: 'none',
+    trustedOrigins: [TRUSTED],
+    accessTokenName: AUTH_ACCESS_COOKIE_NAME,
+    refreshTokenName: AUTH_REFRESH_COOKIE_NAME
+  }
 }
 
 /** A request shape carrying only what the guard reads. */
@@ -55,6 +60,14 @@ function codeOf(error: unknown): string {
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
+
+/** A guard over the given options, for the cases that need a non-default cookie config. */
+async function buildGuard(options: unknown): Promise<TrustedOriginGuard> {
+  const module = await Test.createTestingModule({
+    providers: [TrustedOriginGuard, { provide: BYMAX_AUTH_OPTIONS, useValue: options }]
+  }).compile()
+  return module.get(TrustedOriginGuard)
+}
 
 describe('TrustedOriginGuard', () => {
   let guard: TrustedOriginGuard
@@ -105,12 +118,14 @@ describe('TrustedOriginGuard', () => {
       expect(guard.canActivate(context)).toBe(true)
     })
 
-    // A request with no cookie jar at all (a framework that never parsed cookies) is treated
-    // the same as one with an empty jar rather than crashing on the property access. The
-    // untrusted origin is what makes this observable: reading such a jar as credential-bearing
-    // would turn every unparsed request into a rejection.
+    // Scenario: no cookie jar at all — `cookie-parser` not mounted, or a framework that never
+    // parsed cookies — on a cross-site request from a browser. Expected: refused. Why: the
+    // guard cannot prove there is no ambient credential, and treating "unreadable" as "absent"
+    // means a deployment that forgets the middleware silently loses the CSRF control on every
+    // request. Demanding a trusted Origin is the recoverable direction; waving it through is
+    // not. Non-browser callers are unaffected — see the test below.
     it.each([undefined, null, 'not-an-object'])(
-      'treats a %s cookie jar as carrying no credential',
+      'refuses a cross-site browser request when the %s cookie jar cannot be read',
       (cookies) => {
         const context = contextFor({
           method: 'POST',
@@ -118,9 +133,46 @@ describe('TrustedOriginGuard', () => {
           cookies
         })
 
+        expect(() => guard.canActivate(context)).toThrow(AuthException)
+      }
+    )
+
+    // Scenario: the same unreadable jar, but from a non-browser client — no `Origin`, no
+    // `Sec-Fetch-Site` (curl, a mobile app, server-to-server). Expected: allowed. Why: those
+    // headers are what a browser attaches; their absence means no browser attached an ambient
+    // cookie, so there is no CSRF to prevent. This is what keeps the fail-closed choice above
+    // from breaking every bearer-token deployment that never mounts `cookie-parser`.
+    it.each([undefined, null, 'not-an-object'])(
+      'still allows a non-browser request when the %s cookie jar cannot be read',
+      (cookies) => {
+        const context = contextFor({ method: 'POST', headers: {}, cookies })
+
         expect(guard.canActivate(context)).toBe(true)
       }
     )
+
+    // Scenario: a deployment that RENAMED its auth cookies, cross-site from an untrusted
+    // origin. Expected: refused. Why: the guard used to read the shipped default names, so a
+    // renamed credential was invisible to it — it concluded "no ambient credential" and
+    // allowed the request. That failed open on exactly the configuration the guard exists
+    // for (`SameSite=None`), where the browser does attach the renamed cookie.
+    it('sees a renamed auth cookie as a credential', async () => {
+      const renamed = await buildGuard({
+        cookies: {
+          sameSite: 'none',
+          trustedOrigins: [TRUSTED],
+          accessTokenName: 'bm_at',
+          refreshTokenName: 'bm_rt'
+        }
+      })
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://evil.example.com' },
+        cookies: { bm_at: 'a_1' }
+      })
+
+      expect(() => renamed.canActivate(context)).toThrow(AuthException)
+    })
 
     // `same-origin` is the app calling itself; `none` is a user-initiated navigation. Neither
     // can be caused by another site, so both pass without consulting the allowlist — which is

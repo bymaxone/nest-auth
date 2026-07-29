@@ -1152,33 +1152,27 @@ describe('TokenManagerService', () => {
       )
     })
 
-    // Verifies that issuing a fresh MFA temp token resets the per-user MFA challenge
-    // brute-force counter (`lf:{hmacSha256('challenge:{userId}')}`), so that failed
-    // attempts from an abandoned prior login session do not compound against the user.
-    it('should reset the MFA challenge brute-force counter on new token issuance', async () => {
+    // Scenario: a fresh login for an MFA-enabled account. Expected: the per-user MFA challenge
+    // counter (`lf:{hmac('challenge:{userId}')}`) is NOT cleared. Why: issuing the temp token
+    // used to reset it, on the reasoning that a fresh login proves renewed password
+    // possession — but password possession is exactly what the attacker is assumed to have in
+    // the threat model the second factor covers. With the reset, they looped
+    // `login → five wrong codes → login` and the per-account lockout never engaged; the only
+    // remaining control was the per-IP limit, which a distributed caller sidesteps. At
+    // totpWindow 1 that turns a ~480-guess/day budget into an unbounded one.
+    it('should NOT reset the MFA challenge brute-force counter on token issuance', async () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
 
       await service.issueMfaTempToken('user-1', 'dashboard')
 
-      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^lf:/))
-    })
-
-    // Scenario: the brute-force identifier must be HMAC of the namespaced 'challenge:{userId}' value,
-    // matching the identifier MfaService uses in `challenge`.
-    // Expected: del('lf:<hmac(challenge:user-1)>'). Why: kills the StringLiteral mutant on line 707
-    // (`challenge:${userId}` → '') which would HMAC the empty string, breaking key alignment so the
-    // reset would target the wrong Redis key.
-    it('resets the brute-force counter using the exact challenge:{userId} HMAC identifier', async () => {
-      mockRedis.set.mockResolvedValue(undefined)
-      mockRedis.del.mockResolvedValue(undefined)
-
-      await service.issueMfaTempToken('user-1', 'dashboard')
-
-      const expectedIdentifier = createHmac('sha256', HMAC_KEY)
+      const challengeCounter = `lf:${createHmac('sha256', HMAC_KEY)
         .update('challenge:user-1', 'utf8')
-        .digest('hex')
-      expect(mockRedis.del).toHaveBeenCalledWith(`lf:${expectedIdentifier}`)
+        .digest('hex')}`
+      expect(mockRedis.del).not.toHaveBeenCalledWith(challengeCounter)
+      // …and nothing else in the lockout keyspace is cleared either — the counter is cleared
+      // by exactly one event, a successful challenge.
+      expect(mockRedis.del).not.toHaveBeenCalledWith(expect.stringMatching(/^lf:/))
     })
   })
 

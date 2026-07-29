@@ -6,7 +6,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
+import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type {
@@ -944,17 +944,15 @@ export class TokenManagerService {
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
 
-    // Reset the per-user MFA challenge brute-force counter so that failed attempts
-    // from a prior (now-abandoned) login session do not compound against the
-    // legitimate user. A fresh login proves renewed possession of the password
-    // and starts the MFA brute-force budget from zero. The counter still
-    // protects within a single session — five wrong codes under one issued temp
-    // token flow will lock the account as expected until `windowSeconds` elapses.
-    // Identifier must match the one MfaService uses in `challenge`: namespaced
-    // with `'challenge:'` and HMAC-keyed on the same derived `hmacKey` so the key
-    // space aligns exactly across issue and verify.
-    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.hmacKey)
-    await this.redis.del(`lf:${bfIdentifier}`)
+    // The per-user MFA challenge counter is deliberately NOT reset here. It used to be, on
+    // the reasoning that "a fresh login proves renewed possession of the password" — but
+    // possession of the password is exactly the attacker's assumed capability in the threat
+    // model the second factor exists to cover. Resetting on every temp-token issuance let
+    // that attacker loop `login → five wrong codes → login` forever, so the per-account
+    // lockout never engaged and the only remaining control was the per-IP rate limit, which
+    // a distributed caller sidesteps. The counter is cleared by exactly one event: a
+    // SUCCESSFUL challenge (see `MfaService.challenge`), which is the only thing that proves
+    // possession of the factor being guessed.
 
     return token
   }

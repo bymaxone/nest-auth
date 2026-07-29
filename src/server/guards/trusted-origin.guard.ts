@@ -8,10 +8,6 @@ import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import type { Request } from 'express'
 
-import {
-  AUTH_ACCESS_COOKIE_NAME,
-  AUTH_REFRESH_COOKIE_NAME
-} from '../../shared/constants/cookie-defaults'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -108,14 +104,26 @@ export class TrustedOriginGuard implements CanActivate {
    * JavaScript by design and authenticates nothing, so a request carrying only that one has no
    * ambient credential for an attacker page to spend.
    *
+   * The names come from the resolved options, never from the shipped defaults. Reading the
+   * defaults meant that a deployment renaming its cookies — the `cookies.accessTokenName` /
+   * `refreshTokenName` options — carried a credential this method could not see, so the guard
+   * concluded "no ambient credential" and allowed the cross-site request. That failed open on
+   * exactly the configuration the guard exists for: `SameSite=None`, where the browser does
+   * attach the renamed cookie.
+   *
+   * An unreadable `request.cookies` (the `cookie-parser` middleware not mounted) is treated as
+   * "credential present" rather than "absent": the guard cannot prove the request is safe, and
+   * the safe direction is to demand a trusted `Origin` rather than wave it through.
+   *
    * @param request - The incoming request.
-   * @returns `true` when an access or refresh cookie is present.
+   * @returns `true` when an access or refresh cookie is present, or when the cookies cannot
+   *   be read at all.
    */
   private carriesAuthCookie(request: Request): boolean {
     const cookies: unknown = request.cookies
-    if (typeof cookies !== 'object' || cookies === null) return false
-    const { [AUTH_ACCESS_COOKIE_NAME]: access, [AUTH_REFRESH_COOKIE_NAME]: refresh } =
-      cookies as Record<string, unknown>
-    return typeof access === 'string' || typeof refresh === 'string'
+    if (typeof cookies !== 'object' || cookies === null) return true
+    const jar = cookies as Record<string, unknown>
+    const { accessTokenName, refreshTokenName } = this.options.cookies
+    return typeof jar[accessTokenName] === 'string' || typeof jar[refreshTokenName] === 'string'
   }
 }

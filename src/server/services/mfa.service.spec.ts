@@ -896,6 +896,40 @@ describe('MfaService', () => {
       )
     })
 
+    // Scenario: the loop an attacker who holds the password runs — log in, burn the MFA
+    // guess budget, log in again to get a fresh temp token, keep guessing. Expected: the
+    // failure counter keeps climbing across logins, so the lockout engages. Why: issuing a
+    // temp token used to clear this counter, which made the per-account lockout unreachable
+    // and left only the per-IP limit (defeated by distributing). The counter is cleared by
+    // exactly one event — a successful challenge — and this test pins that: the identifier
+    // recorded across two separate login cycles is the SAME key, so the count accumulates.
+    it('should keep accumulating MFA failures across separate logins', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      // Two challenge attempts, each following its own login (the service re-reads the
+      // identifier from the token's userId every time, so a fresh temp token changes nothing).
+      await expect(service.challenge('mfa.temp', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      await expect(
+        service.challenge('mfa.temp.fresh', '111111', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      const identifiers = mockBruteForce.recordFailure.mock.calls.map((call) => call[0] as string)
+      expect(identifiers).toHaveLength(2)
+      // Same counter both times — nothing in the login path reset it in between.
+      expect(identifiers[0]).toBe(identifiers[1])
+      expect(mockBruteForce.resetFailures).not.toHaveBeenCalled()
+    })
+
     // Verifies that a valid TOTP code resets the brute-force counter and issues tokens.
     it('should reset brute-force counter and issue tokens for a valid TOTP code', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')

@@ -127,7 +127,9 @@ const mockSessionService = {
 
 // Default options with sessions disabled — tests that need sessions override this.
 const MOCK_OPTIONS = {
-  sessions: { enabled: false }
+  sessions: { enabled: false },
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
+  emailVerification: { required: false }
 }
 
 const mockRes = {
@@ -370,6 +372,98 @@ describe('OAuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
     }
 
+    // Scenario: a BANNED account whose OAuth identity is already linked signs in with the
+    // provider. Expected: refused before any token is issued. Why: every other credential
+    // flow in this library gates on status — password login, the MFA challenge, both reset
+    // steps, the platform login — and OAuth was the one that did not, so a ban was fully
+    // reversible by anyone holding the linked provider account. Ban is the primary account
+    // kill switch; a flow that ignores it makes it advisory.
+    it.each([
+      ['BANNED', AUTH_ERROR_CODES.ACCOUNT_BANNED],
+      ['SUSPENDED', AUTH_ERROR_CODES.ACCOUNT_SUSPENDED],
+      ['INACTIVE', AUTH_ERROR_CODES.ACCOUNT_INACTIVE]
+    ])('should refuse an OAuth sign-in for a %s account', async (status, expectedCode) => {
+      setupHappyPathCreate()
+      // Linked identity: the hook resolves to the existing (blocked) account. The link branch
+      // re-fetches by primary key, so `findById` is what supplies the resolved user.
+      const blocked = { ...AUTH_USER, status }
+      mockUserRepo.findByOAuthId.mockResolvedValue(blocked)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(blocked)
+
+      await expect(callCallback()).rejects.toMatchObject({
+        // The status gate specifically — not OAUTH_FAILED from an earlier step, which would
+        // make this test pass while proving nothing.
+        response: { error: { code: expectedCode } }
+      })
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a blocked account that ALSO has MFA enabled. Expected: refused without even
+    // an MFA temp token. Why: the gate runs before the MFA branch, so a blocked account
+    // cannot obtain the intermediate credential either — otherwise the ban would be
+    // enforced only at the second step, and only for accounts that have a second step.
+    it('should refuse a blocked MFA-enabled account before issuing a temp token', async () => {
+      setupHappyPathCreate()
+      const blocked = { ...AUTH_USER, status: 'BANNED', mfaEnabled: true }
+      mockUserRepo.findByOAuthId.mockResolvedValue(blocked)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(blocked)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Scenario: `emailVerification.required` is on and the provider asserted an UNVERIFIED
+    // address. Expected: refused, exactly as password login refuses it. Why: an OAuth
+    // identity is not a substitute for a proven mailbox — signing in must not promote an
+    // unverified address, or the deployment's "this email is proven" invariant is false for
+    // every OAuth account.
+    it('should refuse an unverified address when email verification is required', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          OAuthService,
+          { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: SessionService, useValue: mockSessionService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, emailVerification: { required: true } }
+          }
+        ]
+      }).compile()
+      const strict = module.get<OAuthService>(OAuthService)
+
+      setupHappyPathCreate()
+      const unverified = { ...AUTH_USER, emailVerified: false }
+      mockUserRepo.findByOAuthId.mockResolvedValue(unverified)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(unverified)
+
+      await expect(
+        strict.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        // The EMAIL_NOT_VERIFIED gate specifically — not OAUTH_FAILED from some earlier step,
+        // which would make this test pass while proving nothing.
+        response: { error: { code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED } }
+      })
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
     // Scenario: the provider hands back an address it has NOT verified.
     // Expected: the account is created unverified, so the consumer's own verification flow
     // still has to run. Why: the account belongs to whoever controls the OAuth account, not to
@@ -514,7 +608,10 @@ describe('OAuthService', () => {
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_OPTIONS, useValue: { sessions: { enabled: true } } }
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, sessions: { enabled: true } }
+          }
         ]
       }).compile()
 
@@ -549,7 +646,10 @@ describe('OAuthService', () => {
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_OPTIONS, useValue: { sessions: { enabled: true } } }
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, sessions: { enabled: true } }
+          }
         ]
       }).compile()
 

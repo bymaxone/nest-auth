@@ -43,6 +43,7 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
@@ -341,6 +342,22 @@ export class OAuthService {
       default: {
         throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
       }
+    }
+
+    // Status gate. Every credential flow in this library runs it — password login, the MFA
+    // challenge, both password-reset steps, the platform login — and OAuth was the one that
+    // did not, so a BANNED or SUSPENDED account holding a linked provider identity walked
+    // straight back in. Ban is the primary account kill switch; a flow that ignores it makes
+    // it advisory. Run before the MFA branch so a blocked account cannot even obtain a temp
+    // token. `rust-auth` gates the same point.
+    assertNotBlocked(authUser.status, this.options.blockedStatuses)
+
+    // Email-verification gate, on the same footing as password login: when a deployment
+    // requires a verified address, an OAuth identity does not substitute for one. The `create`
+    // branch above records what the provider actually asserted, so an unverified provider
+    // profile stays unverified here rather than being promoted by the act of signing in.
+    if (this.options.emailVerification.required && !authUser.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED, HttpStatus.FORBIDDEN)
     }
 
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
