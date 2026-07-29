@@ -146,6 +146,16 @@ export class InvitationService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    // The inviter must belong to the tenant they are inviting into. Without this the only
+    // authorization is the role-hierarchy check below, which says nothing about *where* the
+    // role is held: an ADMIN of tenant A could mint an invitation that provisions an ADMIN
+    // account inside tenant B. The shipped controller sources `tenantId` from the caller's own
+    // claims, which hides it — but this is a library whose service layer consumers call
+    // directly, and the authorization contract belongs here rather than in one caller.
+    if (inviter.tenantId !== tenantId) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    }
+
     // The inviter must hold a role >= the role being invited.
     if (!hasRole(inviter.role, role, hierarchy)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)

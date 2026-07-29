@@ -219,6 +219,36 @@ describe('InvitationService', () => {
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
+    // Scenario: an admin of tenant-1 invites into tenant-2. Expected: refused, and nothing is
+    // stored or sent. Why: the only other authorization here is the role-hierarchy check,
+    // which says *what* role the inviter holds and nothing about *where* they hold it — so an
+    // ADMIN of one tenant could mint an invitation that provisions an ADMIN account inside a
+    // tenant they have no relationship with. The shipped controller sources `tenantId` from
+    // the caller's own claims, which hides it, but this is a library whose service layer
+    // consumers call directly.
+    it('should refuse to invite into a tenant the inviter does not belong to', async () => {
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-2')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+      })
+
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the same refusal for an inviter whose role would otherwise permit it. Expected:
+    // still refused. Why: the tenant check must not be reachable-around by holding a high
+    // enough role — cross-tenant is cross-tenant regardless of seniority.
+    it('should refuse a cross-tenant invite even from the highest role', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'admin' })
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'admin', 'other-tenant')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
     // Verifies that the Redis key uses the inv:{sha256} prefix with a 64-char hex hash.
     it('should store the invitation under a key matching /^inv:[0-9a-f]{64}$/', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
