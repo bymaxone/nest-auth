@@ -149,6 +149,48 @@ describe('OtpService', () => {
       expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
     })
 
+    // Scenario: a record that parses but has no `attempts`. Expected: refused exactly like
+    // corrupted JSON. Why: this is the fail-open shape. `undefined >= MAX_ATTEMPTS` is
+    // `false`, so before the shape check a record with that one field stripped never tripped
+    // the cap and the six-digit code could be guessed without limit. `rust-auth` types the
+    // field as a required `u32` and cannot deserialize such a record at all.
+    it('should refuse a record whose attempts counter is missing', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ code: '123456' }))
+      mockRedis.del.mockResolvedValue(1)
+
+      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
+        AuthException
+      )
+      expect(mockRedis.del).toHaveBeenCalledWith(OTP_KEY)
+    })
+
+    // Scenario: a stored value that parses to something that is not an object at all — a bare
+    // `null` or a number. Expected: refused. Why: the guard has to reject before any field
+    // read, or `null['code']` throws a TypeError out of the credential path.
+    it.each(['null', '42'])(
+      'should refuse a stored value that is not an object (%s)',
+      async (raw) => {
+        mockRedis.get.mockResolvedValue(raw)
+        mockRedis.del.mockResolvedValue(1)
+
+        await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
+          AuthException
+        )
+      }
+    )
+
+    // Scenario: a record with no `code`. Expected: refused. Why: the comparison would read
+    // `undefined.length` and throw an unhandled TypeError out of a credential path, which is
+    // a 500 where the contract promises an opaque OTP failure.
+    it('should refuse a record whose code is missing', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ attempts: 0 }))
+      mockRedis.del.mockResolvedValue(1)
+
+      await expect(service.verify('email_verification', 'user-hash', '123456')).rejects.toThrow(
+        AuthException
+      )
+    })
+
     // ---------------------------------------------------------------------------
     // verify — wrong code
     // ---------------------------------------------------------------------------

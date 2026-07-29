@@ -26,6 +26,24 @@ interface OtpRecord {
 }
 
 /**
+ * Whether an unknown value is a well-formed {@link OtpRecord}.
+ *
+ * The shape is checked rather than asserted, because the two fields are the whole security
+ * of this flow and an absent one fails open in the worst possible way: `undefined >= 5` is
+ * `false`, so a record with `attempts` stripped never trips the cap and the OTP can be
+ * guessed without limit. `rust-auth` deserializes into a struct with both fields required,
+ * so a record like that is refused there — this keeps one rule over the shared record.
+ *
+ * @param value - The `JSON.parse` result.
+ * @returns `true` when both fields are present and correctly typed.
+ */
+function isOtpRecord(value: unknown): value is OtpRecord {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return typeof v['code'] === 'string' && typeof v['attempts'] === 'number'
+}
+
+/**
  * Manages one-time passwords for email verification and password reset flows.
  *
  * OTPs are generated with `crypto.randomInt` (cryptographically secure) and
@@ -122,7 +140,9 @@ export class OtpService {
 
     let record: OtpRecord
     try {
-      record = JSON.parse(raw) as OtpRecord
+      const parsed: unknown = JSON.parse(raw)
+      if (!isOtpRecord(parsed)) throw new SyntaxError('malformed OTP record')
+      record = parsed
     } catch {
       // Corrupted Redis value — delete the unusable key and surface as OTP_EXPIRED
       // so callers cannot distinguish corruption from natural expiry (timing oracle

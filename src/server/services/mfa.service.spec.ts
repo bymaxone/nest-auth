@@ -470,6 +470,69 @@ describe('MfaService', () => {
 
       await expect(service.setup('user-1')).rejects.toThrow(AuthException)
     })
+
+    // Scenario: a pending-setup record that parses but carries no `hashedCodes`. Expected:
+    // refused. Why: it used to be cast, not checked, so the field arrived as `undefined` and
+    // the account could finish enrolling with no recovery codes at all — a lockout the user
+    // discovers only when they have already lost their authenticator. `rust-auth`
+    // deserializes into a struct with every field required and refuses the same record.
+    it('should refuse a pending-setup record with no hashed recovery codes', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
+          encryptedPlainCodes: encrypt('["a"]', VALID_ENCRYPTION_KEY)
+        })
+      )
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: a stored pending-setup value that parses to something that is not an object —
+    // a bare `null` or a number. Expected: refused before any field read.
+    it.each(['null', '42'])(
+      'should refuse a pending-setup value that is not an object (%s)',
+      async (raw) => {
+        mockRedis.get.mockResolvedValue(raw)
+
+        await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      }
+    )
+
+    // Scenario: the same record with `hashedCodes` present but holding a non-string.
+    // Expected: refused. Why: the array is written back to the repository verbatim on enable,
+    // so a non-string member becomes a stored digest that no comparison can ever match.
+    it('should refuse a pending-setup record whose hashed codes are not all strings', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
+          hashedCodes: ['hash1', 42],
+          encryptedPlainCodes: encrypt('["a"]', VALID_ENCRYPTION_KEY)
+        })
+      )
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+    })
+
+    // Scenario: the decrypted plain-code payload is valid JSON but not an array of strings.
+    // Expected: refused. Why: it is returned to the caller as the codes to write down; a
+    // shape that is not a string array renders as `[object Object]` in the user's hands.
+    it('should refuse decrypted recovery codes that are not an array of strings', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
+          hashedCodes: ['hash1'],
+          encryptedPlainCodes: encrypt('[{"not":"a string"}]', VALID_ENCRYPTION_KEY)
+        })
+      )
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+    })
   })
 
   // ---------------------------------------------------------------------------

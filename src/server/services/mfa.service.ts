@@ -100,6 +100,23 @@ interface MfaSetupData {
   encryptedPlainCodes: string
 }
 
+/**
+ * Whether an unknown value is a well-formed {@link MfaSetupData}.
+ *
+ * @param value - The `JSON.parse` result.
+ * @returns `true` when every field is present and correctly typed.
+ */
+function isMfaSetupData(value: unknown): value is MfaSetupData {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['encryptedSecret'] === 'string' &&
+    typeof v['encryptedPlainCodes'] === 'string' &&
+    Array.isArray(v['hashedCodes']) &&
+    v['hashedCodes'].every((code) => typeof code === 'string')
+  )
+}
+
 // ---------------------------------------------------------------------------
 // MfaService
 // ---------------------------------------------------------------------------
@@ -248,11 +265,20 @@ export class MfaService {
    * "setup payload corrupted".
    */
   private parseSetupData(raw: string): MfaSetupData {
+    let parsed: unknown
     try {
-      return JSON.parse(raw) as MfaSetupData
+      parsed = JSON.parse(raw)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
+    // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
+    // account with no recovery codes at all — a lockout waiting to happen that the user
+    // discovers only when they lose their authenticator. `rust-auth` deserializes into a
+    // struct with every field required, so a record like that is refused there too.
+    if (!isMfaSetupData(parsed)) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+    }
+    return parsed
   }
 
   /**
@@ -265,11 +291,16 @@ export class MfaService {
    * encrypted payload.
    */
   private parsePlainRecoveryCodes(raw: string): string[] {
+    let parsed: unknown
     try {
-      return JSON.parse(raw) as string[]
+      parsed = JSON.parse(raw)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
+    if (!Array.isArray(parsed) || parsed.some((code) => typeof code !== 'string')) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
+    }
+    return parsed as string[]
   }
 
   /**
