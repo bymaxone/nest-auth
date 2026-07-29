@@ -900,16 +900,21 @@ describe('resolveOptions — security-parameter bounds', () => {
   // decides how much the second factor is worth and had none.
   it('should refuse a TOTP window past the ceiling', () => {
     expect(() => resolveOptions(withMfa({ totpWindow: 60 }))).toThrow(
-      /totpWindow must be between 0 and 10/
+      /totpWindow must be between 0 and 2/
     )
+    expect(() => resolveOptions(withMfa({ totpWindow: 3 }))).toThrow(/totpWindow/)
     expect(() => resolveOptions(withMfa({ totpWindow: -1 }))).toThrow(/totpWindow/)
   })
 
   // Scenario: the boundary values and the default. Expected: accepted. Why: a bound that
   // rejects a legitimate tolerance is an outage, and 0 (no tolerance at all) is a valid
   // hardening choice, not an error.
+  // The bound is the drift window the verifier actually applies, so a configured value always
+  // means what it says. It used to be looser (10) than the verifier's clamp (2), which meant
+  // `totpWindow: 10` read as "±5 minutes" in the config and behaved as ±1 minute — and behaved
+  // differently again in `rust-auth`, which has always clamped.
   it('should accept every window inside the range', () => {
-    for (const totpWindow of [0, 1, 10]) {
+    for (const totpWindow of [0, 1, 2]) {
       expect(() => resolveOptions(withMfa({ totpWindow }))).not.toThrow()
     }
   })

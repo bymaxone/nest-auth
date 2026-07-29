@@ -32,7 +32,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 // ---------------------------------------------------------------------------
 
 /** TOTP period in seconds (RFC 6238 §5.2 recommends 30 s). */
-const TOTP_STEP_SECONDS = 30
+export const TOTP_STEP_SECONDS = 30
 
 /** Number of digits in a generated TOTP code (RFC 4226 §5.3 allows 6–8). */
 const TOTP_DIGITS = 6
@@ -284,6 +284,15 @@ export function generateTotp(secretBase32: string): string {
 }
 
 /**
+ * Maximum accepted drift window, in 30-second steps on either side of now (RFC 6238 §5.2
+ * guidance).
+ *
+ * A caller's larger value is clamped to this, bounding a single verification to
+ * `2 * MAX_VERIFY_WINDOW + 1` HOTP computations. `rust-auth` pins the identical bound.
+ */
+export const MAX_VERIFY_WINDOW = 2
+
+/**
  * Verifies a submitted TOTP code against a secret within an acceptable time window.
  *
  * Checks `window` periods before and after the current time period to tolerate
@@ -300,9 +309,9 @@ export function generateTotp(secretBase32: string): string {
  * @returns `true` if the code matches any period within the window, `false` otherwise.
  *
  * @remarks
- * Anti-replay is the caller's responsibility: a valid code should be stored in
- * Redis with a TTL of at least `(2 * window + 1) * 30` seconds to prevent reuse
- * within the same verification window.
+ * Anti-replay is the caller's responsibility: a valid code should be stored in Redis with a
+ * TTL of at least `(2 * window + 1) * 30` seconds — computed from the EFFECTIVE window, which
+ * this function clamps to {@link MAX_VERIFY_WINDOW}.
  *
  * @example
  * ```typescript
@@ -315,8 +324,15 @@ export function verifyTotp(secretBase32: string, code: string, window = 1): bool
   if (!/^\d{6}$/.test(code)) return false
 
   const currentStep = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS)
+  // Clamp the drift window, bounding the work to `2 * MAX_VERIFY_WINDOW + 1` HOTP
+  // computations so an oversized value cannot turn verification into a CPU-amplification
+  // vector. Startup validation already refuses anything above this, so the clamp is
+  // defence in depth for a caller reaching the primitive directly. `rust-auth` clamps to
+  // the same bound, which is what keeps a given `totpWindow` meaning the same thing on
+  // both sides.
+  const effective = Math.min(Math.max(window, 0), MAX_VERIFY_WINDOW)
 
-  for (let delta = -window; delta <= window; delta++) {
+  for (let delta = -effective; delta <= effective; delta++) {
     // Stryker disable next-line ArithmeticOperator: the window is symmetric (delta ∈ [-window, +window]); currentStep + delta and currentStep - delta enumerate the same set of time periods, so the result is identical
     const expected = generateHotp(secretBase32, currentStep + delta)
     // Use constant-time comparison to prevent timing attacks.

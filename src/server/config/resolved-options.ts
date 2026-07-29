@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto'
 
 import { DEFAULT_OPTIONS } from './default-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { MAX_VERIFY_WINDOW } from '../crypto/totp'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 /**
@@ -629,12 +630,14 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
  */
 function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): void {
   const totpWindow = mfa?.totpWindow
-  if (totpWindow !== undefined && (totpWindow < 0 || totpWindow > 10)) {
+  if (totpWindow !== undefined && (totpWindow < 0 || totpWindow > MAX_VERIFY_WINDOW)) {
     throw new Error(
-      `[BymaxAuthModule] mfa.totpWindow must be between 0 and 10 inclusive ` +
+      `[BymaxAuthModule] mfa.totpWindow must be between 0 and ${MAX_VERIFY_WINDOW} inclusive ` +
         `(current: ${totpWindow}). The window is counted in 30-second steps on either side ` +
-        `of now, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 recommends ` +
-        `at most one step of tolerance; the default of 1 accepts three codes.`
+        `of now, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 §5.2 ` +
+        `recommends at most one step of tolerance; the default of 1 accepts three codes. ` +
+        `The bound matches the drift window the verifier actually applies, so a configured ` +
+        `value always means what it says instead of being silently clamped.`
     )
   }
 

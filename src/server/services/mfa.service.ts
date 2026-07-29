@@ -16,7 +16,13 @@ import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
-import { buildTotpUri, generateTotpSecret, verifyTotp } from '../crypto/totp'
+import {
+  buildTotpUri,
+  generateTotpSecret,
+  MAX_VERIFY_WINDOW,
+  TOTP_STEP_SECONDS,
+  verifyTotp
+} from '../crypto/totp'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
@@ -44,15 +50,28 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 const MFA_SETUP_TTL_SECONDS = 600
 
 /**
- * TTL in seconds for the TOTP anti-replay key.
+ * TTL in seconds for the TOTP anti-replay marker, derived from the drift window in force.
  *
- * A code accepted at period −1 (the first period of the ±1 window) remains valid
- * in `verifyTotp` until the end of period +1 — a span of up to 60 s. Adding a
- * 30-second buffer gives a 90-second TTL, ensuring the anti-replay key outlives
- * every code that `verifyTotp` would accept: (2 × window + 1) × 30 = 90 s for
- * window=1. Adjust proportionally if `totpWindow` is increased.
+ * The marker has to outlive every code the verifier would still accept, or a captured code
+ * becomes replayable in the gap. A code used at step `S` may be the one minted for step
+ * `S + w`, and that code stays acceptable until the end of step `S + 2w` — a span of
+ * `(2w + 1)` steps measured from the start of `S`, which is exactly `(2w + 1) * 30` seconds.
+ *
+ * This used to be a hard-coded 90: exactly right for the default window of 1, and silently
+ * short for any larger one — which the configuration allowed, so `totpWindow: 2` accepted
+ * codes for 150 s while the marker expired at 90 and the last 60 s were replayable.
+ *
+ * `window` goes through the same clamp the verifier applies, so the marker is sized against
+ * the window actually in force rather than the one configured. `rust-auth` derives it with
+ * the identical formula.
+ *
+ * @param window - The configured drift window, in 30-second steps either side of now.
+ * @returns The marker's TTL in seconds.
  */
-const TOTP_ANTI_REPLAY_TTL_SECONDS = 90
+function totpAntiReplayTtlSeconds(window: number): number {
+  const effective = Math.min(Math.max(window, 0), MAX_VERIFY_WINDOW)
+  return (2 * effective + 1) * TOTP_STEP_SECONDS
+}
 
 /** Number of recovery codes generated when MFA is enabled. */
 const DEFAULT_RECOVERY_CODE_COUNT = 8
@@ -1098,7 +1117,7 @@ export class MfaService {
     // The HMAC ties the replay key to both the user identity and the specific code,
     // preventing cross-user replay and avoiding plaintext code storage in Redis.
     const replayKey = `tu:${hmacSha256(`${userId}:${code}`, this.options.hmacKey)}`
-    const isNew = await this.redis.setnx(replayKey, TOTP_ANTI_REPLAY_TTL_SECONDS)
+    const isNew = await this.redis.setnx(replayKey, totpAntiReplayTtlSeconds(window))
     if (!isNew) return false
 
     return true

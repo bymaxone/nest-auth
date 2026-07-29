@@ -896,6 +896,30 @@ describe('MfaService', () => {
       )
     })
 
+    // Scenario: a deployment configured at the widest accepted drift window. Expected: the
+    // anti-replay marker is sized to that window, not to the default. Why: the TTL used to be
+    // a hard-coded 90 s — exactly right for window 1 and silently short for anything larger.
+    // At window 2 the verifier accepts a code across 150 s while the marker expired at 90, so
+    // a captured code was replayable for the last 60 s of its own acceptance window. The
+    // marker exists to make a code single-use; a marker that dies first does not.
+    it('should size the anti-replay marker to the configured drift window', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const wide = await buildService({ mfa: { ...mockOptions.mfa, totpWindow: 2 } })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+
+      await wide.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+
+      // (2 * 2 + 1) * 30 — the full span over which a code used now stays acceptable.
+      expect(mockRedis.setnx).toHaveBeenCalledWith(expect.stringMatching(/^tu:/), 150)
+    })
+
     // Scenario: the loop an attacker who holds the password runs — log in, burn the MFA
     // guess budget, log in again to get a fresh temp token, keep guessing. Expected: the
     // failure counter keeps climbing across logins, so the lockout engages. Why: issuing a
