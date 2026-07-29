@@ -43,7 +43,7 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Tests
 
-- **100% mutation score** ([docs/mutation_testing_results.md](docs/mutation_testing_results.md)) — 3,446 seeded faults killed, no survivors and nothing left uncovered, against a `break` threshold of 95. The pass closed 57 open mutants across 19 files; not one was a bug in the library, and every one was a test that could not see its own subject.
+- **100% mutation score** ([docs/mutation_testing_results.md](docs/mutation_testing_results.md)) — 3,474 seeded faults killed, no survivors and nothing left uncovered, against a `break` threshold of 95. The pass closed 57 open mutants across 19 files; not one was a bug in the library, and every one was a test that could not see its own subject.
 - **2,458 tests** at 100% coverage on all four metrics, including a conformance tier that reads `conformance/wire-contract.json` — the same file `rust-auth` reads — and an adversarial suite for the credential paths.
 
 ## [1.0.11] - 2026-05-30

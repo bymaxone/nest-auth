@@ -299,6 +299,19 @@ figure here is from a recorded run; none is estimated.
 | ---------- | ----------- | -----: | -------: | ----------: | ------: | --------------------------------------------------------------------------------- |
 | 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors |
 | 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                       |
+| 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below              |
+| 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs    |
+
+The 2026-07-28 pair is one day's work read twice: the cross-implementation parity fixes landed
+with a single survivor of their own, and the second row is that survivor recorded rather than
+killed. It is the `^` in the pattern that strips the leading amount from a duration string
+(`jwt.accessExpiresIn`), and it is equivalent under the `amount > 0` guard that follows: a value
+that reaches the unit lookup with a usable amount has its numeric run at index 0, so an unanchored
+search finds the same match, and one whose numeric run starts later fails `Number.parseFloat` and
+is rejected on the amount, never on the unit. That was checked against 211 000 generated inputs
+rather than argued — anchored and unanchored agree on every one — before the disable was written.
+The killed count drops by four between the rows because the block-form disable takes the mutator's
+whole region, which is why the region is one declaration long.
 
 The gate is the `break` threshold of **95**, not the peak: a run fails below it. The 2026-07-26
 figure was new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
