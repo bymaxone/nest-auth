@@ -472,6 +472,39 @@ describe('PlatformAuthService', () => {
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
+    // The boundary itself: a token expiring on this very second has zero seconds left. Writing
+    // the entry with a TTL of zero is not a shorter blacklist — Redis rejects `EX 0` outright,
+    // so the whole logout would throw on a token that needed no blacklisting at all.
+    it('should NOT set rv:{jti} when the token expires on this very second', async () => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000)
+      })
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The log line names the owner the STORED RECORD gave, and says so plainly when there was
+    // none. An operator reading "adminId=" with nothing after it cannot tell an admin whose id
+    // is empty from a session that was already gone.
+    it.each([
+      ['admin-1', 'admin-1'],
+      ['', '(no live session)']
+    ])('logs the owner as %s when the record names %s', async (owner, expected) => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      mockRedis.readSessionOwner.mockResolvedValue(owner)
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(logSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        `logout: adminId=${expected}`
+      )
+      logSpy.mockRestore()
+    })
+
     // The operator stepped away for longer than the fifteen-minute access lifetime. The route
     // used to sit behind a guard that refuses an expired token, so they could not sign out at
     // all and the seven-day refresh session of the highest-privilege identity in the system

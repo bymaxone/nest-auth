@@ -16,7 +16,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { hmacSha256 } from '../crypto/secure-token'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -645,6 +645,51 @@ describe('AuthService', () => {
       )
     })
 
+    // …and the other half of "on the attempt that crosses it": a failure that does NOT cross
+    // the threshold announces nothing. Without this, a hook firing on every wrong password
+    // reads exactly like one firing at the lockout, and a consumer paging on the event would
+    // be paged by every typo.
+    it('stays silent on a failure that does not cross the threshold', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+      // Not locked on entry, and still not locked once the failure is recorded.
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLockout).not.toHaveBeenCalled()
+      // …while the failure itself is still reported, so the silence is about the lockout and
+      // not about the attempt.
+      expect(mockHooks.onLoginFailed).toHaveBeenCalled()
+    })
+
+    // The lockout hook is fire-and-forget in both failure shapes, like every other. The
+    // synchronous throw is the one a consumer writing a non-async body produces.
+    it.each([
+      [
+        'throws synchronously',
+        () => {
+          throw new Error('siem down')
+        }
+      ],
+      ['rejects', () => Promise.reject(new Error('siem down'))]
+    ])('still locks out when the onLockout hook %s', async (_label, impl) => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockPasswordService.compare.mockResolvedValue(false)
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(900)
+      mockHooks.onLockout.mockImplementation(impl)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      // The hook name reaches the log, which is the only thing that tells an operator WHICH
+      // hook is down when several are wired.
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain('onLockout')
+      errorSpy.mockRestore()
+    })
+
     // The same for a hook that REJECTS rather than throwing. Both arms matter: a consumer
     // writing `async onLoginFailed()` produces the rejection, one writing a synchronous body
     // produces the throw, and neither may reach the caller.
@@ -989,6 +1034,44 @@ describe('AuthService', () => {
       mockRedis.readSessionOwner.mockResolvedValue(USER.id)
     })
 
+    // The owner is read under the presented token's OWN key. A wrong key here reads as "no
+    // live session", which logout treats as a no-op — so a mistake would show up as logouts
+    // that silently do nothing rather than as an error.
+    it('should read the owner under the presented refresh token key', async () => {
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        jti: 'j',
+        sub: 'user-1',
+        exp: Math.floor(Date.now() / 1000) + 900
+      })
+
+      await service.logout('access.jwt', 'the-refresh-token')
+
+      expect(mockRedis.readSessionOwner).toHaveBeenCalledWith(`rt:${sha256('the-refresh-token')}`)
+    })
+
+    // The log line names the owner the stored record gave, and says so plainly when there was
+    // none. An operator reading "userId=" with nothing after it cannot tell an account whose id
+    // is empty from a session that was already gone.
+    it.each([
+      ['user-1', 'user-1'],
+      ['', '(no live session)']
+    ])('logs the owner as %s when the record names %s', async (owner, expected) => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      mockRedis.readSessionOwner.mockResolvedValue(owner)
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        jti: 'j',
+        sub: 'user-1',
+        exp: Math.floor(Date.now() / 1000) + 900
+      })
+
+      await service.logout('access.jwt', 'the-refresh-token')
+
+      expect(logSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        `logout: userId=${expected}`
+      )
+      logSpy.mockRestore()
+    })
+
     // Verifies that logout revokes the JWT jti in Redis with the correct key and a positive TTL.
     it('should blacklist the JWT jti and delete the refresh session', async () => {
       const jti = 'some-jti'
@@ -1183,6 +1266,29 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('refresh', () => {
+    /**
+     * An `AuthService` over the same collaborators but different resolved options, for the
+     * cases where the behaviour under test IS the option.
+     */
+    async function buildServiceWith(options: unknown): Promise<AuthService> {
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: options },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      return module.get(AuthService)
+    }
+
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
     it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {
@@ -1228,6 +1334,83 @@ describe('AuthService', () => {
         expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
       }
     )
+
+    // The email-verification gate on rotation, which had no test at all. `register` issues a
+    // full session deliberately — a consumer needs one to render the "check your inbox" screen
+    // — and the specification bounds that window at one access-token lifetime. Rotation is what
+    // un-bounded it: the gate lived only on `login`, a door the caller never has to open again
+    // once register handed them a refresh token, so an address nobody ever proved could hold an
+    // authenticated session indefinitely.
+    it('should refuse the rotation when the address is still unproven', async () => {
+      const strict = await buildServiceWith({
+        ...mockOptions,
+        emailVerification: { required: true, otpTtlSeconds: 600 }
+      })
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        emailVerified: false
+      })
+
+      await expect(strict.refresh('old-refresh', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      // Refused, but NOT compensated. An unproven address is an unfinished onboarding, not a
+      // denied account: revoking everything would also kill the access token the consumer is
+      // using to render the "check your inbox" screen.
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+
+    // …and a PROVEN address rotates normally under the same configuration, so the gate is the
+    // verification flag and not the option being on.
+    it('should rotate for a verified address when verification is required', async () => {
+      const strict = await buildServiceWith({
+        ...mockOptions,
+        emailVerification: { required: true, otpTtlSeconds: 600 }
+      })
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        emailVerified: true
+      })
+
+      await expect(strict.refresh('old-refresh', '1.2.3.4', 'Browser')).resolves.toMatchObject({
+        accessToken: 'new.access'
+      })
+    })
+
+    // …and an unproven address rotates fine when verification is NOT required, which is the
+    // default and the reason the gate reads the option first.
+    it('should rotate for an unproven address when verification is not required', async () => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        emailVerified: false
+      })
+
+      await expect(service.refresh('old-refresh', '1.2.3.4', 'Browser')).resolves.toMatchObject({
+        accessToken: 'new.access'
+      })
+    })
 
     // The account was deleted while the session record outlived it. Hand back nothing, and
     // clear the orphaned session rather than leaving it to be rotated again.
@@ -2234,6 +2417,20 @@ describe('AuthService', () => {
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
         hmacSha256('tenant-1:user@example.com', HMAC_KEY)
       )
+    })
+
+    // The clear is logged with the address masked and the tenant named — an operator auditing
+    // "who unlocked this account" needs both, and must not get the address in the clear.
+    it('logs the clear with the address masked', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await service.unlockAccount('user@example.com', 'tenant-1')
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(logged).toContain('unlockAccount: lockout cleared')
+      expect(logged).toContain('tenantId=tenant-1')
+      expect(logged).not.toContain('user@example.com')
+      logSpy.mockRestore()
     })
   })
 })

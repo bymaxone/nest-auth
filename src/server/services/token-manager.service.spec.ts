@@ -1856,6 +1856,28 @@ describe('TokenManagerService', () => {
     // `rt:{oldHash}`, which is the same key the script consumes. A record that fails here
     // never reaches the script, and a record the script consumed on the live path must have
     // passed here, because that path is unreachable unless this read found the session.
+    // …and the same for the two fields the rotated token's CLAIMS are built from. A record
+    // missing `userId` mints a token for nobody; one missing `role` mints a token whose
+    // authorization claim is `undefined`, which every role check then compares against.
+    it.each([
+      ['userId', { tenantId: 't1', role: 'member', mfaEnabled: false }],
+      ['role', { userId: 'user-1', tenantId: 't1', mfaEnabled: false }]
+    ])('should refuse a session record with no %s', async (_field, record) => {
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          ...record,
+          device: 'Browser',
+          ip: '1.2.3.4',
+          createdAt: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      await expect(
+        service.reissueTokens('raw-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
+    })
+
     it('should refuse a session record with no mfaEnabled flag', async () => {
       mockRedis.get.mockResolvedValue(
         JSON.stringify({
@@ -1873,6 +1895,52 @@ describe('TokenManagerService', () => {
       ).rejects.toThrow(AuthException)
       // …and it refused before the rotation ran, so the token was never consumed.
       expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // verifyIgnoringExpiry / verifyPlatformIgnoringExpiry
+  // ---------------------------------------------------------------------------
+
+  describe('verifying while ignoring expiry', () => {
+    // Exactly one caller wants this: logout. An access token that expired while the user was
+    // away is the normal case there, and refusing would leave the refresh session — the
+    // long-lived credential logout exists to kill — alive for its whole lifetime.
+    //
+    // But the SIGNATURE still has to hold. The payload's `jti` decides which token gets
+    // blacklisted, so reading it unverified would let a caller revoke an access token they do
+    // not own by naming its id. These assert both halves: expiry waived, verification not.
+    it.each([
+      ['dashboard', (svc: TokenManagerService, token: string) => svc.verifyIgnoringExpiry(token)],
+      [
+        'platform',
+        (svc: TokenManagerService, token: string) => svc.verifyPlatformIgnoringExpiry(token)
+      ]
+    ])('waives expiry on the %s plane while still verifying the signature', (_plane, call) => {
+      mockJwtService.verify.mockReturnValue({ sub: 'user-1', jti: 'jti-1' })
+
+      expect(call(service, 'expired.but.signed')).toMatchObject({ jti: 'jti-1' })
+
+      // The waiver is explicit and scoped to this call — every other verification in the
+      // service keeps checking expiry, which is what makes this one safe to have at all.
+      expect(mockJwtService.verify).toHaveBeenCalledWith(
+        'expired.but.signed',
+        expect.objectContaining({ ignoreExpiration: true })
+      )
+    })
+
+    it.each([
+      ['dashboard', (svc: TokenManagerService, token: string) => svc.verifyIgnoringExpiry(token)],
+      [
+        'platform',
+        (svc: TokenManagerService, token: string) => svc.verifyPlatformIgnoringExpiry(token)
+      ]
+    ])('still refuses a %s token no configured secret accepts', (_plane, call) => {
+      mockJwtService.verify.mockImplementation(() => {
+        throw new Error('invalid signature')
+      })
+
+      expect(() => call(service, 'forged.token')).toThrow()
     })
   })
 })

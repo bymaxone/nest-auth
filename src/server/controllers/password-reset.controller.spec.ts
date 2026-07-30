@@ -15,6 +15,8 @@ import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
+import type { ChangePasswordDto } from '../dto/change-password.dto'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { PasswordResetService } from '../services/password-reset.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 
@@ -33,6 +35,7 @@ import type { Request } from 'express'
 const mockPasswordResetService = {
   initiateReset: jest.fn(),
   resetPassword: jest.fn(),
+  changePassword: jest.fn(),
   verifyOtp: jest.fn(),
   resendOtp: jest.fn()
 }
@@ -118,6 +121,58 @@ describe('PasswordResetController', () => {
 
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // changePassword
+  // ---------------------------------------------------------------------------
+
+  describe('changePassword', () => {
+    const dto: ChangePasswordDto = {
+      currentPassword: 'the-old-one',
+      newPassword: 'gliding-walnut-forecast'
+    }
+
+    // The caller's own subject decides whose password changes — never the body. A change that
+    // took an id from the request would let anyone holding any session rewrite any account's
+    // credential, which is the whole of account takeover in one route.
+    it('should change the password of the authenticated caller, not of anyone the body names', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue('current-refresh')
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+
+      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith(
+        'user-1',
+        dto,
+        // The caller's own refresh token rides along so the service can spare THIS session
+        // while ending every other one. Without it the user is signed out of the device they
+        // just changed their password on, which reads as the change having failed.
+        'current-refresh'
+      )
+    })
+
+    // A bearer-mode caller sends no refresh cookie. The change still has to work — it just has
+    // no session to spare, so every session including this one ends.
+    it('should pass an absent refresh token through unchanged', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue(undefined)
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+
+      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith('user-1', dto, undefined)
+    })
+
+    // 204: the route answers with nothing, so a client cannot read anything about the account
+    // out of a successful change.
+    it('should return undefined (HTTP 204 No Content)', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue('current-refresh')
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await expect(
+        controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+      ).resolves.toBeUndefined()
     })
   })
 

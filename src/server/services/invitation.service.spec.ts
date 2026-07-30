@@ -872,6 +872,79 @@ describe('InvitationService', () => {
     })
   })
 
+  // The stored record is trusted on accept, so its SHAPE is re-checked first: a value whose
+  // `role` or `tenantId` is not a string would flow into the created account and the issued
+  // session. The guard reads every field, and each field needs its own case — a record missing
+  // one is otherwise refused by the neighbouring clause and the gap is invisible.
+  describe('acceptInvitation record shape', () => {
+    it.each([
+      ['role', { ...VALID_STORED_INVITATION, role: 42 }],
+      ['tenantId', { ...VALID_STORED_INVITATION, tenantId: null }],
+      ['email', { ...VALID_STORED_INVITATION, email: undefined }],
+      ['inviterUserId', { ...VALID_STORED_INVITATION, inviterUserId: 7 }],
+      ['createdAt', { ...VALID_STORED_INVITATION, createdAt: 1_700_000_000 }]
+    ])('refuses a stored record whose %s is not a string', async (_field, record) => {
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(record))
+
+      await expect(
+        service.acceptInvitation(
+          { token: VALID_TOKEN, name: 'New User', password: 'gliding-walnut-forecast' },
+          TEST_IP,
+          TEST_AGENT,
+          TEST_HEADERS
+        )
+      ).rejects.toThrow(AuthException)
+      // Refused before any account was created — the shape check is the first gate for a
+      // reason.
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // A role the hierarchy does not declare is what a tampered Redis value looks like. The
+    // inviter re-validation catches most of these on its own — `hasRole` cannot grant a role
+    // it has never heard of — but not when the tampered role happens to be the inviter's OWN,
+    // because `hasRole` grants a role to itself. That corner is what this check is for, and
+    // this is the only case that can tell the two apart.
+    it('refuses a role the hierarchy does not declare, even when it is the inviter own role', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'ghost-role' })
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ ...VALID_STORED_INVITATION, role: 'ghost-role' })
+      )
+
+      await expect(
+        service.acceptInvitation(
+          { token: VALID_TOKEN, name: 'New User', password: 'gliding-walnut-forecast' },
+          TEST_IP,
+          TEST_AGENT,
+          TEST_HEADERS
+        )
+      ).rejects.toThrow(AuthException)
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // The refusal is logged with the inviter and the role, which is what an operator needs to
+    // tell a revoked delegation from a corrupted record.
+    it('logs which inviter lost the authority the invitation rests on', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue(null)
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(VALID_STORED_INVITATION))
+
+      await expect(
+        service.acceptInvitation(
+          { token: VALID_TOKEN, name: 'New User', password: 'gliding-walnut-forecast' },
+          TEST_IP,
+          TEST_AGENT,
+          TEST_HEADERS
+        )
+      ).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('the inviter can no longer grant this invitation')
+      expect(warned).toContain('inviterUserId=inviter-1')
+      expect(warned).toContain('role=member')
+      warnSpy.mockRestore()
+    })
+  })
+
   // ---------------------------------------------------------------------------
   // revokeInvitation()
   // ---------------------------------------------------------------------------
@@ -899,6 +972,26 @@ describe('InvitationService', () => {
 
       expect(mockRedis.del).toHaveBeenCalledWith(INDEX_KEY)
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
+      // The record is READ under the same key it is deleted under, or the role check below
+      // would be reading someone else's invitation — or nothing at all, which reads as
+      // "unparseable" and withdraws without a role check.
+      expect(mockRedis.get).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
+    })
+
+    // The withdrawal is logged with the address masked and the tenant and revoker named: the
+    // three things an operator reconstructing "who cancelled this invitation" needs, and the
+    // one thing — the address in the clear — they must not get from a log line.
+    it('logs the withdrawal with the address masked', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(logged).toContain('revokeInvitation: invitation withdrawn')
+      expect(logged).toContain('tenantId=tenant-1')
+      expect(logged).toContain('revokerUserId=inviter-1')
+      expect(logged).not.toContain('invited@example.com')
+      logSpy.mockRestore()
     })
 
     // The address is normalized the same way it was on the way in, or the lookup misses the

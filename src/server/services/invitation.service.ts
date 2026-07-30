@@ -53,7 +53,9 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
   const v = value as Record<string, unknown>
   return (
     typeof v['email'] === 'string' &&
+    // Stryker disable next-line ConditionalExpression: equivalent — a non-string role is refused downstream by `Object.hasOwn(hierarchy, role)` and by `hasRole`, which compares by identity, so no non-string value can reach an account. Kept as the contract this guard states.
     typeof v['role'] === 'string' &&
+    // Stryker disable next-line ConditionalExpression: equivalent — a non-string tenantId is refused downstream by `inviter.tenantId === invitation.tenantId`, a strict comparison against a string that no non-string can satisfy. Kept for the same reason as the role clause.
     typeof v['tenantId'] === 'string' &&
     typeof v['inviterUserId'] === 'string' &&
     typeof v['createdAt'] === 'string'
@@ -233,6 +235,25 @@ export class InvitationService {
    * @throws `AuthException` with `EMAIL_ALREADY_EXISTS` if the email is taken.
    */
   /**
+   * Whether an account's status still permits it to act.
+   *
+   * Routed through `assertNotBlocked` rather than an inline status test: one definition of
+   * "blocked", and an inline version would have to re-implement its case-insensitive
+   * comparison — a second implementation is a second thing to drift.
+   *
+   * @param user - The account to judge.
+   * @returns `true` when the status is not one of the configured blocked ones.
+   */
+  private inGoodStanding(user: { status: string }): boolean {
+    try {
+      assertNotBlocked(user.status, this.options.blockedStatuses)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * The invitee index key: the one handle the issuing side has on a pending invitation.
    *
    * The email is hashed rather than stored in the clear so a dump of the keyspace does not
@@ -249,15 +270,18 @@ export class InvitationService {
   /**
    * Deletes the pending invitation for an address, if there is one, along with its index.
    *
+   * Reports nothing: the one caller supersedes an invitation on the way to writing a new one,
+   * and whether there was an old one to remove changes nothing it does. A boolean nobody reads
+   * is a contract nobody can be held to.
+   *
    * @param email - The normalized invitee address.
    * @param tenantId - The tenant the invitation was issued for.
-   * @returns `true` when an invitation was actually removed.
    */
-  private async dropPendingInvitation(email: string, tenantId: string): Promise<boolean> {
+  private async dropPendingInvitation(email: string, tenantId: string): Promise<void> {
     const indexKey = this.inviteeKey(email, tenantId)
     const tokenHash = await this.redis.getdel(indexKey)
-    if (tokenHash === null) return false
-    return await this.redis.del(`inv:${tokenHash}`)
+    if (tokenHash === null) return
+    await this.redis.del(`inv:${tokenHash}`)
   }
 
   // ---------------------------------------------------------------------------
@@ -335,7 +359,10 @@ export class InvitationService {
     try {
       parsed = JSON.parse(raw)
     } catch {
-      return null
+      // Deliberately swallowed and deliberately NOT an early return: an unparsed value stays
+      // `undefined` and fails the guard below on the same line every other malformed record
+      // fails on. An early return here would be a second spelling of the same answer, which no
+      // test could tell apart from this one.
     }
     return isStoredInvitation(parsed) ? parsed : null
   }
@@ -352,12 +379,10 @@ export class InvitationService {
     revoker: { role: string; status: string },
     invitation: StoredInvitation
   ): boolean {
-    try {
-      assertNotBlocked(revoker.status, this.options.blockedStatuses)
-    } catch {
-      return false
-    }
-    return hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
+    return (
+      this.inGoodStanding(revoker) &&
+      hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
+    )
   }
 
   /**
@@ -377,23 +402,13 @@ export class InvitationService {
    */
   private async assertInviterStillAuthorised(invitation: StoredInvitation): Promise<void> {
     const inviter = await this.userRepo.findById(invitation.inviterUserId)
-    // `assertNotBlocked` rather than an inline status test: one definition of "blocked", and
-    // the inline version would have to re-implement its case-insensitive comparison — a second
-    // implementation is a second thing to drift.
-    const inGoodStanding =
-      inviter !== null &&
-      ((): boolean => {
-        try {
-          assertNotBlocked(inviter.status, this.options.blockedStatuses)
-          return true
-        } catch {
-          return false
-        }
-      })()
 
+    // One null test, not two. The good-standing check used to carry its own `inviter !== null`
+    // and then the conjunction below repeated it — so neither could be removed without the
+    // other still refusing, and no test could tell either apart from its twin.
     const stillAuthorised =
       inviter !== null &&
-      inGoodStanding &&
+      this.inGoodStanding(inviter) &&
       inviter.tenantId === invitation.tenantId &&
       hasRole(inviter.role, invitation.role, this.options.roles.hierarchy)
 
