@@ -457,24 +457,30 @@ export class AuthService {
     }
     try {
       this.assertUserNotBlocked(user)
-
-      // The same email-verification gate `login` applies, for the same reason. `register`
-      // issues a full session deliberately — a consumer needs one to render the "check your
-      // inbox" screen — and this library's own specification bounds the resulting window at
-      // one access-token lifetime. Rotation is what un-bounded it: the gate lived only on
-      // `login`, a door the caller never has to open again once register handed them a
-      // refresh token, so an address nobody ever proved held an authenticated session
-      // indefinitely. Fifteen minutes is what the spec promises; this is what makes it true.
-      if (this.options.emailVerification.required && !user.emailVerified) {
-        throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
-      }
     } catch (err: unknown) {
-      // Compensate, then rethrow the error the gate produced. The status check goes through
+      // Compensate, then rethrow the status error the gate produced. The check goes through
       // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
       // definition of "blocked" — the inline version would have to re-implement the
       // case-insensitive comparison, and a second implementation is a second thing to drift.
       await this.revokeAllSessions(result.session.userId)
       throw err
+    }
+
+    // The same email-verification gate `login` applies, for the same reason. `register` issues
+    // a full session deliberately — a consumer needs one to render the "check your inbox"
+    // screen — and this library's own specification bounds the resulting window at one
+    // access-token lifetime. Rotation is what un-bounded it: the gate lived only on `login`, a
+    // door the caller never has to open again once register handed them a refresh token, so an
+    // address nobody ever proved held an authenticated session indefinitely.
+    //
+    // Refused, but NOT compensated. An unproven address is an unfinished onboarding, not a
+    // denied account: the refusal alone bounds the window to the fifteen minutes the spec
+    // promises, while revoking everything would also kill the access token the consumer is
+    // using to render that very screen. The rotation above did already spend the presented
+    // refresh token, so a user who verifies after the grace window signs in again — which is
+    // the right end state for an account that had not proven its address.
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
     // Rotate the session detail record to the new token hash.

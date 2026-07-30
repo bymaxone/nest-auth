@@ -863,6 +863,49 @@ describe('TokenManagerService', () => {
       expect(mockRedis.sadd).not.toHaveBeenCalled()
     })
 
+    // The platform plane takes the identical check. Adding it to only the dashboard twin left
+    // the higher-privilege identity with the hole the dashboard one had just closed.
+    it('refuses a platform grace recovery for a family past the absolute cap', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis }
+        ]
+      }).compile()
+
+      mockRedis.get.mockResolvedValue(null)
+      const bornAt = new Date(Date.now() - 31 * 86_400_000).toISOString()
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'grace',
+        sessionJson: JSON.stringify({
+          userId: 'admin-1',
+          tenantId: '',
+          role: 'SUPER_ADMIN',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          mfaEnabled: false,
+          createdAt: new Date().toISOString(),
+          familyId: FAMILY,
+          familyCreatedAt: bornAt
+        })
+      })
+
+      await expect(
+        capped
+          .get(TokenManagerService)
+          .reissuePlatformTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
     // Scenario: the same session, one day inside the cap. Expected: it rotates. The boundary
     // matters — an off-by-one here signs users out a day early, every time.
     it('rotates a family that is still inside the absolute cap', async () => {

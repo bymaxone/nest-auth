@@ -826,6 +826,14 @@ export class TokenManagerService {
     refreshTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
+    // The same re-check the dashboard twin makes, for the same reason: the pre-script check
+    // ran against the seed, and on this path the seed is the placeholder `readSeedSession`
+    // returns when the live key is already gone — its `familyCreatedAt` is `now`, so the cap
+    // compared `now - now` and applied nothing. Without this, a platform lineage that had just
+    // passed its absolute cap could still mint a fresh access token and a full-length refresh
+    // session through its grace window. Adding the check to only one plane left the other with
+    // the identical hole, on the higher-privilege identity.
+    this.assertWithinAbsoluteLifetime(graceSession)
     const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
