@@ -629,24 +629,24 @@ both channels are accepted, and a ticket wins when both are present.
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group                 | Key Options                                                                                                                     | Default                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`   | `15m`, `7d`, off, `HS256`               |
-| **password**          | `costFactor`, `blockSize`, `parallelization`                                                                                    | scrypt N=2¹⁷, r=8, p=1                  |
-| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                            | `'cookie'`                              |
-| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains` | `'lax'`, `[]` (see cookie section)      |
-| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                          | —                                       |
-| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                      | `false`, `5`, —, `'fifo'`               |
-| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                  | `5`, `900`                              |
-| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                          | `true`, `'peer'`                        |
-| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                   | `'token'`                               |
-| **platform**          | `enabled`                                                                                                                       | `false`                                 |
-| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                    | `false`                                 |
-| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                     | —                                       |
-| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                               | —                                       |
-| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                     | `true`, `600`                           |
-| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                               | `[]`                                    |
-| **controllers**       | Toggle individual controllers on/off                                                                                            | `auth`, `passwordReset` on; rest opt-in |
+| Group                 | Key Options                                                                                                                                         | Default                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, off, `HS256`, both off     |
+| **password**          | `costFactor`, `blockSize`, `parallelization`                                                                                                        | scrypt N=2¹⁷, r=8, p=1                  |
+| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                              |
+| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)      |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                                          | `false`, `5`, —, `'fifo'`               |
+| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                              |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, `'peer'`                        |
+| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                               |
+| **platform**          | `enabled`                                                                                                                                           | `false`                                 |
+| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                 |
+| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                         | —                                       |
+| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                       |
+| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                           |
+| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                    |
+| **controllers**       | Toggle individual controllers on/off                                                                                                                | `auth`, `passwordReset` on; rest opt-in |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
@@ -661,6 +661,20 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > configured for your real hop count.
 
 > [!TIP]
+> **Binding tokens to an issuer and an audience.** `jwt.issuer` and `jwt.audience` are off by
+> default. Set either and its value is stamped on every token this backend mints and **required**
+> on every token it verifies — one carrying a different value, or none at all, is rejected.
+> That matters with HS256, where the verifier can also sign: every service holding the secret to
+> check a token can mint one, so audience binding is what stops a token minted for one service
+> being replayed at another that trusts the same secret.
+>
+> Two things to know before switching it on. Both backends of a shared deployment must carry the
+> same pair, or they stop accepting each other's tokens. And enabling it invalidates the access
+> tokens already in flight, since those were minted without the claims — a window of one
+> access-token lifetime, which clients close by refreshing. An empty string reads as unconfigured
+> rather than as "require the empty issuer", so an unset environment variable cannot turn the
+> check on by accident.
+
 > **Rotating the signing secret.** `jwt.previousSecrets` lists secrets retired by a rotation,
 > accepted for verification only. Without it, changing `jwt.secret` signs every user out the
 > moment the new configuration rolls out **and** invalidates every stored recovery-code digest —
@@ -897,6 +911,8 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | POST   | `/invitations`              | `JwtAuthGuard`, `UserStatusGuard`  | Create a tenant invitation                                  |
 | POST   | `/invitations/accept`       | Public                             | Accept an invitation and create the user                    |
 | POST   | `/invitations/revoke`       | `JwtAuthGuard`, `UserStatusGuard`  | Withdraw a pending invitation                               |
+| POST   | `/email/change`             | `JwtAuthGuard`, `UserStatusGuard`  | Request an address change (re-proves the current password)  |
+| POST   | `/email/change/confirm`     | Public                             | Confirm it with the token mailed to the new address         |
 | POST   | `/platform/login`           | Public                             | Platform admin login (separate token context)               |
 | POST   | `/platform/mfa/challenge`   | Public                             | Platform admin MFA challenge                                |
 | GET    | `/platform/me`              | `JwtPlatformGuard`                 | Current platform admin payload                              |
