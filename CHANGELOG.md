@@ -149,6 +149,22 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   Unlike the primary path it cannot be summoned on demand — it is reachable only by a client
   retrying a rotation whose response it lost, inside a grace window measured in seconds.
 
+- **A recovery code is claimed before it is accepted**
+  ([`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts)). Consuming a
+  recovery code is a read-modify-write against the consumer's user repository: the challenge
+  reads the whole array, removes one entry, and writes the rest back. Two challenges landing
+  together both read the array containing the code, both match it, and both write — one code
+  minting two sessions, which is the one property a recovery code has. The library cannot make
+  the consumer's repository atomic, because that repository is theirs and its atomicity is
+  theirs to define; it can be atomic in the store it owns. A `SET NX` over
+  `rcu:{hmac(plane:userId:code)}` claims the code, and the losing challenge reads as an invalid
+  code — which is what a code already spent is. Same construction as the TOTP anti-replay
+  marker, for the same reason: the key discloses neither the user nor the code, and binding the
+  plane stops a dashboard user and a platform admin sharing an id from burning each other's
+  codes. The marker is deliberately short-lived (5 minutes): it serializes a race, it is not
+  the durable record of consumption, and outliving the repository write would turn a failed
+  write into a code the account can see but can never use.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.

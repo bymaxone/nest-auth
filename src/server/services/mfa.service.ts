@@ -50,6 +50,17 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 const MFA_SETUP_TTL_SECONDS = 600
 
 /**
+ * TTL in seconds for the single-use claim on a recovery code (5 minutes).
+ *
+ * The claim serializes concurrent challenges presenting the same code; it is not the durable
+ * record of consumption, which is the repository write that removes the code from the account.
+ * Outliving that write by much would turn a failed write into a code the user can no longer
+ * use but can still see in their list — so the marker is deliberately far shorter than the
+ * code's real lifetime, and long enough that no plausible request pair slips past it.
+ */
+const RECOVERY_CODE_CLAIM_TTL_SECONDS = 300
+
+/**
  * TTL in seconds for the TOTP anti-replay marker, derived from the drift window in force.
  *
  * The marker has to outlive every code the verifier would still accept, or a captured code
@@ -411,6 +422,41 @@ export class MfaService {
   }
 
   /**
+   * Claims a matched recovery code for exactly one challenge.
+   *
+   * Consuming a code is a read-modify-write against the consumer's repository: the challenge
+   * reads the whole array, removes one entry, and writes the rest back. Two challenges landing
+   * together both read the array containing the code, both match it, and both write — one code
+   * mints two sessions, which is the one property a recovery code has. The library cannot fix
+   * that in the repository, because the repository is the consumer's and its atomicity is
+   * theirs to define. It can fix it in the store it owns.
+   *
+   * `SET NX` over an HMAC of plane + user + code is the same primitive the TOTP anti-replay
+   * marker already uses, for the same reason and with the same properties: the key discloses
+   * neither the user nor the code, and it cannot be shared across identity planes whose id
+   * spaces may collide. The first claim wins; every other reads as an invalid code, which is
+   * what a code already spent is.
+   *
+   * The marker is deliberately short-lived. It exists to serialize a race measured in
+   * milliseconds, not to be the durable record — that is the repository write. Outliving the
+   * write by much would turn a failed write into a permanently unusable code that is still
+   * sitting in the account's list.
+   *
+   * @param context - The identity plane the challenge belongs to.
+   * @param userId - The account the code belongs to.
+   * @param code - The submitted code, never stored — only its keyed MAC becomes a key.
+   * @returns `true` when this challenge is the one that claimed it.
+   */
+  private async claimRecoveryCode(
+    context: 'dashboard' | 'platform',
+    userId: string,
+    code: string
+  ): Promise<boolean> {
+    const claimKey = `rcu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
+    return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
+  }
+
+  /**
    * Returns a `SafeAuthUser` projection of a dashboard user, stripping credentials
    * and MFA secret fields before passing to hooks or email providers.
    */
@@ -767,7 +813,7 @@ export class MfaService {
       // comparison exactly as the empty array does.
       const recoveryCodes = user.mfaRecoveryCodes ?? []
       usedRecoveryIndex = await this.verifyRecoveryCode(code, recoveryCodes)
-      codeValid = usedRecoveryIndex >= 0
+      codeValid = usedRecoveryIndex >= 0 && (await this.claimRecoveryCode(context, userId, code))
     }
 
     if (!codeValid) {

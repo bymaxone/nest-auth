@@ -184,6 +184,9 @@ describe('MfaService', () => {
     mockRedis.get.mockResolvedValue(null)
     mockRedis.set.mockResolvedValue(undefined)
     mockRedis.del.mockResolvedValue(true)
+    // Both single-use markers this service sets — the recovery-code claim and the TOTP
+    // anti-replay marker — report "first to arrive" unless a test says otherwise.
+    mockRedis.setnx.mockResolvedValue(true)
     // The temp-token consume reports whether THIS call removed the marker — the
     // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
     // raced us.
@@ -1279,6 +1282,54 @@ describe('MfaService', () => {
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
         expect.objectContaining({ mfaRecoveryCodes: [digest] })
+      )
+    })
+
+    // Consuming a recovery code is a read-modify-write against the consumer's repository: two
+    // challenges landing together both read the array, both match, both write, and one code
+    // mints two sessions — the one property a recovery code has. The library cannot make the
+    // consumer's repository atomic, so it claims the code in the store it does own.
+    it('refuses a recovery code another challenge already claimed', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+      })
+      // The claim was already taken — this is the loser of the race.
+      mockRedis.setnx.mockResolvedValue(false)
+
+      await expect(
+        service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      // It reads as an invalid code, which is what a code already spent is — and nothing was
+      // written, so the winner's consumption stands.
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      expect(mockTokenManager.consumeMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // The claim key must not be shareable across identity planes or across users: the two
+    // planes are keyed by ids from different repositories that may legitimately collide, and a
+    // shared marker would let one account burn another's code.
+    it('claims the code under a key bound to the plane, the user and the code', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+      })
+
+      await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `rcu:${hmacSha256(`dashboard:user-1:${plainRecovery}`, HMAC_KEY)}`,
+        300
       )
     })
 
