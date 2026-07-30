@@ -36,7 +36,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // changes. For the LIVE measured sizes vs. these budgets, run `pnpm build &&
 // pnpm size` and read the Brotli column. Re-derive headroom from that output
 // before changing any budget below.
-//   server  82.3 KiB → 86 KiB  (~4% headroom; large module, active dev)
+//   server  86.0 KiB → 92 KiB  (~7% headroom; large module, active dev)
 //     Raised from 68 KiB when the first security-audit work landed (the single-use
 //     WebSocket ticket and JWT verification across a secret rotation), then from 72 KiB
 //     when the blind-audit fixes did. That second round is: the MFA encryption-key
@@ -56,12 +56,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     flow with its invitee index, and the administrative lockout clear. Three capabilities
 //     the audits found missing rather than three refactors — the same test this budget
 //     exists to apply.
+//     Raised again from 86 KiB for the address-change flow: a service, a controller, two DTOs
+//     and their config. It is the last of the four feature-scale gaps the capability audit
+//     found that is worth taking — the address is the account's recovery credential, and until
+//     now the library could mint one and never move it, so a user whose address died was
+//     locked out permanently.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 86 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 92 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.5 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

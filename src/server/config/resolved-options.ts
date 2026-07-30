@@ -74,6 +74,7 @@ export type ResolvedOptions = Omit<
   emailVerification: Required<NonNullable<BymaxAuthModuleOptions['emailVerification']>>
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
+  emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
   rateLimit: Required<NonNullable<BymaxAuthModuleOptions['rateLimit']>>
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
@@ -236,6 +237,11 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
     invitations: {
       ...DEFAULT_OPTIONS.invitations,
       ...userOptions.invitations
+    },
+
+    emailChange: {
+      ...DEFAULT_OPTIONS.emailChange,
+      ...userOptions.emailChange
     },
 
     controllers: {

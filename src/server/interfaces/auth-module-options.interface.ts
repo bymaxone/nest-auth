@@ -542,6 +542,24 @@ export interface BymaxAuthModuleOptions {
   }
 
   /**
+   * Address-change configuration.
+   *
+   * The flow itself is switched on by `controllers.emailChange`; this group only tunes it, so
+   * it can be omitted entirely.
+   */
+  emailChange?: {
+    /**
+     * TTL for the address-change verification token in seconds.
+     *
+     * Default: `3600` (1 hour). Shorter than an invitation because the recipient is a user
+     * who just asked for the change and is waiting on the message — and because the token
+     * points at the account's recovery credential, so a link sitting in a mailbox for two
+     * days is a longer window than the flow needs.
+     */
+    tokenTtlSeconds?: number
+  }
+
+  /**
    * User invitation system configuration.
    */
   invitations?: {
@@ -827,6 +845,15 @@ export interface BymaxAuthModuleOptions {
      * `invitations.enabled: true`; setting one without the other is a startup error.
      */
     invitations?: boolean
+
+    /**
+     * Enables `EmailChangeController` and `EmailChangeService`. **Opt-in** — `Default: false`.
+     *
+     * Requires the configured {@link IEmailProvider} to implement
+     * `sendEmailChangeVerification`: the flow cannot deliver its token without it, and the
+     * module refuses to boot rather than mint tokens nobody receives.
+     */
+    emailChange?: boolean
   }
 
   /**

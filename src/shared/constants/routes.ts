@@ -109,6 +109,18 @@ export const AUTH_SESSION_ROUTES = {
 } as const
 
 /**
+ * Address-change routes (`controllers.emailChange: true`).
+ *
+ * Mounted under `email/` (`src/server/controllers/email-change.controller.ts`).
+ */
+export const AUTH_EMAIL_CHANGE_ROUTES = {
+  /** POST — request a change; mails a token to the new address. */
+  request: 'email/change',
+  /** POST — confirm the change with that token. */
+  confirm: 'email/change/confirm'
+} as const
+
+/**
  * Invitation routes (`controllers.invitations: true`).
  *
  * Mounted under `invitations/`
@@ -135,7 +147,8 @@ export const AUTH_ROUTES = {
   password: AUTH_PASSWORD_ROUTES,
   platform: AUTH_PLATFORM_ROUTES,
   sessions: AUTH_SESSION_ROUTES,
-  invitations: AUTH_INVITATION_ROUTES
+  invitations: AUTH_INVITATION_ROUTES,
+  emailChange: AUTH_EMAIL_CHANGE_ROUTES
 } as const
 
 /**
@@ -183,6 +196,9 @@ const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   'mfa/disable',
   // Invitation acceptance issues tokens
   'invitations/accept',
+  // The address-change confirmation is public: the holder is proving control of a mailbox,
+  // not of a session.
+  'email/change/confirm',
   // Platform endpoints
   'platform/login',
   'platform/refresh',

@@ -120,6 +120,17 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/invitations/revoke — 10 requests per hour per IP, matching the mint. */
   invitationRevoke: { default: { limit: 10, ttl: 3_600_000 } },
 
+  /**
+   * POST /auth/email/change — 3 requests per 5 minutes per IP.
+   *
+   * Matches the reset-email limits: the request sends mail to an address the caller supplies,
+   * so an unbounded one is a way to make the deployment send mail on demand.
+   */
+  emailChangeRequest: { default: { limit: 3, ttl: 300_000 } },
+
+  /** POST /auth/email/change/confirm — 5 requests per minute per IP. */
+  emailChangeConfirm: { default: { limit: 5, ttl: 60_000 } },
+
   /** GET /auth/sessions — 30 requests per minute per IP. */
   listSessions: { default: { limit: 30, ttl: 60_000 } },
 

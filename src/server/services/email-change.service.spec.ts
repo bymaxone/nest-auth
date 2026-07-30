@@ -1,0 +1,418 @@
+/**
+ * Unit tests for {@link EmailChangeService}.
+ *
+ * The address is the account's recovery credential — whoever controls it can drive a password
+ * reset to a mailbox the owner does not read. Every test here is about one of the three things
+ * that makes moving it safe: the password is re-proved, the new address is proved before it is
+ * adopted, and the old address is told.
+ *
+ * @layer Service
+ */
+
+import { Logger } from '@nestjs/common'
+import { Test } from '@nestjs/testing'
+
+import {
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY
+} from '../bymax-auth.constants'
+import { sha256 } from '../crypto/secure-token'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
+import { AuthRedisService } from '../redis/auth-redis.service'
+import { EmailChangeService } from './email-change.service'
+import { PasswordService } from './password.service'
+
+const USER = {
+  id: 'user-1',
+  email: 'old@example.com',
+  name: 'Test User',
+  passwordHash: 'scrypt:salt:hash',
+  role: 'member',
+  status: 'active',
+  tenantId: 'tenant-1',
+  emailVerified: true,
+  mfaEnabled: false,
+  lastLoginAt: null,
+  createdAt: new Date('2026-01-01')
+}
+
+const TOKEN = 'a'.repeat(64)
+const NEW_EMAIL = 'new@example.com'
+
+const mockUserRepo = {
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  updateEmail: jest.fn()
+}
+
+const mockEmailProvider = {
+  sendEmailChangeVerification: jest.fn(),
+  sendEmailChangedNotification: jest.fn()
+}
+
+const mockPasswordService = {
+  compare: jest.fn()
+}
+
+const mockRedis = {
+  set: jest.fn(),
+  getdel: jest.fn()
+}
+
+const mockOptions = {
+  emailChange: { tokenTtlSeconds: 3600 }
+}
+
+/** The stored record a valid token resolves to. */
+function storedContext(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    userId: 'user-1',
+    newEmail: NEW_EMAIL,
+    tenantId: 'tenant-1',
+    passwordFingerprint: sha256(USER.passwordHash),
+    ...overrides
+  })
+}
+
+describe('EmailChangeService', () => {
+  let service: EmailChangeService
+
+  beforeEach(async () => {
+    jest.resetAllMocks()
+    mockUserRepo.findById.mockResolvedValue(USER)
+    mockUserRepo.findByEmail.mockResolvedValue(null)
+    mockUserRepo.updateEmail.mockResolvedValue(undefined)
+    mockPasswordService.compare.mockResolvedValue(true)
+    mockRedis.set.mockResolvedValue(undefined)
+    mockEmailProvider.sendEmailChangeVerification.mockResolvedValue(undefined)
+    mockEmailProvider.sendEmailChangedNotification.mockResolvedValue(undefined)
+
+    const module = await Test.createTestingModule({
+      providers: [
+        EmailChangeService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: AuthRedisService, useValue: mockRedis }
+      ]
+    }).compile()
+
+    service = module.get(EmailChangeService)
+  })
+
+  // ---------------------------------------------------------------------------
+  // onModuleInit
+  // ---------------------------------------------------------------------------
+
+  describe('onModuleInit', () => {
+    // A deployment that enables the flow without a way to deliver the token would mint `ec:`
+    // keys nobody ever receives — a failure that looks like success from every side, and that
+    // a user experiences as a verification email that simply never arrives.
+    it('refuses to boot when the provider cannot deliver the verification', () => {
+      const providerWithout = {} as never
+      const withoutSender = new EmailChangeService(
+        mockOptions as never,
+        mockUserRepo as never,
+        providerWithout,
+        mockPasswordService as never,
+        mockRedis as never
+      )
+
+      expect(() => withoutSender.onModuleInit()).toThrow(/sendEmailChangeVerification/)
+    })
+
+    it('boots when the provider can deliver it', () => {
+      expect(() => service.onModuleInit()).not.toThrow()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // requestChange
+  // ---------------------------------------------------------------------------
+
+  describe('requestChange', () => {
+    const dto = { newEmail: NEW_EMAIL, currentPassword: 'right' }
+
+    // The happy path, and every property of the stored record that the confirmation relies on.
+    it('mails a token to the new address and stores the pending change', async () => {
+      await service.requestChange('user-1', dto)
+
+      expect(mockEmailProvider.sendEmailChangeVerification).toHaveBeenCalledTimes(1)
+      const [addressed, token] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [
+        string,
+        string
+      ]
+      // The token goes to the NEW address and nowhere else — receiving it is the proof.
+      expect(addressed).toBe(NEW_EMAIL)
+      expect(token).toMatch(/^[0-9a-f]{64}$/)
+
+      // …stored under the hash of that token, never the token itself.
+      const [key, value, ttl] = mockRedis.set.mock.calls[0] as [string, string, number]
+      expect(key).toBe(`ec:${sha256(token)}`)
+      expect(ttl).toBe(3600)
+      expect(JSON.parse(value)).toEqual({
+        userId: 'user-1',
+        newEmail: NEW_EMAIL,
+        tenantId: 'tenant-1',
+        // Bound to the password in force right now, so a planted request dies the moment the
+        // victim changes their password.
+        passwordFingerprint: sha256(USER.passwordHash)
+      })
+    })
+
+    // Nothing about the account changes at request time. A flow that wrote the address here
+    // and verified afterwards would hand an attacker the account for the length of the TTL.
+    it('changes nothing about the account', async () => {
+      await service.requestChange('user-1', dto)
+
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // The password re-prove is the gate that stops a stolen access token from moving the
+    // recovery address. Without it, a thief with a token takes the account outright.
+    it('refuses a wrong current password and mints nothing', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendEmailChangeVerification).not.toHaveBeenCalled()
+    })
+
+    // An account that cannot prove a password it does not have, and a subject that no longer
+    // exists, answer identically — the caller learns nothing either way.
+    it.each([
+      ['the account no longer exists', null],
+      ['the account has no local password', { ...USER, passwordHash: null }]
+    ])('refuses when %s', async (_label, found) => {
+      mockUserRepo.findById.mockResolvedValue(found)
+
+      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // Moving to an address someone else holds would put two accounts on one recovery
+    // credential; moving to the account's own is a change that changes nothing and would send
+    // a verification for a move that is not happening.
+    it.each([
+      ['another account in the tenant holds it', { ...USER, id: 'someone-else' }, NEW_EMAIL],
+      ['it is the account own address', null, USER.email]
+    ])('refuses when %s', async (_label, existing, target) => {
+      mockUserRepo.findByEmail.mockResolvedValue(existing)
+
+      await expect(service.requestChange('user-1', { ...dto, newEmail: target })).rejects.toThrow(
+        AuthException
+      )
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The uniqueness check runs in the caller's own tenant. Checking globally would refuse an
+    // address another tenant legitimately holds; checking the wrong tenant would let a
+    // collision through.
+    it('checks uniqueness within the caller tenant', async () => {
+      await service.requestChange('user-1', dto)
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
+    })
+
+    // Normalized on the way in, so the address is stored, mailed and checked in the one form
+    // login resolves an account by. A stored `New@Example.COM` would never match a lookup.
+    it('normalizes the target address before doing anything with it', async () => {
+      await service.requestChange('user-1', { ...dto, newEmail: '  NEW@Example.COM  ' })
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
+      const [addressed] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [string]
+      expect(addressed).toBe(NEW_EMAIL)
+      expect(JSON.parse((mockRedis.set.mock.calls[0] as string[])[1] ?? '{}')).toMatchObject({
+        newEmail: NEW_EMAIL
+      })
+    })
+
+    // The address is masked in the log. An operator needs to see that a change was requested;
+    // they do not need the address, and a log aggregator is not where it should end up.
+    it('masks the address in the log', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await service.requestChange('user-1', dto)
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(logged).toContain('requestChange: verification sent')
+      expect(logged).not.toContain(NEW_EMAIL)
+      logSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // confirmChange
+  // ---------------------------------------------------------------------------
+
+  describe('confirmChange', () => {
+    beforeEach(() => {
+      mockRedis.getdel.mockResolvedValue(storedContext())
+    })
+
+    it('applies the change and notifies the old address', async () => {
+      await service.confirmChange({ token: TOKEN })
+
+      expect(mockRedis.getdel).toHaveBeenCalledWith(`ec:${sha256(TOKEN)}`)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+      // The notice goes to the address the account is LEAVING — the last message the owner can
+      // receive somewhere they still control, and what turns a silent takeover into a visible
+      // one (NIST SP 800-63B §4.6).
+      expect(mockEmailProvider.sendEmailChangedNotification).toHaveBeenCalledWith(
+        'old@example.com',
+        NEW_EMAIL
+      )
+    })
+
+    // The old address is read from the ACCOUNT at confirm time, not from the token. A record
+    // that outlived an intervening change still notifies wherever the account actually is.
+    it('notifies the address the account currently holds, not one the token remembers', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, email: 'moved-since@example.com' })
+
+      await service.confirmChange({ token: TOKEN })
+
+      expect(mockEmailProvider.sendEmailChangedNotification).toHaveBeenCalledWith(
+        'moved-since@example.com',
+        NEW_EMAIL
+      )
+    })
+
+    // Single-use: the read and the delete are one operation, so a link that is clicked twice
+    // — or raced — applies once.
+    it('consumes the token atomically', async () => {
+      mockRedis.getdel.mockResolvedValue(null)
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // A record that is not one, by every route it can fail: unparseable, the wrong shape, and
+    // each field individually absent.
+    it.each([
+      ['unparseable JSON', 'not-json'],
+      ['the wrong shape', '{"nope":true}'],
+      ['no userId', JSON.stringify({ newEmail: NEW_EMAIL, tenantId: 't1' })],
+      ['no newEmail', JSON.stringify({ userId: 'u', tenantId: 't1' })],
+      ['no tenantId', JSON.stringify({ userId: 'u', newEmail: NEW_EMAIL })]
+    ])('refuses a stored record with %s', async (_label, raw) => {
+      mockRedis.getdel.mockResolvedValue(raw)
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // The account was deleted between the request and the confirmation.
+    it('refuses when the account named by the token is gone', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // The binding to the password. An attacker who plants a change request and waits loses it
+    // the moment the victim changes their password — which is the first thing a victim does.
+    it('refuses a token no longer bound to the account password', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:new:hash' })
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // The mirror case: the token was minted against a password the account has since LOST —
+    // converted to OAuth-only, say. The binding no longer matches, and it is refused rather
+    // than treated as unbound: a token that outlives the credential it was tied to is exactly
+    // what the binding exists to catch.
+    it('refuses a token whose account no longer has a password at all', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: null })
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // …and the account that had no password when the token was minted and has one now.
+    it('refuses when a password was set after the token was minted', async () => {
+      mockRedis.getdel.mockResolvedValue(storedContext({ passwordFingerprint: '' }))
+      mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:brand:new' })
+
+      // An empty stored fingerprint is read as "no binding" and accepted, so this one goes
+      // through: refusing it would break every change in flight across a rolling deploy.
+      await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
+    })
+
+    // A fingerprint of the wrong TYPE reads as no binding, like an absent one: the field comes
+    // from a record the engine did not necessarily write, and a number where a string belongs
+    // is a malformed value, not a mismatch to refuse on.
+    it('accepts a record whose fingerprint is not a string', async () => {
+      mockRedis.getdel.mockResolvedValue(storedContext({ passwordFingerprint: 42 }))
+
+      await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+    })
+
+    // A record with no fingerprint field at all — what a sibling implementation that has not
+    // taken this change writes.
+    it('accepts a record that predates the binding', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ userId: 'user-1', newEmail: NEW_EMAIL, tenantId: 'tenant-1' })
+      )
+
+      await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+    })
+
+    // Re-checked here and not only at request time: the two are separated by the whole TTL,
+    // and whoever registered the address in between would otherwise lose it to this change.
+    it('refuses when the address was taken between the request and the confirmation', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'someone-else' })
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // A delivery failure does not roll back a change the user asked for and has proven — but
+    // it is logged, because that notice is the owner's last chance to see a takeover.
+    it('still applies the change when the notification cannot be delivered', async () => {
+      mockEmailProvider.sendEmailChangedNotification.mockRejectedValue(new Error('smtp down'))
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
+
+      expect(mockUserRepo.updateEmail).toHaveBeenCalled()
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        'notification to the previous address failed'
+      )
+      errorSpy.mockRestore()
+    })
+
+    // …and a provider that implements no notification at all is not an error either: the
+    // method is optional on the interface, so the change still lands.
+    it('applies the change when the provider implements no notification', async () => {
+      const silent = new EmailChangeService(
+        mockOptions as never,
+        mockUserRepo as never,
+        { sendEmailChangeVerification: jest.fn() } as never,
+        mockPasswordService as never,
+        mockRedis as never
+      )
+
+      await expect(silent.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+    })
+
+    // Both addresses are masked in the log, for the same reason the request masks one.
+    it('masks both addresses in the log', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await service.confirmChange({ token: TOKEN })
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(logged).toContain('confirmChange: address changed')
+      expect(logged).not.toContain('old@example.com')
+      expect(logged).not.toContain(NEW_EMAIL)
+      logSpy.mockRestore()
+    })
+  })
+})

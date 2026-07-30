@@ -274,6 +274,25 @@ export interface IUserRepository {
   updateEmailVerified(id: string, verified: boolean): Promise<void>
 
   /**
+   * Replaces the account's email address.
+   *
+   * Called only after the new address has been proven — a token mailed to it and nothing
+   * else has come back — so the account stays verified across the change. An implementation
+   * that also clears its own verification flag would sign the user out of a state they just
+   * proved.
+   *
+   * The uniqueness of `email` within the tenant is checked by the caller immediately before
+   * this runs, but a unique index on `(tenantId, email)` is still the right thing to have:
+   * the check and this write are not one transaction, and the index is what makes the race
+   * a failed write instead of two accounts sharing a recovery address.
+   *
+   * @param id - Internal user ID.
+   * @param email - The new address, already normalized (trimmed, lowercased).
+   * @throws Whatever the implementation throws when the address is taken.
+   */
+  updateEmail(id: string, email: string): Promise<void>
+
+  /**
    * Finds a user by their OAuth provider and external provider user ID.
    *
    * @remarks

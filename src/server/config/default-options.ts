@@ -124,6 +124,12 @@ export const DEFAULT_OPTIONS = {
     enabled: false
   },
 
+  emailChange: {
+    // 1 h — long enough for someone who just asked for the change to reach their new mailbox,
+    // short enough that a link pointing at the account's recovery credential is not sitting
+    // around for a day. Rate limiting bounds how many can be alive at once.
+    tokenTtlSeconds: 3_600
+  },
   invitations: {
     enabled: false,
     // 48 h (172_800 s) — limits the window during which a forwarded or leaked invitation
@@ -144,7 +150,8 @@ export const DEFAULT_OPTIONS = {
     sessions: false,
     platform: false,
     oauth: false,
-    invitations: false
+    invitations: false,
+    emailChange: false
   },
 
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],

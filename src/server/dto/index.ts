@@ -1,4 +1,6 @@
 export { AcceptInvitationDto } from './accept-invitation.dto'
+export { ChangeEmailDto } from './change-email.dto'
+export { ConfirmEmailChangeDto } from './confirm-email-change.dto'
 export { CreateInvitationDto } from './create-invitation.dto'
 export { RevokeInvitationDto } from './revoke-invitation.dto'
 export { ForgotPasswordDto } from './forgot-password.dto'

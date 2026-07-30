@@ -20,6 +20,7 @@ import {
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
 import { AuthController } from './controllers/auth.controller'
+import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
@@ -46,6 +47,7 @@ import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
+import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
@@ -203,6 +205,11 @@ export class BymaxAuthModule {
     // InvitationController — opt-in. Requires invitations.enabled: true in the resolved options.
     const includeInvitations = options.controllers?.invitations === true
 
+    // EmailChangeController — opt-in. The service refuses to boot when the configured email
+    // provider cannot deliver the verification token, so a deployment that enables the flow
+    // without wiring the message fails at startup rather than at a user's first attempt.
+    const includeEmailChange = options.controllers?.emailChange === true
+
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {
       provide: BYMAX_AUTH_OPTIONS,
@@ -314,7 +321,8 @@ export class BymaxAuthModule {
       ...(includeSessions ? [SessionController] : []),
       ...(includePlatform ? [PlatformAuthController, PlatformMfaController] : []),
       ...(includeOAuth ? [OAuthController] : []),
-      ...(includeInvitations ? [InvitationController] : [])
+      ...(includeInvitations ? [InvitationController] : []),
+      ...(includeEmailChange ? [EmailChangeController] : [])
     ]
 
     // MfaService and MfaRequiredGuard are only registered when MFA is enabled so
@@ -354,6 +362,9 @@ export class BymaxAuthModule {
 
     // InvitationService — only when controllers.invitations: true.
     const invitationProviders: Provider[] = includeInvitations ? [InvitationService] : []
+
+    // EmailChangeService — only when controllers.emailChange: true.
+    const emailChangeProviders: Provider[] = includeEmailChange ? [EmailChangeService] : []
 
     return {
       module: BymaxAuthModule,
@@ -421,7 +432,9 @@ export class BymaxAuthModule {
         // OAuth providers — only when controllers.oauth: true.
         ...oauthProviders,
         // Invitation service — only when controllers.invitations: true.
-        ...invitationProviders
+        ...invitationProviders,
+        // Address-change service — only when controllers.emailChange: true.
+        ...emailChangeProviders
       ],
       controllers,
       exports: [
@@ -464,6 +477,9 @@ export class BymaxAuthModule {
         BYMAX_AUTH_BREACH_CHECKER,
         // Export InvitationService — allows host-app modules to send or manage invitations.
         ...invitationProviders,
+        // Export EmailChangeService — a host app may want to drive the flow from its own
+        // profile screen rather than through the shipped controller.
+        ...emailChangeProviders,
         // Export AuthRedisService so host-app modules that apply JwtPlatformGuard,
         // WsJwtGuard, or other guards via @UseGuards() have AuthRedisService in scope.
         // NestJS auto-registers @UseGuards() guards as local providers in the controller's

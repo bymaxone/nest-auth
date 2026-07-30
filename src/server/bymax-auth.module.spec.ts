@@ -21,6 +21,7 @@ import { OAuthController } from './oauth/oauth.controller'
 import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthService } from './oauth/oauth.service'
 import { AuthController } from './controllers/auth.controller'
+import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
@@ -33,6 +34,7 @@ import { CommonPasswordChecker } from './providers/common-password-checker.provi
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
+import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { PasswordResetService } from './services/password-reset.service'
@@ -941,6 +943,70 @@ describe('BymaxAuthModule', () => {
 
       expect(module.get(InvitationController)).toBeDefined()
       expect(module.get(InvitationService)).toBeDefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Address-change wiring
+  // ---------------------------------------------------------------------------
+
+  describe('email change controller wiring', () => {
+    const extraProviders = [
+      { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      // A provider that CAN deliver the verification: without it the service refuses to boot,
+      // which is its own test below.
+      {
+        provide: BYMAX_AUTH_EMAIL_PROVIDER,
+        useValue: { sendEmailChangeVerification: jest.fn() }
+      }
+    ]
+
+    // Both halves of the flag: on, the controller and service are registered; off, neither is.
+    it('should register the address-change components when controllers.emailChange: true', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { emailChange: true },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(EmailChangeController)).toBeDefined()
+      expect(module.get(EmailChangeService)).toBeDefined()
+    })
+
+    // The default is off, and a consumer who never asks for the flow must not get a route that
+    // mints address-change tokens.
+    it('should register neither when the flag is absent', async () => {
+      const module = await Test.createTestingModule({
+        imports: [BymaxAuthModule.registerAsync({ useFactory: () => validOptions, extraProviders })]
+      }).compile()
+
+      expect(() => module.get(EmailChangeController)).toThrow()
+      expect(() => module.get(EmailChangeService)).toThrow()
+    })
+
+    // Enabling the flow with a provider that cannot deliver the token fails at BOOT rather
+    // than at a user's first attempt — the alternative is minting `ec:` keys nobody receives.
+    it('should refuse to boot when the provider cannot deliver the verification', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { emailChange: true },
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+              { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} }
+            ]
+          })
+        ]
+      }).compile()
+
+      await expect(module.init()).rejects.toThrow(/sendEmailChangeVerification/)
     })
   })
 

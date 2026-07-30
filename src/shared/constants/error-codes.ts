@@ -33,6 +33,7 @@ export const AUTH_ERROR_CODES = {
   // Registration and email
   EMAIL_ALREADY_EXISTS: 'auth.email_already_exists',
   EMAIL_NOT_VERIFIED: 'auth.email_not_verified',
+  EMAIL_CHANGE_TOKEN_INVALID: 'auth.email_change_token_invalid',
 
   // MFA
   MFA_REQUIRED: 'auth.mfa_required',

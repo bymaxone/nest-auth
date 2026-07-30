@@ -91,6 +91,17 @@ export const AUTH_ERROR_CODES = {
   /** Login attempted when `emailVerification.required` is true and email is unverified. */
   EMAIL_NOT_VERIFIED: 'auth.email_not_verified',
 
+  /**
+   * The address-change token is unknown, expired, already used, or no longer bound to the
+   * password it was minted against.
+   *
+   * One code for all four, deliberately: the holder of a bad link learns only that it does
+   * not work, which is all they can act on. Telling them *why* would say whether an address
+   * change is pending for the account — and a change request that an attacker planted is
+   * exactly the thing they would want confirmed.
+   */
+  EMAIL_CHANGE_TOKEN_INVALID: 'auth.email_change_token_invalid',
+
   // ---------------------------------------------------------------------------
   // MFA
   // ---------------------------------------------------------------------------
@@ -229,6 +240,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.session_not_found': 'Session not found',
   'auth.email_already_exists': 'Email already registered',
   'auth.email_not_verified': 'Email not verified',
+  'auth.email_change_token_invalid': 'Invalid or expired email change link',
   'auth.mfa_required': 'Two-factor authentication required',
   'auth.mfa_invalid_code': 'Invalid MFA code',
   'auth.mfa_already_enabled': 'MFA is already enabled',

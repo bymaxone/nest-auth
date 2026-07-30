@@ -167,6 +167,14 @@ export function createMockUserRepository(): MockUserRepository {
       if (user) users.set(id, { ...user, emailVerified: verified })
     },
 
+    async updateEmail(id: string, email: string): Promise<void> {
+      const user = users.get(id)
+      // The address is proven before this runs, so the account stays verified across the
+      // change — a store that cleared the flag here would sign the user out of a state they
+      // had just proved.
+      if (user) users.set(id, { ...user, email })
+    },
+
     async findByOAuthId(
       provider: string,
       providerId: string,
