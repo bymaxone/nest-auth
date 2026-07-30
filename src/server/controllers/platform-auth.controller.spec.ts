@@ -102,6 +102,7 @@ const mockMfaService = {
 
 const mockTokenDelivery = {
   deliverPlatformAuthResponse: jest.fn(),
+  extractPlatformAccessToken: jest.fn(),
   extractPlatformRefreshToken: jest.fn()
 }
 
@@ -476,17 +477,30 @@ describe('PlatformAuthController', () => {
     // Happy path: reads refresh token from body via extractPlatformRefreshToken.
     it('should call extractPlatformRefreshToken and then platformAuthService.logout with the correct arguments', async () => {
       mockTokenDelivery.extractPlatformRefreshToken.mockReturnValue('raw-rt-from-body')
+      mockTokenDelivery.extractPlatformAccessToken.mockReturnValue('access-from-header')
       const req = makeReq({ body: { refreshToken: 'raw-rt-from-body' } })
 
-      await controller.logout(JWT_PAYLOAD, req)
+      await controller.logout(req)
 
       expect(mockTokenDelivery.extractPlatformRefreshToken).toHaveBeenCalledWith(req)
+      // The owner comes from the stored session, not from token claims — the route no longer
+      // needs a live access token, so there are no claims to take it from.
       expect(mockPlatformAuthService.logout).toHaveBeenCalledWith(
-        JWT_PAYLOAD.sub,
-        JWT_PAYLOAD.jti,
-        JWT_PAYLOAD.exp,
+        'access-from-header',
         'raw-rt-from-body'
       )
+    })
+
+    // An operator whose access token has already expired sends no usable bearer header at all
+    // — which is the whole point of making this route public. The empty string reaches the
+    // service, whose verify fails harmlessly, and the refresh session is revoked regardless.
+    it('should pass an empty access token through when the bearer header is absent', async () => {
+      mockTokenDelivery.extractPlatformAccessToken.mockReturnValue(undefined)
+      mockTokenDelivery.extractPlatformRefreshToken.mockReturnValue('raw-rt')
+
+      await controller.logout(makeReq({ body: { refreshToken: 'raw-rt' } }))
+
+      expect(mockPlatformAuthService.logout).toHaveBeenCalledWith('', 'raw-rt')
     })
 
     // When extractPlatformRefreshToken returns undefined, the ?? '' fallback sends empty string.
@@ -494,14 +508,9 @@ describe('PlatformAuthController', () => {
       mockTokenDelivery.extractPlatformRefreshToken.mockReturnValue(undefined)
       const req = makeReq({ body: {} })
 
-      await controller.logout(JWT_PAYLOAD, req)
+      await controller.logout(req)
 
-      const [, , , rtArg] = mockPlatformAuthService.logout.mock.calls[0] as [
-        string,
-        string,
-        number,
-        string
-      ]
+      const [, rtArg] = mockPlatformAuthService.logout.mock.calls[0] as [string, string]
       expect(rtArg).toBe('')
     })
 
@@ -510,7 +519,7 @@ describe('PlatformAuthController', () => {
       mockTokenDelivery.extractPlatformRefreshToken.mockReturnValue('token-value')
       const req = makeReq()
 
-      await controller.logout(JWT_PAYLOAD, req)
+      await controller.logout(req)
 
       expect(mockTokenDelivery.extractPlatformRefreshToken).toHaveBeenCalledTimes(1)
       // extractRefreshToken should not be present in the mock at all.
@@ -523,7 +532,7 @@ describe('PlatformAuthController', () => {
       const error = new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
       mockPlatformAuthService.logout.mockRejectedValue(error)
 
-      await expect(controller.logout(JWT_PAYLOAD, makeReq())).rejects.toThrow(error)
+      await expect(controller.logout(makeReq())).rejects.toThrow(error)
     })
   })
 

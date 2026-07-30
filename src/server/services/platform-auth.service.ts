@@ -166,22 +166,43 @@ export class PlatformAuthService {
    * @param exp - The expiry Unix timestamp from the access token (for TTL calculation).
    * @param rawRefreshToken - The raw opaque platform refresh token.
    */
-  async logout(userId: string, jti: string, exp: number, rawRefreshToken: string): Promise<void> {
-    this.logger.log(`logout: adminId=${userId}`)
-    const remainingTtl = Math.max(0, exp - Math.floor(Date.now() / 1000))
-    if (remainingTtl > 0) {
-      await this.redis.set('rv:' + jti, '1', remainingTtl)
+  async logout(accessToken: string, rawRefreshToken: string): Promise<string> {
+    // The stored session names its owner. Presenting the refresh token proves possession; the
+    // record proves whose it is. Claims from an unverified token would not — and claims from a
+    // *verified* one were previously the only source, which is why this route sat behind a
+    // guard that refuses an expired token: an operator who stepped away for longer than the
+    // fifteen-minute access lifetime could not sign out at all, and the seven-day refresh
+    // session of the highest-privilege identity in the system stayed live on a console they
+    // believed they had left. The dashboard plane was fixed for exactly this; the platform
+    // plane kept the old shape.
+    const tokenHash = sha256(rawRefreshToken)
+    const userId = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    this.logger.log(`logout: adminId=${userId || '(no live session)'}`)
+
+    // Verify signature and algorithm but not expiry: an expired token is the normal case here,
+    // a forged one must not be able to blacklist an id it does not own.
+    try {
+      const payload = this.tokenManager.verifyPlatformIgnoringExpiry(accessToken)
+      const remainingTtl = payload.exp - Math.floor(Date.now() / 1000)
+      if (remainingTtl > 0) {
+        await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
+      }
+    } catch {
+      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
+      // The refresh session below is revoked either way, which is the part that matters.
     }
 
-    const tokenHash = sha256(rawRefreshToken)
     // Delete the primary session key and its grace pointer (if it exists from the
     // last rotation). Both are tracked in the per-user psess: SET so both must be
     // removed from the SET to keep it accurate for future invalidateUserSessions calls.
     await this.redis.del('prt:' + tokenHash)
     await this.redis.del('prp:' + tokenHash)
-    await this.redis.srem('psess:' + userId, 'prt:' + tokenHash)
-    await this.redis.srem('psess:' + userId, 'prp:' + tokenHash)
+    if (userId) {
+      await this.redis.srem('psess:' + userId, 'prt:' + tokenHash)
+      await this.redis.srem('psess:' + userId, 'prp:' + tokenHash)
+    }
     await this.redis.del('psd:' + tokenHash)
+    return userId
   }
 
   // ---------------------------------------------------------------------------

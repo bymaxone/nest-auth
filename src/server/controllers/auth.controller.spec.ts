@@ -261,14 +261,15 @@ describe('AuthController', () => {
     // Verifies that refresh rotates the token, fetches the user, and delivers new tokens.
     it('should rotate refresh token, fetch user, and deliver new tokens', async () => {
       mockTokenDelivery.extractRefreshToken.mockReturnValue('old-refresh')
-      mockAuthService.refresh.mockResolvedValue(ROTATED_RESULT)
-      mockAuthService.getMe.mockResolvedValue(SAFE_USER)
+      mockAuthService.refresh.mockResolvedValue({ ...ROTATED_RESULT, user: SAFE_USER })
       mockTokenDelivery.deliverRefreshResponse.mockReturnValue({ user: SAFE_USER })
 
       const result = await controller.refresh(mockReq, mockRes)
 
       expect(mockAuthService.refresh).toHaveBeenCalledWith('old-refresh', '1.2.3.4', 'TestBrowser')
-      expect(mockAuthService.getMe).toHaveBeenCalledWith(ROTATED_RESULT.session.userId)
+      // The account rides back with the rotation — `refresh` re-reads it to re-apply the
+      // status and verification gates, so a second repository round trip here would be waste.
+      expect(mockAuthService.getMe).not.toHaveBeenCalled()
       expect(mockTokenDelivery.deliverRefreshResponse).toHaveBeenCalledWith(
         mockRes,
         {

@@ -162,6 +162,53 @@ describe('email verification flow (E2E)', () => {
       expect((me.body as { emailVerified: boolean }).emailVerified).toBe(true)
     })
 
+    // The verification requirement has to survive rotation. `register` issues a full session
+    // deliberately — a consumer needs one to render the "check your inbox" screen — and the
+    // specification bounds that window at one access-token lifetime. Rotation is what
+    // un-bounded it: the gate lived only on `login`, a door the caller never has to open again
+    // once register handed them a refresh token, so an address nobody ever proved held an
+    // authenticated session forever. This is the sequence an attacker would actually run:
+    // occupy someone else's address, discard the OTP, and rotate.
+    it('should refuse to rotate a session whose address was never verified', async () => {
+      const email = 'never-verifies@example.com'
+      const reg = await request(fixture.app.getHttpServer())
+        .post('/register')
+        .send({ email, password: 'VerifyPass1!', name: 'Never Verifies', tenantId: 'tenant-1' })
+      expect(reg.status).toBe(201)
+      const refreshToken = (reg.body as { refreshToken: string }).refreshToken
+      expect(refreshToken).toBeTruthy()
+
+      const rotated = await request(fixture.app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken })
+
+      expect(rotated.status).toBeGreaterThanOrEqual(400)
+      expect((rotated.body as { error?: { code?: string } }).error?.code).toBe(
+        'auth.email_not_verified'
+      )
+    })
+
+    // The same rotation succeeds once the address is proven — the gate must bound the
+    // unverified window, not break the verified one.
+    it('should rotate normally once the address has been verified', async () => {
+      const email = 'verifies-then-rotates@example.com'
+      const reg = await request(fixture.app.getHttpServer())
+        .post('/register')
+        .send({ email, password: 'VerifyPass1!', name: 'Verifies', tenantId: 'tenant-1' })
+      const refreshToken = (reg.body as { refreshToken: string }).refreshToken
+
+      const otp = fixture.email.otps.get(email)
+      await request(fixture.app.getHttpServer())
+        .post('/verify-email')
+        .send({ email, otp, tenantId: 'tenant-1' })
+
+      const rotated = await request(fixture.app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken })
+
+      expect(rotated.status).toBe(200)
+    })
+
     // Verifies the OTP_INVALID error code is returned when the submitted code
     // does not match the dispatched one.
     it('should reject /verify-email with OTP_INVALID for a wrong code', async () => {

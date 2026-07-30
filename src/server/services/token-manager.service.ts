@@ -924,6 +924,23 @@ export class TokenManagerService {
     })
   }
 
+  /**
+   * The platform twin of {@link verifyIgnoringExpiry}, for the same single caller: logout.
+   *
+   * An operator who walks away for longer than the access-token lifetime and then signs out is
+   * the ordinary case, and refusing them leaves the refresh session — seven days of the
+   * highest-privilege identity in the system — alive on a console they believed they had left.
+   *
+   * @param token - The raw platform access token.
+   * @returns The verified payload, expiry aside.
+   * @throws Whatever the verifier throws when no configured secret accepts the token.
+   */
+  verifyPlatformIgnoringExpiry(token: string): PlatformJwtPayload {
+    return verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token, {
+      ignoreExpiration: true
+    })
+  }
+
   decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload {
     const raw = this.jwtService.decode(token)
 

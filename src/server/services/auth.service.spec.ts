@@ -121,7 +121,9 @@ const mockRedis = {
   set: jest.fn(),
   del: jest.fn(),
   setnx: jest.fn(),
-  readSessionOwner: jest.fn()
+  readSessionOwner: jest.fn(),
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockOtpService = {
@@ -1046,21 +1048,65 @@ describe('AuthService', () => {
 
   describe('refresh', () => {
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
-    it('should delegate to tokenManager.reissueTokens', async () => {
+    it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {
         session: { userId: 'u1', tenantId: 't1', role: 'member' },
         accessToken: 'new.access',
         rawRefreshToken: 'new-refresh'
       }
       mockTokenManager.reissueTokens.mockResolvedValue(rotated)
+      mockUserRepo.findById.mockResolvedValue({ id: 'u1', email: 'a@e.com', status: 'active' })
 
       const result = await service.refresh('old-refresh', '1.2.3.4', 'Browser')
-      expect(result).toBe(rotated)
+      expect(result.accessToken).toBe('new.access')
+      expect(result.rawRefreshToken).toBe('new-refresh')
+      // The account rides along so the caller does not pay a second repository read.
+      expect(result.user.id).toBe('u1')
       expect(mockTokenManager.reissueTokens).toHaveBeenCalledWith(
         'old-refresh',
         '1.2.3.4',
         'Browser'
       )
+    })
+
+    // A ban has to end an existing session, not merely refuse the next login — a door a
+    // signed-in user never needs to open again. Rotation works entirely from the Redis record,
+    // so without this re-read a suspended account renews its access token every fifteen
+    // minutes for the refresh token's whole seven days (ASVS v5 §7.4.2).
+    it.each([['banned'], ['suspended'], ['inactive']])(
+      'should refuse the rotation and end every session for a %s account',
+      async (status) => {
+        mockTokenManager.reissueTokens.mockResolvedValue({
+          session: { userId: 'u1', tenantId: 't1', role: 'member' },
+          accessToken: 'new.access',
+          rawRefreshToken: 'new-refresh'
+        })
+        mockUserRepo.findById.mockResolvedValue({ id: 'u1', email: 'a@e.com', status })
+
+        await expect(service.refresh('old-refresh', '1.2.3.4', 'Browser')).rejects.toThrow(
+          AuthException
+        )
+        // The compensation is total: the session just minted goes with all the others, and the
+        // epoch bump kills the access token that was issued a line earlier.
+        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
+        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      }
+    )
+
+    // The account was deleted while the session record outlived it. Hand back nothing, and
+    // clear the orphaned session rather than leaving it to be rotated again.
+    it('should refuse the rotation when the account no longer exists', async () => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.refresh('old-refresh', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
     })
   })
 

@@ -112,7 +112,8 @@ const mockPasswordService = {
 const mockTokenManager = {
   issuePlatformTokens: jest.fn(),
   issueMfaTempToken: jest.fn(),
-  reissuePlatformTokens: jest.fn()
+  reissuePlatformTokens: jest.fn(),
+  verifyPlatformIgnoringExpiry: jest.fn()
 }
 
 const mockBruteForce = {
@@ -126,6 +127,7 @@ const mockRedis = {
   set: jest.fn(),
   del: jest.fn(),
   srem: jest.fn(),
+  readSessionOwner: jest.fn(),
   invalidateUserSessions: jest.fn(),
   bumpUserTokenEpoch: jest.fn()
 }
@@ -440,13 +442,19 @@ describe('PlatformAuthService', () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.srem.mockResolvedValue(1)
+      // The stored record names the owner — logout no longer takes it from token claims.
+      mockRedis.readSessionOwner.mockResolvedValue(userId)
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000) + 3600
+      })
     })
 
     // Verifies that when the access token still has remaining TTL, the JTI is
     // blacklisted in Redis (rv:{jti}) to prevent it being used after logout.
     it('should blacklist the JTI in Redis when the token is not yet expired', async () => {
-      const futureExp = Math.floor(Date.now() / 1000) + 3600
-      await service.logout(userId, jti, futureExp, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.set).toHaveBeenCalledWith('rv:' + jti, '1', expect.any(Number))
       const ttl = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
       expect(ttl).toBeGreaterThan(0)
@@ -455,9 +463,57 @@ describe('PlatformAuthService', () => {
     // Verifies that when the token is already expired (exp <= now), no revocation entry
     // is written — there is nothing to blacklist since the token cannot be reused anyway.
     it('should NOT set rv:{jti} when the token has already expired', async () => {
-      const pastExp = Math.floor(Date.now() / 1000) - 1
-      await service.logout(userId, jti, pastExp, rawRefreshToken)
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000) - 1
+      })
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The operator stepped away for longer than the fifteen-minute access lifetime. The route
+    // used to sit behind a guard that refuses an expired token, so they could not sign out at
+    // all and the seven-day refresh session of the highest-privilege identity in the system
+    // stayed live on a console they believed they had left.
+    it('should still revoke the session when the access token is absent or unverifiable', async () => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockImplementation(() => {
+        throw new Error('jwt malformed')
+      })
+
+      const owner = await service.logout('', rawRefreshToken)
+
+      expect(owner).toBe(userId)
+      expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
+      expect(mockRedis.del).toHaveBeenCalledWith('prp:' + tokenHash)
+      // Nothing to blacklist without a verifiable token — and nothing that needed to be.
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // No live session matched the presented refresh token — already signed out, or expired.
+    // There is no owner to prune the index for, and the operation is still a success: logout
+    // is idempotent, and answering an error would tell a caller whether a token was live.
+    it('should not touch the session index when no live session matched', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('')
+
+      const owner = await service.logout('access.jwt', rawRefreshToken)
+
+      expect(owner).toBe('')
+      expect(mockRedis.srem).not.toHaveBeenCalled()
+      // The keys are still deleted — a DEL of an absent key is a harmless no-op, and doing it
+      // unconditionally is what makes a half-rotated session final.
+      expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
+    })
+
+    // A forged access token must not be able to blacklist a `jti` it does not own: the
+    // signature is still checked, only the expiry is waived.
+    it('should read the owner from the stored record, not from the token claims', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('the-real-owner')
+
+      const owner = await service.logout('access.jwt', rawRefreshToken)
+
+      expect(owner).toBe('the-real-owner')
+      expect(mockRedis.readSessionOwner).toHaveBeenCalledWith('prt:' + tokenHash)
     })
 
     // Scenario: logout must prune the session from the platform index and drop its detail
@@ -468,7 +524,7 @@ describe('PlatformAuthService', () => {
     it('should prune both platform index members and the detail record on logout', async () => {
       const futureExp = Math.floor(Date.now() / 1000) + 3600
 
-      await service.logout(userId, jti, futureExp, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
 
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
@@ -482,7 +538,7 @@ describe('PlatformAuthService', () => {
     it('should leave the dashboard index alone on a platform logout', async () => {
       const futureExp = Math.floor(Date.now() / 1000) + 3600
 
-      await service.logout(userId, jti, futureExp, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
 
       expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
       expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
@@ -490,7 +546,7 @@ describe('PlatformAuthService', () => {
 
     // Verifies that the primary platform refresh token key (prt:{hash}) is deleted from Redis.
     it('should delete prt:{sha256(rawRefreshToken)} from Redis', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
     })
 
@@ -499,7 +555,7 @@ describe('PlatformAuthService', () => {
     // logout otherwise has only Redis side effects, no return value.
     it('should log the logout event with the admin id', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
       expect(logged).toContain('logout: adminId=')
       logSpy.mockRestore()
@@ -508,20 +564,20 @@ describe('PlatformAuthService', () => {
     // Verifies that the grace-pointer key (prp:{hash}) is also deleted during logout
     // so a partially-rotated session cannot be reused after the admin logs out.
     it('should delete prp:{sha256(rawRefreshToken)} from Redis', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.del).toHaveBeenCalledWith('prp:' + tokenHash)
     })
 
     // Verifies that prt:{hash} is removed from the per-user psess: SET so that
     // a future revokeAllPlatformSessions call does not try to delete an already-gone key.
     it('should srem prt:{hash} from psess:{userId}', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
     })
 
     // Verifies that prp:{hash} is also removed from the per-user psess: SET.
     it('should srem prp:{hash} from psess:{userId}', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
     })
   })

@@ -180,11 +180,12 @@ export class AuthController {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
 
+    // `refresh` re-reads the account to re-apply the status gate, and hands the record back so
+    // this does not pay a second repository read to build the body.
     const rotated = await this.authService.refresh(rawRefreshToken, ip, userAgent)
-    const user = await this.authService.getMe(rotated.session.userId)
 
     const authResult: AuthResult = {
-      user,
+      user: rotated.user,
       accessToken: rotated.accessToken,
       rawRefreshToken: rotated.rawRefreshToken
     }

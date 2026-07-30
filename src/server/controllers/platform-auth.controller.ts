@@ -242,13 +242,22 @@ export class PlatformAuthController {
    * @param user - JWT payload from the verified platform access token.
    * @param req - Incoming request (used to extract the raw refresh token from the body).
    */
-  @UseGuards(JwtPlatformGuard)
+  @Public()
+  @Throttle(AUTH_THROTTLE_CONFIGS.logout)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
-  async logout(@CurrentUser() user: PlatformJwtPayload, @Req() req: Request): Promise<void> {
+  async logout(@Req() req: Request): Promise<void> {
+    // Public for the same reason the dashboard route is: an operator who stepped away for
+    // longer than the fifteen-minute access lifetime must still be able to sign out, or the
+    // seven-day refresh session of the highest-privilege identity in the system lives on at a
+    // console they believed they had left. The refresh token is what authorizes the operation,
+    // the stored record names its owner, and the access token is verified (signature and
+    // algorithm, expiry aside) before its `jti` is blacklisted.
+    const accessToken = this.tokenDelivery.extractPlatformAccessToken(req) ?? ''
     // Always reads from req.body — platform sessions never use cookie delivery.
     const rawRefreshToken = this.tokenDelivery.extractPlatformRefreshToken(req) ?? ''
-    await this.platformAuthService.logout(user.sub, user.jti, user.exp, rawRefreshToken)
+    await this.platformAuthService.logout(accessToken, rawRefreshToken)
   }
 
   // ---------------------------------------------------------------------------

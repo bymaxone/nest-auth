@@ -103,6 +103,24 @@ export interface RotatedTokenResult {
 }
 
 /**
+ * What a **dashboard** refresh returns: the rotated tokens plus the account behind them.
+ *
+ * Rotation itself works entirely from the Redis record, so the repository read this carries is
+ * what lets the status gate apply on refresh at all. Without it a suspended or banned account
+ * renews its access token for the refresh token's whole lifetime — the login door a ban closes
+ * is one a signed-in user never needs to open again (ASVS v5 §7.4.2 requires disabling an
+ * account to terminate its sessions). The user is returned rather than discarded so the caller
+ * does not pay a second read to build the response body.
+ *
+ * The platform plane keeps the plain {@link RotatedTokenResult}: `TokenManagerService` has no
+ * user repository by design, and this shape belongs to the service that does.
+ */
+export interface DashboardRefreshResult extends RotatedTokenResult {
+  /** The account behind the rotated session, re-read and re-checked during the rotation. */
+  user: SafeAuthUser
+}
+
+/**
  * Result returned when authentication requires MFA completion.
  *
  * The `mfaRequired: true` literal type enables reliable type narrowing in

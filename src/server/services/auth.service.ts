@@ -19,8 +19,8 @@ import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
   AuthResult,
-  MfaChallengeResult,
-  RotatedTokenResult
+  DashboardRefreshResult,
+  MfaChallengeResult
 } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
@@ -433,8 +433,49 @@ export class AuthService {
     oldRefreshToken: string,
     ip: string,
     userAgent: string
-  ): Promise<RotatedTokenResult> {
+  ): Promise<DashboardRefreshResult> {
     const result = await this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+
+    // Re-read the account and re-apply the status gate. Rotation works entirely from the Redis
+    // record, so nothing else on this path ever looks at the user again: without this a
+    // suspended or banned account renews its access token every fifteen minutes for the
+    // refresh token's whole seven days. The ban closes the login door, and a signed-in user
+    // never needs to open it again — which makes the ban advisory in practice. ASVS v5 §7.4.2
+    // requires an account being disabled to terminate its sessions.
+    //
+    // The check runs AFTER rotation because that is the only point where the owner is known on
+    // both the live and the grace path. The compensation is deliberately total: every session
+    // the account holds is revoked, including the one just minted, and the epoch bump kills
+    // the access token issued a line above. Touching the system while blocked ends everything
+    // at once, which is what the ban was supposed to mean.
+    const user = await this.userRepo.findById(result.session.userId)
+    if (!user) {
+      // The account is gone. The session record outlived it, so end it rather than hand back
+      // a token for a user nobody can look up.
+      await this.revokeAllSessions(result.session.userId)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    try {
+      this.assertUserNotBlocked(user)
+
+      // The same email-verification gate `login` applies, for the same reason. `register`
+      // issues a full session deliberately — a consumer needs one to render the "check your
+      // inbox" screen — and this library's own specification bounds the resulting window at
+      // one access-token lifetime. Rotation is what un-bounded it: the gate lived only on
+      // `login`, a door the caller never has to open again once register handed them a
+      // refresh token, so an address nobody ever proved held an authenticated session
+      // indefinitely. Fifteen minutes is what the spec promises; this is what makes it true.
+      if (this.options.emailVerification.required && !user.emailVerified) {
+        throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+      }
+    } catch (err: unknown) {
+      // Compensate, then rethrow the error the gate produced. The status check goes through
+      // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
+      // definition of "blocked" — the inline version would have to re-implement the
+      // case-insensitive comparison, and a second implementation is a second thing to drift.
+      await this.revokeAllSessions(result.session.userId)
+      throw err
+    }
 
     // Rotate the session detail record to the new token hash.
     // Fire-and-forget: sd: keys are display metadata only — a rotation failure
@@ -447,7 +488,35 @@ export class AuthService {
         })
     }
 
-    return result
+    return { ...result, user: toSafeUser(user) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session revocation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Ends every dashboard session for one account, and kills the access tokens already issued.
+   *
+   * The dashboard twin of {@link PlatformAuthService.revokeAllPlatformSessions}. It exists
+   * because a library cannot see the moment a host suspends, bans, or deletes an account —
+   * the user record is the host's — and until the host says so, the account's live sessions
+   * keep working. ASVS v5 §7.4.2 requires that moment to terminate them, so the host needs a
+   * supported way to say it. `SessionService.revokeAllExceptCurrent` cannot serve: it wants
+   * the hash of a session to keep, and an administrator banning somebody else has none.
+   *
+   * Call it from wherever the account's status changes. Refresh applies the same gate on its
+   * own, so a ban takes effect within one access-token lifetime even if this is never called
+   * — but that is a backstop, not the mechanism.
+   *
+   * The epoch is bumped after the sweep, not before: a failure in the sweep then leaves the
+   * operation visibly incomplete rather than reading as done while the sessions live on.
+   *
+   * @param userId - The account whose sessions are being ended.
+   */
+  async revokeAllSessions(userId: string): Promise<void> {
+    await this.redis.invalidateUserSessions(userId)
+    await this.redis.bumpUserTokenEpoch(userId)
   }
 
   // ---------------------------------------------------------------------------
