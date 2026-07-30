@@ -4466,22 +4466,37 @@ export const AUTH_THROTTLE_CONFIGS = {
 
 ### 16.3 Rate limiting summary table
 
+> Generated from `conformance/wire-contract.json`, which is the enforced source of truth:
+> both backends assert against it, and a route missing from it fails the conformance test on
+> each side. Change the contract, not this table.
+
 | Endpoint                              | Limit  | Window    | Description                                                                      |
 | ------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- |
 | `POST /auth/login`                    | 5 req  | 1 minute  | Protects against brute-force per IP                                              |
 | `POST /auth/register`                 | 10 req | 1 hour    | Protects against mass account creation                                           |
 | `POST /auth/refresh`                  | 10 req | 1 minute  | Limits refresh requests                                                          |
+| `POST /auth/logout`                   | 20 req | 1 minute  | Public route: bounds the cost of an unauthenticated call                         |
+| `POST /auth/ws-ticket`                | 20 req | 1 minute  | Bounds socket-upgrade ticket minting                                             |
 | `POST /auth/password/forgot-password` | 3 req  | 5 minutes | Prevents spam of reset emails                                                    |
 | `POST /auth/password/reset-password`  | 3 req  | 5 minutes | Protects the reset endpoint                                                      |
+| `POST /auth/password/change`          | 5 req  | 1 minute  | Protects the authenticated change against a stolen access token                  |
 | `POST /auth/password/verify-otp`      | 3 req  | 5 minutes | Protects OTP verification (aligned with the internal max. of 5 attempts per OTP) |
-| `POST /auth/mfa/setup`                | 5 req  | 1 minute  | Limits setup attempts                                                            |
-| `POST /auth/mfa/challenge`            | 10 req | 1 minute  | Limits MFA attempts                                                              |
-| `POST /auth/mfa/disable`              | 3 req  | 5 minutes | Protects MFA deactivation                                                        |
-| `POST /auth/platform/login`           | 5 req  | 1 minute  | Protects admin login                                                             |
+| `POST /auth/password/resend-otp`      | 3 req  | 5 minutes | Prevents spam of password reset OTPs                                             |
 | `POST /auth/verify-email`             | 5 req  | 1 minute  | Limits email verification                                                        |
 | `POST /auth/resend-verification`      | 3 req  | 5 minutes | Prevents spam of verification emails                                             |
-| `POST /auth/password/resend-otp`      | 3 req  | 5 minutes | Prevents spam of password reset OTPs                                             |
+| `POST /auth/mfa/setup`                | 5 req  | 1 minute  | Limits setup attempts                                                            |
+| `POST /auth/mfa/verify-enable`        | 5 req  | 1 minute  | Limits enrolment confirmation attempts                                           |
+| `POST /auth/mfa/challenge`            | 5 req  | 1 minute  | Limits MFA attempts                                                              |
+| `POST /auth/mfa/disable`              | 3 req  | 5 minutes | Protects MFA deactivation                                                        |
+| `POST /auth/platform/login`           | 5 req  | 1 minute  | Protects admin login                                                             |
+| `POST /auth/invitations`              | 10 req | 1 hour    | Limits invitation minting                                                        |
 | `POST /auth/invitations/accept`       | 5 req  | 1 minute  | Protects invitation acceptance                                                   |
+| `POST /auth/invitations/revoke`       | 10 req | 1 hour    | Matches the mint, so withdrawing costs what issuing does                         |
+| `GET /auth/sessions`                  | 30 req | 1 minute  | Limits session listing                                                           |
+| `DELETE /auth/sessions/:id`           | 10 req | 1 minute  | Limits per-session revocation                                                    |
+| `DELETE /auth/sessions/all`           | 5 req  | 1 minute  | Limits bulk revocation                                                           |
+| `GET /auth/oauth/:provider`           | 10 req | 1 minute  | Limits OAuth starts                                                              |
+| `GET /auth/oauth/:provider/callback`  | 10 req | 1 minute  | Limits OAuth callbacks                                                           |
 
 ### 16.4 Usage in controllers
 
