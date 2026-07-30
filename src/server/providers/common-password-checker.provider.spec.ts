@@ -8,7 +8,13 @@
  * @layer Provider
  */
 
-import { CommonPasswordChecker, reduceToBaseWord } from './common-password-checker.provider'
+import {
+  COMMON_BASE_WORDS,
+  CommonPasswordChecker,
+  LEET_MAP,
+  SEQUENCE_ALPHABETS,
+  reduceToBaseWord
+} from './common-password-checker.provider'
 import type { ResolvedOptions } from '../config/resolved-options'
 
 /** A checker with no consumer-supplied blocklist — the shipped default. */
@@ -101,6 +107,119 @@ describe('CommonPasswordChecker', () => {
     ['1password']
   ])('allows %s', async (password) => {
     expect(await defaultChecker().isBreached(password)).toBe(false)
+  })
+
+  // Every shipped base word, swept in one test. A sample proves the mechanism works; only the
+  // full sweep proves the LIST does — a mistyped or deleted entry is otherwise invisible, and
+  // the entry is the whole product here.
+  //
+  // Deliberately a loop inside ONE test rather than `it.each` over the array. Under `it.each`
+  // the test NAME carries the datum, so corrupting an entry renames the case — and a runner
+  // that selects tests by name (Stryker's per-test coverage does) then finds nothing to run and
+  // reads the corruption as unnoticed. A static name keeps the assertion attached to the data.
+  it('refuses every shipped base word', async () => {
+    for (const word of COMMON_BASE_WORDS) {
+      expect(await defaultChecker().isBreached(word)).toBe(true)
+    }
+  })
+
+  // …and each entry has to survive its own normalisation, which is the invariant that makes it
+  // reachable at all. `isBreached` compares `reduceToBaseWord(candidate)` against this set, so
+  // an entry that does not reduce to itself can never be matched by anything: a dead line that
+  // reads as a defence. `Password1` in the list would silently protect nobody.
+  //
+  // This is what the sweep above cannot check. That test reads the same array the
+  // implementation does, so a corrupted entry is refused *because* it is in the list — the
+  // assertion moves with the corruption. This one holds the entry to a rule the reduction
+  // defines, not to itself.
+  it('stores every base word in the reduced form it is compared in', () => {
+    for (const word of COMMON_BASE_WORDS) {
+      expect(reduceToBaseWord(word)).toBe(word)
+      // …and long enough to clear the floor below which every candidate is refused outright,
+      // where an entry would again be unreachable.
+      expect(word.length).toBeGreaterThanOrEqual(4)
+    }
+  })
+
+  // A duplicate is not wrong, but it is a mistake worth catching: it means an edit landed twice
+  // and the second one is not the addition its author thought they were making.
+  it('carries no duplicate base words', () => {
+    expect(new Set(COMMON_BASE_WORDS).size).toBe(COMMON_BASE_WORDS.length)
+  })
+
+  // …and every leet substitution actually substitutes. One wrong mapping silently un-covers a
+  // whole family of decorated forms — `p@ssw0rd` stops reducing to `password` — while every
+  // undecorated test keeps passing.
+  it('maps every leet character back to the letter it stands in for', () => {
+    for (const [from, to] of LEET_MAP) {
+      expect(reduceToBaseWord(`x${from}x`)).toBe(`x${to}x`)
+      // The target has to be a single lowercase letter, or the substitution produces something
+      // the reduction then drops — the mapping would read as configured and do nothing.
+      expect(to).toMatch(/^[a-z]$/)
+      // …and the source a single character that is not already the letter it maps to.
+      expect(from).toHaveLength(1)
+      expect(from).not.toBe(to)
+    }
+  })
+
+  // …and every sequence alphabet is walked in both directions. A run is refused whatever
+  // characters it is made of, which is the part no word list can enumerate.
+  it('refuses a run along every sequence alphabet, in both directions', async () => {
+    for (const alphabet of SEQUENCE_ALPHABETS) {
+      const forwards = alphabet.slice(0, 8)
+      const backwards = [...forwards].reverse().join('')
+
+      expect(await defaultChecker().isBreached(forwards)).toBe(true)
+      expect(await defaultChecker().isBreached(backwards)).toBe(true)
+      // A reduced base is `[a-z0-9]+` by construction, so an alphabet carrying anything else
+      // could never contain one — the entry would read as a defence and match nothing.
+      expect(alphabet).toMatch(/^[a-z0-9]+$/)
+      // …and it has to be long enough to hold a window that clears the four-character floor.
+      expect(alphabet.length).toBeGreaterThan(8)
+    }
+  })
+
+  // The reduction drops interior punctuation as well as trailing decoration, or a base word
+  // would never be reached through the separators people actually type.
+  it('drops interior punctuation on the way to the base word', async () => {
+    expect(reduceToBaseWord('pass-word')).toBe('password')
+    expect(await defaultChecker().isBreached('p.a.s.s.w.o.r.d')).toBe(true)
+  })
+
+  // The four-character floor, isolated from every other guard. `xq` survives the reduction of
+  // `xq!!!!` and is not a run, not a repeat, and in no list — so only the floor refuses it, and
+  // dropping the floor would let six characters of punctuation stand in for a password.
+  it('refuses a candidate that reduces below the length floor and nothing else catches', async () => {
+    expect(reduceToBaseWord('xq!!!!')).toBe('xq')
+
+    expect(await defaultChecker().isBreached('xq!!!!')).toBe(true)
+  })
+
+  // The repeated-unit check is anchored at BOTH ends on purpose: it is a check on a password
+  // that is nothing but padding, not on one that merely contains a repetition. Losing either
+  // anchor turns it into a general "contains a repeat" rule that refuses ordinary passphrases.
+  it.each([
+    ['abcabcabcxylophone', 'a repeat at the front'],
+    ['xylophoneabcabcabc', 'a repeat at the back'],
+    ['xylophonezz', 'a doubled character at the back'],
+    ['zzxylophone', 'a doubled character at the front']
+  ])('allows %s (%s)', async (password) => {
+    expect(await defaultChecker().isBreached(password)).toBe(false)
+  })
+
+  // The consumer's group is optional, and the provider is also usable standalone: a resolved
+  // options object that carries no `password` group must not throw on construction.
+  it('accepts options with no password group', async () => {
+    const checker = new CommonPasswordChecker({} as unknown as ResolvedOptions)
+
+    expect(await checker.isBreached('password')).toBe(true)
+  })
+
+  // …and an absent blocklist contributes nothing rather than some default entry — a word the
+  // deployment never chose must not be refused on its behalf.
+  it('adds no entry of its own when the blocklist is absent', async () => {
+    expect(await checkerWith([]).isBreached('strykerwashere')).toBe(false)
+    expect(await defaultChecker().isBreached('strykerwashere')).toBe(false)
   })
 
   // ASVS v5 §6.2.11: the deployment's own product, company and domain names — the words its

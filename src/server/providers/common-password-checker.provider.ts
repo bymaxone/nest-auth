@@ -17,8 +17,12 @@ import type { IPasswordBreachChecker } from '../interfaces/password-breach-check
  *
  * Entries are stored already normalised (lowercase, no decorations), because that is the form
  * they are compared in.
+ *
+ * Exported so the test suite can assert over every entry rather than a sample. A blocklist is
+ * only worth what it actually refuses, and a list nobody checks entry by entry is a list where
+ * a typo — or a deletion — is invisible.
  */
-const COMMON_BASE_WORDS: readonly string[] = [
+export const COMMON_BASE_WORDS: readonly string[] = [
   // The perennial top of every published list.
   'password',
   'passwort',
@@ -212,15 +216,22 @@ const COMMON_BASE_WORDS: readonly string[] = [
  *
  * A run long enough to fill the minimum length is not a password no matter which characters it
  * is made of, and no word list can enumerate every window of every sequence.
+ *
+ * Exported for the same reason as {@link COMMON_BASE_WORDS}: the test suite asserts over each.
  */
-const SEQUENCE_ALPHABETS: readonly string[] = [
+export const SEQUENCE_ALPHABETS: readonly string[] = [
   'abcdefghijklmnopqrstuvwxyz',
   '01234567890',
   'qwertyuiopasdfghjklzxcvbnm'
 ]
 
-/** Leet substitutions people use, mapped back to the letter they stand in for. */
-const LEET_MAP: ReadonlyMap<string, string> = new Map([
+/**
+ * Leet substitutions people use, mapped back to the letter they stand in for.
+ *
+ * Exported for the same reason as {@link COMMON_BASE_WORDS}: one wrong mapping silently
+ * un-covers a whole family of decorated passwords, and only a per-entry assertion sees it.
+ */
+export const LEET_MAP: ReadonlyMap<string, string> = new Map([
   ['0', 'o'],
   ['1', 'i'],
   ['3', 'e'],
@@ -329,14 +340,17 @@ export class CommonPasswordChecker implements IPasswordBreachChecker {
 
     if (this.blocked.has(base)) return true
 
-    // A single character repeated, before or after reduction — `aaaaaaaa`, `AAAA1111`.
-    if (/^(.)\1+$/.test(base)) return true
-
     // A straight run along the alphabet, the digits, or the keyboard.
     if (isSequential(base)) return true
 
-    // The same short unit repeated to reach the length floor: `abcabcabc`, `1212121212`.
-    // Bounded to units of 1–4 so this stays a check on padding, not on any repetition.
+    // The same short unit repeated to reach the length floor: `abcabcabc`, `1212121212`, and
+    // — with a unit of one — `aaaaaaaa`. Bounded to units of 1–4 so this stays a check on
+    // padding, not on any repetition.
+    //
+    // A separate `/^(.)\1+$/` for the single-character case used to sit above this one. It was
+    // dead: every base it matched, this one matches too, because a one-character unit is
+    // exactly what `.{1,4}?` tries first. Nothing reached it, and no test could tell it apart
+    // from its neighbour — which is how it survived every mutation of itself.
     if (/^(.{1,4}?)\1{2,}$/.test(base)) return true
 
     return false
