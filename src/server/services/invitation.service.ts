@@ -19,6 +19,7 @@ import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
 import { hasRole } from '../utils/roles.util'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -221,6 +222,52 @@ export class InvitationService {
    * @throws `AuthException` with `INVALID_INVITATION_TOKEN` if the token is missing or malformed.
    * @throws `AuthException` with `EMAIL_ALREADY_EXISTS` if the email is taken.
    */
+  /**
+   * Re-checks, at redemption time, everything that was true of the inviter when the link was
+   * minted.
+   *
+   * An invitation is a delegation of authority, and authority is revocable. Validating it only
+   * at creation means a 48-hour token carries whatever power its author had at the moment they
+   * clicked send — surviving their suspension, their demotion, and their removal from the
+   * tenant. The failure is answered as `INVALID_INVITATION_TOKEN` rather than as a role error:
+   * the redeemer is not the one who lost authority, and telling them *why* would describe the
+   * inviter's account status to someone who may be a stranger to it.
+   *
+   * @param invitation - The stored record, already shape-validated.
+   * @throws {@link AuthException} `INVALID_INVITATION_TOKEN` when the inviter can no longer
+   *   grant what the invitation grants.
+   */
+  private async assertInviterStillAuthorised(invitation: StoredInvitation): Promise<void> {
+    const inviter = await this.userRepo.findById(invitation.inviterUserId)
+    // `assertNotBlocked` rather than an inline status test: one definition of "blocked", and
+    // the inline version would have to re-implement its case-insensitive comparison — a second
+    // implementation is a second thing to drift.
+    const inGoodStanding =
+      inviter !== null &&
+      ((): boolean => {
+        try {
+          assertNotBlocked(inviter.status, this.options.blockedStatuses)
+          return true
+        } catch {
+          return false
+        }
+      })()
+
+    const stillAuthorised =
+      inviter !== null &&
+      inGoodStanding &&
+      inviter.tenantId === invitation.tenantId &&
+      hasRole(inviter.role, invitation.role, this.options.roles.hierarchy)
+
+    if (!stillAuthorised) {
+      this.logger.warn(
+        `acceptInvitation: the inviter can no longer grant this invitation ` +
+          `inviterUserId=${invitation.inviterUserId} role=${invitation.role}`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
+    }
+  }
+
   async acceptInvitation(
     dto: AcceptInvitationDto,
     ip: string,
@@ -258,6 +305,15 @@ export class InvitationService {
     if (!Object.hasOwn(this.options.roles.hierarchy, invitation.role)) {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
+
+    // …and re-validate the INVITER, whose authority is what the invitation rests on. It was
+    // checked when the link was minted and never again, so for the token's whole lifetime the
+    // invitation outlived the person behind it: an admin could send one, be banned and stripped
+    // of their role, and the invitee would still arrive as an admin of that tenant with a live
+    // session. That is a clean way to keep a foothold across the account kill switch, which
+    // makes the switch advisory. Re-reading closes it: the inviter must still exist, still be
+    // in good standing, still belong to this tenant, and still out-rank the role being granted.
+    await this.assertInviterStillAuthorised(invitation)
 
     // Guard against duplicate registrations within the same tenant.
     const existing = await this.userRepo.findByEmail(invitation.email, invitation.tenantId)

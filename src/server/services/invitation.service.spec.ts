@@ -161,7 +161,8 @@ const mockOptions = {
   },
   sessions: {
     enabled: false
-  }
+  },
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED']
 }
 
 // Shared request metadata for acceptInvitation() tests
@@ -410,6 +411,15 @@ describe('InvitationService', () => {
   describe('acceptInvitation', () => {
     beforeEach(() => {
       mockRedis.getdel.mockResolvedValue(JSON.stringify(VALID_STORED_INVITATION))
+      // The inviter is re-read at redemption: their authority is what the invitation rests on,
+      // and authority is revocable. By default they are still in good standing.
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'inviter-1',
+        email: 'inviter@example.com',
+        status: 'active',
+        role: 'admin',
+        tenantId: 'tenant-1'
+      })
       mockUserRepo.findByEmail.mockResolvedValue(null)
       mockPasswordService.hash.mockResolvedValue('scrypt:salt:newhash')
       mockUserRepo.create.mockResolvedValue(AUTH_USER)
@@ -426,6 +436,64 @@ describe('InvitationService', () => {
       expect(mockUserRepo.create).toHaveBeenCalledTimes(1)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledTimes(1)
       expect(mockHooks.afterInvitationAccepted).toHaveBeenCalledTimes(1)
+    })
+
+    // An invitation is a delegation of authority, and authority is revocable. Validating it
+    // only at creation meant a 48-hour token carried whatever power its author had when they
+    // clicked send: an admin could invite, then be banned and stripped of their role, and the
+    // invitee would still arrive as an admin of that tenant with a live session. That is a
+    // clean way to keep a foothold across the account kill switch, which makes the switch
+    // advisory.
+    it.each([
+      ['banned', { status: 'banned', role: 'admin', tenantId: 'tenant-1' }],
+      ['moved to another tenant', { status: 'active', role: 'admin', tenantId: 'tenant-2' }],
+      ['deleted', null]
+    ])('refuses an invitation whose inviter was %s', async (_label, inviter) => {
+      mockUserRepo.findById.mockResolvedValue(
+        inviter === null ? null : { id: 'inviter-1', email: 'i@e.com', ...inviter }
+      )
+
+      await expect(
+        service.acceptInvitation(
+          { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' },
+          TEST_IP,
+          TEST_AGENT,
+          TEST_HEADERS
+        )
+      ).rejects.toMatchObject({
+        // Answered as an invalid token, not a role error: the redeemer is not the one who lost
+        // authority, and saying why would describe the inviter's account status to a stranger.
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN } }
+      })
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
+    })
+
+    // Demotion is the same failure by another route: the invitation grants `admin`, and by the
+    // time it is redeemed its author is only a `member`. The hierarchy check that ran at
+    // creation has to run again, against who they are now.
+    it('refuses an invitation whose inviter no longer out-ranks the granted role', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({ ...VALID_STORED_INVITATION, role: 'admin' })
+      )
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'inviter-1',
+        email: 'i@e.com',
+        status: 'active',
+        role: 'member',
+        tenantId: 'tenant-1'
+      })
+
+      await expect(
+        service.acceptInvitation(
+          { token: VALID_TOKEN, name: 'Invited User', password: 'Secure123!' },
+          TEST_IP,
+          TEST_AGENT,
+          TEST_HEADERS
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN } }
+      })
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
     })
 
     // Verifies that getdel is called with the exactly derived inv:{sha256(dto.token)} key.

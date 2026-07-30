@@ -70,6 +70,20 @@ interface ResetContext {
   userId: string
   email: string
   tenantId: string
+  /**
+   * A digest of the password hash this token was issued against, binding it to that password.
+   *
+   * Each `forgot-password` writes its own `pw_reset:` key, so several can be alive at once —
+   * the 60-second cooldown against a 600-second TTL allows up to ten. Completing a reset with
+   * one used to leave the others valid, which is the wrong end state precisely when it matters:
+   * a victim who resets because an attacker read a link from their mailbox has not closed the
+   * link the attacker read. Binding each token to the password in force when it was minted
+   * means the first completed reset — or an authenticated change — invalidates every one of
+   * them at once, with no per-user index to keep in step.
+   *
+   * Empty for an account that had no password (OAuth-only) at issue time.
+   */
+  passwordFingerprint: string
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +306,12 @@ export class PasswordResetService {
     }
 
     const rawVerifiedToken = generateSecureToken()
-    const context: ResetContext = { userId: user.id, email: dto.email, tenantId: dto.tenantId }
+    const context: ResetContext = {
+      userId: user.id,
+      email: dto.email,
+      tenantId: dto.tenantId,
+      passwordFingerprint: await this.passwordFingerprintOf(user.id)
+    }
     await this.redis.set(
       `pw_vtok:${sha256(rawVerifiedToken)}`,
       JSON.stringify(context),
@@ -390,6 +409,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
+    await this.assertResetTokenStillBound(context)
     await this.applyPasswordReset(context.userId, newPassword)
   }
 
@@ -441,6 +461,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
+    await this.assertResetTokenStillBound(context)
     await this.applyPasswordReset(context.userId, newPassword)
   }
 
@@ -550,6 +571,43 @@ export class PasswordResetService {
     })
   }
 
+  /**
+   * A digest of the account's current password hash, used to bind a reset token to it.
+   *
+   * The hash itself never leaves the repository — only this digest goes into Redis, so a leaked
+   * snapshot of the reset keyspace reveals nothing about the credential. An account with no
+   * local password yields the empty string, which is a value like any other: a token minted
+   * then is invalidated as soon as one is set.
+   */
+  private async passwordFingerprintOf(userId: string): Promise<string> {
+    const user = await this.userRepo.findById(userId)
+    return user?.passwordHash ? sha256(user.passwordHash) : ''
+  }
+
+  /**
+   * Refuses a reset token whose binding no longer matches the account's current password.
+   *
+   * Several `pw_reset:` keys can be alive at once, and completing a reset with one used to
+   * leave the others valid — the wrong end state precisely when it matters, since a victim
+   * resetting because an attacker read a link from their mailbox had not closed the link the
+   * attacker read. The binding makes the first completed reset, or an authenticated change,
+   * invalidate all of them.
+   *
+   * An empty stored fingerprint means the token predates the binding (a rolling deploy, or a
+   * sibling implementation that has not taken this change), and is accepted: refusing those
+   * would break every reset in flight for a window this narrow.
+   */
+  private async assertResetTokenStillBound(context: ResetContext): Promise<void> {
+    if (context.passwordFingerprint === '') return
+    if (context.passwordFingerprint === (await this.passwordFingerprintOf(context.userId))) return
+
+    this.logger.warn(
+      `reset: refusing a token issued against a password that has since changed ` +
+        `userId=${context.userId}`
+    )
+    throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+  }
+
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
     await this.passwordService.assertNotCompromised(newPassword)
     const passwordHash = await this.passwordService.hash(newPassword)
@@ -596,7 +654,12 @@ export class PasswordResetService {
 
     const rawToken = generateSecureToken()
     const tokenKey = `pw_reset:${sha256(rawToken)}`
-    const context: ResetContext = { userId, email, tenantId }
+    const context: ResetContext = {
+      userId,
+      email,
+      tenantId,
+      passwordFingerprint: await this.passwordFingerprintOf(userId)
+    }
     await this.redis.set(
       tokenKey,
       JSON.stringify(context),
@@ -699,7 +762,18 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    return parsed as ResetContext
+    const record = parsed as Record<string, unknown>
+    const fingerprint = record['passwordFingerprint']
+    return {
+      userId: record['userId'] as string,
+      email: record['email'] as string,
+      tenantId: record['tenantId'] as string,
+      // Absent on a record written by an older build, or by a sibling that has not taken this
+      // change yet. Treated as "no binding" rather than as a mismatch: refusing every such
+      // token would break every reset in flight during a rolling deploy, which is a worse
+      // outcome than the narrow window this closes.
+      passwordFingerprint: typeof fingerprint === 'string' ? fingerprint : ''
+    }
   }
 }
 

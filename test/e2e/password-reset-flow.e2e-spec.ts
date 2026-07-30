@@ -16,6 +16,7 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
+import type { Redis } from 'ioredis'
 import request from 'supertest'
 
 import type { CapturedEmail, MockEmailProvider } from './setup'
@@ -60,7 +61,7 @@ function instrumentPasswordResetEmails(email: MockEmailProvider): CapturedEmail[
  */
 async function waitForEmail(
   sentEmails: CapturedEmail[],
-  predicate: (email: CapturedEmail) => boolean,
+  predicate: (email: CapturedEmail, index: number) => boolean,
   timeoutMs = 1_000
 ): Promise<CapturedEmail> {
   const deadline = Date.now() + timeoutMs
@@ -232,6 +233,95 @@ describe('password reset flow (E2E)', () => {
   // in a single `beforeAll` and the assertions are split across focused `it()`
   // blocks. The shared variables below mutate step-by-step inside that hook.
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // A completed reset invalidates the tokens issued beside it
+  // ---------------------------------------------------------------------------
+
+  describe('sibling reset tokens', () => {
+    let app: INestApplication
+    let sentEmails: CapturedEmail[]
+    let redis: Redis
+
+    beforeAll(async () => {
+      const bootstrap = await bootstrapTestApp({
+        tokenDelivery: 'bearer',
+        passwordReset: { method: 'token', tokenTtlSeconds: 3_600 }
+      })
+      app = bootstrap.app
+      redis = bootstrap.redis
+      sentEmails = instrumentPasswordResetEmails(bootstrap.email)
+    })
+
+    afterAll(async () => {
+      await app.close()
+    })
+
+    // Each `forgot-password` writes its own `pw_reset:` key, so several can be alive at once.
+    // Completing a reset with one used to leave the others valid — the wrong end state exactly
+    // when it matters: a victim who resets *because* an attacker read a link from their mailbox
+    // had not closed the link the attacker read, and the attacker could set the password again
+    // for the rest of the TTL.
+    it('refuses a token issued before the password changed', async () => {
+      const email = 'siblings@example.com'
+      await request(app.getHttpServer())
+        .post('/register')
+        .send({ email, password: 'OldSecret123!', name: 'Sib', tenantId: 'tenant-1' })
+
+      /**
+       * Requests a reset and returns the token from the mail it produced.
+       *
+       * Anchored on the capture count taken *before* the request: `waitForEmail` finds the
+       * first match, so a second call would otherwise return the first link again and the test
+       * would compare a token against itself.
+       */
+      async function requestToken(): Promise<string> {
+        const before = sentEmails.length
+        await request(app.getHttpServer())
+          .post('/password/forgot-password')
+          .send({ email, tenantId: 'tenant-1' })
+        const mail = await waitForEmail(
+          sentEmails,
+          (e, index) => index >= before && e.to === email && e.subject === 'Password reset'
+        )
+        return /token=([a-f0-9]{64})/.exec(mail.html ?? '')?.[1] ?? ''
+      }
+
+      const first = await requestToken()
+      // Release the 60-second send cooldown the way waiting would, so the second request is
+      // issued at all — the cooldown is a separate control with its own tests.
+      for (const key of await redis.keys('*resend:password_reset:*')) {
+        await redis.del(key)
+      }
+      const second = await requestToken()
+      expect(first).not.toBe(second)
+      expect(first).toBeTruthy()
+
+      // The victim completes the reset with the second link.
+      const completed = await request(app.getHttpServer()).post('/password/reset-password').send({
+        email,
+        tenantId: 'tenant-1',
+        token: second,
+        newPassword: 'VictimChosen456!'
+      })
+      expect(completed.status).toBe(204)
+
+      // The first link — the one the attacker read — no longer works.
+      const replayed = await request(app.getHttpServer()).post('/password/reset-password').send({
+        email,
+        tenantId: 'tenant-1',
+        token: first,
+        newPassword: 'AttackerChosen789!'
+      })
+      expect(replayed.status).toBeGreaterThanOrEqual(400)
+
+      // And the victim's password is the one that stands.
+      const login = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'VictimChosen456!', tenantId: 'tenant-1' })
+      expect(login.status).toBe(200)
+    })
+  })
 
   // ---------------------------------------------------------------------------
   // POST /password/change — the authenticated rotation

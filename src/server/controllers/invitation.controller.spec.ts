@@ -18,6 +18,7 @@ import type { Request, Response } from 'express'
 
 import type { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { InvitationService } from '../services/invitation.service'
@@ -101,6 +102,8 @@ describe('InvitationController', () => {
     })
       // Override JwtAuthGuard to avoid instantiating JwtService and related dependencies.
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })

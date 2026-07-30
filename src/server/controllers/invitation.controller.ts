@@ -23,6 +23,7 @@ import { CreateInvitationDto } from '../dto/create-invitation.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -80,7 +81,11 @@ export class InvitationController {
    * @param dto - Validated invitation payload (email, role, optional tenantName).
    * @param user - Verified JWT payload from the access token.
    */
-  @UseGuards(JwtAuthGuard)
+  // `UserStatusGuard` alongside the JWT guard: minting an invitation delegates the caller's
+  // authority, and a suspended admin still holding a live access token must not be able to
+  // delegate what they no longer have. Without it there is a window of one access-token
+  // lifetime after a suspension in which the account can still hand out roles.
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.invitationCreate)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationCreate)
   @HttpCode(HttpStatus.NO_CONTENT)
