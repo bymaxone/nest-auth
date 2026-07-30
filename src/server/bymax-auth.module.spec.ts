@@ -29,7 +29,7 @@ import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
-import { AllowAllBreachChecker } from './providers/hibp-breach-checker.provider'
+import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
@@ -343,9 +343,12 @@ describe('BymaxAuthModule', () => {
       expect(emailProvider).toBeInstanceOf(NoOpEmailProvider)
     })
 
-    // The default breach checker approves everything, so a deployment that upgrades the
-    // library never starts reaching a third-party corpus it did not ask for.
-    it('should register the allow-all breach checker when the consumer supplies none', async () => {
+    // The default checker refuses the common passwords offline. It used to approve
+    // everything, which meant a deployment on defaults accepted `password1` — something NIST
+    // SP 800-63B §3.1.1.2 says a verifier SHALL refuse and ASVS v5 §6.2.4 asks for at Level 1.
+    // The *network* check (HIBP) stays opt-in for the original reason: a library should not
+    // start talking to a third party because it was upgraded.
+    it('should register the common-password checker when the consumer supplies none', async () => {
       const module = await Test.createTestingModule({
         imports: [
           BymaxAuthModule.registerAsync({
@@ -358,7 +361,7 @@ describe('BymaxAuthModule', () => {
         ]
       }).compile()
 
-      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBeInstanceOf(AllowAllBreachChecker)
+      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBeInstanceOf(CommonPasswordChecker)
     })
 
     // A supplied checker wins, and the fallback is not registered over it — otherwise opting

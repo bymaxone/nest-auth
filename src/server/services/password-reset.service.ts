@@ -9,8 +9,10 @@ import {
 } from '../bymax-auth.constants'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { generateSecureToken, hmacSha256, sha256, timingSafeCompare } from '../crypto/secure-token'
+import type { ChangePasswordDto } from '../dto/change-password.dto'
 import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import type { ResendOtpDto } from '../dto/resend-otp.dto'
 import type { ResetPasswordDto } from '../dto/reset-password.dto'
@@ -112,7 +114,8 @@ export class PasswordResetService {
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
     private readonly otpService: OtpService,
     private readonly passwordService: PasswordService,
-    private readonly redis: AuthRedisService
+    private readonly redis: AuthRedisService,
+    private readonly sessionService: SessionService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -461,6 +464,92 @@ export class PasswordResetService {
    * Cross-store atomicity between the DB and Redis is inherently unavailable.
    * The current ordering minimises the security impact of a partial failure.
    */
+  /**
+   * Changes the password of an already-authenticated account, proving identity with the
+   * current password rather than an emailed token.
+   *
+   * This is the flow ASVS v5 §6.2.2 and §6.2.3 require at Level 1 — "users can change their
+   * password", and "password change functionality requires the user's current and new
+   * password" — and it was the one credential operation this library did not own. Without it a
+   * consumer either sends their users through the *unauthenticated* recovery flow to rotate a
+   * password they already know, or rebuilds the operation themselves against a hash format the
+   * README forbids them to touch.
+   *
+   * The current password is what makes it safe. A session alone is not proof of identity: a
+   * token lifted by XSS or from a shared machine would otherwise be enough to rotate the
+   * credential, lock the real owner out of an account they still know the password to, and
+   * keep the attacker in.
+   *
+   * Every other session is ended on success (ASVS v5 §7.4.3), and the token epoch is bumped so
+   * already-issued access tokens die with them. The caller's own refresh session survives when
+   * it can be identified, so the device that just changed the password stays signed in —
+   * silently re-minting its access token on the next rotation. When it cannot be identified,
+   * every session goes, including this one: a change that leaves an unknown session alive is
+   * the failure this control exists to prevent.
+   *
+   * @param userId - The authenticated account, taken from the verified token — never the body.
+   * @param dto - Validated current and new password.
+   * @param currentRefreshToken - The caller's raw refresh token, when the request carried one.
+   * @throws {@link AuthException} `INVALID_CREDENTIALS` when the current password does not
+   *   match, or the account has no local password (an OAuth-only account has nothing to
+   *   change; its credential belongs to the provider).
+   * @throws {@link AuthException} `PASSWORD_COMPROMISED` when the new password is refused by
+   *   the configured breach checker.
+   */
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    currentRefreshToken?: string
+  ): Promise<void> {
+    const user = await this.userRepo.findById(userId)
+    // A verified token whose subject no longer exists, and an account with no local password,
+    // answer identically: the caller cannot prove a credential this account does not have.
+    if (!user?.passwordHash) {
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
+    if (!matches) {
+      this.logger.warn(`changePassword: current password rejected userId=${userId}`)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    await this.passwordService.assertNotCompromised(dto.newPassword)
+    const passwordHash = await this.passwordService.hash(dto.newPassword)
+    await this.userRepo.updatePassword(userId, passwordHash)
+
+    // End every other session, and the access tokens with them. `revokeAllExceptCurrent`
+    // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
+    // session sweep alone leaves valid until they expire.
+    if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
+      await this.sessionService.revokeAllExceptCurrent(userId, sha256(currentRefreshToken))
+    } else {
+      await this.redis.invalidateUserSessions(userId)
+      await this.redis.bumpUserTokenEpoch(userId)
+    }
+
+    await this.notifyPasswordChanged(user)
+  }
+
+  /**
+   * Sends the "your password changed" notice, fire-and-forget.
+   *
+   * NIST SP 800-63B §4.6 asks for a notification through a channel independent of the
+   * transaction that bound the new credential. The classic takeover starts with a compromised
+   * mailbox — trigger a reset, complete it, delete the mail — so this notice is what turns
+   * "the victim finds out days later, at a failed login" into "the victim finds out now".
+   *
+   * Never awaited and never allowed to throw: a delivery failure must not undo a password that
+   * has already been written, nor answer differently to the caller.
+   */
+  private async notifyPasswordChanged(user: AuthUser): Promise<void> {
+    const send = this.emailProvider?.sendPasswordChangedNotification
+    if (send === undefined) return
+    void Promise.resolve(send.call(this.emailProvider, user.email)).catch((err: unknown) => {
+      this.logger.error('notifyPasswordChanged: delivery failed', err)
+    })
+  }
+
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
     await this.passwordService.assertNotCompromised(newPassword)
     const passwordHash = await this.passwordService.hash(newPassword)
@@ -475,10 +564,13 @@ export class PasswordResetService {
     await this.redis.invalidateUserSessions(userId)
     await this.redis.bumpUserTokenEpoch(userId)
 
-    // afterPasswordReset — fire-and-forget; errors must not propagate.
-    if (this.hooks?.afterPasswordReset) {
-      const user = await this.userRepo.findById(userId)
-      if (user) {
+    // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
+    // serves the notification, which a reset needs at least as much as a change does: the
+    // classic takeover completes a reset from a compromised mailbox and deletes the mail.
+    const user = await this.userRepo.findById(userId)
+    if (user) {
+      await this.notifyPasswordChanged(user)
+      if (this.hooks?.afterPasswordReset) {
         void Promise.resolve(
           this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
         ).catch((err: unknown) => {

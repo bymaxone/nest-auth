@@ -167,6 +167,22 @@ export interface BymaxAuthModuleOptions {
      * Default: `1`
      */
     parallelization?: number
+
+    /**
+     * Extra words the default password checker should refuse, on top of the ones it ships.
+     *
+     * ASVS v5 §6.2.11 asks for a "documented list of context specific words" — the deployment's
+     * own product, company, and domain names, which are exactly the words its users reach for
+     * and which no general corpus contains. Entries are reduced the same way a candidate is
+     * (lowercased, leet undone, trailing digits dropped), so listing `Acme` also refuses
+     * `Acme2024!` and `@cme123` without anyone having to think of them.
+     *
+     * Ignored when a custom `BYMAX_AUTH_BREACH_CHECKER` is supplied — that provider owns the
+     * decision entirely.
+     *
+     * Default: `[]`
+     */
+    blocklist?: readonly string[]
   }
 
   /**

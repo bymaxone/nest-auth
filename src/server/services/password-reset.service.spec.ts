@@ -29,7 +29,9 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { OtpService } from './otp.service'
 import { PasswordResetService } from './password-reset.service'
+import { sha256 } from '../crypto/secure-token'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import { sleep } from '../utils/sleep'
 import type { Request } from 'express'
 
@@ -85,7 +87,8 @@ const mockHooks = {
 
 const mockEmailProvider = {
   sendPasswordResetToken: jest.fn(),
-  sendPasswordResetOtp: jest.fn()
+  sendPasswordResetOtp: jest.fn(),
+  sendPasswordChangedNotification: jest.fn()
 }
 
 const mockOtpService = {
@@ -96,7 +99,12 @@ const mockOtpService = {
 
 const mockPasswordService = {
   hash: jest.fn(),
+  compare: jest.fn(),
   assertNotCompromised: jest.fn().mockResolvedValue(undefined)
+}
+
+const mockSessionService = {
+  revokeAllExceptCurrent: jest.fn()
 }
 
 const mockRedis = {
@@ -126,7 +134,8 @@ async function buildModule(
       { provide: BYMAX_AUTH_HOOKS, useValue: hooksValue },
       { provide: OtpService, useValue: mockOtpService },
       { provide: PasswordService, useValue: mockPasswordService },
-      { provide: AuthRedisService, useValue: mockRedis }
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: SessionService, useValue: mockSessionService }
     ]
   }).compile()
 }
@@ -174,6 +183,123 @@ describe('PasswordResetService', () => {
   // =========================================================================
   // initiateReset
   // =========================================================================
+
+  describe('changePassword', () => {
+    const dto = { currentPassword: 'the-old-one', newPassword: 'a-brand-new-one' }
+
+    beforeEach(() => {
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'user@example.com',
+        status: 'active',
+        passwordHash: 'scrypt:stored'
+      })
+      mockPasswordService.compare.mockResolvedValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:new')
+      mockPasswordService.assertNotCompromised.mockResolvedValue(undefined)
+    })
+
+    // The happy path, and the shape of it: the current password is verified against the STORED
+    // hash before anything is written, the new one goes through the breach checker, and the
+    // write lands.
+    it('verifies the current password, screens the new one, and persists it', async () => {
+      await service.changePassword('u1', dto, 'raw-refresh')
+
+      expect(mockPasswordService.compare).toHaveBeenCalledWith('the-old-one', 'scrypt:stored')
+      expect(mockPasswordService.assertNotCompromised).toHaveBeenCalledWith('a-brand-new-one')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'scrypt:new')
+    })
+
+    // The reason ASVS §6.2.3 asks for the current password at all: a session is not proof of
+    // identity. A token lifted by XSS or from a shared machine must not be enough to rotate the
+    // credential, lock the real owner out, and keep the attacker in.
+    it('refuses when the current password does not match, and writes nothing', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+      expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
+    })
+
+    // An account provisioned purely through OAuth has no local password. There is nothing to
+    // prove and nothing to change — its credential belongs to the provider. Answering the same
+    // `INVALID_CREDENTIALS` as a wrong password keeps the two indistinguishable.
+    it('refuses an account with no local password', async () => {
+      mockUserRepo.findById.mockResolvedValue({ id: 'u1', email: 'o@e.com', status: 'active' })
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+    })
+
+    // A verified token whose subject no longer exists answers the same way, rather than
+    // throwing something that tells the caller the account is gone.
+    it('refuses when the account no longer exists', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+    })
+
+    // ASVS v5 §7.4.3: a credential change offers to end every other session. The caller's own
+    // survives — the device that just changed the password should not be signed out by doing
+    // so — and `revokeAllExceptCurrent` bumps the epoch, which is what reaches the stateless
+    // access tokens the other devices hold.
+    it('ends every other session, keeping the caller signed in', async () => {
+      await service.changePassword('u1', dto, 'raw-refresh')
+
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
+        'u1',
+        sha256('raw-refresh')
+      )
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+    })
+
+    // Without the caller's refresh token there is no session to spare, and the safe reading is
+    // that every one of them goes — a change that leaves an unidentified session alive is the
+    // failure this control exists to prevent.
+    it('ends every session when the caller cannot be identified', async () => {
+      await service.changePassword('u1', dto, undefined)
+
+      expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+    })
+
+    // A new password the breach checker refuses never reaches the repository.
+    it('refuses a compromised new password before writing', async () => {
+      mockPasswordService.assertNotCompromised.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
+      )
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    // NIST SP 800-63B §4.6 wants the subscriber told through a channel independent of the
+    // transaction. The classic takeover starts with a compromised mailbox, so this notice is
+    // what turns "the victim finds out days later" into "the victim finds out now".
+    it('notifies the account that its password changed', async () => {
+      await service.changePassword('u1', dto, 'raw-refresh')
+
+      expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalledWith(
+        'user@example.com'
+      )
+    })
+
+    // The notice is fire-and-forget: a mail failure must not undo a password already written,
+    // nor answer differently to the caller.
+    it('succeeds even when the notification cannot be delivered', async () => {
+      mockEmailProvider.sendPasswordChangedNotification.mockRejectedValue(new Error('smtp down'))
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+    })
+  })
 
   describe('initiateReset', () => {
     const dto = { email: 'user@example.com', tenantId: 'tenant1' }
@@ -411,7 +537,9 @@ describe('PasswordResetService', () => {
             { provide: BYMAX_AUTH_HOOKS, useValue: null },
             { provide: OtpService, useValue: mockOtpService },
             { provide: PasswordService, useValue: mockPasswordService },
-            { provide: AuthRedisService, useValue: mockRedis }
+            { provide: AuthRedisService, useValue: mockRedis },
+            { provide: SessionService, useValue: mockSessionService },
+            { provide: SessionService, useValue: mockSessionService }
           ]
         }).compile()
         otpMethodService = module.get(PasswordResetService)
@@ -861,7 +989,8 @@ describe('PasswordResetService', () => {
           { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
       otpMethodService = module.get(PasswordResetService)
@@ -1161,7 +1290,8 @@ describe('PasswordResetService', () => {
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
       otpMethodService = module.get(PasswordResetService)
@@ -1359,7 +1489,8 @@ describe('PasswordResetService', () => {
           { provide: BYMAX_AUTH_HOOKS, useValue: null },
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: SessionService, useValue: mockSessionService }
         ]
       }).compile()
       const noEmailOtpService = noEmailModule.get(PasswordResetService)

@@ -113,6 +113,26 @@ export interface IEmailProvider {
   sendEmailVerificationOtp(email: string, otp: string, locale?: string): Promise<void>
 
   /**
+   * Notifies the user that the password on their account has changed.
+   *
+   * Called after a completed password change *and* after a completed password reset. Both are
+   * credential-binding events, and NIST SP 800-63B §4.6 requires the subscriber to be notified
+   * through a channel independent of the transaction that made the change. The classic
+   * takeover starts with a compromised mailbox: the attacker triggers a reset, completes it,
+   * and deletes the mail. This notice is what turns "the victim finds out days later, at a
+   * failed login" into "the victim finds out now" — and it is the one credential change this
+   * interface used to stay silent about while announcing every MFA change unprompted.
+   *
+   * **Optional.** Declared with `?` so an existing provider keeps compiling; the library calls
+   * it when present and logs at debug when it is not, rather than failing a password change
+   * over a missing notification.
+   *
+   * @param email - Recipient's email address.
+   * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
+   */
+  sendPasswordChangedNotification?(email: string, locale?: string): Promise<void>
+
+  /**
    * Notifies the user that multi-factor authentication (MFA) has been enabled on
    * their account.
    *

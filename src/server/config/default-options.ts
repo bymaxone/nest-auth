@@ -41,7 +41,11 @@ export const DEFAULT_OPTIONS = {
   password: {
     costFactor: 131_072,
     blockSize: 8,
-    parallelization: 1
+    parallelization: 1,
+    // Empty: the default checker ships its own bases, and this is where a deployment adds the
+    // context-specific words ASVS v5 §6.2.11 asks for — its product, company and domain names,
+    // which no general corpus contains and which its users reach for first.
+    blocklist: [] as readonly string[]
   },
 
   tokenDelivery: 'cookie' as const,

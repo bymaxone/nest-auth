@@ -64,6 +64,16 @@ export const AUTH_THROTTLE_CONFIGS = {
   resetPassword: { default: { limit: 3, ttl: 300_000 } },
 
   /**
+   * POST /auth/password/change — 5 requests per minute per IP.
+   *
+   * Authenticated, so the caller is already known — but each call spends a scrypt verification
+   * of the current password plus a scrypt derivation of the new one, which is the most
+   * expensive pair of operations in the library. The ceiling is the same as `login`'s for the
+   * same reason: it is a password-guessing surface, just one that needs a live session first.
+   */
+  changePassword: { default: { limit: 5, ttl: 60_000 } },
+
+  /**
    * POST /auth/password/verify-otp — 3 requests per 5 minutes per IP.
    * More restrictive than the internal 5-attempt-per-OTP application limit,
    * providing an earlier IP-level block before the app-level lockout triggers.

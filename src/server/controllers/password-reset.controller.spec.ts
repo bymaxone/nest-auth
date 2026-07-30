@@ -13,7 +13,14 @@ import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import type { ResendOtpDto } from '../dto/resend-otp.dto'
 import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
+import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import { PasswordResetService } from '../services/password-reset.service'
+import { TokenDeliveryService } from '../services/token-delivery.service'
+
+const mockTokenDelivery = {
+  extractRefreshToken: jest.fn()
+}
 import { PasswordResetController } from './password-reset.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
@@ -58,11 +65,18 @@ describe('PasswordResetController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PasswordResetController],
-      providers: [{ provide: PasswordResetService, useValue: mockPasswordResetService }]
+      providers: [
+        { provide: PasswordResetService, useValue: mockPasswordResetService },
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+      ]
     })
       .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .compile()
 

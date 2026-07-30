@@ -111,6 +111,10 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { NoOpEmailProvider } from './providers/no-op-email.provider'
+export {
+  CommonPasswordChecker,
+  reduceToBaseWord
+} from './providers/common-password-checker.provider'
 export { AllowAllBreachChecker, HibpBreachChecker } from './providers/hibp-breach-checker.provider'
 
 // ---------------------------------------------------------------------------
@@ -135,6 +139,7 @@ export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 export { CurrentUser } from './decorators/current-user.decorator'
 export { PLATFORM_ROLES_KEY, PlatformRoles } from './decorators/platform-roles.decorator'
+export { Authenticated } from './decorators/authenticated.decorator'
 export { IS_PUBLIC_KEY, Public } from './decorators/public.decorator'
 export { ROLES_KEY, Roles } from './decorators/roles.decorator'
 export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
@@ -155,6 +160,7 @@ export { PlatformLoginDto } from './dto/platform-login.dto'
 export { RegisterDto } from './dto/register.dto'
 export { ResendOtpDto } from './dto/resend-otp.dto'
 export { ResendVerificationDto } from './dto/resend-verification.dto'
+export { ChangePasswordDto } from './dto/change-password.dto'
 export { ResetPasswordDto } from './dto/reset-password.dto'
 export { VerifyEmailDto } from './dto/verify-email.dto'
 export { VerifyOtpDto } from './dto/verify-otp.dto'

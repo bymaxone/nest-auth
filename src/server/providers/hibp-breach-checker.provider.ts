@@ -107,13 +107,14 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
 }
 
 /**
- * The default breach checker: approves every password.
+ * A breach checker that approves every password.
  *
  * @remarks
- * Registered when the consumer supplies no `BYMAX_AUTH_BREACH_CHECKER`, so the credential path
- * behaves exactly as it did before the check existed. Making the network call opt-in rather
- * than opt-out is deliberate: a library should not start talking to a third party because it
- * was upgraded.
+ * **No longer the default** — `CommonPasswordChecker` is. Approving everything meant a
+ * deployment on defaults accepted `password1` and `12345678`, which NIST SP 800-63B §3.1.1.2
+ * states a verifier SHALL refuse and ASVS v5 §6.2.4 asks for at Level 1. It stays exported for
+ * the deployment that has a deliberate reason to screen nothing — a migration importing legacy
+ * accounts, a test fixture — and has to say so explicitly rather than getting it by default.
  *
  * @layer Provider
  */

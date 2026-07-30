@@ -41,7 +41,7 @@ import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { buildOAuthPlugins } from './oauth/oauth.module'
 import { OAuthService } from './oauth/oauth.service'
-import { AllowAllBreachChecker } from './providers/hibp-breach-checker.provider'
+import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
@@ -296,7 +296,7 @@ export class BymaxAuthModule {
       BYMAX_AUTH_BREACH_CHECKER
     )
       ? []
-      : [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: AllowAllBreachChecker }]
+      : [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: CommonPasswordChecker }]
 
     // Fallback hooks provider — only registered when the consumer has not supplied one.
     const hooksProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_HOOKS)
