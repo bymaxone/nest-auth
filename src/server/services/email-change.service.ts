@@ -252,8 +252,12 @@ export class EmailChangeService implements OnModuleInit {
     const stored = context.passwordFingerprint
     if (typeof stored !== 'string' || stored === '') return
 
-    const current = user.passwordHash ? sha256(user.passwordHash) : ''
-    if (stored !== current) {
+    // An account with no password cannot match a non-empty fingerprint — and `stored` is
+    // non-empty by the guard above — so the comparison is decided before it is made. Written
+    // as its own refusal rather than as a value that could never match: a placeholder here
+    // would read as a comparison that might succeed.
+    const current = user.passwordHash === null ? null : sha256(user.passwordHash)
+    if (current === null || stored !== current) {
       this.logger.warn(
         `confirmChange: token no longer bound to the account password userId=${context.userId}`
       )

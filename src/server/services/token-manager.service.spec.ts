@@ -1977,6 +1977,10 @@ describe('TokenManagerService', () => {
         unknown,
         Record<string, unknown>
       ]
+      // Key ABSENT, not present-and-undefined. `jsonwebtoken` validates sign options by type
+      // and throws `"issuer" must be a string` on an explicit `undefined`, so an unbound
+      // deployment that passed the key through would fail to mint any token at all — which is
+      // exactly what the end-to-end suite caught when this was written the other way.
       expect(signOptions).not.toHaveProperty('issuer')
       expect(signOptions).not.toHaveProperty('audience')
     })
@@ -2013,17 +2017,8 @@ describe('TokenManagerService', () => {
     // An empty value is read as unconfigured rather than as "stamp the empty issuer": a
     // consumer threading an unset environment variable through must not silently turn the
     // check on and start minting tokens their own verifier rejects.
-    it('treats an empty value as unconfigured', async () => {
-      const bound = await bindingService({ issuer: '', audience: '' })
-
-      await bound.issueTokens(SAFE_USER, '1.2.3.4', 'Browser')
-
-      const [, signOptions] = mockJwtService.sign.mock.calls[0] as [
-        unknown,
-        Record<string, unknown>
-      ]
-      expect(signOptions).not.toHaveProperty('issuer')
-      expect(signOptions).not.toHaveProperty('audience')
-    })
+    // The empty-value case is decided by `resolveOptions` and asserted there: by the time a
+    // value reaches this service it is either a real binding or absent, and re-testing the
+    // normalization here would pin it in a second place that could disagree with the first.
   })
 })

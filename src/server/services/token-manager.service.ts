@@ -174,10 +174,18 @@ export class TokenManagerService {
    * other splits them apart.
    */
   private issuerAudience(): { issuer?: string; audience?: string } {
+    // The key is OMITTED rather than set to `undefined`, and that asymmetry with the verifier
+    // is load-bearing: `jsonwebtoken` validates sign options by type and throws
+    // `"issuer" must be a string` on an explicit `undefined`, while its verify path reads the
+    // same value as "do not check". Signing is the side that cares, so this is the side that
+    // guards.
+    //
+    // `resolveOptions` has already dropped an empty value, so the only question left here is
+    // present-or-absent.
     const { issuer, audience } = this.options.jwt
     return {
-      ...(issuer !== undefined && issuer !== '' ? { issuer } : {}),
-      ...(audience !== undefined && audience !== '' ? { audience } : {})
+      ...(issuer === undefined ? {} : { issuer }),
+      ...(audience === undefined ? {} : { audience })
     }
   }
 

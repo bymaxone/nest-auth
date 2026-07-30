@@ -182,6 +182,10 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthProviders(userOptions.oauth)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
+
+  // Split the binding off the rest of the jwt group so the empty-string case can be dropped
+  // rather than spread through: spreading `{}` over an already-set key does not remove it.
+  const { issuer: rawIssuer, audience: rawAudience, ...jwtWithoutBinding } = userOptions.jwt
   validateOAuthErrorRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateSameSiteNoneRequiresSecure(userOptions)
@@ -198,7 +202,17 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     jwt: {
       ...DEFAULT_OPTIONS.jwt,
-      ...userOptions.jwt
+      ...jwtWithoutBinding,
+      // `''` means unconfigured, decided HERE and nowhere else. A consumer threading an unset
+      // environment variable through must not silently turn the binding on — and the two
+      // places that read these values (the signer and the verifier) only agree on what
+      // "configured" means if exactly one of them decides it.
+      //
+      // A truthy test rather than two comparisons: for a string, "present and not empty" is
+      // exactly what truthiness means, and the values reaching the readers are then either a
+      // real binding or nothing at all.
+      ...(rawIssuer ? { issuer: rawIssuer } : {}),
+      ...(rawAudience ? { audience: rawAudience } : {})
     },
 
     password: {

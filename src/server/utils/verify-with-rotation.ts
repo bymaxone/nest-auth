@@ -49,13 +49,14 @@ export function verifyWithRotation<T extends object>(
   // claim differs — and one that carries none at all. That is the point. A verifier that
   // accepted an unstamped token would give an attacker a way to opt out of the check simply by
   // omitting the claim.
+  //
+  // Passed through unguarded because `resolveOptions` has already decided what "configured"
+  // means: these are either a real binding or `undefined`, and `jsonwebtoken` reads an
+  // undefined issuer/audience as "do not check" — which is the same answer omitting the key
+  // gives. A guard here would be a second opinion on a question already settled, and one no
+  // test could observe.
   const { issuer, audience } = options.jwt
-  const base = {
-    algorithms,
-    ignoreExpiration,
-    ...(issuer !== undefined && issuer !== '' ? { issuer } : {}),
-    ...(audience !== undefined && audience !== '' ? { audience } : {})
-  }
+  const base = { algorithms, ignoreExpiration, issuer, audience }
 
   try {
     return jwtService.verify<T>(token, base)

@@ -2467,3 +2467,50 @@ describe('resolveOptions — jwt.refreshExpiresInDays validation', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// jwt.issuer / jwt.audience normalization
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — token binding', () => {
+  // The binding is off unless the deployment asked for it, so an existing consumer mints and
+  // accepts exactly the tokens it did before.
+  it('leaves both absent when neither is configured', () => {
+    const resolved = resolveOptions(MINIMAL_OPTIONS)
+
+    expect(resolved.jwt.issuer).toBeUndefined()
+    expect(resolved.jwt.audience).toBeUndefined()
+  })
+
+  // A real value survives, or configuring the binding would do nothing at all.
+  it('keeps a configured pair', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, issuer: 'bymax', audience: 'dashboard' }
+    })
+
+    expect(resolved.jwt.issuer).toBe('bymax')
+    expect(resolved.jwt.audience).toBe('dashboard')
+  })
+
+  // The case this normalization exists for. A consumer threading an unset environment variable
+  // through reaches here with `''`, and treating that as a configured binding would turn the
+  // check on by accident — the deployment would then require the empty issuer on every token
+  // and reject the ones it had just minted, since nothing stamps an empty value either.
+  //
+  // Decided HERE and nowhere else: the signer and the verifier both read the resolved value,
+  // and they only agree on what "configured" means because exactly one place decides it.
+  it.each([
+    ['both empty', { issuer: '', audience: '' }],
+    ['issuer empty', { issuer: '', audience: 'dashboard' }],
+    ['audience empty', { issuer: 'bymax', audience: '' }]
+  ])('drops an empty value (%s)', (_label, binding) => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, ...binding }
+    })
+
+    expect(resolved.jwt.issuer).toBe(binding.issuer === '' ? undefined : binding.issuer)
+    expect(resolved.jwt.audience).toBe(binding.audience === '' ? undefined : binding.audience)
+  })
+})

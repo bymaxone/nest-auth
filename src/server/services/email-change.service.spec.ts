@@ -121,7 +121,12 @@ describe('EmailChangeService', () => {
         mockRedis as never
       )
 
+      // Both halves of the message: it has to name the flag that turned the flow on AND the
+      // method that is missing, or an operator reading a startup crash has to go and find out
+      // which of the two the library meant.
+      expect(() => withoutSender.onModuleInit()).toThrow(/controllers\.emailChange is enabled/)
       expect(() => withoutSender.onModuleInit()).toThrow(/sendEmailChangeVerification/)
+      expect(() => withoutSender.onModuleInit()).toThrow(/cannot deliver/)
     })
 
     it('boots when the provider can deliver it', () => {
@@ -228,6 +233,20 @@ describe('EmailChangeService', () => {
       expect(JSON.parse((mockRedis.set.mock.calls[0] as string[])[1] ?? '{}')).toMatchObject({
         newEmail: NEW_EMAIL
       })
+    })
+
+    // The refusal names the account, so an operator can tell a user fumbling their own password
+    // from someone working through a stolen access token.
+    it('logs which account had its password rejected', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('current password rejected')
+      expect(warned).toContain('userId=user-1')
+      warnSpy.mockRestore()
     })
 
     // The address is masked in the log. An operator needs to see that a change was requested;
@@ -402,6 +421,30 @@ describe('EmailChangeService', () => {
       expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
     })
 
+    // A stored `null` is the one non-object JSON value that reaches the type guard: it parses
+    // fine and `typeof null === 'object'`, so without the explicit null test it would fall
+    // through to a property read on nothing.
+    it('refuses a stored record that is JSON null', async () => {
+      mockRedis.getdel.mockResolvedValue('null')
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+    })
+
+    // The refusal names the account whose token stopped matching, which is what an operator
+    // needs to tell a stale link from a planted one.
+    it('logs which account a rejected token belonged to', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:new:hash' })
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('token no longer bound to the account password')
+      expect(warned).toContain('userId=user-1')
+      warnSpy.mockRestore()
+    })
+
     // Both addresses are masked in the log, for the same reason the request masks one.
     it('masks both addresses in the log', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
@@ -410,6 +453,10 @@ describe('EmailChangeService', () => {
 
       const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(logged).toContain('confirmChange: address changed')
+      expect(logged).toContain('userId=user-1')
+      // Both endpoints of the move are named, masked — an operator reconstructing an incident
+      // needs to see WHICH change happened, not just that one did.
+      expect(logged).toMatch(/from=\S+ to=\S+/)
       expect(logged).not.toContain('old@example.com')
       expect(logged).not.toContain(NEW_EMAIL)
       logSpy.mockRestore()
