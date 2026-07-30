@@ -61,8 +61,12 @@ export type ResolvedOptions = Omit<
 > & {
   // `previousSecrets` stays optional: it is absent unless a rotation is in progress, and
   // `Required` would force every consumer to declare an empty array to mean "not rotating".
-  jwt: Required<Omit<BymaxAuthModuleOptions['jwt'], 'previousSecrets'>> &
-    Pick<BymaxAuthModuleOptions['jwt'], 'previousSecrets'>
+  // `issuer` and `audience` stay OPTIONAL through the resolution, unlike every other jwt
+  // field: their absence is the default and it is meaningful. Defaulting them to a string
+  // would make every deployment stamp and require a value nobody chose, and turning the check
+  // on by accident is exactly the failure mode that splits two backends apart.
+  jwt: Required<Omit<BymaxAuthModuleOptions['jwt'], 'previousSecrets' | 'issuer' | 'audience'>> &
+    Pick<BymaxAuthModuleOptions['jwt'], 'previousSecrets' | 'issuer' | 'audience'>
   password: Required<NonNullable<BymaxAuthModuleOptions['password']>>
   tokenDelivery: NonNullable<BymaxAuthModuleOptions['tokenDelivery']>
   cookies: Required<Omit<NonNullable<BymaxAuthModuleOptions['cookies']>, 'resolveDomains'>> &

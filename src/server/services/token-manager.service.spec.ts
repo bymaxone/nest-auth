@@ -1943,4 +1943,87 @@ describe('TokenManagerService', () => {
       expect(() => call(service, 'forged.token')).toThrow()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // iss / aud stamping
+  // ---------------------------------------------------------------------------
+
+  describe('issuer and audience stamping', () => {
+    /** A service whose options bind the pair. */
+    async function bindingService(binding: {
+      issuer?: string
+      audience?: string
+    }): Promise<TokenManagerService> {
+      const module = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, jwt: { ...mockOptions.jwt, ...binding } }
+          },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      return module.get(TokenManagerService)
+    }
+
+    // Absent by default, so an existing deployment mints exactly the tokens it did before.
+    it('stamps neither when the deployment configured neither', async () => {
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'Browser')
+
+      const [, signOptions] = mockJwtService.sign.mock.calls[0] as [
+        unknown,
+        Record<string, unknown>
+      ]
+      expect(signOptions).not.toHaveProperty('issuer')
+      expect(signOptions).not.toHaveProperty('audience')
+    })
+
+    // …and stamps both when it did. The claim has to be ON the token, or the verifier that
+    // requires it rejects the backend's own output.
+    it('stamps both on the access token when configured', async () => {
+      const bound = await bindingService({ issuer: 'bymax', audience: 'dashboard' })
+
+      await bound.issueTokens(SAFE_USER, '1.2.3.4', 'Browser')
+
+      const [, signOptions] = mockJwtService.sign.mock.calls[0] as [
+        unknown,
+        Record<string, unknown>
+      ]
+      expect(signOptions).toMatchObject({ issuer: 'bymax', audience: 'dashboard' })
+    })
+
+    // The MFA challenge token is stamped like every other. It grants no resource access on its
+    // own, but a shape the verifier exempted would be a shape an attacker aims at.
+    it('stamps the MFA challenge token too', async () => {
+      const bound = await bindingService({ issuer: 'bymax', audience: 'dashboard' })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await bound.issueMfaTempToken('user-1', 'dashboard')
+
+      const [, signOptions] = mockJwtService.sign.mock.calls.at(-1) as [
+        unknown,
+        Record<string, unknown>
+      ]
+      expect(signOptions).toMatchObject({ issuer: 'bymax', audience: 'dashboard' })
+    })
+
+    // An empty value is read as unconfigured rather than as "stamp the empty issuer": a
+    // consumer threading an unset environment variable through must not silently turn the
+    // check on and start minting tokens their own verifier rejects.
+    it('treats an empty value as unconfigured', async () => {
+      const bound = await bindingService({ issuer: '', audience: '' })
+
+      await bound.issueTokens(SAFE_USER, '1.2.3.4', 'Browser')
+
+      const [, signOptions] = mockJwtService.sign.mock.calls[0] as [
+        unknown,
+        Record<string, unknown>
+      ]
+      expect(signOptions).not.toHaveProperty('issuer')
+      expect(signOptions).not.toHaveProperty('audience')
+    })
+  })
 })

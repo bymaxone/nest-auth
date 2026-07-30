@@ -128,6 +128,30 @@ export interface BymaxAuthModuleOptions {
     algorithm?: 'HS256'
 
     /**
+     * The `iss` claim stamped on every token this backend mints, and required on every token
+     * it verifies.
+     *
+     * Absent by default, so an existing deployment is unchanged. When set, a token carrying a
+     * different issuer — or none at all — is rejected. That is the whole point: a verifier
+     * that accepts an unstamped token gives an attacker a way to opt out of the check.
+     *
+     * Both backends sharing a deployment must be configured with the same value, or they stop
+     * accepting each other's tokens. Turning it on invalidates the access tokens already in
+     * flight; the window is one access-token lifetime and clients recover by refreshing, since
+     * the refresh token is opaque and carries no claims.
+     */
+    issuer?: string
+
+    /**
+     * The `aud` claim, with the same semantics as {@link issuer}.
+     *
+     * Names who the token is *for*. With HS256 the verifier can also sign, so audience binding
+     * is what stops a token minted for one service being replayed at another that trusts the
+     * same secret.
+     */
+    audience?: string
+
+    /**
      * Grace window in seconds during which the old refresh token remains valid
      * after rotation. Prevents race conditions on concurrent requests.
      * Default: `30`

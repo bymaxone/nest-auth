@@ -45,7 +45,17 @@ export function verifyWithRotation<T extends object>(
   { ignoreExpiration = false }: { ignoreExpiration?: boolean } = {}
 ): T {
   const algorithms = [options.jwt.algorithm]
-  const base = { algorithms, ignoreExpiration }
+  // `issuer`/`audience` are REQUIREMENTS here, not hints: `jsonwebtoken` rejects a token whose
+  // claim differs — and one that carries none at all. That is the point. A verifier that
+  // accepted an unstamped token would give an attacker a way to opt out of the check simply by
+  // omitting the claim.
+  const { issuer, audience } = options.jwt
+  const base = {
+    algorithms,
+    ignoreExpiration,
+    ...(issuer !== undefined && issuer !== '' ? { issuer } : {}),
+    ...(audience !== undefined && audience !== '' ? { audience } : {})
+  }
 
   try {
     return jwtService.verify<T>(token, base)

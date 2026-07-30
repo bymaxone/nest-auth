@@ -155,8 +155,30 @@ export class TokenManagerService {
   private accessSignOptions(): JwtSignOptions {
     return {
       expiresIn: this.options.jwt.accessExpiresIn,
-      algorithm: this.options.jwt.algorithm
+      algorithm: this.options.jwt.algorithm,
+      ...this.issuerAudience()
     } as unknown as JwtSignOptions
+  }
+
+  /**
+   * The `iss`/`aud` pair to stamp and to require, or nothing when the deployment configured
+   * neither.
+   *
+   * Spread into both the sign and the verify options so the two can never disagree — a token
+   * stamped with an issuer the verifier does not require, or required where none is stamped,
+   * is a deployment that rejects its own tokens.
+   *
+   * Absent by default. With HS256 the verifier can also sign, so audience binding is what
+   * stops a token minted for one service being replayed at another that trusts the same
+   * secret; it is opt-in because enabling it on one backend of a shared deployment and not the
+   * other splits them apart.
+   */
+  private issuerAudience(): { issuer?: string; audience?: string } {
+    const { issuer, audience } = this.options.jwt
+    return {
+      ...(issuer !== undefined && issuer !== '' ? { issuer } : {}),
+      ...(audience !== undefined && audience !== '' ? { audience } : {})
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1000,7 +1022,11 @@ export class TokenManagerService {
 
     const token = this.jwtService.sign(payload, {
       expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
-      algorithm: this.options.jwt.algorithm
+      algorithm: this.options.jwt.algorithm,
+      // The challenge token is stamped and checked like every other: it grants no resource
+      // access on its own, but it is still a token this backend minted, and a verifier that
+      // exempted one shape would be a verifier an attacker aims at.
+      ...this.issuerAudience()
     } as unknown as JwtSignOptions)
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)

@@ -165,6 +165,26 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   the durable record of consumption, and outliving the repository write would turn a failed
   write into a code the account can see but can never use.
 
+- **`jwt.issuer` and `jwt.audience` — binding tokens to who minted them and who they are for**
+  ([`src/server/utils/verify-with-rotation.ts`](src/server/utils/verify-with-rotation.ts)).
+  Optional and absent by default, so an existing deployment is unchanged. When set, the value
+  is stamped on every token the backend mints — access, platform and MFA challenge alike — and
+  **required** on every token it verifies: one carrying a different value, or none at all, is
+  rejected. Accepting an unstamped token would give an attacker a way to opt out of the check
+  simply by omitting the claim.
+
+  This matters here specifically because HS256 means the verifier can also sign. Every service
+  holding the secret to check a token can mint one, so audience binding is what stops a token
+  minted for one service being replayed at another that trusts the same secret. It is opt-in
+  because both backends of a shared deployment must carry the same pair or they stop accepting
+  each other's tokens, and because turning it on invalidates the access tokens already in
+  flight — a window of one access-token lifetime, which clients close by refreshing, since the
+  refresh token is opaque and carries no claims.
+
+  An empty string reads as unconfigured rather than as "require the empty issuer", so a
+  consumer threading an unset environment variable through does not silently turn the check on
+  and start minting tokens their own verifier rejects.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.
