@@ -36,7 +36,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // changes. For the LIVE measured sizes vs. these budgets, run `pnpm build &&
 // pnpm size` and read the Brotli column. Re-derive headroom from that output
 // before changing any budget below.
-//   server  78.5 KiB → 82 KiB  (~4% headroom; large module, active dev)
+//   server  82.3 KiB → 86 KiB  (~4% headroom; large module, active dev)
 //     Raised from 68 KiB when the first security-audit work landed (the single-use
 //     WebSocket ticket and JWT verification across a secret rotation), then from 72 KiB
 //     when the blind-audit fixes did. That second round is: the MFA encryption-key
@@ -51,12 +51,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     it is the one kind of growth worth taking without argument: NIST SP 800-63B §3.1.1.2
 //     says a verifier SHALL screen against a blocklist, the previous default approved
 //     everything, and this bundle runs on a server rather than being shipped to a browser.
+//     Raised again from 82 KiB for the third audit round: the failure-side hooks
+//     (`onLoginFailed`/`onLockout`/`onRefreshTokenReuseDetected`), the invitation-revoke
+//     flow with its invitee index, and the administrative lockout clear. Three capabilities
+//     the audits found missing rather than three refactors — the same test this budget
+//     exists to apply.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 82 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 86 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.5 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
