@@ -404,13 +404,12 @@ export class TokenManagerService {
       this.logger.warn(
         'reissueTokens: reuse of a consumed refresh token detected — revoking the token family'
       )
-      const owner = await this.redis.readSessionOwner(`rt:${sha256(oldRefresh)}`)
-      await this.redis.revokeFamily(outcome.familyId)
+      const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
       // The one moment the library can say "this is not a guess about risk": a token that was
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
-      this.emitReuseDetected(owner, outcome.familyId)
+      this.emitReuseDetected(ownerId, outcome.familyId)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     this.logger.warn(
@@ -796,7 +795,10 @@ export class TokenManagerService {
       this.logger.warn(
         'reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the token family'
       )
-      await this.redis.revokeFamily(outcome.familyId, 'platform')
+      const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
+      // Both planes report reuse: an operator watching for account takeover cares about a
+      // replayed platform token at least as much as a dashboard one.
+      this.emitReuseDetected(ownerId, outcome.familyId)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 

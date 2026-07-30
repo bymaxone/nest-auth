@@ -517,26 +517,31 @@ export class AuthRedisService {
    *
    * @param familyId - The family id carried by the consumed-token marker.
    * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`.
-   * @returns The number of family members that were removed.
+   * @returns The number of members removed and the account the family belonged to. The owner
+   *   is reported because the caller cannot obtain it any other way: the presented token's own
+   *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
+   *   the only surviving link between the replayed token and an account. It is `''` when no
+   *   member record was readable.
    */
   async revokeFamily(
     familyId: string,
     kind: 'dashboard' | 'platform' = 'dashboard'
-  ): Promise<number> {
-    if (familyId === '') return 0
+  ): Promise<{ removed: number; ownerId: string }> {
+    if (familyId === '') return { removed: 0, ownerId: '' }
     const p = prefixesFor(kind)
     const members = await this.smembers(`${p.family}:${familyId}`)
-    const indexKey = await this.resolveFamilyOwnerIndex(members, p.live, p.index)
+    const ownerId = await this.readFamilyOwner(members, p.live)
+    const indexKey = ownerId === '' ? '' : this.prefix(`${p.index}:${ownerId}`)
     const removed = await this.eval(
       REVOKE_FAMILY_LUA,
       [`${p.family}:${familyId}`],
       [this.namespace, p.live, p.detail, indexKey]
     )
-    return typeof removed === 'number' ? removed : 0
+    return { removed: typeof removed === 'number' ? removed : 0, ownerId }
   }
 
   /**
-   * Resolves the namespaced index key of the user a family belongs to.
+   * Resolves the id of the user a family belongs to.
    *
    * Every member of one family descends from the same login, so the first readable record
    * names the owner. Reading it here rather than decoding JSON inside the revocation script
@@ -544,15 +549,10 @@ export class AuthRedisService {
    *
    * @param members - The family index members (bare session hashes).
    * @param livePrefix - The live-session prefix for the plane (`rt` or `prt`).
-   * @param indexPrefix - The session-index prefix for the plane (`sess` or `psess`).
-   * @returns The namespaced `sess:`/`psess:` key, or `''` when no member record is readable —
-   *   every member may have already expired, in which case there is nothing left to prune.
+   * @returns The owner's id, or `''` when no member record is readable — every member may have
+   *   already expired, in which case there is nothing left to prune and nobody left to name.
    */
-  private async resolveFamilyOwnerIndex(
-    members: string[],
-    livePrefix: string,
-    indexPrefix: string
-  ): Promise<string> {
+  private async readFamilyOwner(members: string[], livePrefix: string): Promise<string> {
     for (const hash of members) {
       const record = await this.get(`${livePrefix}:${hash}`)
       if (record === null) continue
@@ -564,7 +564,7 @@ export class AuthRedisService {
         // may still name one. The loop's own guard rejects the undefined that leaves here.
       }
       if (typeof userId === 'string' && userId !== '') {
-        return this.prefix(`${indexPrefix}:${userId}`)
+        return userId
       }
     }
     return ''

@@ -54,7 +54,7 @@ const mockRedis = {
   rotateRefreshSession: jest.fn(),
   getUserTokenEpoch: jest.fn().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn().mockResolvedValue(1),
-  revokeFamily: jest.fn().mockResolvedValue(1),
+  revokeFamily: jest.fn().mockResolvedValue({ removed: 1, ownerId: 'user-1' }),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined),
   readSessionOwner: jest.fn().mockResolvedValue('user-1')
@@ -704,7 +704,6 @@ describe('TokenManagerService', () => {
     // or raise the account's risk score had only an English log line to key on.
     it('emits onRefreshTokenReuseDetected with the owner and the revoked family', async () => {
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
-      mockRedis.readSessionOwner.mockResolvedValue('user-1')
 
       await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -734,7 +733,6 @@ describe('TokenManagerService', () => {
     ])('still refuses when the reuse hook %s', async (_label, arrange) => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
-      mockRedis.readSessionOwner.mockResolvedValue('user-1')
       arrange()
 
       await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
@@ -751,9 +749,9 @@ describe('TokenManagerService', () => {
 
     // A replay whose live key is already gone leaves no owner to read. The hook is skipped
     // rather than fired with an empty identity a consumer would have to guess about.
-    it('skips the reuse hook when the session owner cannot be read', async () => {
+    it('skips the reuse hook when the family names no owner', async () => {
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
-      mockRedis.readSessionOwner.mockResolvedValue('')
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
 
       await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
@@ -1659,6 +1657,28 @@ describe('TokenManagerService', () => {
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('reuse of a consumed refresh token detected')
       warnSpy.mockRestore()
+    })
+
+    // A replayed PLATFORM token is the same evidence of compromise as a dashboard one, against
+    // an account that usually holds more authority. The hook has to fire on both planes, or an
+    // operator watching for takeover is blind on the half that matters most.
+    it('emits onRefreshTokenReuseDetected for a replayed platform token', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: PLATFORM_FAMILY
+      })
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 2, ownerId: 'admin-1' })
+
+      await expect(
+        service.reissuePlatformTokens('stolen-platform-token', '9.9.9.9', 'Attacker')
+      ).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
+        { userId: 'admin-1', familyId: PLATFORM_FAMILY },
+        expect.anything()
+      )
     })
 
     // Scenario: platform primary rotation rewrites the per-admin SET — remove old prt:, add new

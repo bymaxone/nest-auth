@@ -495,7 +495,7 @@ describe('AuthRedisService', () => {
       mockRedis.get.mockResolvedValue('{"userId":"u1"}')
       mockRedis.eval.mockResolvedValue(2)
 
-      await expect(service.revokeFamily('fam-1')).resolves.toBe(2)
+      await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 2, ownerId: 'u1' })
 
       // The membership is read from the family index itself — a wrong key here would revoke
       // nothing while still reporting success.
@@ -518,7 +518,10 @@ describe('AuthRedisService', () => {
       mockRedis.get.mockResolvedValue('{"userId":"admin-1"}')
       mockRedis.eval.mockResolvedValue(1)
 
-      await expect(service.revokeFamily('fam-1', 'platform')).resolves.toBe(1)
+      await expect(service.revokeFamily('fam-1', 'platform')).resolves.toEqual({
+        removed: 1,
+        ownerId: 'admin-1'
+      })
 
       expect(mockRedis.get).toHaveBeenCalledWith(prefixed('prt:h1'))
       expect(mockRedis.eval).toHaveBeenCalledWith(
@@ -570,7 +573,7 @@ describe('AuthRedisService', () => {
     // Verifies an empty family id short-circuits: `fam:` with no id is a key every familyless
     // session would share, so revoking it would be an unbounded blast radius.
     it('is a no-op for an empty family id', async () => {
-      await expect(service.revokeFamily('')).resolves.toBe(0)
+      await expect(service.revokeFamily('')).resolves.toEqual({ removed: 0, ownerId: '' })
 
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
@@ -579,7 +582,7 @@ describe('AuthRedisService', () => {
     it('reports zero removals when the script returns a non-numeric reply', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
-      await expect(service.revokeFamily('fam-1')).resolves.toBe(0)
+      await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 0, ownerId: '' })
     })
   })
 

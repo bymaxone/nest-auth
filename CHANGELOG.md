@@ -87,6 +87,18 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 - **Failure-side hooks: `onLoginFailed`, `onLockout`, `onRefreshTokenReuseDetected`** ([`src/server/interfaces/auth-hooks.interface.ts`](src/server/interfaces/auth-hooks.interface.ts)). Every one of the fourteen existing hooks fired on a success path, which left the failure side of authentication with no structured seam at all: a burst of wrong passwords, an account tripping its lockout, and a stolen refresh token being replayed existed only as English log lines whose wording is not a contract and whose change is not semver-visible. ASVS v5 §16.3.1 expects authentication operations to be logged with their outcome and §6.1.1 an _adaptive_ response, which needs a signal to adapt to. `onLoginFailed` carries the reason and — only when the account resolved — the user id, so a consumer can tell "someone is guessing at this account" from "someone is spraying addresses". `onLockout` fires on the attempt that _crosses_ the threshold, not the next one, because an attacker who trips the lock and walks away would otherwise never produce the event. `onRefreshTokenReuseDetected` is the strongest evidence of compromise the library produces: a token already exchanged has been presented again, so one of its two holders is not the owner.
 
+- **Reuse detection can finally name its victim, and fires on the platform plane too**
+  ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)).
+  `revokeFamily` now returns `{ removed, ownerId }` instead of a bare count. The owner could
+  not be read any other way: the replayed token's own `rt:` key is deleted the moment it is
+  rotated, so the previous lookup — `readSessionOwner('rt:' + sha256(oldRefresh))` — was
+  reading a key that reuse detection guarantees is gone, and `onRefreshTokenReuseDetected`
+  would have been skipped every time in production. The family index is the last surviving
+  link between a replayed token and an account, and the revocation already reads a member
+  record to find the session index it prunes. The platform rotation now emits the hook as
+  well: an operator watching for account takeover cares about a replayed platform token at
+  least as much as a dashboard one.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.
