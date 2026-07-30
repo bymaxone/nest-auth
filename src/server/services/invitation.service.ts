@@ -164,7 +164,8 @@ export class InvitationService {
 
     // Generate a cryptographically secure single-use token (64 hex chars).
     const rawToken = generateSecureToken(32)
-    const tokenKey = `inv:${sha256(rawToken)}`
+    const tokenHash = sha256(rawToken)
+    const tokenKey = `inv:${tokenHash}`
     const ttl = this.options.invitations.tokenTtlSeconds
 
     const stored: StoredInvitation = {
@@ -175,7 +176,16 @@ export class InvitationService {
       createdAt: new Date().toISOString()
     }
 
+    // Re-inviting an address supersedes the previous invitation rather than adding a second
+    // one. Two live tokens for one invitee is two chances for an intercepted link to be
+    // redeemed, and revoking would only ever reach the newest — the older one would sit there
+    // valid and unreferenced for the rest of its TTL.
+    await this.dropPendingInvitation(normalizedEmail, tenantId)
     await this.redis.set(tokenKey, JSON.stringify(stored), ttl)
+    // The invitee index is what makes an invitation manageable at all: the record is keyed by
+    // the hash of a token only the recipient's mailbox holds, so without this nobody on the
+    // issuing side can name a pending invitation, let alone withdraw one.
+    await this.redis.set(this.inviteeKey(normalizedEmail, tenantId), tokenHash, ttl)
 
     const displayTenantName = tenantName ?? tenantId
     const expiresAt = new Date(Date.now() + ttl * 1_000)
@@ -222,6 +232,134 @@ export class InvitationService {
    * @throws `AuthException` with `INVALID_INVITATION_TOKEN` if the token is missing or malformed.
    * @throws `AuthException` with `EMAIL_ALREADY_EXISTS` if the email is taken.
    */
+  /**
+   * The invitee index key: the one handle the issuing side has on a pending invitation.
+   *
+   * The email is hashed rather than stored in the clear so a dump of the keyspace does not
+   * enumerate who a tenant has been inviting, which the record itself never exposes either.
+   *
+   * @param email - The normalized invitee address.
+   * @param tenantId - The tenant the invitation was issued for.
+   * @returns The namespaced-by-caller key.
+   */
+  private inviteeKey(email: string, tenantId: string): string {
+    return `invidx:${tenantId}:${sha256(email)}`
+  }
+
+  /**
+   * Deletes the pending invitation for an address, if there is one, along with its index.
+   *
+   * @param email - The normalized invitee address.
+   * @param tenantId - The tenant the invitation was issued for.
+   * @returns `true` when an invitation was actually removed.
+   */
+  private async dropPendingInvitation(email: string, tenantId: string): Promise<boolean> {
+    const indexKey = this.inviteeKey(email, tenantId)
+    const tokenHash = await this.redis.getdel(indexKey)
+    if (tokenHash === null) return false
+    return await this.redis.del(`inv:${tokenHash}`)
+  }
+
+  // ---------------------------------------------------------------------------
+  // revokeInvitation()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Withdraws a pending invitation before it is accepted.
+   *
+   * An invitation is a credential: it provisions an account, at a role, inside a tenant,
+   * to whoever holds the link. Until now the library could mint one and had no way to take
+   * it back — a link sent to the wrong address, or sent by someone who has since left, stayed
+   * redeemable for its whole TTL with nothing an operator could do about it. ASVS v5 §6.1.1
+   * expects an administrative path to invalidate a credential that should no longer work.
+   *
+   * The revoker is held to the same bar as the issuer: they must belong to the tenant, be in
+   * good standing, and out-rank the role the invitation grants. Anything looser would let a
+   * member cancel an admin's invitations.
+   *
+   * Idempotent: revoking an invitation that never existed, already expired, or was already
+   * accepted is not an error — the end state the caller asked for is the end state they get,
+   * and reporting the difference would tell them whether an address has a pending invitation,
+   * which is precisely what the index hashes the email to avoid disclosing.
+   *
+   * @param revokerUserId - Internal ID of the authenticated user withdrawing the invitation.
+   * @param email - The invited address. Normalized at this boundary.
+   * @param tenantId - The tenant the invitation was issued for.
+   * @returns `true` when a pending invitation was removed, `false` when there was none.
+   * @throws {@link AuthException} `TOKEN_INVALID` when the revoker no longer exists, or
+   *   `INSUFFICIENT_ROLE` when they may not withdraw this invitation.
+   */
+  async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
+    const normalizedEmail = email.trim().toLowerCase()
+
+    const revoker = await this.userRepo.findById(revokerUserId)
+    if (!revoker) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    if (revoker.tenantId !== tenantId) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    }
+
+    const indexKey = this.inviteeKey(normalizedEmail, tenantId)
+    const tokenHash = await this.redis.get(indexKey)
+    if (tokenHash === null) return false
+
+    // The role check reads the invitation itself rather than the request: the caller names an
+    // address, not a role, so the only way to know what authority is being withdrawn is to
+    // look. A record that no longer parses is withdrawn without a role check — it can no
+    // longer be accepted either, and leaving it would be worse than removing it.
+    const raw = await this.redis.get(`inv:${tokenHash}`)
+    const invitation = raw === null ? null : this.parseInvitation(raw)
+
+    if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    }
+
+    await this.redis.del(indexKey)
+    const removed = await this.redis.del(`inv:${tokenHash}`)
+    this.logger.log(
+      `revokeInvitation: invitation withdrawn email=${maskEmail(normalizedEmail)} ` +
+        `tenantId=${tenantId} revokerUserId=${revokerUserId}`
+    )
+    return removed
+  }
+
+  /**
+   * Parses a stored invitation, answering `null` for anything that is not one.
+   *
+   * @param raw - The stored JSON.
+   * @returns The validated record, or `null`.
+   */
+  private parseInvitation(raw: string): StoredInvitation | null {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return null
+    }
+    return isStoredInvitation(parsed) ? parsed : null
+  }
+
+  /**
+   * Whether `revoker` may withdraw `invitation` — in good standing and out-ranking the role
+   * the invitation grants.
+   *
+   * @param revoker - The authenticated user.
+   * @param invitation - The pending record.
+   * @returns `true` when the withdrawal is authorised.
+   */
+  private mayWithdraw(
+    revoker: { role: string; status: string },
+    invitation: StoredInvitation
+  ): boolean {
+    try {
+      assertNotBlocked(revoker.status, this.options.blockedStatuses)
+    } catch {
+      return false
+    }
+    return hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
+  }
+
   /**
    * Re-checks, at redemption time, everything that was true of the inviter when the link was
    * minted.
@@ -300,6 +438,12 @@ export class InvitationService {
     }
 
     const invitation = parsed
+
+    // The record is already gone; drop the index that pointed at it so a later revoke does not
+    // report success over an invitation that was accepted. Both carry the same TTL, so this is
+    // tidiness rather than correctness — but a stale pointer is exactly the kind of thing an
+    // operator reads as "still pending".
+    await this.redis.del(this.inviteeKey(invitation.email, invitation.tenantId))
 
     // Re-validate role against the hierarchy to guard against Redis tampering.
     if (!Object.hasOwn(this.options.roles.hierarchy, invitation.role)) {

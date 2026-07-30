@@ -128,6 +128,8 @@ const mockHooks = {
 
 const mockRedis = {
   set: jest.fn(),
+  get: jest.fn(),
+  del: jest.fn(),
   getdel: jest.fn()
 }
 
@@ -216,7 +218,8 @@ describe('InvitationService', () => {
     it('should store token in Redis and send invitation email on success', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
+      // Two writes: the invitation record, and the invitee index that makes it revocable.
+      expect(mockRedis.set).toHaveBeenCalledTimes(2)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -866,6 +869,163 @@ describe('InvitationService', () => {
         expect.any(Error)
       )
       loggerSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // revokeInvitation()
+  // ---------------------------------------------------------------------------
+
+  describe('revokeInvitation', () => {
+    /** The index key the service derives for the fixture invitee. */
+    const INDEX_KEY = `invidx:tenant-1:${sha256('invited@example.com')}`
+    const TOKEN_HASH = 'b'.repeat(64)
+
+    beforeEach(() => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key === INDEX_KEY ? TOKEN_HASH : JSON.stringify(VALID_STORED_INVITATION))
+      )
+      mockRedis.del.mockResolvedValue(true)
+    })
+
+    // The capability the module has always documented and never had: an invitation is a
+    // credential that provisions an account at a role, and it was unwithdrawable for its
+    // whole TTL.
+    it('deletes the invitation and its index', async () => {
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).resolves.toBe(true)
+
+      expect(mockRedis.del).toHaveBeenCalledWith(INDEX_KEY)
+      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${TOKEN_HASH}`)
+    })
+
+    // The address is normalized the same way it was on the way in, or the lookup misses the
+    // index it wrote and every revoke silently reports "nothing pending".
+    it('normalizes the address before looking it up', async () => {
+      await service.revokeInvitation('inviter-1', '  INVITED@Example.com  ', 'tenant-1')
+
+      expect(mockRedis.get).toHaveBeenCalledWith(INDEX_KEY)
+    })
+
+    // Idempotent, and deliberately silent about which case it was: answering differently
+    // would turn the endpoint into an oracle for "does this address have an invitation".
+    it('answers false when there is nothing pending', async () => {
+      mockRedis.get.mockResolvedValue(null)
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).resolves.toBe(false)
+      expect(mockRedis.del).not.toHaveBeenCalled()
+    })
+
+    // A member must not be able to cancel an admin's invitations — the revoker is held to
+    // the same bar as the issuer.
+    it('refuses a revoker who does not out-rank the invited role', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key === INDEX_KEY
+            ? TOKEN_HASH
+            : JSON.stringify({ ...VALID_STORED_INVITATION, role: 'admin' })
+        )
+      )
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.del).not.toHaveBeenCalled()
+    })
+
+    // A suspended admin holding a live access token is not making authority decisions.
+    it('refuses a blocked revoker', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, status: 'SUSPENDED' })
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Cross-tenant: the caller's own claims decide the tenant, and a caller from another one
+    // is refused before any lookup happens.
+    it('refuses a revoker from a different tenant', async () => {
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-2')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
+    // The JWT names a user that no longer exists.
+    it('refuses when the revoker is gone', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).rejects.toThrow(AuthException)
+    })
+
+    // A record that no longer parses is withdrawn without a role check: it can no longer be
+    // accepted either, and leaving it indexed would be worse than removing it.
+    it('withdraws an unparseable record without a role check', async () => {
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key === INDEX_KEY ? TOKEN_HASH : 'not-json')
+      )
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).resolves.toBe(true)
+    })
+
+    // …and one whose shape is wrong, and one whose record has already expired out from under
+    // the index. Both reach the same place by a different route.
+    it.each([
+      ['a record of the wrong shape', '{"nope":true}'],
+      ['a record that has already expired', null]
+    ])('withdraws over %s', async (_label, record) => {
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key === INDEX_KEY ? TOKEN_HASH : record)
+      )
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).resolves.toBe(true)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // supersede-on-reinvite
+  // ---------------------------------------------------------------------------
+
+  describe('invite supersedes a pending invitation', () => {
+    // Two live tokens for one invitee is two chances for an intercepted link to be redeemed,
+    // and a revoke would only ever reach the newest — the older would sit valid and
+    // unreferenced for the rest of its TTL.
+    it('drops the previous invitation for the same address', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.getdel.mockResolvedValue('c'.repeat(64))
+      mockRedis.set.mockResolvedValue('OK')
+      mockRedis.del.mockResolvedValue(true)
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      expect(mockRedis.getdel).toHaveBeenCalledWith(
+        `invidx:tenant-1:${sha256('invited@example.com')}`
+      )
+      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+    })
+
+    // …and does not delete anything when the invitee had no pending invitation.
+    it('deletes nothing when there was none', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.set.mockResolvedValue('OK')
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
+
+      expect(mockRedis.del).not.toHaveBeenCalled()
     })
   })
 })

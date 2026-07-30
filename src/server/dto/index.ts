@@ -1,5 +1,6 @@
 export { AcceptInvitationDto } from './accept-invitation.dto'
 export { CreateInvitationDto } from './create-invitation.dto'
+export { RevokeInvitationDto } from './revoke-invitation.dto'
 export { ForgotPasswordDto } from './forgot-password.dto'
 export { LoginDto } from './login.dto'
 export { MfaChallengeDto } from './mfa-challenge.dto'

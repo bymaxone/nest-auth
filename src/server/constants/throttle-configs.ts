@@ -117,6 +117,9 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/invitations/accept — 5 requests per minute per IP. */
   invitationAccept: { default: { limit: 5, ttl: 60_000 } },
 
+  /** POST /auth/invitations/revoke — 10 requests per hour per IP, matching the mint. */
+  invitationRevoke: { default: { limit: 10, ttl: 3_600_000 } },
+
   /** GET /auth/sessions — 30 requests per minute per IP. */
   listSessions: { default: { limit: 30, ttl: 60_000 } },
 

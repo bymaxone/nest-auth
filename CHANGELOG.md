@@ -99,6 +99,25 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   well: an operator watching for account takeover cares about a replayed platform token at
   least as much as a dashboard one.
 
+- **`POST /invitations/revoke` — withdrawing a pending invitation**
+  ([`src/server/controllers/invitation.controller.ts`](src/server/controllers/invitation.controller.ts)).
+  `controllers.invitations` has always been documented as "send, accept, **revoke** invitations"
+  and there was no revoke: an invitation provisions an account, at a role, inside a tenant, to
+  whoever holds the link — a credential in every sense — and once sent it stayed redeemable for
+  its whole TTL with nothing an operator could do about it. A link sent to the wrong address was
+  simply unrecoverable. ASVS v5 §6.1.1 expects an administrative path to invalidate a credential
+  that should no longer work.
+
+  The record is keyed by the hash of a token only the invitee's mailbox ever held, so nothing on
+  the issuing side could _name_ a pending invitation. A new `invidx:{tenantId}:{sha256(email)}`
+  index carries the invitation's TTL and points at its record; the email is hashed so a dump of
+  the keyspace does not enumerate who a tenant has been inviting. Re-inviting an address now
+  supersedes the previous invitation through that index rather than adding a second live token —
+  two tokens for one invitee is two chances for an intercepted link, and a revoke would only ever
+  have reached the newest. The revoker is held to the same bar as the issuer (in the tenant, in
+  good standing, out-ranking the granted role), and the endpoint answers `204` whether or not
+  anything was pending, so it cannot be used as an oracle for which addresses have invitations.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.

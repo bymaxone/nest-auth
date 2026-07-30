@@ -894,8 +894,9 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | GET    | `/sessions`                 | `JwtAuthGuard`, `UserStatusGuard`  | List active sessions for the current user                   |
 | DELETE | `/sessions/all`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke all sessions                                         |
 | DELETE | `/sessions/:id`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke a specific session                                   |
-| POST   | `/invitations`              | `JwtAuthGuard`                     | Create a tenant invitation                                  |
+| POST   | `/invitations`              | `JwtAuthGuard`, `UserStatusGuard`  | Create a tenant invitation                                  |
 | POST   | `/invitations/accept`       | Public                             | Accept an invitation and create the user                    |
+| POST   | `/invitations/revoke`       | `JwtAuthGuard`, `UserStatusGuard`  | Withdraw a pending invitation                               |
 | POST   | `/platform/login`           | Public                             | Platform admin login (separate token context)               |
 | POST   | `/platform/mfa/challenge`   | Public                             | Platform admin MFA challenge                                |
 | GET    | `/platform/me`              | `JwtPlatformGuard`                 | Current platform admin payload                              |

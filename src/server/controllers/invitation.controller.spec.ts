@@ -17,6 +17,7 @@ import { Test, type TestingModule } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
 import type { CreateInvitationDto } from '../dto/create-invitation.dto'
+import type { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import type { AuthResult } from '../interfaces/auth-result.interface'
@@ -69,6 +70,7 @@ const JWT_PAYLOAD: DashboardJwtPayload = {
 
 const mockInvitationService = {
   invite: jest.fn(),
+  revokeInvitation: jest.fn(),
   acceptInvitation: jest.fn()
 }
 
@@ -171,6 +173,50 @@ describe('InvitationController', () => {
       const result = await controller.invite(dto, JWT_PAYLOAD)
       expect(result).toBeUndefined()
     })
+  })
+
+  // ---------------------------------------------------------------------------
+  // revoke — POST /invitations/revoke
+  // ---------------------------------------------------------------------------
+
+  describe('revoke', () => {
+    const dto: RevokeInvitationDto = { email: 'new@example.com' }
+
+    beforeEach(() => {
+      mockInvitationService.revokeInvitation.mockResolvedValue(true)
+    })
+
+    // Verifies the delegation: the caller's own subject and tenant, plus the address they named.
+    it('should call revokeInvitation with user.sub, dto.email and user.tenantId', async () => {
+      await controller.revoke(dto, JWT_PAYLOAD)
+
+      expect(mockInvitationService.revokeInvitation).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        dto.email,
+        JWT_PAYLOAD.tenantId
+      )
+    })
+
+    // Verifies the tenant comes from the JWT and never from the body — the same anti-spoofing
+    // rule that governs minting one. Withdrawing across tenants is the mirror-image abuse.
+    it('should use tenantId from the JWT payload, not from any dto field', async () => {
+      await controller.revoke(dto, JWT_PAYLOAD)
+
+      const [, , tenantIdArg] = mockInvitationService.revokeInvitation.mock.calls[0] as string[]
+      expect(tenantIdArg).toBe(JWT_PAYLOAD.tenantId)
+    })
+
+    // Verifies the endpoint answers 204 whether or not anything was withdrawn: the service's
+    // boolean must not reach the wire, or the response becomes an oracle for "does this
+    // address have a pending invitation".
+    it.each([[true], [false]])(
+      'should return undefined (HTTP 204) when the service answers %s',
+      async (removed) => {
+        mockInvitationService.revokeInvitation.mockResolvedValue(removed)
+
+        await expect(controller.revoke(dto, JWT_PAYLOAD)).resolves.toBeUndefined()
+      }
+    )
   })
 
   // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { AcceptInvitationDto } from '../dto/accept-invitation.dto'
 import { CreateInvitationDto } from '../dto/create-invitation.dto'
+import { RevokeInvitationDto } from '../dto/revoke-invitation.dto'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
@@ -102,6 +103,39 @@ export class InvitationController {
       user.tenantId,
       dto.tenantName
     )
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /invitations/revoke
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Withdraws a pending invitation before it is accepted.
+   *
+   * An invitation provisions an account, at a role, inside a tenant, to whoever holds the
+   * link — a credential in every sense, and until now one the library could mint but never
+   * take back. A link sent to the wrong address stayed redeemable for its whole TTL.
+   *
+   * Answers `204` whether or not there was anything to withdraw. The caller asked for an
+   * end state and gets it; reporting the difference would turn this into an oracle for
+   * "does this address have a pending invitation".
+   *
+   * @param dto - Validated payload naming the invited address.
+   * @param user - Verified JWT payload from the access token.
+   */
+  // Same guards as minting one: withdrawing an invitation is an authority decision, and a
+  // suspended admin holding a live access token must not be making it either.
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
+  @Throttle(AUTH_THROTTLE_CONFIGS.invitationRevoke)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.invitationRevoke)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post('revoke')
+  async revoke(
+    @Body() dto: RevokeInvitationDto,
+    @CurrentUser() user: DashboardJwtPayload
+  ): Promise<void> {
+    // tenantId comes from the JWT — not from the DTO body — to prevent tenant spoofing.
+    await this.invitationService.revokeInvitation(user.sub, dto.email, user.tenantId)
   }
 
   // ---------------------------------------------------------------------------

@@ -118,7 +118,9 @@ export const AUTH_INVITATION_ROUTES = {
   /** POST — create a new invitation (admin-only). */
   create: 'invitations',
   /** POST — accept an invitation token and register the recipient. */
-  accept: 'invitations/accept'
+  accept: 'invitations/accept',
+  /** POST — withdraw a pending invitation before it is accepted (admin-only). */
+  revoke: 'invitations/revoke'
 } as const
 
 /**
