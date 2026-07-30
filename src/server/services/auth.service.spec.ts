@@ -2209,4 +2209,31 @@ describe('AuthService', () => {
       errorSpy.mockRestore()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // unlockAccount()
+  // ---------------------------------------------------------------------------
+
+  describe('unlockAccount', () => {
+    // The counter is keyed by an HMAC no consumer can derive, so before this the lockout
+    // could only be waited out — and it is also the lever an attacker pulls to deny service
+    // to one account, which makes undoing it part of the defence.
+    it('clears the lockout under the same key login derives', async () => {
+      await service.unlockAccount('user@example.com', 'tenant-1')
+
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
+        hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+      )
+    })
+
+    // Normalized the same way login normalizes it, or the derived key misses the counter the
+    // lockout actually wrote and the unlock silently does nothing.
+    it('normalizes the address before deriving the key', async () => {
+      await service.unlockAccount('  USER@Example.com  ', 'tenant-1')
+
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
+        hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+      )
+    })
+  })
 })

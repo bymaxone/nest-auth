@@ -170,6 +170,11 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+// `BruteForceService` is exported for consumers building their own lockout tooling. The
+// administrative unlock itself lives on `AuthService.unlockAccount`, because the counter is
+// keyed by an HMAC of `{tenantId}:{email}` under the library's own `hmacKey` — a key no
+// consumer can derive, which made the lockout unclearable from outside until v1.0.12.
+export { BruteForceService } from './services/brute-force.service'
 // NOTE: MfaService is only registered in the NestJS container when
 // controllers.mfa: true OR controllers.platform: true. Importing it here for
 // use in a host-app module without those flags set will cause an injection error —

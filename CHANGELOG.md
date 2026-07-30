@@ -118,6 +118,18 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   good standing, out-ranking the granted role), and the endpoint answers `204` whether or not
   anything was pending, so it cannot be used as an oracle for which addresses have invitations.
 
+- **`AuthService.unlockAccount(email, tenantId)` — clearing a brute-force lockout**
+  ([`src/server/services/auth.service.ts`](src/server/services/auth.service.ts)). A lockout is
+  a denial of service the library imposes on its own users, and it could only be waited out:
+  the counter is keyed by an HMAC of `{tenantId}:{email}` under the library's own `hmacKey`,
+  which no consumer can derive, so a support desk facing "I am locked out and I need in now"
+  had nothing to offer. The lockout is also the lever an attacker pulls to deny service to one
+  specific account, which makes the ability to undo it part of the defence rather than a
+  convenience (ASVS v5 §6.1.1). It grants no access — the password, the status gate, the
+  verification gate and MFA all still apply; it restores the ability to _try_. No route ships
+  with it, because who may unlock whom is a decision only the host application can make.
+  `BruteForceService` is now exported for consumers building their own lockout tooling.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.

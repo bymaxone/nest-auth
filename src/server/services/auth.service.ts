@@ -742,6 +742,40 @@ export class AuthService {
   }
 
   // ---------------------------------------------------------------------------
+  // unlockAccount()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Clears an account's brute-force lockout so the next attempt is judged on its merits.
+   *
+   * A lockout is a denial of service the library imposes on its own users, and until now it
+   * could only be waited out: the counter is keyed by an HMAC of `{tenantId}:{email}` under
+   * the library's own `hmacKey`, which no consumer can derive, so a support desk facing "I
+   * am locked out and I need in now" had nothing to offer. ASVS v5 §6.1.1 asks for an
+   * administrative path to clear it — and the lockout is also the lever an attacker pulls to
+   * deny service to a specific account, which makes the ability to undo it part of the
+   * defence rather than a convenience.
+   *
+   * **This grants no access.** It restores the ability to *try*: the password, the status
+   * gate, the verification gate and MFA all still apply. Authorising the caller is the
+   * consumer's job — the library deliberately ships no route for this, because who may
+   * unlock whom is a decision only the host application can make.
+   *
+   * Idempotent: unlocking an account that is not locked is a no-op.
+   *
+   * @param email - The account's address. Normalized here the same way login normalizes it,
+   *   or the derived key would miss the counter the lockout actually wrote.
+   * @param tenantId - The tenant the account belongs to.
+   */
+  async unlockAccount(email: string, tenantId: string): Promise<void> {
+    const identifier = hmacSha256(`${tenantId}:${normalizeEmail(email)}`, this.options.hmacKey)
+    await this.bruteForce.resetFailures(identifier)
+    this.logger.log(
+      `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${tenantId}`
+    )
+  }
+
+  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
