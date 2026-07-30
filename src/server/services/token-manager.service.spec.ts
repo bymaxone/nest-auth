@@ -492,6 +492,8 @@ describe('TokenManagerService', () => {
         newHash: NEW_HASH,
         newSessionJson: expect.stringContaining(`"familyId":"${FAMILY}"`),
         familyId: FAMILY,
+        // The owner, so the script can maintain the session index itself.
+        userId: 'user-1',
         refreshTtl: 7 * 86_400,
         graceTtl: 30
       })
@@ -556,13 +558,21 @@ describe('TokenManagerService', () => {
     // Verifies that primary rotation tracks the grace pointer in sess:{userId} so
     // invalidateUserSessions can delete it — without that member, a token rotated away moments
     // before "log out everywhere" would still recover a session for the whole grace window.
-    it('should add the grace pointer key to sess:{userId} SET on primary rotation', async () => {
+    it('leaves the session index to the rotation script on primary rotation', async () => {
       armLiveRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
-      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(true)
+      // The membership moved inside the script: maintaining it out here left a window between
+      // the consume and the SADD in which "log out everywhere" could sweep the index without
+      // seeing the session the rotation had just minted, leaving it alive and rotating after a
+      // revocation the user was told had happened. The script gets the owner it needs; the
+      // key-level assertions over `sess:` live in the redis service spec, against the script.
+      expect(mockRedis.sadd).not.toHaveBeenCalledWith('sess:user-1', expect.anything())
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:user-1', expect.anything())
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1' })
+      )
     })
 
     // Scenario: a zero-width grace window writes no `rp:` key, so indexing an `rp:` member for
@@ -590,9 +600,8 @@ describe('TokenManagerService', () => {
         .get(TokenManagerService)
         .reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
-      expect(addedKeys.some((k) => k.startsWith('rt:'))).toBe(true)
-      expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(false)
+      // The zero window is threaded to the script, which is where the `graceTtl > 0` guard
+      // that decides whether an `rp:` member is indexed now lives.
       expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
         expect.objectContaining({ graceTtl: 0 })
       )
@@ -811,16 +820,19 @@ describe('TokenManagerService', () => {
     // grace pointer, then expire the SET with the refresh TTL (days*86400).
     // Expected: exact srem/sadd/expire calls on 'sess:user-1'. Why: kills the StringLiteral
     // mutants on each key/member and the arithmetic mutant on `* 86_400` via the pinned TTL.
-    it('updates the sess:{userId} SET with exact keys and TTL on primary rotation', async () => {
+    it('hands the rotation script every key it needs to index the new session', async () => {
       const oldHash = sha256('old-refresh-token')
       armLiveRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:user-1', `rt:${oldHash}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rp:${oldHash}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+      // The exact `sess:` writes are asserted in the redis service spec against the script's
+      // KEYS/ARGV. What this level owns is that the script is given the owner and both hashes
+      // — without the owner it has no index to maintain, and the window this change closed
+      // would reopen silently.
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1', oldHash, newHash: NEW_HASH })
+      )
     })
 
     // Scenario: grace-window rotation registers the new rt: under the per-user SET and expires it.
@@ -1580,6 +1592,7 @@ describe('TokenManagerService', () => {
         newHash: NEW_HASH,
         newSessionJson: expect.stringContaining(`"familyId":"${PLATFORM_FAMILY}"`),
         familyId: PLATFORM_FAMILY,
+        userId: 'admin-1',
         refreshTtl: 7 * 86_400,
         graceTtl: 30
       })
@@ -1690,10 +1703,13 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prt:${oldHash}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
+      // The `psess:` membership moved inside the rotation script, on this plane as on the
+      // other: maintaining it out here left a window in which a concurrent revoke-all could
+      // sweep past the session the rotation was minting. The script is given the plane and
+      // the owner; the key-level assertions live in the redis service spec.
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'platform', userId: 'admin-1' })
+      )
       // The dashboard index is a different plane with a colliding id space: a platform
       // rotation neither reads it nor writes it.
       const touched = [...mockRedis.sadd.mock.calls, ...mockRedis.srem.mock.calls].map(
@@ -1727,9 +1743,11 @@ describe('TokenManagerService', () => {
         .get(TokenManagerService)
         .reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
-      expect(addedKeys.some((k) => k.startsWith('prt:'))).toBe(true)
-      expect(addedKeys.some((k) => k.startsWith('prp:'))).toBe(false)
+      // The zero window is threaded to the script, which is where the guard that decides
+      // whether a `prp:` member is indexed now lives.
+      expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'platform', graceTtl: 0 })
+      )
     })
 
     // Scenario: the new platform session record must store an empty tenantId on primary rotation.
@@ -1833,10 +1851,14 @@ describe('TokenManagerService', () => {
     // `mfaEnabled && !mfaVerified`, so an absent field reads as "no second factor here" and the
     // rotated token clears every MFA-gated route. Refusing costs the holder a login; defaulting
     // costs the account.
+    //
+    // The check reads the record where the rotation first touches it — the seed read of
+    // `rt:{oldHash}`, which is the same key the script consumes. A record that fails here
+    // never reaches the script, and a record the script consumed on the live path must have
+    // passed here, because that path is unreachable unless this read found the session.
     it('should refuse a session record with no mfaEnabled flag', async () => {
-      mockRedis.rotateRefreshSession.mockResolvedValue({
-        kind: 'rotated',
-        sessionJson: JSON.stringify({
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
           userId: 'user-1',
           tenantId: 'tenant-1',
           role: 'member',
@@ -1844,11 +1866,13 @@ describe('TokenManagerService', () => {
           ip: '1.2.3.4',
           createdAt: '2026-01-01T00:00:00.000Z'
         })
-      })
+      )
 
       await expect(
         service.reissueTokens('raw-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
+      // …and it refused before the rotation ran, so the token was never consumed.
+      expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
     })
   })
 })

@@ -29,7 +29,9 @@
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
+import { sha256 } from '../../src/server/crypto/secure-token'
 import { JWT_SECRET, bootstrapTestApp } from './setup'
+import type { BootstrappedTestApp } from './setup'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,6 +79,9 @@ describe('refresh concurrency with grace window (E2E)', () => {
     // primary session was already deleted by the first rotation.
     let firstResponse: request.Response
     let secondResponse: request.Response
+    // The mock Redis and the account, so a test can read the index the rotation script wrote.
+    let redisClient: BootstrappedTestApp['redis']
+    let userId: string
 
     // Shared state IS shared across the it() blocks below — each test
     // verifies one slice of the chained scenario set up in beforeAll
@@ -90,6 +95,7 @@ describe('refresh concurrency with grace window (E2E)', () => {
         jwt: { secret: JWT_SECRET, refreshGraceWindowSeconds: GRACE_WINDOW_SECONDS }
       })
       app = bootstrap.app
+      redisClient = bootstrap.redis
 
       // ioredis-mock returns `undefined` when a Lua script returns nil, but the
       // production `TokenManagerService.reissueTokens` checks `oldSessionJson !==
@@ -127,6 +133,7 @@ describe('refresh concurrency with grace window (E2E)', () => {
       })
 
       originalRefreshToken = login.body.refreshToken as string
+      userId = login.body.user.id as string
 
       // Act — fire two /refresh requests in parallel via Promise.all, both
       // exchanging the SAME original refresh token. The first to win the
@@ -169,6 +176,24 @@ describe('refresh concurrency with grace window (E2E)', () => {
       expect(userJwt.refreshGraceWindowSeconds).toBeUndefined()
 
       await defaultBootstrap.app.close()
+    })
+
+    // The session index is maintained by the rotation script itself, not by the service after
+    // it. This runs the real Lua against the in-memory Redis and reads the SET the script
+    // wrote, so losing those lines from the script fails here rather than silently reopening
+    // the window in which "log out everywhere" could sweep past a session a concurrent
+    // rotation was in the middle of minting.
+    it('indexes the rotated session and its grace pointer from inside the script', async () => {
+      const members = await redisClient.smembers(`auth:sess:${userId}`)
+
+      // Both freshly minted sessions are in the index — a revoke-all sweeping now removes them.
+      expect(members).toContain(`rt:${sha256(firstResponse.body.refreshToken as string)}`)
+      expect(members).toContain(`rt:${sha256(secondResponse.body.refreshToken as string)}`)
+      // …and so is the grace pointer, or a token rotated away moments before the sweep could
+      // still recover a session for the whole grace window.
+      expect(members).toContain(`rp:${sha256(originalRefreshToken)}`)
+      // The consumed member is gone.
+      expect(members).not.toContain(`rt:${sha256(originalRefreshToken)}`)
     })
 
     // Verifies that the first /refresh request returns HTTP 200.

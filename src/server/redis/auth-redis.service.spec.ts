@@ -322,24 +322,28 @@ describe('AuthRedisService', () => {
       newHash: 'new-hash',
       newSessionJson: '{"userId":"u1"}',
       familyId: 'fam-1',
+      userId: 'u1',
       refreshTtl: 604_800,
       graceTtl: 30
     }
 
-    // Verifies the script receives the five keys and six arguments it documents, in order.
-    it('passes the five rotation keys and seven arguments to the script', async () => {
+    // Verifies the script receives the six keys and nine arguments it documents, in order.
+    it('passes the six rotation keys and nine arguments to the script', async () => {
       mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
 
       await service.rotateRefreshSession(BUNDLE)
 
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call('GET', KEYS[1])"),
-        5,
+        6,
         prefixed('rt:old-hash'),
         prefixed('rt:new-hash'),
         prefixed('rp:old-hash'),
         prefixed('cf:old-hash'),
         prefixed('fam:fam-1'),
+        // The owner's session index, which the script maintains itself so a concurrent
+        // "log out everywhere" cannot sweep past the session this rotation is minting.
+        prefixed('sess:u1'),
         '{"userId":"u1"}',
         '604800',
         '30',
@@ -348,7 +352,10 @@ describe('AuthRedisService', () => {
         'new-hash',
         // The namespaced live-session prefix, so the grace branch can probe whether the
         // session a rotation produced is still alive before honouring the pointer.
-        prefixed('rt')
+        prefixed('rt'),
+        // …and the two member prefixes the index entries are built from.
+        'rt',
+        'rp'
       )
     })
 

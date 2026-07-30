@@ -82,11 +82,13 @@ function prefixesFor(
  *
  * ```text
  * KEYS[1] = rt:{sha256(old)}   KEYS[2] = rt:{sha256(new)}   KEYS[3] = rp:{sha256(old)}
- * KEYS[4] = cf:{sha256(old)}   KEYS[5] = fam:{family}
+ * KEYS[4] = cf:{sha256(old)}   KEYS[5] = fam:{family}     KEYS[6] = sess:{userId}
  * ARGV[1] = new session JSON   ARGV[2] = refresh TTL (s)    ARGV[3] = grace TTL (s; 0 skips)
  * ARGV[4] = family id ('' = no family, skip family work)
  * ARGV[5] = sha256(old)        ARGV[6] = sha256(new)
  * ARGV[7] = the live-session key prefix, namespace included, for the successor probe
+ * ARGV[8] = the live-session member prefix for the session index ('rt' / 'prt')
+ * ARGV[9] = the grace-pointer member prefix for the session index ('rp' / 'prp')
  * ```
  *
  * The grace pointer stores `{successorHash}:{session JSON}` — the hash of the session the
@@ -119,6 +121,27 @@ if old then
     redis.call('SADD', KEYS[5], ARGV[6])
     redis.call('EXPIRE', KEYS[5], ARGV[2])
   end
+  -- Session-index bookkeeping, INSIDE the script rather than after it. Left to the caller, it
+  -- opened a window between the consume and the SADD in which "log out everywhere" could sweep
+  -- the index: the sweep would not see the session this rotation had just minted, and that
+  -- session would survive a revocation the user was told had happened — and go on rotating,
+  -- re-stamping a fresh access token under every later epoch. An attacker holding a stolen
+  -- token and refreshing in a loop can aim for that window, and the moment they would aim for
+  -- it is precisely the password reset trying to evict them. Inside the script the two
+  -- serialize: either the sweep sees the new member and revokes it, or the rotation runs after
+  -- the sweep and finds no live key to rotate.
+  --
+  -- The grace pointer is indexed too, or a token rotated away moments before the sweep could
+  -- still recover a session for the whole grace window.
+  --
+  -- KEYS[6] is touched only here, on the live path — which the caller can only reach when its
+  -- own pre-read of KEYS[1] succeeded, so the key is always the real owner's index.
+  redis.call('SREM', KEYS[6], ARGV[8] .. ':' .. ARGV[5])
+  redis.call('SADD', KEYS[6], ARGV[8] .. ':' .. ARGV[6])
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SADD', KEYS[6], ARGV[9] .. ':' .. ARGV[5])
+  end
+  redis.call('EXPIRE', KEYS[6], ARGV[2])
   redis.call('DEL', KEYS[1])
   return old
 end
@@ -201,6 +224,13 @@ export interface RefreshRotationParams {
   newSessionJson: string
   /** Family of the presented session; `''` when it belongs to no lineage. */
   familyId: string
+  /**
+   * Owner of the session being rotated, for the per-user session index the script now
+   * maintains itself. Taken from the record the caller pre-read, which is what makes it the
+   * real owner: the script touches this index only on the live-rotation path, and that path
+   * is unreachable unless that pre-read found the session.
+   */
+  userId: string
   /** Refresh-session lifetime in seconds. */
   refreshTtl: number
   /** Grace-pointer lifetime in seconds; `0` writes no pointer. */
@@ -451,7 +481,8 @@ export class AuthRedisService {
         `${p.live}:${params.newHash}`,
         `${p.grace}:${params.oldHash}`,
         `${p.consumed}:${params.oldHash}`,
-        `${p.family}:${params.familyId}`
+        `${p.family}:${params.familyId}`,
+        `${p.index}:${params.userId}`
       ],
       [
         params.newSessionJson,
@@ -460,7 +491,9 @@ export class AuthRedisService {
         params.familyId,
         params.oldHash,
         params.newHash,
-        this.prefix(p.live)
+        this.prefix(p.live),
+        p.live,
+        p.grace
       ]
     )
     if (typeof raw !== 'string') return { kind: 'invalid' }

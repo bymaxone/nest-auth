@@ -130,6 +130,25 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   with it, because who may unlock whom is a decision only the host application can make.
   `BruteForceService` is now exported for consumers building their own lockout tooling.
 
+- **The session index is maintained by the rotation script, not after it**
+  ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)).
+  `rotateRefreshSession` now takes the owner and does the `sess:{userId}` bookkeeping inside
+  the Lua. Doing it in the service afterwards left a window between the atomic consume and the
+  `SADD` in which "log out everywhere" could sweep the index without seeing the session the
+  rotation had just minted: that session survived a revocation the user was told had happened,
+  and went on rotating — re-stamping a fresh access token under every later epoch, so the token
+  epoch did not contain it either. The window is attacker-aimable: a thief holding a stolen
+  refresh token and refreshing in a loop is most likely to be mid-rotation exactly when a
+  password reset is trying to evict them. Inside the script the two operations serialize —
+  either the sweep sees the new member and revokes it, or the rotation runs after the sweep and
+  finds no live key to rotate. Held byte-compatible with rust-auth, which rotates the same
+  sessions.
+
+  The grace-recovery path still writes its session after the script (the recovered identity is
+  only known once the script has answered), so it keeps a much narrower version of this window.
+  Unlike the primary path it cannot be summoned on demand — it is reachable only by a client
+  retrying a rotation whose response it lost, inside a grace window measured in seconds.
+
 ### Changed
 
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.

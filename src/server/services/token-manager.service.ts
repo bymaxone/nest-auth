@@ -382,20 +382,13 @@ export class TokenManagerService {
       newHash,
       newSessionJson: this.serializeSession(newSession),
       familyId: seed.familyId,
+      userId: seed.userId,
       refreshTtl,
       graceTtl
     })
 
     if (outcome.kind === 'rotated') {
-      return this.rotateFromPrimary(
-        outcome.sessionJson,
-        oldHash,
-        newHash,
-        newSession,
-        newRawRefresh,
-        refreshTtl,
-        graceTtl
-      )
+      return this.rotateFromPrimary(newSession, newRawRefresh)
     }
     if (outcome.kind === 'grace') {
       return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
@@ -503,29 +496,18 @@ export class TokenManagerService {
   /**
    * Handles the primary rotation path: the presented token was live and is now consumed.
    *
-   * The rotation script already wrote `rt:{new}`, the grace pointer, and the family
-   * bookkeeping. What is left is the per-user session index, whose members are full key
-   * suffixes: the rotated-away session is pruned, the new session added, and the grace
-   * pointer indexed too so a revoke-all can delete it — without that member, a token rotated
-   * away moments before "log out everywhere" would still recover a session for the whole
-   * grace window.
+   * The rotation script wrote `rt:{new}`, the grace pointer, the family bookkeeping **and**
+   * the per-user session index. The index moved inside the script because doing it here left
+   * a window between the consume and the SADD in which "log out everywhere" could sweep the
+   * index without seeing the session this rotation had just minted — leaving it alive, and
+   * rotating, after a revocation the user was told had happened.
+   *
+   * What is left here is issuing the token pair.
    */
   private async rotateFromPrimary(
-    oldSessionJson: string,
-    oldHash: string,
-    newHash: string,
     newSession: RefreshSession,
-    newRawRefresh: string,
-    refreshTtl: number,
-    graceTtl: number
+    newRawRefresh: string
   ): Promise<RotatedTokenResult> {
-    const old = this.parseSession(oldSessionJson)
-    await this.redis.srem(`sess:${old.userId}`, `rt:${oldHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, `rt:${newHash}`)
-    if (graceTtl > 0) {
-      await this.redis.sadd(`sess:${old.userId}`, `rp:${oldHash}`)
-    }
-    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
     return await this.buildRotatedResult(newSession, newRawRefresh)
   }
 
@@ -769,21 +751,20 @@ export class TokenManagerService {
       newHash,
       newSessionJson: this.serializeSession(newSession),
       familyId: seed.familyId,
+      userId: seed.userId,
       refreshTtl,
       graceTtl
     })
 
     if (outcome.kind === 'rotated') {
       return this.rotatePlatformFromPrimary(
-        outcome.sessionJson,
         oldHash,
         newHash,
         newSession,
         ip,
         userAgent,
         newRawRefresh,
-        refreshTtl,
-        graceTtl
+        refreshTtl
       )
     }
     if (outcome.kind === 'grace') {
@@ -816,28 +797,19 @@ export class TokenManagerService {
    * the grace window.
    */
   private async rotatePlatformFromPrimary(
-    oldSessionJson: string,
     oldHash: string,
     newHash: string,
     newSession: RefreshSession,
     ip: string,
     userAgent: string,
     newRawRefresh: string,
-    refreshTtl: number,
-    graceTtl: number
+    refreshTtl: number
   ): Promise<RotatedTokenResult> {
-    const old = this.parseSession(oldSessionJson)
-
-    // The rotated session is indexed under the platform-only `psess:` key — the dashboard
-    // `sess:` index is a separate plane and is never touched from here.
-    await this.redis.srem(`psess:${old.userId}`, `prt:${oldHash}`)
-    await this.redis.sadd(`psess:${old.userId}`, `prt:${newHash}`)
-    if (graceTtl > 0) {
-      await this.redis.sadd(`psess:${old.userId}`, `prp:${oldHash}`)
-    }
-    await this.redis.expire(`psess:${old.userId}`, refreshTtl)
-    // Move the detail record with the session, so a listing describes the live token rather
-    // than a hash that no longer exists.
+    // The `psess:` index moved inside the rotation script, on this plane as on the other:
+    // maintaining it out here left a window in which a concurrent revoke-all could sweep past
+    // the session the rotation was minting. What remains is the per-session DETAIL, which the
+    // revocation never reaches through — a stale `psd:` costs a row in a session listing, not
+    // a session that should have died.
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
