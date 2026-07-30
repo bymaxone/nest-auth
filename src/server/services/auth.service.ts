@@ -235,16 +235,17 @@ export class AuthService {
     // never produce the same input string (prefix-collision resistance).
     const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.hmacKey)
 
+    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
+
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
       this.logger.warn(`login: account locked email=${maskEmail(dto.email)} tenantId=${tenantId}`)
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
         retryAfterSeconds: remainingSeconds
       })
     }
-
-    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
     if (this.hooks?.beforeLogin) {
       await this.hooks.beforeLogin(dto.email, tenantId, context)
@@ -260,23 +261,39 @@ export class AuthService {
     // rate limiting bounds it further.
     if (!user || !user.passwordHash) {
       await this.passwordService.compareDummy(dto.password)
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordLoginFailure(bfIdentifier, { email: dto.email, tenantId }, context)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
     // Status check before expensive scrypt — avoid wasting CPU on blocked accounts.
-    this.assertUserNotBlocked(user)
+    try {
+      this.assertUserNotBlocked(user)
+    } catch (err: unknown) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'account_blocked' },
+        context
+      )
+      throw err
+    }
 
     // Email verification gate.
     if (this.options.emailVerification.required && !user.emailVerified) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'email_not_verified' },
+        context
+      )
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
-      await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(
         `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${tenantId}`
+      )
+      await this.recordLoginFailure(
+        bfIdentifier,
+        { email: dto.email, tenantId, userId: user.id },
+        context
       )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
@@ -756,6 +773,56 @@ export class AuthService {
     if (opts.email !== undefined) ctx.email = opts.email
     if (opts.tenantId !== undefined) ctx.tenantId = opts.tenantId
     return ctx
+  }
+
+  /**
+   * Records a failed credential attempt against the brute-force counter, and emits the failure
+   * hooks the moment they are due — including {@link IAuthHooks.onLockout} on the attempt that
+   * crosses the threshold.
+   *
+   * The lockout signal has to be emitted here rather than on the *next* attempt: an attacker
+   * who trips the lock and walks away would otherwise never produce the event, and the account
+   * would sit locked with nothing having announced it.
+   */
+  private async recordLoginFailure(
+    bfIdentifier: string,
+    who: { email: string; tenantId: string; userId?: string },
+    context: HookContext
+  ): Promise<void> {
+    await this.bruteForce.recordFailure(bfIdentifier)
+    this.emitLoginFailed({ ...who, reason: 'invalid_credentials' }, context)
+
+    if (this.hooks?.onLockout && (await this.bruteForce.isLockedOut(bfIdentifier))) {
+      const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      this.fireAndForget(
+        () => this.hooks?.onLockout?.({ ...who, retryAfterSeconds }, context),
+        'onLockout'
+      )
+    }
+  }
+
+  /** Emits {@link IAuthHooks.onLoginFailed}, fire-and-forget. */
+  private emitLoginFailed(
+    details: Parameters<NonNullable<IAuthHooks['onLoginFailed']>>[0],
+    context: HookContext
+  ): void {
+    this.fireAndForget(() => this.hooks?.onLoginFailed?.(details, context), 'onLoginFailed')
+  }
+
+  /**
+   * Runs a hook without awaiting it and without letting it change the caller's outcome.
+   *
+   * Every hook on this interface is advisory: a consumer's SIEM being down must not turn a
+   * refused login into a different refusal, nor a successful one into a failure.
+   */
+  private fireAndForget(run: () => Promise<void> | void, name: string): void {
+    try {
+      void Promise.resolve(run()).catch((err: unknown) => {
+        this.logger.error(`${name} hook threw`, err)
+      })
+    } catch (err: unknown) {
+      this.logger.error(`${name} hook threw synchronously`, err)
+    }
   }
 
   private assertUserNotBlocked(user: AuthUser): void {

@@ -424,6 +424,38 @@ export class SessionService {
   }
 
   /**
+   * Revokes one named session **other than the caller's own**, and cuts the access tokens with
+   * it.
+   *
+   * Distinct from {@link revokeSession}, which is the primitive: deleting the refresh session
+   * stops rotation but says nothing about the stateless access token that session's holder is
+   * already carrying, and that token keeps working until it expires. Someone who opens their
+   * session list and revokes a device does so because they think it is compromised — a decision
+   * about *right now*, not about the next fifteen minutes. The same argument
+   * {@link revokeAllExceptCurrent} makes in its own JSDoc applies to revoking one.
+   *
+   * The epoch is the only lever available: a session hash does not name the `jti` of any access
+   * token, so there is nothing to blacklist individually. Bumping it ends every access token
+   * the account holds, and the user's *other* devices silently re-mint one on their next
+   * rotation — they still hold live refresh sessions. The revoked device cannot, which is the
+   * point.
+   *
+   * `logout` deliberately keeps using the primitive: it blacklists its own `jti` by name, and
+   * ending one session must not sign the account out of every other device's access token.
+   *
+   * @param userId - Internal user ID who owns the session.
+   * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
+   */
+  async revokeOtherSession(userId: string, sessionHash: string): Promise<void> {
+    await this.revokeSession(userId, sessionHash)
+    // After the revoke, not before: a failure above leaves the epoch untouched and the
+    // operation visibly incomplete, rather than the reverse — every device losing its access
+    // token for a session that is in fact still alive.
+    await this.redis.bumpUserTokenEpoch(userId)
+  }
+
+  /**
    * Revokes all sessions for a user except the caller's current session.
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}` and calls

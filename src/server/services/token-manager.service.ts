@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto'
 
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions } from '@nestjs/jwt'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
   AuthResult,
   PlatformAuthResult,
@@ -22,6 +23,7 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
@@ -106,7 +108,12 @@ export class TokenManagerService {
   constructor(
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    private readonly redis: AuthRedisService
+    private readonly redis: AuthRedisService,
+    // Optional, and the only reason this otherwise dependency-light service knows about hooks:
+    // reuse detection happens here and nowhere else, and it is the strongest evidence of
+    // compromise the library produces. Routing it out through an exception would lose the
+    // family id, and losing it would leave a consumer with nothing to correlate against.
+    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -397,7 +404,13 @@ export class TokenManagerService {
       this.logger.warn(
         'reissueTokens: reuse of a consumed refresh token detected — revoking the token family'
       )
+      const owner = await this.redis.readSessionOwner(`rt:${sha256(oldRefresh)}`)
       await this.redis.revokeFamily(outcome.familyId)
+      // The one moment the library can say "this is not a guess about risk": a token that was
+      // already exchanged has been presented again, so one of its two holders is not the owner.
+      // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
+      // to a lineage that is already dead rather than one still being torn down.
+      this.emitReuseDetected(owner, outcome.familyId)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     this.logger.warn(
@@ -423,6 +436,26 @@ export class TokenManagerService {
    *   remedy is the same (sign in again) and the difference would only tell a holder of a
    *   stolen token how old the account's session is.
    */
+  /**
+   * Emits {@link IAuthHooks.onRefreshTokenReuseDetected}, fire-and-forget.
+   *
+   * The owner is read from the stored session where it can be — a replay of a token whose live
+   * key is already gone leaves nothing to read, and the hook is skipped rather than fired with
+   * an empty identity that a consumer would have to guess about.
+   */
+  private emitReuseDetected(userId: string, familyId: string): void {
+    if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
+    try {
+      void Promise.resolve(
+        this.hooks.onRefreshTokenReuseDetected({ userId, familyId }, createEmptyHookContext())
+      ).catch((err: unknown) => {
+        this.logger.error('onRefreshTokenReuseDetected hook threw', err)
+      })
+    } catch (err: unknown) {
+      this.logger.error('onRefreshTokenReuseDetected hook threw synchronously', err)
+    }
+  }
+
   private assertWithinAbsoluteLifetime(session: RefreshSession): void {
     const capDays = this.options.jwt.absoluteSessionLifetimeDays
     if (capDays <= 0) return

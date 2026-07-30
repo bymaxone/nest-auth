@@ -1459,6 +1459,33 @@ describe('SessionService', () => {
   // revokeAllExceptCurrent
   // =========================================================================
 
+  describe('revokeOtherSession', () => {
+    // Deleting the refresh session stops rotation but says nothing about the stateless access
+    // token its holder already carries — that token kept working for up to its full lifetime.
+    // Someone who opens their session list and revokes a device does so because they think it
+    // is compromised, which is a decision about right now.
+    it('bumps the token epoch so the revoked device loses its access token too', async () => {
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeOtherSession('user-1', 'a'.repeat(64))
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1')
+    })
+
+    // After the revoke, never before: a failure in the revoke must leave the epoch untouched
+    // and the operation visibly incomplete, rather than signing every device out of its access
+    // token for a session that is in fact still alive.
+    it('does not bump when the session was not revoked', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await expect(service.revokeOtherSession('user-1', 'a'.repeat(64))).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+  })
+
   describe('revokeAllExceptCurrent', () => {
     const userId = 'user-revoke-all'
 

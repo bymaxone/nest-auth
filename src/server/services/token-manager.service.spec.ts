@@ -4,7 +4,7 @@ import { Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -38,6 +38,10 @@ const mockJwtService = {
   verify: jest.fn()
 }
 
+const mockHooks = {
+  onRefreshTokenReuseDetected: jest.fn()
+}
+
 const mockRedis = {
   get: jest.fn(),
   set: jest.fn(),
@@ -52,7 +56,8 @@ const mockRedis = {
   bumpUserTokenEpoch: jest.fn().mockResolvedValue(1),
   revokeFamily: jest.fn().mockResolvedValue(1),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
-  revokeAllUserTokens: jest.fn().mockResolvedValue(undefined)
+  revokeAllUserTokens: jest.fn().mockResolvedValue(undefined),
+  readSessionOwner: jest.fn().mockResolvedValue('user-1')
 }
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
@@ -137,7 +142,8 @@ describe('TokenManagerService', () => {
         TokenManagerService,
         { provide: JwtService, useValue: mockJwtService },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
-        { provide: AuthRedisService, useValue: mockRedis }
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
       ]
     }).compile()
 
@@ -574,7 +580,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, refreshGraceWindowSeconds: 0 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       armLiveRotation()
@@ -691,6 +698,70 @@ describe('TokenManagerService', () => {
 
     // Reuse detection (RFC 6819): replaying a consumed refresh token past its grace window is
     // the signature of a stolen token. The compromised lineage is revoked and the request still
+    // The strongest evidence of compromise the library produces, and it had no structured
+    // outlet: a token that was already exchanged has been presented again, so one of its two
+    // holders is not the owner. A consumer wanting to force a password reset, page an on-call,
+    // or raise the account's risk score had only an English log line to key on.
+    it('emits onRefreshTokenReuseDetected with the owner and the revoked family', async () => {
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+      mockRedis.readSessionOwner.mockResolvedValue('user-1')
+
+      await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      await Promise.resolve()
+
+      expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
+        { userId: 'user-1', familyId: FAMILY },
+        expect.anything()
+      )
+      // Emitted AFTER the revocation, so a consumer that reacts by paging someone is reacting
+      // to a lineage that is already dead rather than one still being torn down.
+      expect(mockRedis.revokeFamily).toHaveBeenCalledWith(FAMILY)
+    })
+
+    // Both failure shapes of the hook itself: a rejection from an `async` body and a throw
+    // from a synchronous one. Neither may change the refusal the caller receives.
+    it.each([
+      ['rejects', () => mockHooks.onRefreshTokenReuseDetected.mockRejectedValue(new Error('x'))],
+      [
+        'throws',
+        () =>
+          mockHooks.onRefreshTokenReuseDetected.mockImplementation(() => {
+            throw new Error('x')
+          })
+      ]
+    ])('still refuses when the reuse hook %s', async (_label, arrange) => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+      mockRedis.readSessionOwner.mockResolvedValue('user-1')
+      arrange()
+
+      await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        'onRefreshTokenReuseDetected hook threw'
+      )
+      errorSpy.mockRestore()
+    })
+
+    // A replay whose live key is already gone leaves no owner to read. The hook is skipped
+    // rather than fired with an empty identity a consumer would have to guess about.
+    it('skips the reuse hook when the session owner cannot be read', async () => {
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+      mockRedis.readSessionOwner.mockResolvedValue('')
+
+      await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockHooks.onRefreshTokenReuseDetected).not.toHaveBeenCalled()
+    })
+
     // fails as REFRESH_TOKEN_INVALID — the reaction never resurrects the token.
     it('should revoke the compromised family when a consumed token is replayed', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
@@ -780,7 +851,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       const bornAt = new Date(Date.now() - 31 * 86_400_000).toISOString()
@@ -832,7 +904,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
 
@@ -877,7 +950,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
 
@@ -920,7 +994,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       const bornAt = new Date(Date.now() - 29 * 86_400_000).toISOString()
@@ -959,7 +1034,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       // Pinned: real time advances between building the record and reading it, which would
@@ -1006,7 +1082,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: capDays }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       const session = JSON.stringify({
@@ -1620,7 +1697,8 @@ describe('TokenManagerService', () => {
               jwt: { ...mockOptions.jwt, refreshGraceWindowSeconds: 0 }
             }
           },
-          { provide: AuthRedisService, useValue: mockRedis }
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
         ]
       }).compile()
       armLivePlatformRotation()

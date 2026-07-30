@@ -194,6 +194,20 @@ describe('sessions flow (E2E)', () => {
 
       // Assert — controller declares HttpStatus.NO_CONTENT (204).
       expect(res.status).toBe(204)
+
+      // Revoking a named session bumps the token epoch: deleting the refresh session stops
+      // rotation but says nothing about the stateless access token its holder already carries,
+      // and someone revoking a device they believe is compromised is making a decision about
+      // *right now*. The collateral is that every device — including this one — loses its
+      // access token and re-mints one on the next rotation, which the shipped client does
+      // silently. This test holds a bare bearer token, so it does that rotation by hand.
+      const rotated = await request(app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken: currentRefreshToken })
+      expect(rotated.status).toBe(200)
+      const rotatedBody = rotated.body as { accessToken: string; refreshToken: string }
+      currentAccessToken = rotatedBody.accessToken
+      currentRefreshToken = rotatedBody.refreshToken
     })
 
     // Verifies that GET /sessions returns only two sessions after one was explicitly revoked.

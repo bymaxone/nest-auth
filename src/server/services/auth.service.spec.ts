@@ -90,7 +90,9 @@ const mockHooks = {
   beforeLogin: jest.fn(),
   afterLogin: jest.fn(),
   afterLogout: jest.fn(),
-  afterEmailVerified: jest.fn()
+  afterEmailVerified: jest.fn(),
+  onLoginFailed: jest.fn(),
+  onLockout: jest.fn()
 }
 
 const mockPasswordService = {
@@ -539,6 +541,140 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockUserRepo.updateLastLogin.mockResolvedValue(undefined)
       mockHooks.afterLogin.mockResolvedValue(undefined)
+    })
+
+    // Every other hook fires on a success path, which left the failure side of authentication
+    // with no structured seam: the events that matter most to detection existed only as
+    // English log lines whose wording is not a contract. ASVS v5 §16.3.1 expects the outcome
+    // of every authentication operation to be logged, and §6.1.1 an *adaptive* response, which
+    // needs a signal to adapt to.
+    it('emits onLoginFailed for an unknown address, with no userId', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLoginFailed).toHaveBeenCalledWith(
+        // No `userId`: the account does not exist, which is exactly the credential-stuffing
+        // signal a consumer wants — and the thing the uniform response deliberately hides
+        // from the caller but not from the hook.
+        expect.objectContaining({
+          email: dto.email,
+          tenantId: 'tenant-1',
+          reason: 'invalid_credentials'
+        }),
+        expect.anything()
+      )
+      expect(mockHooks.onLoginFailed.mock.calls[0]?.[0]).not.toHaveProperty('userId')
+    })
+
+    // A wrong password against a real account carries the id, which is what separates "someone
+    // is guessing at this account" from "someone is spraying addresses".
+    it('emits onLoginFailed with the userId when the password is wrong', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLoginFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: USER.id, reason: 'invalid_credentials' }),
+        expect.anything()
+      )
+    })
+
+    // The blocked and unverified refusals are distinct reasons: a consumer counting
+    // credential-stuffing attempts must not have them inflated by an account that simply has
+    // not finished onboarding.
+    it('emits onLoginFailed with reason account_blocked', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, status: 'banned' })
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLoginFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'account_blocked', userId: USER.id }),
+        expect.anything()
+      )
+    })
+
+    it('emits onLoginFailed with reason email_not_verified', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, emailVerification: { required: true, otpTtlSeconds: 600 } }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+
+      await expect(module.get(AuthService).login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLoginFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'email_not_verified', userId: USER.id }),
+        expect.anything()
+      )
+    })
+
+    // The lockout signal has to fire on the attempt that CROSSES the threshold, not on the next
+    // one: an attacker who trips the lock and walks away would otherwise never produce the
+    // event, and the account would sit locked with nothing having announced it.
+    it('emits onLockout on the attempt that crosses the threshold', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+      // Not locked on entry, locked once the failure is recorded.
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(900)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await Promise.resolve()
+
+      expect(mockHooks.onLockout).toHaveBeenCalledWith(
+        expect.objectContaining({ email: dto.email, retryAfterSeconds: 900 }),
+        expect.anything()
+      )
+    })
+
+    // The same for a hook that REJECTS rather than throwing. Both arms matter: a consumer
+    // writing `async onLoginFailed()` produces the rejection, one writing a synchronous body
+    // produces the throw, and neither may reach the caller.
+    it('still refuses when the onLoginFailed hook rejects, and logs it', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      mockHooks.onLoginFailed.mockRejectedValue(new Error('siem unreachable'))
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      // Let the rejection settle so the handler runs before the assertion.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        'onLoginFailed hook threw'
+      )
+      errorSpy.mockRestore()
+    })
+
+    // A hook that throws must not change the answer the caller gets — the refusal is still a
+    // refusal, and a consumer's SIEM being down is not an authentication decision.
+    it('still refuses when the onLoginFailed hook throws', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+      mockHooks.onLoginFailed.mockImplementation(() => {
+        throw new Error('siem down')
+      })
+
+      await expect(service.login(dto, mockReq)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
     })
 
     // Verifies that a successful login returns the full AuthResult with tokens.

@@ -164,6 +164,6 @@ export class SessionController {
     @CurrentUser() user: DashboardJwtPayload,
     @Param('id') id: string
   ): Promise<void> {
-    await this.sessionService.revokeSession(user.sub, id)
+    await this.sessionService.revokeOtherSession(user.sub, id)
   }
 }

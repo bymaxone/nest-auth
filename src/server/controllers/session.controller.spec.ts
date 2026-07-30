@@ -26,7 +26,8 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 const mockSessionService = {
   listSessions: jest.fn(),
   revokeAllExceptCurrent: jest.fn(),
-  revokeSession: jest.fn()
+  revokeSession: jest.fn(),
+  revokeOtherSession: jest.fn()
 }
 
 const mockTokenDelivery = {
@@ -260,29 +261,32 @@ describe('SessionController', () => {
     const SESSION_ID = 'b'.repeat(64)
 
     // Verifies that revokeSession calls the service with the authenticated user's sub and the session ID.
-    it('should call sessionService.revokeSession with user.sub and the session id', async () => {
-      mockSessionService.revokeSession.mockResolvedValue(undefined)
+    it('should call sessionService.revokeOtherSession with user.sub and the session id', async () => {
+      mockSessionService.revokeOtherSession.mockResolvedValue(undefined)
 
       await controller.revokeSession(JWT_PAYLOAD, SESSION_ID)
 
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(JWT_PAYLOAD.sub, SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        SESSION_ID
+      )
     })
 
     // Verifies that the controller binds the caller's own sub as the ownership key so users cannot revoke other users' sessions.
     it('should use the authenticated user sub as the ownership key (BOLA prevention)', async () => {
       const differentUserPayload = { ...JWT_PAYLOAD, sub: 'attacker-999' }
-      mockSessionService.revokeSession.mockResolvedValue(undefined)
+      mockSessionService.revokeOtherSession.mockResolvedValue(undefined)
 
       await controller.revokeSession(differentUserPayload, SESSION_ID)
 
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
-      expect(mockSessionService.revokeSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
     })
 
     // Verifies that SESSION_NOT_FOUND thrown by the service propagates to the caller unchanged.
-    it('should propagate SESSION_NOT_FOUND from sessionService.revokeSession', async () => {
+    it('should propagate SESSION_NOT_FOUND from sessionService.revokeOtherSession', async () => {
       const serviceError = new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-      mockSessionService.revokeSession.mockRejectedValue(serviceError)
+      mockSessionService.revokeOtherSession.mockRejectedValue(serviceError)
 
       let caughtError: unknown
       try {
