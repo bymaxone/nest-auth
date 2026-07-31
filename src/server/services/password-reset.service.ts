@@ -224,7 +224,7 @@ export class PasswordResetService {
    * @param dto - Validated DTO with `email`, `newPassword`, `tenantId`, and one proof field.
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` when the proof is absent,
    *   consumed, expired, or method-mismatch detected.
-   * @throws {@link AuthException} `OTP_INVALID` / `OTP_EXPIRED` / `OTP_MAX_ATTEMPTS` for
+   * @throws {@link AuthException} `OTP_INVALID` — one answer for every OTP failure — for
    *   OTP-path failures.
    */
   async resetPassword(dto: ResetPasswordDto, req: Request): Promise<void> {
@@ -301,9 +301,8 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO with `email`, `tenantId`, and `otp`.
    * @returns The raw `verifiedToken` string (64-char hex) to forward to the client.
-   * @throws {@link AuthException} `OTP_EXPIRED` when the OTP is not in Redis.
-   * @throws {@link AuthException} `OTP_MAX_ATTEMPTS` when the attempt limit is reached.
-   * @throws {@link AuthException} `OTP_INVALID` when the OTP does not match.
+   * @throws {@link AuthException} `OTP_INVALID` for every OTP failure — a wrong code, a
+   *   record that is not in Redis, and an exhausted attempt ceiling are indistinguishable.
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` when the user is not
    *   found after OTP verification (prevents issuing tokens for non-existent accounts).
    */

@@ -102,7 +102,8 @@ export class PasswordResetController {
    *
    * @param dto - Validated DTO with `email`, `newPassword`, `tenantId`, and one proof field.
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` on invalid proof.
-   * @throws {@link AuthException} `OTP_INVALID` / `OTP_EXPIRED` / `OTP_MAX_ATTEMPTS`
+   * @throws {@link AuthException} `OTP_INVALID` — for a wrong code, a missing record, and
+   *   an exhausted attempt ceiling alike
    *   for OTP-path failures.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.resetPassword)
@@ -168,8 +169,8 @@ export class PasswordResetController {
    *
    * @param dto - Validated DTO with `email`, `tenantId`, and `otp`.
    * @returns Object containing the `verifiedToken` to pass to `reset-password`.
-   * @throws {@link AuthException} `OTP_EXPIRED` when the OTP is not in Redis.
-   * @throws {@link AuthException} `OTP_MAX_ATTEMPTS` when the attempt limit is reached.
+   * @throws {@link AuthException} `OTP_INVALID` for every failure — a wrong code, a record
+   *   that is not in Redis, and an exhausted attempt ceiling are indistinguishable.
    * @throws {@link AuthException} `OTP_INVALID` when the OTP does not match.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.verifyOtp)

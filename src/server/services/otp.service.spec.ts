@@ -181,35 +181,32 @@ describe('OtpService', () => {
       expect(executable).not.toContain('cjson')
     })
 
-    // Scenario: the record is gone (TTL elapsed). Expected: OTP_EXPIRED.
-    it('should throw OTP_EXPIRED when the record is gone', async () => {
-      armScript('EXPIRED')
-
-      await expect(service.verify('email_verification', 'user-hash', CODE)).rejects.toThrow(
-        AuthException
-      )
-      try {
-        await service.verify('email_verification', 'user-hash', CODE)
-      } catch (e) {
-        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_EXPIRED)
-      }
-    })
-
-    // Scenario: the attempt ceiling was already reached. Expected: OTP_MAX_ATTEMPTS, and the
-    // script consumed the record so it cannot be probed again.
-    it('should throw OTP_MAX_ATTEMPTS at the ceiling', async () => {
-      armScript('MAX')
+    // Scenario: every way an OTP verification can fail. Expected: one answer, `OTP_INVALID`,
+    // for all of them.
+    //
+    // Telling them apart defeated the anti-enumeration in front of this. `forgot-password`
+    // answers the same whether or not the address exists, but only writes an OTP record when
+    // it does — so a caller could request a reset for an address and submit one wrong code:
+    // `OTP_EXPIRED` meant "no record was ever written, no account here", `OTP_INVALID` meant
+    // "there is one". `OTP_MAX_ATTEMPTS` said the same thing more slowly, since only a record
+    // that exists can reach a ceiling. One extra request turned a uniform answer definitive.
+    it.each([
+      ['the record is gone', 'EXPIRED' as const, CODE],
+      ['the attempt ceiling was reached', 'MAX' as const, CODE],
+      ['the code is simply wrong', 'PRESENT' as const, '999999']
+    ])('answers OTP_INVALID when %s', async (_label, tag, submitted) => {
+      armScript(tag, CODE)
 
       try {
-        await service.verify('email_verification', 'user-hash', CODE)
+        await service.verify('email_verification', 'user-hash', submitted)
         throw new Error('expected a rejection')
       } catch (e) {
-        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_MAX_ATTEMPTS)
+        expect(e).toBeInstanceOf(AuthException)
+        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_INVALID)
       }
     })
 
-    // Scenario: a wrong code while under the ceiling. Expected: OTP_INVALID — distinct from
-    // both EXPIRED and MAX_ATTEMPTS, so a caller can tell "try again" from "start over".
+    // Scenario: a wrong code while under the ceiling. Expected: OTP_INVALID.
     it('should throw OTP_INVALID for a wrong code below the ceiling', async () => {
       armScript('PRESENT', CODE)
 
@@ -237,23 +234,23 @@ describe('OtpService', () => {
     })
 
     // Scenario: the script answers with something outside its documented contract — a shape a
-    // corrupt record or a future script change could produce. Expected: OTP_EXPIRED, the same
-    // answer a missing record gets. Why: any other answer would tell a caller that *something*
-    // is stored under their identifier, which is the enumeration oracle the timing floor and
-    // the uniform error codes exist to close.
+    // corrupt record or a future script change could produce. Expected: the same OTP_INVALID
+    // every other failure gets. Why: any other answer would tell a caller that *something* is
+    // stored under their identifier, which is the enumeration oracle the timing floor and the
+    // single error code exist to close.
     it.each([
       ['a non-array reply', 'nonsense'],
       ['a short array', ['PRESENT']],
       ['an unknown tag', ['WAT', 'x']],
       ['a null reply', null]
-    ])('should treat %s as expired', async (_label, reply) => {
+    ])('should treat %s as a plain failure', async (_label, reply) => {
       mockRedis.eval.mockResolvedValue(reply)
 
       try {
         await service.verify('email_verification', 'user-hash', CODE)
         throw new Error('expected a rejection')
       } catch (e) {
-        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_EXPIRED)
+        expect(errorCodeOf(e)).toBe(AUTH_ERROR_CODES.OTP_INVALID)
       }
     })
 

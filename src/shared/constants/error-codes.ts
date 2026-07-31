@@ -53,8 +53,19 @@ export const AUTH_ERROR_CODES = {
   PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
 
   // OTP (email verification, password reset via OTP)
+
+  /**
+   * The only code an OTP failure reaches a client with. A wrong code, a record that is not in
+   * Redis, and an exhausted attempt ceiling are deliberately indistinguishable: `forgot-password`
+   * answers the same whether or not the address exists, but only writes an OTP record when it
+   * does, so telling them apart made that uniform answer definitive after one extra request.
+   */
   OTP_INVALID: 'auth.otp_invalid',
+
+  /** Internal-only: the OTP record was absent. Never on the wire — see {@link OTP_INVALID}. */
   OTP_EXPIRED: 'auth.otp_expired',
+
+  /** Internal-only: the attempt ceiling was hit. Never on the wire — see {@link OTP_INVALID}. */
   OTP_MAX_ATTEMPTS: 'auth.otp_max_attempts',
 
   // Authorization

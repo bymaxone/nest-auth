@@ -178,9 +178,9 @@ export class OtpService {
    * @param purpose - Logical purpose matching the one used in {@link store}.
    * @param identifier - User-scoped identifier matching the one used in {@link store}.
    * @param code - The OTP code supplied by the user.
-   * @throws {@link AuthException} with `OTP_EXPIRED` if the key is not in Redis.
-   * @throws {@link AuthException} with `OTP_MAX_ATTEMPTS` if the attempt limit is reached.
-   * @throws {@link AuthException} with `OTP_INVALID` if the code does not match.
+   * @throws {@link AuthException} with `OTP_INVALID` — for a missing record, an exhausted
+   *   attempt ceiling, and a wrong code alike. The three are deliberately indistinguishable:
+   *   see the note in the body.
    */
   async verify(purpose: string, identifier: string, code: string): Promise<void> {
     const start = Date.now()
@@ -195,16 +195,29 @@ export class OtpService {
     const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [code, String(MAX_ATTEMPTS)])
     const [tag, storedCode] = parseOtpVerifyReply(raw)
 
+    // Every failure below answers `OTP_INVALID`, in the same time, whatever went wrong.
+    //
+    // Distinguishing them defeated the anti-enumeration the flows in front of this were built
+    // for. `forgot-password` deliberately answers the same whether or not the address exists —
+    // but it only writes an OTP record when it does, so a caller could ask for a reset and then
+    // submit one wrong code: `OTP_EXPIRED` meant "no record was ever written, that address has
+    // no account", `OTP_INVALID` meant "there is one". One extra request turned a uniform
+    // answer into a definitive one. `OTP_MAX_ATTEMPTS` said the same thing more slowly: only a
+    // record that exists can reach a ceiling.
+    //
+    // `OTP_EXPIRED` and `OTP_MAX_ATTEMPTS` stay in the catalog as internal, diagnostic codes —
+    // the same treatment `TOKEN_REVOKED` and `TOKEN_EXPIRED` already get, for the same reason —
+    // and the distinction is recorded in the logs rather than in the response.
     if (tag === 'EXPIRED') {
       // Also the corrupted-record answer: the script's `cjson.decode` throws, the eval fails,
       // and the caller cannot distinguish corruption from natural expiry — which is the point.
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-      throw new AuthException(AUTH_ERROR_CODES.OTP_EXPIRED)
+      throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
     if (tag === 'MAX') {
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-      throw new AuthException(AUTH_ERROR_CODES.OTP_MAX_ATTEMPTS)
+      throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
     // The script's own comparison only decided the bump-or-consume; this is the authoritative

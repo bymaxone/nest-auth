@@ -150,13 +150,30 @@ export const AUTH_ERROR_CODES = {
   // OTP (email verification, password reset via OTP)
   // ---------------------------------------------------------------------------
 
-  /** Submitted OTP code does not match the stored value. */
+  /**
+   * An OTP verification failed. The **only** code an OTP failure ever answers with: a wrong
+   * code, a record that is not in Redis, and an exhausted attempt ceiling are deliberately
+   * indistinguishable, and take the same time.
+   *
+   * Telling them apart defeated the anti-enumeration in front of them. `forgot-password`
+   * answers the same whether or not the address exists, but only writes an OTP record when it
+   * does — so one wrong code afterwards used to say which it had been.
+   */
   OTP_INVALID: 'auth.otp_invalid',
 
-  /** OTP not found in Redis — TTL has expired. */
+  /**
+   * Internal-only: the OTP record was not in Redis. Never reaches a client — surfaced as
+   * {@link AUTH_ERROR_CODES.OTP_INVALID}, the same treatment {@link
+   * AUTH_ERROR_CODES.TOKEN_EXPIRED} gets. Kept for logs and for the shared error catalog,
+   * which rust-auth holds identical.
+   */
   OTP_EXPIRED: 'auth.otp_expired',
 
-  /** OTP verification failed more than 5 times — token is now locked. */
+  /**
+   * Internal-only: OTP verification hit the five-attempt ceiling. Never reaches a client —
+   * surfaced as {@link AUTH_ERROR_CODES.OTP_INVALID}, because only a record that exists can
+   * reach a ceiling, which is the same disclosure by a slower route.
+   */
   OTP_MAX_ATTEMPTS: 'auth.otp_max_attempts',
 
   // ---------------------------------------------------------------------------
