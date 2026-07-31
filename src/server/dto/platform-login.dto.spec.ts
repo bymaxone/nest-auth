@@ -188,28 +188,32 @@ describe('PlatformLoginDto — password field', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // @MinLength(12)
+  // @MinLength(1)
   // ---------------------------------------------------------------------------
 
-  describe('@MinLength(12)', () => {
-    // An 11-character password is one char below the minimum and must fail.
-    it('should fail validation for an 11-character password', async () => {
+  describe('@MinLength(1)', () => {
+    // The floor is 1, not the deployment's policy length. This is a login: the password may
+    // predate whatever the policy says today, so a policy floor here locks an operator out of
+    // the console with a validation error rather than an authentication one — and tells an
+    // unauthenticated caller what the policy is, before any key derivation runs. rust-auth
+    // bounds this field the same way and the dashboard login always has.
+    it('should accept a short password that predates the current policy', async () => {
       const { errors } = await buildAndValidate({
         email: 'admin@example.com',
-        password: 'ShortPass01'
-      })
-      const pwErrors = errors.filter((e) => e.property === 'password')
-      expect(pwErrors.length).toBeGreaterThan(0)
-    })
-
-    // Exactly 12 characters is the boundary value and must pass.
-    it('should pass validation for a 12-character password', async () => {
-      const { errors } = await buildAndValidate({
-        email: 'admin@example.com',
-        password: 'Exactly12Chr'
+        password: 'legacy'
       })
       const pwErrors = errors.filter((e) => e.property === 'password')
       expect(pwErrors).toHaveLength(0)
+    })
+
+    // Blank is still refused: nobody buys a key derivation for free.
+    it('should reject an empty password', async () => {
+      const { errors } = await buildAndValidate({
+        email: 'admin@example.com',
+        password: ''
+      })
+      const pwErrors = errors.filter((e) => e.property === 'password')
+      expect(pwErrors.length).toBeGreaterThan(0)
     })
   })
 

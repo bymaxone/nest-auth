@@ -18,9 +18,17 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { plainToInstance } from 'class-transformer'
+import { validate } from 'class-validator'
 import type { Redis } from 'ioredis'
 
 import { AuthController } from './controllers/auth.controller'
+import { AcceptInvitationDto } from './dto/accept-invitation.dto'
+import { LoginDto } from './dto/login.dto'
+import { MfaVerifyDto } from './dto/mfa-verify.dto'
+import { RegisterDto } from './dto/register.dto'
+import { VerifyEmailDto } from './dto/verify-email.dto'
+import { VerifyOtpDto } from './dto/verify-otp.dto'
 import { encrypt } from './crypto/aes-gcm'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
@@ -47,6 +55,7 @@ interface WireContract {
   }
   redisKeyPrefixes: Record<string, string>
   identifierPreimages: Record<string, string>
+  requestFieldBounds: Record<string, { min?: number; max?: number }>
   sessionIndexMembers: Record<string, string>
   familyIndexMembers: Record<string, string>
   rotationSemantics: Record<string, string>
@@ -224,6 +233,105 @@ describe('cross-implementation conformance', () => {
       expect(platformSessionIndex).not.toBe(dashboardSessionIndex)
       expect(contract.redisKeyPrefixes['platformSessionDetail']).not.toBe(dashboardSessionDetail)
     })
+  })
+
+  // -------------------------------------------------------------------------
+  // Request field bounds
+  // -------------------------------------------------------------------------
+
+  describe('request field bounds', () => {
+    /**
+     * A value of exactly `n` characters that is otherwise valid for the field. Numeric fields
+     * need digits and addresses need an `@`, so each bounded field says how to fill itself.
+     */
+    type Filler = (n: number) => string
+    const text: Filler = (n) => 'a'.repeat(n)
+    const digits: Filler = (n) => '1'.repeat(n)
+    /** `a…a@e.com` — a well-formed address of exactly `n` characters. */
+    const address: Filler = (n) => `${'a'.repeat(Math.max(1, n - 6))}@e.com`
+
+    /**
+     * One DTO field per contract bound: the DTO, the property, a payload that is otherwise
+     * valid, and how to fill the field to a given length.
+     *
+     * Driven through class-validator rather than read out of the decorators: what matters is
+     * the length the endpoint actually accepts, and a boundary test says that in a way a
+     * decorator scan cannot.
+     */
+    const BOUNDED_FIELDS: [string, new () => object, string, Record<string, unknown>, Filler][] = [
+      ['email', LoginDto, 'email', { password: 'x', tenantId: 't' }, address],
+      [
+        'newPassword',
+        RegisterDto,
+        'password',
+        { email: 'a@e.com', name: 'Ok', tenantId: 't' },
+        text
+      ],
+      ['provenPassword', LoginDto, 'password', { email: 'a@e.com', tenantId: 't' }, text],
+      ['tenantId', LoginDto, 'tenantId', { email: 'a@e.com', password: 'x' }, text],
+      [
+        'displayName',
+        RegisterDto,
+        'name',
+        { email: 'a@e.com', password: 'hunter2hunter2', tenantId: 't' },
+        text
+      ],
+      [
+        'invitationDisplayName',
+        AcceptInvitationDto,
+        'name',
+        { token: 'a'.repeat(64), password: 'hunter2hunter2' },
+        text
+      ],
+      [
+        'singleUseToken',
+        AcceptInvitationDto,
+        'token',
+        { name: 'Ok', password: 'hunter2hunter2' },
+        text
+      ],
+      ['verificationOtp', VerifyEmailDto, 'otp', { email: 'a@e.com', tenantId: 't' }, digits],
+      ['resetOtp', VerifyOtpDto, 'otp', { email: 'a@e.com', tenantId: 't' }, digits],
+      ['totpCode', MfaVerifyDto, 'code', {}, digits]
+    ]
+
+    /** Whether `value` passes validation for `property` on `dto`. */
+    async function accepts(
+      Dto: new () => object,
+      property: string,
+      rest: Record<string, unknown>,
+      value: string
+    ): Promise<boolean> {
+      const errors = await validate(plainToInstance(Dto, { ...rest, [property]: value }))
+      return !errors.some((e) => e.property === property)
+    }
+
+    // Verifies each bound is the length the endpoint actually enforces, at both edges. A bound
+    // that differs between the two implementations means the same request is accepted by one
+    // backend and refused by the other, which for a deployment running both behind one address
+    // is a difference nobody can explain from the outside.
+    //
+    // The address is the one field whose upper edge is not asserted from below: `@IsEmail`
+    // already refuses an address near that length on its own grounds (the domain-label limits),
+    // so "accepted at exactly 255" is not a property this DTO has. The half that matters — that
+    // an oversized value is refused — is asserted for it like every other field.
+    it.each(BOUNDED_FIELDS)(
+      'enforces the contract bound for %s',
+      async (name, Dto, property, rest, fill) => {
+        const bound = contract.requestFieldBounds[name]
+        expect(bound).toBeDefined()
+
+        if (bound?.max !== undefined) {
+          if (name !== 'email') {
+            expect(await accepts(Dto, property, rest, fill(bound.max))).toBe(true)
+          }
+          expect(await accepts(Dto, property, rest, fill(bound.max + 1))).toBe(false)
+        }
+        if (bound?.min !== undefined && bound.min > 1) {
+          expect(await accepts(Dto, property, rest, fill(bound.min - 1))).toBe(false)
+        }
+      }
+    )
   })
 
   // -------------------------------------------------------------------------

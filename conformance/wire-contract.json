@@ -115,6 +115,33 @@
     "inviteeIndex": "hmac_sha256(hmacKey, '{email}')"
   },
 
+  "requestFieldBounds": {
+    "$comment": [
+      "The length bounds every request DTO applies to a shared field, held identical by both",
+      "implementations. They matter beyond tidiness: an unbounded field on a public route is a",
+      "free byte sink to carry, parse and log, and a bound that differs between the two backends",
+      "means the same request is accepted by one and refused by the other — for a deployment that",
+      "runs both behind one address, that is a difference nobody can explain from the outside.",
+      "",
+      "The password bounds split deliberately. Setting a password enforces the policy minimum;",
+      "PROVING one (login, or the current-password re-proof) floors at 1, because the credential",
+      "may predate whatever the policy says today and a policy floor on a login door refuses a",
+      "legitimate holder with a validation error while telling an unauthenticated caller what the",
+      "policy is, before any key derivation runs."
+    ],
+    "email": { "max": 255 },
+    "newPassword": { "min": 8, "max": 128 },
+    "provenPassword": { "min": 1, "max": 128 },
+    "tenantId": { "min": 1, "max": 128 },
+    "displayName": { "min": 2, "max": 128 },
+    "invitationDisplayName": { "min": 2, "max": 100 },
+    "singleUseToken": { "min": 64, "max": 64 },
+    "resetOtp": { "min": 4, "max": 8 },
+    "verificationOtp": { "min": 6, "max": 6 },
+    "totpCode": { "min": 6, "max": 6 },
+    "role": { "min": 1, "max": 64 },
+    "opaqueToken": { "min": 1, "max": 2048 }
+  },
   "sessionIndexMembers": {
     "$comment": [
       "Index members are FULL key suffixes, not bare hashes. The member has to name its own",
