@@ -86,10 +86,7 @@ export class PlatformAuthService {
     // resolves the same admin. Merged immutably to avoid mutating the validated DTO.
     dto = { ...dto, email: normalizeEmail(dto.email) }
 
-    // HMAC-SHA-256 of 'platform:' + email prevents PII in Redis keys and blocks
-    // rainbow-table reversal. The derived `hmacKey` is used so the Redis-identifier
-    // security domain stays independent from the JWT-signing secret.
-    const bfIdentifier = hmacSha256('platform:' + dto.email, this.options.hmacKey)
+    const bfIdentifier = this.lockoutIdentifier(dto.email)
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
@@ -309,6 +306,28 @@ export class PlatformAuthService {
    *
    * @param userId - The platform admin's internal ID.
    */
+  /**
+   * Derives the brute-force identifier for a platform login: `hmac('platform:{email}')`.
+   *
+   * HMAC rather than a bare digest keeps PII out of the Redis key and blocks dictionary
+   * reversal, and the derived `hmacKey` keeps the identifier domain independent of the
+   * JWT-signing secret. The `platform:` namespace is what keeps this counter disjoint from
+   * the dashboard's: without it, a tenant whose id is literally `platform` produced a
+   * byte-identical identifier, so unauthenticated dashboard logins against an operator's
+   * address could lock that operator out of the console — and a successful one cleared the
+   * lockout mid-attack.
+   *
+   * Single source on purpose: every platform site that touches the counter derives it here,
+   * so no two of them can drift apart. The preimage is pinned by
+   * `conformance/wire-contract.json` and shared byte-for-byte with rust-auth.
+   *
+   * @param email - The canonicalized address.
+   * @returns Hex HMAC-SHA-256 identifier.
+   */
+  private lockoutIdentifier(email: string): string {
+    return hmacSha256(`platform:${email}`, this.options.hmacKey)
+  }
+
   async revokeAllPlatformSessions(userId: string): Promise<void> {
     await this.redis.invalidateUserSessions(userId, 'platform')
     await this.redis.bumpUserTokenEpoch(userId, 'platform')

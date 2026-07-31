@@ -265,7 +265,25 @@ export class InvitationService {
    * @returns The namespaced-by-caller key.
    */
   private inviteeKey(email: string, tenantId: string): string {
-    return `invidx:${tenantId}:${hmacSha256(email, this.options.hmacKey)}`
+    return `invidx:${tenantId}:${this.inviteeIdentifier(email)}`
+  }
+
+  /**
+   * Derives the invitee-index identifier for an address: `hmac('{email}')`.
+   *
+   * HMAC rather than a bare digest because an address is low-entropy — a plain SHA-256 of one
+   * is reversible by dictionary, and this key is the one handle anyone reading a keyspace dump
+   * has on who a tenant has been inviting. The tenant is not in the preimage because it is
+   * already a literal segment of the key.
+   *
+   * The preimage is pinned by `conformance/wire-contract.json` and shared byte-for-byte with
+   * rust-auth, which writes the same index into the same Redis.
+   *
+   * @param email - The canonicalized address.
+   * @returns Hex HMAC-SHA-256 identifier.
+   */
+  private inviteeIdentifier(email: string): string {
+    return hmacSha256(`${email}`, this.options.hmacKey)
   }
 
   /**

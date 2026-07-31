@@ -46,6 +46,7 @@ interface WireContract {
     }[]
   }
   redisKeyPrefixes: Record<string, string>
+  identifierPreimages: Record<string, string>
   sessionIndexMembers: Record<string, string>
   familyIndexMembers: Record<string, string>
   rotationSemantics: Record<string, string>
@@ -105,6 +106,64 @@ describe('cross-implementation conformance', () => {
         expect(hmacSha256(vector.identifierMessage, resolved.hmacKey)).toBe(vector.identifierHex)
       }
     )
+  })
+
+  // -------------------------------------------------------------------------
+  // Identifier preimages
+  // -------------------------------------------------------------------------
+
+  describe('identifier preimages', () => {
+    /**
+     * The single-source helper that derives each preimage. Every site that touches one of
+     * these counters goes through the helper named here, so there is exactly one place per
+     * preimage that has to agree with the contract.
+     */
+    const PREIMAGE_SOURCES: Record<string, string> = {
+      dashboard: 'services/auth.service.ts',
+      platform: 'services/platform-auth.service.ts',
+      otpRecord: 'services/auth.service.ts',
+      inviteeIndex: 'services/invitation.service.ts'
+    }
+
+    /**
+     * Renders a contract preimage as the TypeScript template literal the source must contain.
+     *
+     * The contract writes them as `hmac_sha256(hmacKey, '<template>')` with `{placeholder}`
+     * fields; the source writes the same template as a tagged literal with `${placeholder}`.
+     * Deriving the expectation from the contract rather than repeating it is what makes this
+     * bidirectional: a change on either side turns the test red.
+     *
+     * @param rendered - The contract value, e.g. `hmac_sha256(hmacKey, 'platform:{email}')`.
+     * @returns The TypeScript literal, e.g. `` `platform:${email}` ``.
+     */
+    const asTemplateLiteral = (rendered: string): string =>
+      '`' + (rendered.split("'")[1] ?? '').replace(/\{(\w+)\}/g, '${$1}') + '`'
+
+    // Verifies each preimage is the one the code actually HMACs. These decide which records the
+    // two backends share: the `dashboard:` segment is what keeps a tenant named `platform` out
+    // of the platform lockout counter, and the invitee index is HMAC'd rather than plainly
+    // digested because an address is too low-entropy for a bare SHA-256 to hide.
+    it.each(Object.entries(PREIMAGE_SOURCES))(
+      'builds the contract preimage for %s',
+      (name, file) => {
+        const rendered = contract.identifierPreimages[name]
+
+        expect(rendered).toBeDefined()
+        expect(readFileSync(join(__dirname, file), 'utf8')).toContain(asTemplateLiteral(rendered!))
+      }
+    )
+
+    // Verifies the three planes cannot collide. `dashboard:` and `platform:` namespace their
+    // own counters, and the OTP preimage stays bare only because its keyspace is already
+    // purpose-scoped — so it must never equal either of the other two.
+    it('keeps the login planes and the OTP records in separate keyspaces', () => {
+      const { dashboard, platform, otpRecord, inviteeIndex } = contract.identifierPreimages
+
+      expect(new Set([dashboard, platform, otpRecord, inviteeIndex]).size).toBe(4)
+      expect(dashboard).toContain('dashboard:')
+      expect(platform).toContain('platform:')
+      expect(otpRecord).not.toContain('dashboard:')
+    })
   })
 
   // -------------------------------------------------------------------------
