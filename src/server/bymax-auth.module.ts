@@ -122,7 +122,7 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
  *   this is intentional for testing environments. Supply a real `BYMAX_AUTH_EMAIL_PROVIDER`
  *   in production to ensure reset emails are delivered.
  * - **MFA is opt-in.** Set `controllers: { mfa: true }` **on the `registerAsync()`
- *   call** (not inside `useFactory`) **and** supply `mfa.encryptionKey` + `mfa.issuer`
+ *   call** (not inside `useFactory`, which throws at startup if you do) **and** supply `mfa.encryptionKey` + `mfa.issuer`
  *   in the factory return value. Omitting either leaves `MfaService` and
  *   `MfaRequiredGuard` completely unregistered. Setting `controllers.mfa: true`
  *   without the `mfa` configuration group causes a startup error.
@@ -215,6 +215,20 @@ export class BymaxAuthModule {
       provide: BYMAX_AUTH_OPTIONS,
       useFactory: async (...args: unknown[]): Promise<ResolvedOptions> => {
         const userOptions = await options.useFactory(...args)
+
+        // `controllers` belongs on the `registerAsync()` call, never in the factory's return
+        // value. Nest decides a module's shape before any factory runs, so a `controllers` key
+        // here is read by nothing: the flags are silently dropped and the endpoints they were
+        // meant to enable are simply absent — a 404 whose cause is in a different object from
+        // the one the developer edited. It was documented; documentation is not a control.
+        if ('controllers' in (userOptions as unknown as Record<string, unknown>)) {
+          throw new Error(
+            '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not ' +
+              'returned from useFactory — the module is assembled before the factory runs, so ' +
+              'flags returned here are ignored and the endpoints are never registered.'
+          )
+        }
+
         const resolved = resolveOptions(userOptions)
 
         // Cross-validate: controllers.mfa: true without the mfa config group would

@@ -91,8 +91,7 @@ export const DEFAULT_OPTIONS = {
 
   sessions: {
     enabled: false,
-    defaultMaxSessions: 5,
-    evictionStrategy: 'fifo' as const
+    defaultMaxSessions: 5
   },
 
   bruteForce: {

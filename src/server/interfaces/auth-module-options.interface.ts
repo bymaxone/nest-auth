@@ -463,18 +463,16 @@ export interface BymaxAuthModuleOptions {
      */
     maxSessionsResolver?: (user: AuthUser) => number | Promise<number>
 
-    /**
-     * Eviction strategy when the session limit is reached.
-     * `'fifo'` removes the oldest session to make room for the new one.
-     * Default: `'fifo'`
+    /*
+     * There is no eviction-strategy option: reaching the limit always evicts the oldest
+     * session. A knob with one possible value configures nothing, and the option that used to
+     * be here only looked like a choice.
      *
-     * @remarks
-     * Under FIFO eviction, an attacker who establishes a new session will silently
-     * evict a legitimate user's session with no visible signal. Implement the
-     * `onSessionEvicted` hook in your `IAuthHooks` class to detect and alert on
-     * unexpected evictions, which may indicate an account takeover attempt.
+     * The caveat it carried is real and still applies: eviction is silent, so an attacker who
+     * opens a session pushes a legitimate one out with no signal to its owner. Implement
+     * `onSessionEvicted` in your `IAuthHooks` to detect and alert on unexpected evictions,
+     * which may indicate an account takeover.
      */
-    evictionStrategy?: 'fifo'
   }
 
   /**

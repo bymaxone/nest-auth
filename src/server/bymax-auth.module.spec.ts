@@ -175,6 +175,28 @@ describe('BymaxAuthModule', () => {
       ).rejects.toThrow(/insufficient entropy/)
     })
 
+    // Scenario: `controllers` returned from `useFactory` instead of passed to `registerAsync`.
+    // Expected: a startup error naming the mistake. Why: Nest decides a module's shape before
+    // any factory runs, so the flags are read by nothing — the endpoints they were meant to
+    // enable are simply absent, and the 404 that follows has its cause in a different object
+    // from the one the developer edited. This was documented for as long as the trap existed;
+    // documentation is not a control.
+    it('should throw when controllers is returned from useFactory rather than passed in', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => ({ ...validOptions, controllers: { mfa: true } }) as never,
+              extraProviders: [
+                { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+                { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+              ]
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/`controllers` must be passed to registerAsync\(\) itself/)
+    })
+
     // Verifies that the module fails when controllers.mfa: true is set without the mfa config group.
     it('should throw when controllers.mfa is true but mfa config group is missing', async () => {
       await expect(

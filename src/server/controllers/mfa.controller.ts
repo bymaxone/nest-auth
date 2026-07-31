@@ -34,7 +34,7 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
-import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
@@ -307,14 +307,17 @@ export class MfaController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
   async disable(
-    @CurrentUser() user: DashboardJwtPayload | PlatformJwtPayload,
+    @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaDisableDto,
     @Req() req: Request
   ): Promise<void> {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    const context = user.type === 'platform' ? 'platform' : 'dashboard'
-    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, context)
+    // Always the dashboard plane: `JwtAuthGuard` runs `assertTokenType(payload, 'dashboard')`,
+    // so a platform token cannot reach this controller at all. The platform surface has its
+    // own — `PlatformMfaController` — and the branch that used to read the plane off the
+    // payload here could never take its other arm.
+    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard')
   }
 
   /**
@@ -342,13 +345,13 @@ export class MfaController {
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
   async regenerateRecoveryCodes(
-    @CurrentUser() user: DashboardJwtPayload | PlatformJwtPayload,
+    @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaRegenerateRecoveryCodesDto,
     @Req() req: Request
   ): Promise<{ recoveryCodes: string[] }> {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    const context = user.type === 'platform' ? 'platform' : 'dashboard'
-    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, context)
+    // See `disable`: this controller is dashboard-only by its guard.
+    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'dashboard')
   }
 }

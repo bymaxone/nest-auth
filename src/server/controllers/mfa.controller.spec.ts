@@ -770,36 +770,31 @@ describe('MfaController', () => {
         'dashboard'
       )
     })
-
-    // Verifies that a PlatformJwtPayload user triggers context='platform' in the service call.
-    it('should pass context=platform when user.type is platform', async () => {
-      mockMfaService.disable.mockResolvedValue(undefined)
-      const platformUser = {
-        sub: 'admin-1',
-        type: 'platform' as const,
-        role: 'super-admin',
-        jti: 'jti',
-        mfaEnabled: true,
-        mfaVerified: false,
-        iat: 0,
-        exp: 9_999_999_999
-      }
-
-      await controller.disable(platformUser as never, dto as never, mockReq)
-
-      expect(mockMfaService.disable).toHaveBeenCalledWith(
-        'admin-1',
-        dto.code,
-        '1.2.3.4',
-        'TestBrowser',
-        'platform'
-      )
-    })
   })
 
   // ---------------------------------------------------------------------------
   // regenerateRecoveryCodes
   // ---------------------------------------------------------------------------
+
+  // This controller is dashboard-only by its guard: `JwtAuthGuard` runs
+  // `assertTokenType(payload, 'dashboard')`, so a platform token never reaches it and the
+  // platform surface has its own controller. The plane it passes to the service is therefore
+  // fixed, not read off the payload — a branch that read it could never take its other arm,
+  // and the tests that exercised it were feeding the method a payload the guard would refuse.
+  it('always acts on the dashboard plane, whatever a payload claims', async () => {
+    mockMfaService.disable.mockResolvedValue(undefined)
+    const impossible = { sub: 'admin-1', type: 'platform' as const, jti: 'jti' }
+
+    await controller.disable(impossible as never, { code: '123456' } as never, mockReq)
+
+    expect(mockMfaService.disable).toHaveBeenCalledWith(
+      'admin-1',
+      '123456',
+      expect.any(String),
+      expect.any(String),
+      'dashboard'
+    )
+  })
 
   describe('regenerateRecoveryCodes', () => {
     const dto = { code: '654321' }
@@ -825,31 +820,6 @@ describe('MfaController', () => {
         'dashboard'
       )
       expect(result).toBe(REGENERATE_RESULT)
-    })
-
-    // Verifies that a PlatformJwtPayload user routes the call with context='platform'.
-    it('should pass context=platform when user.type is platform', async () => {
-      mockMfaService.regenerateRecoveryCodes.mockResolvedValue(REGENERATE_RESULT)
-      const platformUser = {
-        sub: 'admin-1',
-        type: 'platform' as const,
-        role: 'super-admin',
-        jti: 'jti',
-        mfaEnabled: true,
-        mfaVerified: false,
-        iat: 0,
-        exp: 9_999_999_999
-      }
-
-      await controller.regenerateRecoveryCodes(platformUser as never, dto as never, mockReq)
-
-      expect(mockMfaService.regenerateRecoveryCodes).toHaveBeenCalledWith(
-        'admin-1',
-        dto.code,
-        '1.2.3.4',
-        'TestBrowser',
-        'platform'
-      )
     })
 
     // Verifies that ip and userAgent fall back to empty strings when absent

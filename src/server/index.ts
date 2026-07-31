@@ -183,6 +183,10 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+// NOTE: `EmailChangeService` is only registered when `controllers.emailChange !== false`
+// (the default). Importing it for a host module with the controller disabled causes an
+// injection error — register it in `extraProviders` in that case.
+export { EmailChangeService } from './services/email-change.service'
 // `BruteForceService` is exported for consumers building their own lockout tooling. The
 // administrative unlock itself lives on `AuthService.unlockAccount`, because the counter is
 // keyed by an HMAC of `{tenantId}:{email}` under the library's own `hmacKey` — a key no
@@ -195,11 +199,19 @@ export { BruteForceService } from './services/brute-force.service'
 export { MfaService } from './services/mfa.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
+// NOTE: `InvitationService` is only registered when `controllers.invitations` is enabled.
+// Same caveat as the services above.
+export { InvitationService } from './services/invitation.service'
 // NOTE: PasswordResetService is only registered in the NestJS container when
 // controllers.passwordReset !== false (the default). Importing it here for
 // use in a host-app module where passwordReset is disabled will cause an
 // injection error — register it in extraProviders in that case.
 export { PasswordResetService } from './services/password-reset.service'
+// NOTE: `PlatformAuthService` is only registered when `controllers.platform` is enabled.
+// Same caveat as the services above. Exported because the platform identity surface has the
+// same reason to be driven from consumer code the dashboard one does — a custom console
+// route that issues an operator session without going through the bundled controller.
+export { PlatformAuthService } from './services/platform-auth.service'
 export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).

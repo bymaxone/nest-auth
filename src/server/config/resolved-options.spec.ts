@@ -91,7 +91,6 @@ describe('resolveOptions — success', () => {
     const resolved = resolveOptions(MINIMAL_OPTIONS)
     expect(resolved.sessions.enabled).toBe(false)
     expect(resolved.sessions.defaultMaxSessions).toBe(5)
-    expect(resolved.sessions.evictionStrategy).toBe('fifo')
   })
 
   // Verifies that email verification is required by default to protect new registrations.
