@@ -25,9 +25,10 @@ export const AUTH_ERROR_CODES = {
   TOKEN_EXPIRED: 'auth.token_expired',
   TOKEN_REVOKED: 'auth.token_revoked',
   TOKEN_INVALID: 'auth.token_invalid',
+  /** Internal-only: the request carried no credential. Never on the wire — see TOKEN_INVALID. */
+  TOKEN_MISSING: 'auth.token_missing',
+
   REFRESH_TOKEN_INVALID: 'auth.refresh_token_invalid',
-  SESSION_EXPIRED: 'auth.session_expired',
-  SESSION_LIMIT_REACHED: 'auth.session_limit_reached',
   SESSION_NOT_FOUND: 'auth.session_not_found',
 
   // Registration and email
@@ -42,15 +43,12 @@ export const AUTH_ERROR_CODES = {
   MFA_NOT_ENABLED: 'auth.mfa_not_enabled',
   MFA_SETUP_REQUIRED: 'auth.mfa_setup_required',
   MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
-  RECOVERY_CODE_INVALID: 'auth.recovery_code_invalid',
 
   // Password
-  PASSWORD_TOO_WEAK: 'auth.password_too_weak',
 
   /** The password appears in a known-breach corpus. */
   PASSWORD_COMPROMISED: 'auth.password_compromised',
   PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
-  PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
 
   // OTP (email verification, password reset via OTP)
 
@@ -95,7 +93,13 @@ export const AUTH_ERROR_CODES = {
   OAUTH_EMAIL_MISMATCH: 'auth.oauth_email_mismatch',
 
   // Platform admin
-  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required'
+  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required',
+
+  /**
+   * An unexpected internal failure. Raised only by the server's optional `AuthExceptionFilter`,
+   * which gives unhandled failures the same envelope everything else answers with.
+   */
+  INTERNAL: 'auth.internal'
 } as const
 
 /**

@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { plainToInstance } from 'class-transformer'
@@ -35,7 +35,7 @@ import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
 import type { ResolvedOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
-import { AUTH_ERROR_CODES } from './errors/auth-error-codes'
+import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
@@ -73,6 +73,7 @@ interface WireContract {
   credentialFormats: Record<string, string>
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
+  errorCatalog: { codes: string[]; internalOnly: string[] }
   errorEnvelope: { shape: { error: Record<string, string> } }
   responseBodies: {
     login: { cookie: string[]; bearer: string[] }
@@ -232,6 +233,48 @@ describe('cross-implementation conformance', () => {
 
       expect(platformSessionIndex).not.toBe(dashboardSessionIndex)
       expect(contract.redisKeyPrefixes['platformSessionDetail']).not.toBe(dashboardSessionDetail)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Error catalog
+  // -------------------------------------------------------------------------
+
+  describe('error catalog', () => {
+    // Verifies both libraries name exactly the same set of codes. They can back the same
+    // deployment, so a client switching on `error.code` must see one vocabulary: a code
+    // present on one side only is a branch that never fires against the other, and a code
+    // neither side emits is a branch that never fires at all — which is what five of them
+    // were before this section existed.
+    it('names exactly the codes the contract does, and no others', () => {
+      expect(Object.values(AUTH_ERROR_CODES).sort()).toEqual(
+        [...contract.errorCatalog.codes].sort()
+      )
+    })
+
+    // Verifies every code carries a default end-user message. A code with no message would
+    // answer with its own identifier, which is a developer string reaching a user.
+    it('gives every code a default message', () => {
+      for (const code of contract.errorCatalog.codes) {
+        expect(AUTH_ERROR_MESSAGES[code as keyof typeof AUTH_ERROR_MESSAGES]).toBeTruthy()
+      }
+    })
+
+    // Verifies the internal-only codes are exactly the ones the contract names, and that this
+    // library never throws one. They exist for logs; reaching a client, each would give back
+    // the distinction the collapse exists to remove — "valid until revoked" from "never
+    // valid", "no record was ever written here" from "wrong code".
+    it('never throws a code the contract marks internal-only', () => {
+      const sources = readdirSync(__dirname, { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+        .map((f) => readFileSync(join(__dirname, f), 'utf8'))
+        .join('\n')
+
+      for (const wire of contract.errorCatalog.internalOnly) {
+        const name = Object.entries(AUTH_ERROR_CODES).find(([, v]) => v === wire)?.[0]
+        expect(name).toBeDefined()
+        expect(sources).not.toContain(`new AuthException(AUTH_ERROR_CODES.${name!}`)
+      }
     })
   })
 

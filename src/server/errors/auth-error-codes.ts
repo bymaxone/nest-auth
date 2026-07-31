@@ -69,14 +69,16 @@ export const AUTH_ERROR_CODES = {
   /** JWT is malformed, has an invalid signature, or the referenced user does not exist. */
   TOKEN_INVALID: 'auth.token_invalid',
 
+  /**
+   * Internal-only: the request carried no credential at all. Never reaches a client —
+   * surfaced as {@link AUTH_ERROR_CODES.TOKEN_INVALID}, so a caller cannot tell "you sent
+   * nothing" from "you sent something unusable". Kept for logs and for the shared error
+   * catalog, which rust-auth holds identical.
+   */
+  TOKEN_MISSING: 'auth.token_missing',
+
   /** Refresh token not found in Redis — expired or revoked. */
   REFRESH_TOKEN_INVALID: 'auth.refresh_token_invalid',
-
-  /** Session associated with the refresh token no longer exists in Redis. */
-  SESSION_EXPIRED: 'auth.session_expired',
-
-  /** Maximum concurrent session limit reached (informational — FIFO eviction handles this automatically). */
-  SESSION_LIMIT_REACHED: 'auth.session_limit_reached',
 
   /** Attempted to revoke a session that does not exist or does not belong to the user. */
   SESSION_NOT_FOUND: 'auth.session_not_found',
@@ -124,27 +126,19 @@ export const AUTH_ERROR_CODES = {
   /** MFA temporary token (5-minute JWT) is invalid or expired. */
   MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
 
-  /** Submitted recovery code does not match any stored hash. */
-  RECOVERY_CODE_INVALID: 'auth.recovery_code_invalid',
-
   // ---------------------------------------------------------------------------
   // Password
   // ---------------------------------------------------------------------------
 
-  /** Password does not meet minimum strength requirements (e.g., fewer than 8 characters). */
-  PASSWORD_TOO_WEAK: 'auth.password_too_weak',
-
   /**
-   * The password appears in a known-breach corpus. Distinct from `PASSWORD_TOO_WEAK`: the
-   * password may satisfy every complexity rule and still be one an attacker will try first.
+   * The password appears in a known-breach corpus, or on the offline common-password screen.
+   * It may satisfy every length and complexity rule and still be one an attacker tries first,
+   * which is why the policy checks live in the request DTO and this does not.
    */
   PASSWORD_COMPROMISED: 'auth.password_compromised',
 
   /** Password reset token not found in Redis. */
   PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
-
-  /** Password reset token found but its TTL has expired. */
-  PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
 
   // ---------------------------------------------------------------------------
   // OTP (email verification, password reset via OTP)
@@ -228,7 +222,17 @@ export const AUTH_ERROR_CODES = {
   // ---------------------------------------------------------------------------
 
   /** Platform-admin endpoint accessed with a dashboard JWT instead of a platform JWT. */
-  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required'
+  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required',
+
+  /**
+   * An unexpected internal failure. The cause is logged and never serialized.
+   *
+   * Raised only by {@link AuthExceptionFilter}, which a host registers to give unhandled
+   * failures the same `{ error: { code, message, details } }` envelope everything else
+   * answers with. Without the filter the framework's own 500 shape stands, which is the
+   * behaviour this library had before it existed.
+   */
+  INTERNAL: 'auth.internal'
 } as const
 
 /**
@@ -260,8 +264,6 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.token_revoked': 'Token revoked',
   'auth.token_invalid': 'Invalid token',
   'auth.refresh_token_invalid': 'Invalid or expired refresh token',
-  'auth.session_expired': 'Session expired',
-  'auth.session_limit_reached': 'Session limit reached',
   'auth.session_not_found': 'Session not found',
   'auth.email_already_exists': 'Email already registered',
   'auth.email_not_verified': 'Email not verified',
@@ -272,12 +274,9 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.mfa_not_enabled': 'MFA is not enabled',
   'auth.mfa_setup_required': 'MFA setup required',
   'auth.mfa_temp_token_invalid': 'Invalid or expired temporary MFA token',
-  'auth.recovery_code_invalid': 'Invalid recovery code',
-  'auth.password_too_weak': 'Password too weak',
   'auth.password_compromised':
     'This password has appeared in a data breach. Please choose a different one.',
   'auth.password_reset_token_invalid': 'Invalid password reset token',
-  'auth.password_reset_token_expired': 'Expired password reset token',
   'auth.otp_invalid': 'Invalid OTP code',
   'auth.otp_expired': 'Expired OTP code',
   'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
@@ -289,5 +288,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',
   'auth.oauth_failed': 'OAuth authentication failed',
   'auth.oauth_email_mismatch': 'OAuth email does not match',
-  'auth.platform_auth_required': 'Platform authentication required'
+  'auth.token_missing': 'Token missing',
+  'auth.platform_auth_required': 'Platform authentication required',
+  'auth.internal': 'Internal server error'
 }

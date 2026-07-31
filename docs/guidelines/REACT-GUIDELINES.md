@@ -1290,7 +1290,7 @@ function getErrorMessage(code: string): string {
       return 'Invalid email or password.'
     case AUTH_ERROR_CODES.ACCOUNT_LOCKED:
       return 'Account locked. Please try again later.'
-    case AUTH_ERROR_CODES.SESSION_EXPIRED:
+    case AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID:
       return 'Your session has expired. Please sign in again.'
     default:
       return 'An unexpected error occurred.'
