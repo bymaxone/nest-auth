@@ -170,6 +170,14 @@ export const AUTH_ERROR_CODES = {
   FORBIDDEN: 'auth.forbidden',
 
   /**
+   * The request body or query failed DTO validation. Per-field failures serialize into
+   * `error.details` as `[{ field, message }]`. Raised by the module's validation pipe so a
+   * malformed request answers in the same envelope as every other error rather than in the
+   * framework's default shape — the same code and the same details rust-auth emits.
+   */
+  VALIDATION: 'auth.validation',
+
+  /**
    * The caller exceeded a per-IP rate limit on an auth route. Carries `Retry-After`.
    * Distinct from `ACCOUNT_LOCKED`, which is the per-identity brute-force lockout.
    */
@@ -258,6 +266,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
   'auth.insufficient_role': 'Insufficient permission',
   'auth.forbidden': 'Access denied',
+  'auth.validation': 'Validation failed',
   'auth.too_many_requests': 'Too many requests. Please try again shortly.',
   'auth.untrusted_origin': 'Request origin not allowed',
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',

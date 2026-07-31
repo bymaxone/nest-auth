@@ -25,7 +25,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { sha256 } from '../crypto/secure-token'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -151,7 +151,11 @@ const mockSessionService = {
  * admin inherits member (can invite members).
  * member has no inherited roles (cannot invite anyone above themselves).
  */
+/** The server secret the invitee index is keyed under — the address is HMAC'd, never bare. */
+const HMAC_KEY = 'invitation-spec-hmac-key'
+
 const mockOptions = {
+  hmacKey: HMAC_KEY,
   roles: {
     hierarchy: {
       admin: ['member'],
@@ -951,7 +955,7 @@ describe('InvitationService', () => {
 
   describe('revokeInvitation', () => {
     /** The index key the service derives for the fixture invitee. */
-    const INDEX_KEY = `invidx:tenant-1:${sha256('invited@example.com')}`
+    const INDEX_KEY = `invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`
     const TOKEN_HASH = 'b'.repeat(64)
 
     beforeEach(() => {
@@ -1015,7 +1019,11 @@ describe('InvitationService', () => {
 
     // A member must not be able to cancel an admin's invitations — the revoker is held to
     // the same bar as the issuer.
-    it('refuses a revoker who does not out-rank the invited role', async () => {
+    // The refusal is silent, and that is the point. The caller names an address and nothing
+    // else, so a 403 would say "there is a pending invitation here, at a role above yours"
+    // while a 204 says "there is none" — an oracle any member could walk an address list
+    // through, which is exactly what hashing the address into the index exists to prevent.
+    it('answers a revoker who does not out-rank the invited role exactly as it answers an address with no invitation', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
       mockRedis.get.mockImplementation((key: string) =>
         Promise.resolve(
@@ -1025,10 +1033,19 @@ describe('InvitationService', () => {
         )
       )
 
-      await expect(
-        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
-      ).rejects.toThrow(AuthException)
+      const outranked = await service.revokeInvitation(
+        'inviter-1',
+        'invited@example.com',
+        'tenant-1'
+      )
       expect(mockRedis.del).not.toHaveBeenCalled()
+
+      // The same caller, against an address with nothing pending.
+      mockRedis.get.mockResolvedValue(null)
+      const absent = await service.revokeInvitation('inviter-1', 'nobody@example.com', 'tenant-1')
+
+      expect(outranked).toBe(false)
+      expect(outranked).toBe(absent)
     })
 
     // A suspended admin holding a live access token is not making authority decisions.
@@ -1104,7 +1121,7 @@ describe('InvitationService', () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(
-        `invidx:tenant-1:${sha256('invited@example.com')}`
+        `invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`
       )
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
     })

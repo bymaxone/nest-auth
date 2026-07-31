@@ -2045,6 +2045,37 @@ describe('AuthService', () => {
   // resendVerificationEmail
   // ---------------------------------------------------------------------------
 
+  // The verification OTP, its five-attempt ceiling and the resend cooldown are all keyed on
+  // `hmac(tenantId:email)`. Left raw, a change of case was a change of key: the same six-digit
+  // code could be guessed five times per spelling, and one send per minute became one send per
+  // spelling. Both doors canonicalize the address before it reaches the identifier.
+  describe('email canonicalization on the verification paths', () => {
+    it('verifies against the same OTP record whatever case the caller sends', async () => {
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
+      mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
+
+      await service.verifyEmail('tenant-1', '  USER@Example.COM ', '123456', mockReq)
+
+      expect(mockOtpService.verify).toHaveBeenCalledWith(
+        'email_verification',
+        hmacSha256('tenant-1:user@example.com', HMAC_KEY),
+        '123456'
+      )
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
+    })
+
+    it('draws on the same resend cooldown whatever case the caller sends', async () => {
+      mockRedis.setnx.mockResolvedValue(false) // already sent within the window
+      await service.resendVerificationEmail('tenant-1', 'USER@Example.COM', mockReq)
+
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `resend:email_verification:${hmacSha256('tenant-1:user@example.com', HMAC_KEY)}`,
+        60
+      )
+    })
+  })
+
   describe('resendVerificationEmail', () => {
     // Verifies that an OTP is generated and sent when the cooldown has not been triggered yet.
     it('should send OTP when cooldown is not active', async () => {

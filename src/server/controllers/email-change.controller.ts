@@ -6,8 +6,7 @@ import {
   Post,
   UseGuards,
   UseInterceptors,
-  UsePipes,
-  ValidationPipe
+  UsePipes
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 
@@ -23,6 +22,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { EmailChangeService } from '../services/email-change.service'
 
 // ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ import { EmailChangeService } from '../services/email-change.service'
 @UseInterceptors(NoStoreInterceptor)
 @Controller('email')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class EmailChangeController {
   constructor(private readonly emailChangeService: EmailChangeService) {}
 

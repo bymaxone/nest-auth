@@ -5,7 +5,6 @@ import {
   HttpStatus,
   Post,
   UsePipes,
-  ValidationPipe,
   UseGuards,
   UseInterceptors,
   Req
@@ -29,6 +28,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { PasswordResetService } from '../services/password-reset.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 
@@ -62,7 +62,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @UseInterceptors(NoStoreInterceptor)
 @Controller('password')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class PasswordResetController {
   constructor(
     private readonly passwordResetService: PasswordResetService,

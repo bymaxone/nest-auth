@@ -61,6 +61,12 @@ export const AUTH_ERROR_CODES = {
   INSUFFICIENT_ROLE: 'auth.insufficient_role',
   FORBIDDEN: 'auth.forbidden',
 
+  /**
+   * The request body or query failed DTO validation. Per-field failures serialize into
+   * `error.details` as `[{ field, message }]`.
+   */
+  VALIDATION: 'auth.validation',
+
   /** The caller exceeded a per-IP rate limit on an auth route. */
   TOO_MANY_REQUESTS: 'auth.too_many_requests',
 

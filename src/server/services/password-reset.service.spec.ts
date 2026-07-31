@@ -1272,6 +1272,114 @@ describe('PasswordResetService', () => {
   // Note: `resendOtp` only applies when method='otp'. This describe uses `otpMethodService`,
   // not the outer `service` (which uses method='token'). The outer beforeEach still runs first
   // — clearing mocks and setting defaults — then this inner beforeEach builds the OTP module.
+  // Every control on the reset path is keyed on `hmac(tenantId:email)` — the OTP record, its
+  // five-attempt ceiling, and the cooldown `initiateReset` and `resendOtp` share. Left raw, a
+  // change of case was a change of key: five fresh guesses at the same code per spelling, and
+  // one send per minute per spelling. All four doors canonicalize before deriving it.
+  // Every proof on the reset path is single-use and consumed atomically. A breach-list
+  // rejection that arrived after the consumption told the caller their password was
+  // unacceptable and, in the same breath, that the credential they needed to fix it was gone —
+  // the whole mail round trip repeated for a mistake the request itself carried. The judgement
+  // now runs first, so nothing is spent on a request that was never going to succeed.
+  describe('a rejected new password costs the caller nothing', () => {
+    beforeEach(() => {
+      mockPasswordService.assertNotCompromised.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
+      )
+    })
+
+    // `jest.clearAllMocks()` clears recorded calls, not implementations — without this the
+    // rejection above would follow the mock into every later suite in the file.
+    afterEach(() => {
+      mockPasswordService.assertNotCompromised.mockResolvedValue(undefined)
+    })
+
+    it.each([
+      ['token', { token: 'raw-token' }],
+      ['verifiedToken', { verifiedToken: 'raw-vtok' }],
+      ['otp', { otp: '123456' }]
+    ])('leaves the %s unspent', async (_proof, payload) => {
+      // `token` is the only proof the token-configured module accepts, and the other two the
+      // only ones the OTP-configured module accepts — so each case runs under its own module.
+      const method = 'token' in payload ? ('token' as const) : ('otp' as const)
+      const module = await Test.createTestingModule({
+        providers: [
+          PasswordResetService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, passwordReset: { ...mockOptions.passwordReset, method } }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+      const svc = module.get(PasswordResetService)
+
+      const caught = await svc
+        .resetPassword(
+          {
+            email: 'user@example.com',
+            tenantId: 'tenant1',
+            newPassword: 'hunter2hunter2',
+            ...payload
+          } as never,
+          mockReq
+        )
+        .catch((err: unknown) => err)
+
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
+      expect(mockOtpService.verify).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('email canonicalization', () => {
+    const canonical = hmacSha256('tenant1:user@example.com', HMAC_KEY)
+
+    it('initiateReset draws on the canonical cooldown key', async () => {
+      mockRedis.setnx.mockResolvedValue(false) // already sent within the window
+
+      await service.initiateReset(
+        { email: '  USER@Example.COM ', tenantId: 'tenant1' } as never,
+        mockReq
+      )
+
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `resend:password_reset:${canonical}`,
+        expect.any(Number)
+      )
+    })
+
+    it('resendOtp draws on that same canonical cooldown key', async () => {
+      mockRedis.setnx.mockResolvedValue(false)
+
+      await service.resendOtp({ email: 'User@Example.com', tenantId: 'tenant1' } as never, mockReq)
+
+      expect(mockRedis.setnx).toHaveBeenCalledWith(
+        `resend:password_reset:${canonical}`,
+        expect.any(Number)
+      )
+    })
+
+    it('verifyOtp verifies against the canonical OTP record', async () => {
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await service
+        .verifyOtp(
+          { email: 'USER@EXAMPLE.COM', tenantId: 'tenant1', otp: '123456' } as never,
+          mockReq
+        )
+        .catch(() => undefined)
+
+      expect(mockOtpService.verify).toHaveBeenCalledWith('password_reset', canonical, '123456')
+    })
+  })
+
   describe('resendOtp', () => {
     let otpMethodService: PasswordResetService
     const dto = { email: 'user@example.com', tenantId: 'tenant1' }

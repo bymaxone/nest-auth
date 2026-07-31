@@ -8,7 +8,6 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -26,6 +25,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
@@ -62,7 +62,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @Controller('sessions')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UseGuards(JwtAuthGuard, UserStatusGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService,

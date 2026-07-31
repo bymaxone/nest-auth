@@ -20,7 +20,7 @@
 import { createHash } from 'node:crypto'
 
 import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
 import {
@@ -37,7 +37,7 @@ import {
 import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import type {
@@ -50,6 +50,7 @@ import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
@@ -142,15 +143,30 @@ export class OAuthService {
    * 5. Issues a 302 redirect via the Express `res` object.
    *
    * @param provider - Provider name matching a registered {@link OAuthProviderPlugin}.
-   * @param tenantId - Tenant the user will join on successful login.
-   *   **Warning:** Not validated against the database — implement `onOAuthLogin`
-   *   to enforce tenant membership. Without the hook, OAuth sign-in is disabled.
+   * @param tenantId - Tenant the user will join on successful login, as named by the caller.
+   *   Superseded by the configured `tenantIdResolver` when there is one, and never validated
+   *   against the database — implement `onOAuthLogin` to enforce tenant membership. Without
+   *   the hook, OAuth sign-in is disabled.
+   * @param req - Incoming Express request, read by the configured `tenantIdResolver`.
    * @param res - Express response in passthrough mode (used for the 302 redirect).
    * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`.
    */
-  async initiateOAuth(provider: string, tenantId: string, res: Response): Promise<void> {
+  async initiateOAuth(
+    provider: string,
+    tenantId: string,
+    req: Request,
+    res: Response
+  ): Promise<void> {
     // Validate and resolve early so the Redis write is never attempted for unknown providers.
     const plugin = this.resolvePlugin(provider)
+
+    // The configured resolver is authoritative, exactly as it is for login, register and the
+    // reset flows: a deployment that derives the tenant from the request has stated that the
+    // caller's value is not to be trusted. This was the one door that still took it verbatim —
+    // and it is the door that decides which tenant an account gets provisioned into, which is
+    // strictly more than the others were protecting. The resolved value is what goes into the
+    // state record, so the callback cannot be talked into a different one either.
+    tenantId = await resolveTenantId(tenantId, req, this.options.tenantIdResolver)
 
     // Generate a 64-char hex nonce for CSRF protection.
     const state = generateSecureToken(32)
@@ -304,7 +320,15 @@ export class OAuthService {
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
 
     // Build the hook context with properly sanitized headers.
-    const hookContext = {
+    //
+    // The tenant and the address travel with it. `onOAuthLogin` is the documented — and only —
+    // place a deployment can enforce tenant membership, and it was being asked to decide that
+    // without being told which tenant, or which address, the flow had resolved to. The values
+    // come from the server-side state record and the verified profile, never from the callback
+    // request.
+    const hookContext: HookContext = {
+      tenantId,
+      email: profile.email,
       ip,
       userAgent,
       sanitizedHeaders: sanitizeHeaders(headers)

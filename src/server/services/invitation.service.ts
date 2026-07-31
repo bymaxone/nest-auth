@@ -10,7 +10,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
 import type { AcceptInvitationDto } from '../dto/accept-invitation.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -21,6 +21,7 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
+import { normalizeEmail } from '../utils/normalize-email'
 import { hasRole } from '../utils/roles.util'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
@@ -133,7 +134,7 @@ export class InvitationService {
     tenantName?: string
   ): Promise<void> {
     // Normalize at the service boundary to guard against callers bypassing DTO transforms.
-    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedEmail = normalizeEmail(email)
 
     const hierarchy = this.options.roles.hierarchy
 
@@ -264,7 +265,7 @@ export class InvitationService {
    * @returns The namespaced-by-caller key.
    */
   private inviteeKey(email: string, tenantId: string): string {
-    return `invidx:${tenantId}:${sha256(email)}`
+    return `invidx:${tenantId}:${hmacSha256(email, this.options.hmacKey)}`
   }
 
   /**
@@ -314,13 +315,20 @@ export class InvitationService {
    *   `INSUFFICIENT_ROLE` when they may not withdraw this invitation.
    */
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
-    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedEmail = normalizeEmail(email)
 
     const revoker = await this.userRepo.findById(revokerUserId)
     if (!revoker) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     if (revoker.tenantId !== tenantId) {
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    }
+    // Standing is a fact about the CALLER, so refusing out loud describes nobody else — and it
+    // is settled before any lookup, so a suspended account cannot use this door to ask
+    // questions at all. The rank comparison below is the opposite kind of check, and is
+    // answered the opposite way.
+    if (!this.inGoodStanding(revoker)) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
     }
 
@@ -335,8 +343,19 @@ export class InvitationService {
     const raw = await this.redis.get(`inv:${tokenHash}`)
     const invitation = raw === null ? null : this.parseInvitation(raw)
 
+    // A revoker who may not withdraw THIS invitation is answered exactly as one who asked
+    // about an address with no invitation at all. `INSUFFICIENT_ROLE` here was an oracle: the
+    // caller names an address and nothing else, so a 403 said "there is a pending invitation
+    // for this address, at a role above yours" while a 204 said "there is none" — letting any
+    // member enumerate a tenant's pending invitations, and roughly at what authority. That is
+    // precisely the disclosure the index hashes the address to prevent. The refusal is
+    // recorded server-side, where an operator can see it and the prober cannot.
     if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      this.logger.warn(
+        `revokeInvitation: refused email=${maskEmail(normalizedEmail)} ` +
+          `tenantId=${tenantId} revokerUserId=${revokerUserId} — outranked by the invitation`
+      )
+      return false
     }
 
     await this.redis.del(indexKey)
@@ -368,10 +387,13 @@ export class InvitationService {
   }
 
   /**
-   * Whether `revoker` may withdraw `invitation` — in good standing and out-ranking the role
-   * the invitation grants.
+   * Whether `revoker` out-ranks the role `invitation` grants.
    *
-   * @param revoker - The authenticated user.
+   * Standing is checked by the caller, before the invitation is looked up at all: the two
+   * belong on opposite sides of the disclosure line, because this comparison depends on the
+   * target and that one does not.
+   *
+   * @param revoker - The authenticated user, already known to be in good standing.
    * @param invitation - The pending record.
    * @returns `true` when the withdrawal is authorised.
    */
@@ -379,10 +401,7 @@ export class InvitationService {
     revoker: { role: string; status: string },
     invitation: StoredInvitation
   ): boolean {
-    return (
-      this.inGoodStanding(revoker) &&
-      hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
-    )
+    return hasRole(revoker.role, invitation.role, this.options.roles.hierarchy)
   }
 
   /**

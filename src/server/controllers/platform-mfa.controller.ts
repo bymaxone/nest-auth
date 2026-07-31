@@ -7,7 +7,6 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -25,6 +24,7 @@ import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
 
@@ -62,9 +62,7 @@ import { MfaService } from '../services/mfa.service'
 @UseInterceptors(NoStoreInterceptor)
 @Controller('platform/mfa')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(
-  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
-)
+@UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class PlatformMfaController {
   constructor(private readonly mfaService: MfaService) {}
 

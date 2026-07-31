@@ -8,7 +8,6 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -28,6 +27,7 @@ import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { InvitationService } from '../services/invitation.service'
 import type {
   BearerAuthResponse,
@@ -61,7 +61,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @UseInterceptors(NoStoreInterceptor)
 @Controller('invitations')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class InvitationController {
   constructor(
     private readonly invitationService: InvitationService,

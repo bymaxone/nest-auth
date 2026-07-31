@@ -132,10 +132,14 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
 
     assertTokenType(payload, 'dashboard')
 
-    // rv:{jti} is written on logout with the token's remaining TTL as expiry.
+    // rv:{jti} is written on logout with the token's remaining TTL as expiry. A hit is
+    // surfaced as TOKEN_INVALID, exactly as `JwtAuthGuard` does it: TOKEN_REVOKED would let a
+    // caller distinguish "this token was valid until someone logged it out" from "this token
+    // was never valid", and the upgrade handshake is a cheaper place to ask that question than
+    // the REST surface, not a more private one.
     const revoked = await this.redis.get(`rv:${payload.jti}`)
     if (revoked !== null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_REVOKED)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     // Require a well-formed `sub` before it keys the epoch lookup (`ep:{sub}`) —

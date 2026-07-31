@@ -9,7 +9,6 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -34,6 +33,7 @@ import type {
 } from '../interfaces/auth-result.interface'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
@@ -106,7 +106,7 @@ function isMfaChallenge(
 @UseInterceptors(NoStoreInterceptor)
 @Controller('platform')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class PlatformAuthController {
   constructor(
     private readonly platformAuthService: PlatformAuthService,

@@ -27,6 +27,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { normalizeEmail } from '../utils/normalize-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
@@ -163,7 +164,13 @@ export class PasswordResetService {
     // in another, and a reset started under the resolved tenant could never be completed —
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
-    dto = { ...dto, tenantId }
+    // The address is canonicalized here for the same reason the tenant is resolved here: every
+    // control on this path is keyed on it. The OTP record, its five-attempt ceiling and the
+    // resend cooldown all hang off `hmac(tenantId:email)`, so left raw, `USER@x.com` and
+    // `user@x.com` key different records — varying the case alone bought a fresh attempt budget
+    // and a fresh send, and the account lookup was left depending on whether the host's
+    // repository happens to compare case-insensitively.
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
     // The SAME cooldown key `resendOtp` uses, so the two entry points share one budget rather
@@ -227,7 +234,7 @@ export class PasswordResetService {
     // in another, and a reset started under the resolved tenant could never be completed —
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
-    dto = { ...dto, tenantId }
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const { method } = this.options.passwordReset
 
     // Mutual exclusivity: exactly one proof field must be present.
@@ -239,6 +246,20 @@ export class PasswordResetService {
     if (proofCount > 1) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
+
+    // The new password is judged BEFORE any proof is spent.
+    //
+    // Every proof on this path is single-use and consumed atomically — `GETDEL` for the two
+    // token shapes, the Lua script for the OTP — so a breach-list rejection that arrived after
+    // the consumption burned the token: the caller was told their password was unacceptable
+    // and, in the same breath, that the only credential they had to fix it was gone. The whole
+    // mail round trip had to be repeated for a mistake the request itself contained.
+    //
+    // Judging first means an unproven caller can drive the breach checker, which for the
+    // bundled HIBP provider is an outbound range query. That is the same exposure `register`
+    // already carries on the same checker, and this route allows three requests per five
+    // minutes — the burned token was the larger of the two costs by a wide margin.
+    await this.passwordService.assertNotCompromised(dto.newPassword)
 
     if (method === 'token') {
       if (!dto.token) {
@@ -293,7 +314,7 @@ export class PasswordResetService {
     // in another, and a reset started under the resolved tenant could never be completed —
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
-    dto = { ...dto, tenantId }
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, dto.otp)
 
@@ -339,7 +360,7 @@ export class PasswordResetService {
     // in another, and a reset started under the resolved tenant could never be completed —
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
-    dto = { ...dto, tenantId }
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
@@ -609,7 +630,7 @@ export class PasswordResetService {
   }
 
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
-    await this.passwordService.assertNotCompromised(newPassword)
+    // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
     // Revoke every session AND invalidate already-issued access tokens. This is two Redis

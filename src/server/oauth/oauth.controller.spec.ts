@@ -102,16 +102,23 @@ describe('OAuthController', () => {
   // ---------------------------------------------------------------------------
 
   describe('initiate()', () => {
-    // Verifies the happy path: initiateOAuth is called with the correct provider,
-    // tenantId from the query DTO, and the response object.
-    it('should call oauthService.initiateOAuth with provider, tenantId, and res', async () => {
+    // Verifies the happy path: initiateOAuth is called with the correct provider, the tenantId
+    // from the query DTO, the request (which the configured resolver reads, and which decides
+    // the tenant when there is one), and the response object.
+    it('should call oauthService.initiateOAuth with provider, tenantId, req and res', async () => {
       mockOAuthService.initiateOAuth.mockResolvedValue(undefined)
       const mockRes = { redirect: jest.fn() } as unknown as Response
+      const mockReq = { headers: {} } as unknown as Request
       const query = { tenantId: 'tenant-abc' }
 
-      await controller.initiate('google', query as never, mockRes)
+      await controller.initiate('google', query as never, mockReq, mockRes)
 
-      expect(mockOAuthService.initiateOAuth).toHaveBeenCalledWith('google', 'tenant-abc', mockRes)
+      expect(mockOAuthService.initiateOAuth).toHaveBeenCalledWith(
+        'google',
+        'tenant-abc',
+        mockReq,
+        mockRes
+      )
     })
 
     // Verifies that initiate() returns void (undefined) — the redirect is performed
@@ -121,7 +128,12 @@ describe('OAuthController', () => {
       const mockRes = { redirect: jest.fn() } as unknown as Response
       const query = { tenantId: 'tenant-1' }
 
-      const result = await controller.initiate('google', query as never, mockRes)
+      const result = await controller.initiate(
+        'google',
+        query as never,
+        { headers: {} } as unknown as Request,
+        mockRes
+      )
 
       expect(result).toBeUndefined()
     })

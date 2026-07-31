@@ -134,6 +134,13 @@ export { UserStatusGuard } from './guards/user-status.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 // ---------------------------------------------------------------------------
+// Pipes
+// ---------------------------------------------------------------------------
+
+export { createAuthValidationPipe } from './pipes/auth-validation.pipe'
+export type { AuthFieldError } from './pipes/auth-validation.pipe'
+
+// ---------------------------------------------------------------------------
 // Decorators
 // ---------------------------------------------------------------------------
 

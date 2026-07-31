@@ -28,7 +28,6 @@ import {
   Req,
   Res,
   UsePipes,
-  ValidationPipe,
   UseGuards,
   UseInterceptors
 } from '@nestjs/common'
@@ -55,6 +54,7 @@ import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type {
   BearerAuthResponse,
   BothAuthResponse,
@@ -161,9 +161,7 @@ function logSafe(value: string): string {
 @UseInterceptors(NoStoreInterceptor)
 @Controller('oauth')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(
-  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
-)
+@UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class OAuthController {
   /** Records provider-side refusals; never carries a token, a code, or the state. */
   private readonly logger = new Logger(OAuthController.name)
@@ -188,6 +186,7 @@ export class OAuthController {
    *
    * @param provider - Provider name (e.g. `'google'`). Must match a registered plugin.
    * @param query - Validated query parameters (contains `tenantId`).
+   * @param req - Incoming Express request — the configured `tenantIdResolver` reads it.
    * @param res - Express response object (used to issue the 302 redirect).
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.oauthInitiate)
@@ -196,9 +195,10 @@ export class OAuthController {
   async initiate(
     @Param('provider') provider: string,
     @Query() query: OAuthInitiateQueryDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ): Promise<void> {
-    await this.oauthService.initiateOAuth(provider, query.tenantId, res)
+    await this.oauthService.initiateOAuth(provider, query.tenantId, req, res)
   }
 
   // ---------------------------------------------------------------------------

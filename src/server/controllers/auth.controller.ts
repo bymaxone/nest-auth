@@ -9,7 +9,6 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -31,6 +30,7 @@ import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { AuthService } from '../services/auth.service'
 import type {
   BearerAuthResponse,
@@ -70,7 +70,7 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
 @UseInterceptors(NoStoreInterceptor)
 @Controller()
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UsePipes(createAuthValidationPipe())
 export class AuthController {
   constructor(
     private readonly authService: AuthService,

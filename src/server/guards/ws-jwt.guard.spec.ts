@@ -6,7 +6,7 @@
  *  - Extracts tokens exclusively from the handshake Authorization header (not query params)
  *  - Rejects tokens with type !== 'dashboard' (platform, mfa_challenge)
  *  - Validates the jti claim is a string type
- *  - Checks the Redis revocation list and throws TOKEN_REVOKED if revoked
+ *  - Checks the Redis revocation list and throws TOKEN_INVALID if revoked
  *  - Pins the signing algorithm from resolved options to prevent confusion attacks
  *  - Populates client.data.user with the decoded payload on success
  *
@@ -29,6 +29,12 @@ import { WsJwtGuard } from './ws-jwt.guard'
 // ---------------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------------
+
+/** The wire code an `AuthException` carries, or `undefined` for anything else. */
+function errorCodeOf(err: unknown): string | undefined {
+  if (!(err instanceof AuthException)) return undefined
+  return (err.getResponse() as { error: { code: string } }).error.code
+}
 
 const VALID_PAYLOAD = {
   jti: 'some-jti-uuid',
@@ -291,6 +297,28 @@ describe('WsJwtGuard', () => {
       // Pin the revocation key shape: the guard must look up `rv:${jti}`, not an
       // empty or differently-prefixed key, or revoked tokens would slip through.
       expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_PAYLOAD.jti}`)
+    })
+
+    // The socket answers a revoked token exactly as `JwtAuthGuard` answers one: TOKEN_INVALID.
+    // TOKEN_REVOKED told the caller their token had been valid until someone logged it out,
+    // which is the same oracle the HTTP surface deliberately refuses to give — and the
+    // handshake is a cheaper place to ask, not a more private one.
+    it('should answer a revoked token exactly as it answers a malformed one', async () => {
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue('1')
+      const { context } = makeWsContext('Bearer some.jwt.token')
+
+      const revoked = await guard.canActivate(context as never).catch((e: unknown) => e)
+
+      mockJwtService.verify.mockImplementation(() => {
+        throw new Error('malformed')
+      })
+      const malformed = await guard
+        .canActivate(makeWsContext('Bearer nonsense').context as never)
+        .catch((e: unknown) => e)
+
+      expect(errorCodeOf(revoked)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+      expect(errorCodeOf(revoked)).toBe(errorCodeOf(malformed))
     })
   })
 

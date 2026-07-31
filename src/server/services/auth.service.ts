@@ -730,8 +730,12 @@ export class AuthService {
     // in it — and a verification issued under the resolved tenant could never be completed,
     // because the OTP identifier here would be derived from a different one.
     tenantId = await this.resolveTenantId(tenantId, req)
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
-    await this.otpService.verify('email_verification', identifier, otp)
+    // Canonicalized here, not merely at the door that issued the OTP: the record, its
+    // five-attempt ceiling and the resend cooldown all hang off `hmac(tenantId:email)`, so a
+    // caller who varied the case of the address keyed a different record and drew a fresh
+    // budget of guesses at the same six-digit code.
+    email = normalizeEmail(email)
+    await this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
 
     const user = await this.userRepo.findByEmail(email, tenantId)
     if (!user) {
@@ -765,8 +769,11 @@ export class AuthService {
   async resendVerificationEmail(tenantId: string, email: string, req: Request): Promise<void> {
     // See `verifyEmail`: the resolver decides the tenant whenever one is configured.
     tenantId = await this.resolveTenantId(tenantId, req)
+    // See `verifyEmail`: raw, a change of case is a change of cooldown key, and the one-send-
+    // per-minute limit that key exists to enforce becomes one send per spelling.
+    email = normalizeEmail(email)
     const start = Date.now()
-    const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)}`
+    const cooldownKey = `resend:email_verification:${this.otpIdentifier(tenantId, email)}`
 
     // Atomic NX: only one send allowed per 60 seconds. SET NX EX is atomic — no TOCTOU race.
     const wasSet = await this.redis.setnx(cooldownKey, 60)
@@ -841,6 +848,25 @@ export class AuthService {
    * @param email - The address, already normalized by the caller.
    * @returns The HMAC identifier, opaque and non-reversible.
    */
+  /**
+   * Derives the OTP-record identifier for a `tenantId + email` pair.
+   *
+   * HMAC rather than a bare digest because an address is low-entropy: a bare SHA-256 of one is
+   * reversible by dictionary, and these identifiers are the Redis key an operator can read.
+   * The preimage is pinned by `conformance/wire-contract.json` and shared byte-for-byte with
+   * rust-auth, which keys the same records in the same Redis.
+   *
+   * Deliberately distinct from {@link lockoutIdentifier}: that one namespaces the login
+   * keyspace with a `dashboard:` prefix, and the two must never collide.
+   *
+   * @param tenantId - Tenant scope.
+   * @param email - The canonicalized address.
+   * @returns Hex HMAC-SHA-256 identifier.
+   */
+  private otpIdentifier(tenantId: string, email: string): string {
+    return hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
+  }
+
   private lockoutIdentifier(tenantId: string, email: string): string {
     return hmacSha256(`dashboard:${tenantId}:${email}`, this.options.hmacKey)
   }
@@ -939,7 +965,7 @@ export class AuthService {
       return
     }
 
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
+    const identifier = this.otpIdentifier(tenantId, email)
     const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
     const ttl = this.options.emailVerification.otpTtlSeconds
     const otp = this.otpService.generate(length)

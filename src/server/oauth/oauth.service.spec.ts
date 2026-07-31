@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
 import { OAuthService } from './oauth.service'
@@ -138,6 +138,12 @@ const mockRes = {
   cookie: jest.fn()
 } as unknown as Response
 
+/** A minimal request double — `initiateOAuth` only hands it to the tenant resolver. */
+const mockReq = {
+  ip: '1.2.3.4',
+  headers: { 'user-agent': 'TestBrowser' }
+} as unknown as Request
+
 /**
  * Builds an OAuthService backed by a single plugin whose `name` is provided by
  * the caller. Used to prove the `resolvePlugin` format guard rejects malformed
@@ -218,6 +224,25 @@ describe('OAuthService', () => {
   })
 
   describe('initiateOAuth', () => {
+    // Every other entry point runs the configured resolver, on the stated principle that a
+    // deployment deriving the tenant from the request has said the caller's value is not to be
+    // trusted. This was the one door that took it verbatim — and it is the door that decides
+    // which tenant an account gets provisioned into, which is more than the others protect.
+    it('lets a configured resolver override the tenant the caller named', async () => {
+      const svc = await buildServiceWithOptions({
+        ...MOCK_OPTIONS,
+        tenantIdResolver: () => 'tenant-from-request'
+      })
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example/authorize')
+
+      await svc.initiateOAuth('google', 'tenant-the-caller-asked-for', mockReq, mockRes)
+
+      // The RESOLVED tenant is what lands in the state record, so the callback — which reads
+      // the account's tenant from there and nowhere else — cannot be talked into the other one.
+      const [, payload] = mockRedis.set.mock.calls[0] as [string, string, number]
+      expect(JSON.parse(payload)).toMatchObject({ tenantId: 'tenant-from-request' })
+    })
+
     // Verifies the happy path: a valid provider name resolves the plugin, stores
     // the CSRF state in Redis with the correct key format and TTL, and redirects
     // the user to the URL returned by plugin.authorizeUrl().
@@ -226,7 +251,7 @@ describe('OAuthService', () => {
         'https://accounts.google.com/o/oauth2/v2/auth?state=abc'
       )
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       // Verify that the plugin's authorizeUrl was called with the generated state
       // and a PKCE code challenge (second positional parameter).
@@ -261,7 +286,7 @@ describe('OAuthService', () => {
     // that binds the authorize URL to the server-held verifier.
     it('should pass the SHA-256 base64url(code_verifier) as the PKCE challenge', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [, codeChallenge] = mockPlugin.authorizeUrl.mock.calls[0] as [
         string,
@@ -281,7 +306,7 @@ describe('OAuthService', () => {
     it('should generate a 64-char hex state nonce', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [state] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
       expect(state).toMatch(/^[0-9a-f]{64}$/)
@@ -291,7 +316,7 @@ describe('OAuthService', () => {
     it('should store state with a TTL of 600 seconds', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const ttlArg = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
       expect(ttlArg).toBe(600)
@@ -304,7 +329,7 @@ describe('OAuthService', () => {
     it('should plant the raw state as an HttpOnly oauth_state cookie', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [generatedState] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
       expect(mockRes.cookie).toHaveBeenCalledWith('oauth_state', generatedState, {
@@ -326,7 +351,7 @@ describe('OAuthService', () => {
       const svc = await buildServiceWithOptions({ ...MOCK_OPTIONS, secureCookies: false })
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await svc.initiateOAuth('google', 'tenant-1', mockRes)
+      await svc.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [, , attrs] = (mockRes.cookie as jest.Mock).mock.calls[0] as [
         string,
@@ -339,7 +364,7 @@ describe('OAuthService', () => {
     // Verifies that an unknown provider name triggers OAUTH_FAILED before any Redis
     // write — the validation happens before the state is stored.
     it('should throw AuthException(OAUTH_FAILED) for an unknown provider', async () => {
-      await expect(service.initiateOAuth('github', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('github', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
       expect(mockRedis.set).not.toHaveBeenCalled()
@@ -348,21 +373,23 @@ describe('OAuthService', () => {
     // Verifies that provider names with uppercase letters fail format validation
     // before the plugin registry is consulted.
     it('should throw OAUTH_FAILED for a provider with uppercase letters', async () => {
-      await expect(service.initiateOAuth('GOOGLE', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('GOOGLE', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
     })
 
     // Verifies that path-traversal style provider names are rejected by format validation.
     it('should throw OAUTH_FAILED for a provider with path-traversal characters', async () => {
-      await expect(service.initiateOAuth('../etc', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('../etc', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
     })
 
     // Verifies that an empty string is rejected by format validation (requires 1+ chars).
     it('should throw OAUTH_FAILED for an empty provider string', async () => {
-      await expect(service.initiateOAuth('', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(service.initiateOAuth('', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Pins that the format guard runs at all (and is not stubbed away). Even when a
@@ -373,7 +400,9 @@ describe('OAuthService', () => {
     it('should reject an uppercase provider even if a plugin is registered under that exact name', async () => {
       const svc = await buildServiceWithPluginName('GOOGLE')
 
-      await expect(svc.initiateOAuth('GOOGLE', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth('GOOGLE', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRes.redirect).not.toHaveBeenCalled()
     })
@@ -385,7 +414,9 @@ describe('OAuthService', () => {
     it('should reject a provider with a leading space even if a plugin matches that name (pins ^)', async () => {
       const svc = await buildServiceWithPluginName(' google')
 
-      await expect(svc.initiateOAuth(' google', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth(' google', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
@@ -396,7 +427,9 @@ describe('OAuthService', () => {
     it('should reject a provider with a trailing space even if a plugin matches that name (pins $)', async () => {
       const svc = await buildServiceWithPluginName('google ')
 
-      await expect(svc.initiateOAuth('google ', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth('google ', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
   })
@@ -1038,6 +1071,25 @@ describe('OAuthService', () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
       await expect(callCallback()).rejects.toThrow(AuthException)
+    })
+
+    // `onOAuthLogin` is the documented — and only — place a deployment can enforce tenant
+    // membership, and it is what stands between an unconfigured install and an unauthenticated
+    // OAuth sign-in. It was being asked to make that call without being told which tenant, or
+    // which address, the flow had resolved to. Both come from server-side state (the `os:`
+    // record and the verified profile), never from the callback request.
+    it('tells the onOAuthLogin hook which tenant and address the flow resolved to', async () => {
+      setupHappyPathCreate()
+
+      await service.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
+
+      const [, , context] = mockHooks.onOAuthLogin.mock.calls[0] as [
+        unknown,
+        unknown,
+        { tenantId?: string; email?: string }
+      ]
+      expect(context.tenantId).toBe('tenant-1')
+      expect(context.email).toBe(OAUTH_PROFILE.email)
     })
 
     // Verifies that the headers passed to handleCallback reach the onOAuthLogin hook

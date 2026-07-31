@@ -9,7 +9,6 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe,
   UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
@@ -36,6 +35,7 @@ import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
 import type {
@@ -122,9 +122,7 @@ function isTokenInvalidException(err: unknown): boolean {
 @UseInterceptors(NoStoreInterceptor)
 @Controller('mfa')
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UsePipes(
-  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
-)
+@UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class MfaController {
   constructor(
     private readonly mfaService: MfaService,
