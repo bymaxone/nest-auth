@@ -175,11 +175,35 @@ export interface AuthClient {
 }
 
 /**
+ * Strip leading and trailing `/` characters without a regular expression.
+ *
+ * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
+ * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
+ * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
+ * was never reachable in practice; a scan cannot know that, and neither can the next reader.
+ * A pair of scans is linear and says what it does.
+ *
+ * @param value - The string to trim.
+ * @param leading - Whether to trim the leading run too. `baseUrl` keeps its leading slash
+ *   because a root-relative base (`/api`) is a legitimate value.
+ * @returns `value` with the requested runs of `/` removed.
+ */
+function trimSlashes(value: string, leading: boolean): string {
+  let start = 0
+  let end = value.length
+  if (leading) {
+    while (start < end && value[start] === '/') start += 1
+  }
+  while (end > start && value[end - 1] === '/') end -= 1
+  return value.slice(start, end)
+}
+
+/**
  * Trim trailing slashes from `baseUrl` so concatenation with route
  * paths produces exactly one separator regardless of the input form.
  */
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '')
+  return trimSlashes(baseUrl, false)
 }
 
 /**
@@ -187,7 +211,7 @@ function normalizeBaseUrl(baseUrl: string): string {
  * leading slashes; the join routine adds the separator itself.
  */
 function normalizeRoutePrefix(prefix: string): string {
-  return prefix.replace(/^\/+|\/+$/g, '')
+  return trimSlashes(prefix, true)
 }
 
 /**

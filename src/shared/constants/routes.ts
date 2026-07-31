@@ -219,6 +219,26 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
 ] as const
 
 /**
+ * Strip leading and trailing `/` characters without a regular expression.
+ *
+ * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
+ * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
+ * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
+ * was never reachable in practice; a scan cannot know that, and neither can the next reader.
+ * A pair of scans is linear and says what it does.
+ *
+ * @param value - The string to trim.
+ * @returns `value` with every leading and trailing `/` removed.
+ */
+function trimSlashes(value: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value[start] === '/') start += 1
+  while (end > start && value[end - 1] === '/') end -= 1
+  return value.slice(start, end)
+}
+
+/**
  * Build the pathname-suffix skip list that `createAuthFetch` uses to
  * decide whether a 401 from a given URL should trigger a refresh.
  *
@@ -233,7 +253,7 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
  *   Default is `'auth'` when omitted.
  */
 export function buildAuthRefreshSkipSuffixes(routePrefix: string = 'auth'): readonly string[] {
-  const normalized = routePrefix.replace(/^\/+|\/+$/g, '')
+  const normalized = trimSlashes(routePrefix)
   const prefix = normalized.length > 0 ? `/${normalized}` : ''
   return [
     ...AUTH_REFRESH_SKIP_CONTROLLER_PATHS.map((path) => `${prefix}/${path}`),
