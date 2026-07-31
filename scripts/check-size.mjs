@@ -62,12 +62,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     now the library could mint one and never move it, so a user whose address died was
 //     locked out permanently.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
+//     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
+//     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
+//     replaced a regex CodeQL reports as a polynomial ReDoS. Both are small and both are
+//     load-bearing; the budget was at ~28% headroom and is back to ~16%.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 92 * 1024 },
-  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3 * 1024 },
+  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3.5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.5 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }
