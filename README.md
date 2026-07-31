@@ -636,7 +636,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                              |
 | **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)      |
 | **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
-| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                                                                          | `false`, `5`, —, `'fifo'`               |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                         |
 | **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                              |
 | **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, `'peer'`                        |
 | **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                               |
@@ -942,6 +942,30 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 > [!NOTE]
 > Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above.
+
+### One error envelope
+
+Every failure the module raises answers with the same body, so a client parses `error.code` and
+nothing else:
+
+```json
+{ "error": { "code": "auth.invalid_credentials", "message": "…", "details": null } }
+```
+
+That includes malformed requests: the controllers mount `createAuthValidationPipe()`, which
+answers `auth.validation` with the offending fields under `error.details` as
+`[{ "field": "email", "message": "…" }]` rather than the framework's own shape.
+
+Failures the module did **not** raise are the application's to answer, so nothing is imposed on
+them by default. Register the optional filter to bring them into the same envelope:
+
+```typescript
+app.useGlobalFilters(new AuthExceptionFilter())
+```
+
+It passes an `AuthException` through untouched, keeps the status any other `HttpException`
+chose, and answers an unhandled throw with `auth.internal` and a generic message — never the
+thrown one.
 
 ### Server Decorators
 
