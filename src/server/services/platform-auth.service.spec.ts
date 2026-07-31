@@ -143,6 +143,12 @@ const mockOptions = {
 // Suite — PlatformAuthService
 // ---------------------------------------------------------------------------
 
+/** The wire code carried by a thrown `AuthException`. */
+function getErrorCode(err: unknown): string {
+  if (!(err instanceof AuthException)) throw new Error(`not an AuthException: ${String(err)}`)
+  return (err.getResponse() as { error: { code: string } }).error.code
+}
+
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
 
@@ -330,12 +336,32 @@ describe('PlatformAuthService', () => {
     // Verifies the status gate runs BEFORE the KDF. Ordering is the security property:
     // if it ran after, an attacker knowing a disabled address could force unbounded
     // scrypt work with attempts that could never succeed.
-    it('should reject a blocked admin without running the password KDF', async () => {
+    // This used to assert the opposite — that a blocked admin was refused WITHOUT paying the
+    // KDF. That saving answered with the administrator's own status in a millisecond, which
+    // enumerated operator accounts and read their moderation state on the highest-privilege
+    // plane. The password is proved first now, and the state is described only to whoever
+    // proved it.
+    it('should refuse a blocked admin only after proving the password', async () => {
       mockPlatformUserRepo.findByEmail.mockResolvedValue({ ...PLATFORM_ADMIN, status: 'BANNED' })
+      mockPasswordService.compare.mockResolvedValue(true)
 
       await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
 
-      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      expect(mockPasswordService.compare).toHaveBeenCalled()
+    })
+
+    // …and a WRONG password on a blocked admin is indistinguishable from a wrong password on
+    // any other account: same code, and the attempt is counted so probing is bounded by the
+    // lockout rather than only by the per-IP limit.
+    it('should answer a wrong password on a blocked admin like any other wrong password', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({ ...PLATFORM_ADMIN, status: 'BANNED' })
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      const err = await service.login(dto, ip, userAgent).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(AuthException)
+      expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+      expect(mockBruteForce.recordFailure).toHaveBeenCalled()
     })
 
     // Verifies an MFA-enrolled admin whose account is blocked never receives a temp
@@ -620,18 +646,63 @@ describe('PlatformAuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('refresh', () => {
+    const ip = '1.2.3.4'
+    const userAgent = 'TestBrowser/1.0'
+
     // Verifies that refresh is a thin delegation to TokenManagerService.reissuePlatformTokens —
     // the caller only needs to pass the raw token; complex rotation logic lives in the manager.
     it('should delegate to tokenManager.reissuePlatformTokens and return its result', async () => {
-      mockTokenManager.reissuePlatformTokens.mockResolvedValue(ROTATED_TOKEN_RESULT)
+      const rotated = {
+        session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      }
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue(rotated)
+      mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
 
-      const result = await service.refresh('raw-refresh', '1.2.3.4', 'Browser/1')
-      expect(result).toBe(ROTATED_TOKEN_RESULT)
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result).toBe(rotated)
       expect(mockTokenManager.reissuePlatformTokens).toHaveBeenCalledWith(
-        'raw-refresh',
-        '1.2.3.4',
-        'Browser/1'
+        'old-refresh',
+        ip,
+        userAgent
       )
+    })
+
+    // The backstop the dashboard plane has carried since ASVS v5 §7.4.2 was applied to it, and
+    // which this plane went without: rotation works entirely from the stored `prt:` record, so
+    // a SUSPENDED or BANNED operator kept renewing access every fifteen minutes for the
+    // refresh token's whole lifetime — on the highest-privilege identity in the system.
+    it.each([['BANNED'], ['SUSPENDED'], ['INACTIVE']])(
+      'should refuse the rotation and end every platform session for a %s admin',
+      async (status) => {
+        mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+          session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+          accessToken: 'new.access',
+          rawRefreshToken: 'new-refresh'
+        })
+        mockPlatformUserRepo.findById.mockResolvedValue({ ...PLATFORM_ADMIN, status })
+
+        await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
+        // Compensated, not merely refused: the rotation already minted a live pair, and
+        // leaving it would hand back the access this gate exists to end.
+        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      }
+    )
+
+    // The account was deleted while the session outlived it.
+    it('should refuse the rotation when the admin no longer exists', async () => {
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+        session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
     })
 
     // Verifies that errors thrown by reissuePlatformTokens propagate without wrapping —

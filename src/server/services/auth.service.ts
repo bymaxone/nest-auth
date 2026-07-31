@@ -233,7 +233,7 @@ export class AuthService {
     // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
     // The ':' separator ensures 'tenantABC' + 'x@y.com' and 'tenantABCx' + '@y.com'
     // never produce the same input string (prefix-collision resistance).
-    const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.hmacKey)
+    const bfIdentifier = this.lockoutIdentifier(tenantId, dto.email)
 
     const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
@@ -265,26 +265,18 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    // Status check before expensive scrypt — avoid wasting CPU on blocked accounts.
-    try {
-      this.assertUserNotBlocked(user)
-    } catch (err: unknown) {
-      this.emitLoginFailed(
-        { email: dto.email, tenantId, userId: user.id, reason: 'account_blocked' },
-        context
-      )
-      throw err
-    }
-
-    // Email verification gate.
-    if (this.options.emailVerification.required && !user.emailVerified) {
-      this.emitLoginFailed(
-        { email: dto.email, tenantId, userId: user.id, reason: 'email_not_verified' },
-        context
-      )
-      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
-    }
-
+    // The password is proved FIRST, before the status and verification gates below.
+    //
+    // Those gates used to run here, ahead of the KDF, to spare the CPU of hashing against an
+    // account that could never sign in. The saving was real and the cost was worse: a blocked
+    // or unverified account answered with its own status code, in a millisecond, without
+    // touching the failure counter — so anyone could enumerate addresses AND read their
+    // moderation state at whatever rate the per-IP limiter allowed, and never trip a lockout.
+    // The CPU it saved is bounded by that same limiter; the disclosure it bought was bounded
+    // by nothing.
+    //
+    // Proving the password first costs one derivation on a blocked account and buys the
+    // property that matters: every answer an attacker can reach is the same answer.
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
       this.logger.warn(
@@ -296,6 +288,27 @@ export class AuthService {
         context
       )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    // Only now, with the password proved, may the account's own state be described. The
+    // holder of the credential is not the attacker this hides from, and telling them "your
+    // address is unverified" is the whole point of the flow.
+    try {
+      this.assertUserNotBlocked(user)
+    } catch (err: unknown) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'account_blocked' },
+        context
+      )
+      throw err
+    }
+
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'email_not_verified' },
+        context
+      )
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
     // Reset brute-force counter on success.
@@ -500,6 +513,35 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
+    // Re-stamp the access token from the account that was just re-read.
+    //
+    // Rotation builds its claims from the session record written at LOGIN, and that record
+    // carries the role and tenant the account had then — inherited unchanged through every
+    // rotation. So demoting an ADMIN to MEMBER, or moving a user between tenants, had no
+    // effect on a live session: they kept minting tokens with the old authority for the
+    // refresh token's whole lifetime, and every role guard in the system reads the claim.
+    // The status gate above already re-read the account; the authority was sitting right
+    // there, unused.
+    //
+    // Only re-signed when it actually differs, so the ordinary rotation costs nothing extra.
+    let authoritative = result.accessToken
+    if (user.role !== result.session.role || user.tenantId !== result.session.tenantId) {
+      const rotated = this.tokenManager.verifyIgnoringExpiry(result.accessToken)
+      authoritative = this.tokenManager.issueAccess({
+        sub: user.id,
+        tenantId: user.tenantId,
+        role: user.role,
+        type: 'dashboard',
+        status: user.status,
+        mfaEnabled: user.mfaEnabled,
+        // Carried across from the token the rotation just produced: a second factor already
+        // cleared on this session stays cleared, and re-stamping the authority must not
+        // silently demand it again.
+        mfaVerified: rotated.mfaVerified,
+        epoch: await this.redis.getUserTokenEpoch(user.id)
+      })
+    }
+
     // Rotate the session detail record to the new token hash.
     // Fire-and-forget: sd: keys are display metadata only — a rotation failure
     // does not invalidate the auth tokens already issued above.
@@ -511,7 +553,7 @@ export class AuthService {
         })
     }
 
-    return { ...result, user: toSafeUser(user) }
+    return { ...result, accessToken: authoritative, user: toSafeUser(user) }
   }
 
   // ---------------------------------------------------------------------------
@@ -768,7 +810,7 @@ export class AuthService {
    * @param tenantId - The tenant the account belongs to.
    */
   async unlockAccount(email: string, tenantId: string): Promise<void> {
-    const identifier = hmacSha256(`${tenantId}:${normalizeEmail(email)}`, this.options.hmacKey)
+    const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
     await this.bruteForce.resetFailures(identifier)
     this.logger.log(
       `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${tenantId}`
@@ -778,6 +820,30 @@ export class AuthService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * The brute-force counter key for a dashboard account.
+   *
+   * The identity PLANE is part of the preimage, not just the tenant. Without it a tenant whose
+   * id is literally `platform` produced a byte-identical identifier to the platform plane's
+   * own `platform:{email}` — so five unauthenticated dashboard logins against an operator's
+   * address locked that operator out of the console, repeatably, without the platform surface
+   * ever being touched. The reverse held too: a successful dashboard login in that tenant
+   * cleared the operator's lockout mid-attack. The MFA counters already carry their plane for
+   * exactly this reason.
+   *
+   * One method rather than two call sites: `login` writes this counter and `unlockAccount`
+   * clears it, and a preimage that drifted between them would make the unlock silently do
+   * nothing — the failure mode is invisible, because clearing a key that does not exist
+   * succeeds.
+   *
+   * @param tenantId - The resolved tenant.
+   * @param email - The address, already normalized by the caller.
+   * @returns The HMAC identifier, opaque and non-reversible.
+   */
+  private lockoutIdentifier(tenantId: string, email: string): string {
+    return hmacSha256(`dashboard:${tenantId}:${email}`, this.options.hmacKey)
+  }
 
   private async resolveTenantId(dtoTenantId: string, req: Request): Promise<string> {
     return await resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver)

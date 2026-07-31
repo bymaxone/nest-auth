@@ -112,18 +112,23 @@ export class PlatformAuthService {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    // Status gate before the KDF. A suspended, inactive, or banned administrator must never
-    // authenticate — without this a revoked operator keeps full platform access as long as
-    // the password is known. Running it ahead of scrypt also denies an attacker unbounded
-    // hashing work on an account whose login could never succeed.
-    assertNotBlocked(admin.status, this.options.blockedStatuses)
-
+    // The password is proved FIRST. The status gate below used to run ahead of the KDF to deny
+    // an attacker hashing work on an account that could never sign in — but it answered with
+    // the administrator's own status, in a millisecond, without touching the failure counter,
+    // which enumerated operator accounts and read their moderation state on the
+    // highest-privilege plane in the system. The hashing it saved is bounded by the per-IP
+    // limiter; the disclosure was bounded by nothing.
     const passwordMatch = await this.passwordService.compare(dto.password, admin.passwordHash)
     if (!passwordMatch) {
       await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`login: invalid credentials email=${maskEmail(dto.email)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
+
+    // Only now, with the password proved, is the account's state described. A suspended,
+    // inactive, or banned administrator must never authenticate — without this a revoked
+    // operator keeps full platform access as long as the password is known.
+    assertNotBlocked(admin.status, this.options.blockedStatuses)
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
@@ -227,7 +232,33 @@ export class PlatformAuthService {
     ip: string,
     userAgent: string
   ): Promise<RotatedTokenResult> {
-    return this.tokenManager.reissuePlatformTokens(rawRefreshToken, ip, userAgent)
+    const result = await this.tokenManager.reissuePlatformTokens(rawRefreshToken, ip, userAgent)
+
+    // Re-read the administrator and re-apply the status gate — the backstop the dashboard
+    // plane has carried since ASVS v5 §7.4.2 was applied to it, and which this plane went
+    // without. Rotation works entirely from the stored `prt:` record, so nothing else on this
+    // path ever looks at the account again: a SUSPENDED or BANNED operator kept renewing
+    // access every fifteen minutes for the refresh token's whole lifetime, on the
+    // highest-privilege identity in the system, and the kill switch was advisory exactly
+    // where it mattered most.
+    const admin = await this.platformUserRepo.findById(result.session.userId)
+    if (!admin) {
+      // The account was deleted while the session outlived it. Clear what is left rather than
+      // leaving the freshly rotated records to be rotated again.
+      await this.revokeAllPlatformSessions(result.session.userId)
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+
+    try {
+      assertNotBlocked(admin.status, this.options.blockedStatuses)
+    } catch (err: unknown) {
+      // Compensated, not merely refused: the rotation above already minted a live pair, and
+      // leaving it would hand back exactly the access this gate exists to end.
+      await this.revokeAllPlatformSessions(admin.id)
+      throw err
+    }
+
+    return result
   }
 
   // ---------------------------------------------------------------------------

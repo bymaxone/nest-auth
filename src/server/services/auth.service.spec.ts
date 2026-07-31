@@ -108,7 +108,8 @@ const mockTokenManager = {
   issueMfaTempToken: jest.fn(),
   reissueTokens: jest.fn(),
   decodeToken: jest.fn(),
-  verifyIgnoringExpiry: jest.fn()
+  verifyIgnoringExpiry: jest.fn(),
+  issueAccess: jest.fn()
 }
 
 const mockBruteForce = {
@@ -125,7 +126,8 @@ const mockRedis = {
   setnx: jest.fn(),
   readSessionOwner: jest.fn(),
   invalidateUserSessions: jest.fn(),
-  bumpUserTokenEpoch: jest.fn()
+  bumpUserTokenEpoch: jest.fn(),
+  getUserTokenEpoch: jest.fn()
 }
 
 const mockOtpService = {
@@ -164,7 +166,36 @@ const mockReq = {
 // Suite
 // ---------------------------------------------------------------------------
 
+/** The wire code carried by a thrown `AuthException`. */
+function getErrorCode(err: unknown): string {
+  if (!(err instanceof AuthException)) throw new Error(`not an AuthException: ${String(err)}`)
+  return (err.getResponse() as { error: { code: string } }).error.code
+}
+
 describe('AuthService', () => {
+  /**
+   * An `AuthService` over the same collaborators but different resolved options, for the
+   * cases where the behaviour under test IS the option.
+   */
+  async function buildServiceWith(options: unknown): Promise<AuthService> {
+    const module = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: options },
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+        { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: TokenManagerService, useValue: mockTokenManager },
+        { provide: BruteForceService, useValue: mockBruteForce },
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: OtpService, useValue: mockOtpService },
+        { provide: SessionService, useValue: mockSessionService }
+      ]
+    }).compile()
+    return module.get(AuthService)
+  }
+
   let service: AuthService
 
   beforeEach(async () => {
@@ -645,6 +676,56 @@ describe('AuthService', () => {
       )
     })
 
+    // The enumeration oracle this ordering exists to close. A blocked or unverified account
+    // must be indistinguishable from a non-existent one to anyone who does NOT hold the
+    // password — same code, same status, and the failure counter advances so probing is
+    // bounded by the lockout rather than only by the per-IP limit.
+    it.each([
+      ['blocked', { ...USER, status: 'suspended' }],
+      ['unverified', { ...USER, emailVerified: false }]
+    ])(
+      'answers a wrong password on a %s account like any other wrong password',
+      async (_label, account) => {
+        const strict = await buildServiceWith({
+          ...mockOptions,
+          emailVerification: { required: true, otpTtlSeconds: 600 }
+        })
+        mockUserRepo.findByEmail.mockResolvedValue(account)
+        mockPasswordService.compare.mockResolvedValue(false)
+
+        const err = await strict.login(dto, mockReq).catch((e: unknown) => e)
+
+        expect(err).toBeInstanceOf(AuthException)
+        expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+        // …and the attempt counted, which is what stops unlimited probing of those states.
+        expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+      }
+    )
+
+    // The other half: the holder of the credential IS told why, because the flow is useless
+    // otherwise — a user whose address is unverified has to learn to check their inbox.
+    it('tells the password holder that the address is unverified', async () => {
+      const strict = await buildServiceWith({
+        ...mockOptions,
+        emailVerification: { required: true, otpTtlSeconds: 600 }
+      })
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockPasswordService.compare.mockResolvedValue(true)
+
+      const err = await strict.login(dto, mockReq).catch((e: unknown) => e)
+
+      expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    })
+
+    it('tells the password holder that the account is blocked', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, status: 'suspended' })
+      mockPasswordService.compare.mockResolvedValue(true)
+
+      const err = await service.login(dto, mockReq).catch((e: unknown) => e)
+
+      expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+    })
+
     // …and the other half of "on the attempt that crosses it": a failure that does NOT cross
     // the threshold announces nothing. Without this, a hook firing on every wrong password
     // reads exactly like one firing at the lockout, and a consumer paging on the event would
@@ -750,7 +831,7 @@ describe('AuthService', () => {
     // '{tenantId}:{email}'. Why: pins the hmac input template (line 185:37) so blanking it dies.
     it('should compute the brute-force identifier from the tenant and email HMAC', async () => {
       await service.login(dto, mockReq)
-      const expectedIdentifier = hmacSha256(`tenant-1:${dto.email}`, HMAC_KEY)
+      const expectedIdentifier = hmacSha256(`dashboard:tenant-1:${dto.email}`, HMAC_KEY)
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedIdentifier)
     })
 
@@ -759,9 +840,31 @@ describe('AuthService', () => {
     // canonical lowercase form, so an attacker cannot rotate casing to get a fresh
     // lockout bucket. This holds independently of the DTO @Transform (which the
     // non-transforming ValidationPipe discards).
+    // The plane collision. A tenant whose id is literally `platform` used to produce a
+    // byte-identical lockout identifier to the platform plane's own `platform:{email}`, so
+    // five unauthenticated dashboard logins locked an operator out of the console — and a
+    // successful one cleared their lockout mid-attack. `tenantId` comes from the request body
+    // whenever no resolver is configured, which is the default, so it was attacker-chosen.
+    it('never derives the platform plane key, even for a tenant named platform', async () => {
+      const platformKey = hmacSha256(`platform:${dto.email}`, HMAC_KEY)
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      await expect(service.login({ ...dto, tenantId: 'platform' }, mockReq)).rejects.toThrow(
+        AuthException
+      )
+
+      const touched = [
+        ...mockBruteForce.isLockedOut.mock.calls,
+        ...mockBruteForce.recordFailure.mock.calls,
+        ...mockBruteForce.resetFailures.mock.calls
+      ].map((call) => call[0] as string)
+      expect(touched.length).toBeGreaterThan(0)
+      expect(touched).not.toContain(platformKey)
+    })
+
     it('should derive the brute-force key and lookup from the normalized email', async () => {
       await service.login({ ...dto, email: '  USER@Example.COM  ' }, mockReq)
-      const canonicalIdentifier = hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+      const canonicalIdentifier = hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
     })
@@ -1266,29 +1369,6 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('refresh', () => {
-    /**
-     * An `AuthService` over the same collaborators but different resolved options, for the
-     * cases where the behaviour under test IS the option.
-     */
-    async function buildServiceWith(options: unknown): Promise<AuthService> {
-      const module = await Test.createTestingModule({
-        providers: [
-          AuthService,
-          { provide: BYMAX_AUTH_OPTIONS, useValue: options },
-          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
-          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
-          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
-          { provide: PasswordService, useValue: mockPasswordService },
-          { provide: TokenManagerService, useValue: mockTokenManager },
-          { provide: BruteForceService, useValue: mockBruteForce },
-          { provide: AuthRedisService, useValue: mockRedis },
-          { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
-        ]
-      }).compile()
-      return module.get(AuthService)
-    }
-
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
     it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {
@@ -1297,7 +1377,13 @@ describe('AuthService', () => {
         rawRefreshToken: 'new-refresh'
       }
       mockTokenManager.reissueTokens.mockResolvedValue(rotated)
-      mockUserRepo.findById.mockResolvedValue({ id: 'u1', email: 'a@e.com', status: 'active' })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        role: 'member',
+        tenantId: 't1'
+      })
 
       const result = await service.refresh('old-refresh', '1.2.3.4', 'Browser')
       expect(result.accessToken).toBe('new.access')
@@ -1355,6 +1441,8 @@ describe('AuthService', () => {
         id: 'u1',
         email: 'a@e.com',
         status: 'active',
+        role: 'member',
+        tenantId: 't1',
         emailVerified: false
       })
 
@@ -1384,6 +1472,8 @@ describe('AuthService', () => {
         id: 'u1',
         email: 'a@e.com',
         status: 'active',
+        role: 'member',
+        tenantId: 't1',
         emailVerified: true
       })
 
@@ -1404,12 +1494,96 @@ describe('AuthService', () => {
         id: 'u1',
         email: 'a@e.com',
         status: 'active',
+        role: 'member',
+        tenantId: 't1',
         emailVerified: false
       })
 
       await expect(service.refresh('old-refresh', '1.2.3.4', 'Browser')).resolves.toMatchObject({
         accessToken: 'new.access'
       })
+    })
+
+    // Rotation builds its claims from the session record written at LOGIN, so a demotion had
+    // no effect on a live session: the user kept minting ADMIN-roled tokens for the refresh
+    // token's whole lifetime, and every role guard in the system reads that claim. The status
+    // gate already re-reads the account — the authority was sitting there, unused.
+    it.each([
+      ['a demotion', { role: 'member' }, { role: 'admin' }],
+      ['a tenant move', { tenantId: 't2' }, { tenantId: 't1' }]
+    ])('re-stamps the rotated access token after %s', async (_label, current, stale) => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'admin', ...stale },
+        accessToken: 'stale.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        role: 'admin',
+        tenantId: 't1',
+        mfaEnabled: false,
+        ...current
+      })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ mfaVerified: false })
+      mockTokenManager.issueAccess.mockReturnValue('restamped.access')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(3)
+
+      const result = await service.refresh('old-refresh', '1.2.3.4', 'Browser')
+
+      expect(result.accessToken).toBe('restamped.access')
+      expect(mockTokenManager.issueAccess).toHaveBeenCalledWith(
+        expect.objectContaining({ ...current, sub: 'u1', epoch: 3 })
+      )
+    })
+
+    // …and the ordinary rotation, where nothing changed, pays nothing extra.
+    it('leaves the rotated token alone when the authority is unchanged', async () => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        role: 'member',
+        tenantId: 't1'
+      })
+
+      const result = await service.refresh('old-refresh', '1.2.3.4', 'Browser')
+
+      expect(result.accessToken).toBe('new.access')
+      expect(mockTokenManager.issueAccess).not.toHaveBeenCalled()
+    })
+
+    // A second factor already cleared on this session stays cleared — re-stamping the
+    // authority must not silently demand it again.
+    it('carries mfaVerified across the re-stamp', async () => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'admin' },
+        accessToken: 'stale.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        role: 'member',
+        tenantId: 't1',
+        mfaEnabled: true
+      })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ mfaVerified: true })
+      mockTokenManager.issueAccess.mockReturnValue('restamped.access')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+
+      await service.refresh('old-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockTokenManager.issueAccess).toHaveBeenCalledWith(
+        expect.objectContaining({ mfaVerified: true, mfaEnabled: true })
+      )
     })
 
     // The account was deleted while the session record outlived it. Hand back nothing, and
@@ -2405,7 +2579,7 @@ describe('AuthService', () => {
       await service.unlockAccount('user@example.com', 'tenant-1')
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
-        hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+        hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
       )
     })
 
@@ -2415,7 +2589,7 @@ describe('AuthService', () => {
       await service.unlockAccount('  USER@Example.com  ', 'tenant-1')
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
-        hmacSha256('tenant-1:user@example.com', HMAC_KEY)
+        hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
       )
     })
 
