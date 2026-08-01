@@ -756,7 +756,14 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
   if (bytesPerDerivation > MAX_KDF_BYTES_PER_DERIVATION) {
     throw new Error(
       `[BymaxAuthModule] password.costFactor ${effectiveN} with blockSize ${effectiveR} ` +
-        `needs ${Math.round(bytesPerDerivation / 1024 / 1024)} MiB per derivation ` +
+        // Rounded UP, so the figure can never be printed as equal to the ceiling it is above:
+        // "needs 512 MiB, above the 512 MiB ceiling" reads as a bug in the check rather than a
+        // misconfiguration. No configuration reaching here can currently produce a fractional
+        // figure — `validatePasswordCostFactor` runs first and requires a power of two, so
+        // `128 * N * r` is always a whole number of MiB — which is exactly why this is written
+        // as the rounding that stays correct if that constraint is ever relaxed, rather than
+        // left to be re-derived by whoever relaxes it.
+        `needs ${Math.ceil(bytesPerDerivation / 1024 / 1024)} MiB per derivation ` +
         `(scrypt uses 128 * N * r), above the ${MAX_KDF_BYTES_PER_DERIVATION / 1024 / 1024} ` +
         `MiB ceiling. Each derivation occupies one libuv threadpool thread ` +
         `(UV_THREADPOOL_SIZE, 4 by default), and an unauthenticated login pays the full cost ` +
