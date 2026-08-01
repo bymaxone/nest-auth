@@ -130,7 +130,10 @@ const mockRedis = {
   set: jest.fn(),
   get: jest.fn(),
   del: jest.fn(),
-  getdel: jest.fn()
+  getdel: jest.fn(),
+  // The invitee index is claimed atomically (read-and-set in one step), so the default is
+  // "nothing was displaced" — the ordinary first invitation for an address.
+  eval: jest.fn().mockResolvedValue(null)
 }
 
 const mockPasswordService = {
@@ -222,8 +225,10 @@ describe('InvitationService', () => {
     it('should store token in Redis and send invitation email on success', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // Two writes: the invitation record, and the invitee index that makes it revocable.
-      expect(mockRedis.set).toHaveBeenCalledTimes(2)
+      // One `set` — the invitation record. The invitee index is claimed through the atomic
+      // read-and-set, so it is not a second `set`.
+      expect(mockRedis.set).toHaveBeenCalledTimes(1)
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
@@ -1113,15 +1118,22 @@ describe('InvitationService', () => {
     // unreferenced for the rest of its TTL.
     it('drops the previous invitation for the same address', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
-      mockRedis.getdel.mockResolvedValue('c'.repeat(64))
+      // The pending invitation the supersede will displace: readable for the rank check, and
+      // returned by the atomic index claim as the hash that was displaced.
+      mockRedis.get.mockResolvedValue('c'.repeat(64))
+      mockRedis.eval.mockResolvedValue('c'.repeat(64))
       mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      expect(mockRedis.getdel).toHaveBeenCalledWith(
-        `invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`
+      // The index is claimed atomically rather than read-then-written: two concurrent invites
+      // for one address must not both believe they displaced nothing.
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('SET'),
+        [`invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`],
+        expect.arrayContaining([expect.any(String)])
       )
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
     })
@@ -1129,13 +1141,69 @@ describe('InvitationService', () => {
     // …and does not delete anything when the invitee had no pending invitation.
     it('deletes nothing when there was none', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
-      mockRedis.getdel.mockResolvedValue(null)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(null)
       mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
 
       expect(mockRedis.del).not.toHaveBeenCalled()
+    })
+
+    // The index can outlive the record it names: the `inv:` key has the same TTL but a revoke
+    // deletes them in sequence, and a crash between the two leaves the index pointing at
+    // nothing. There is no role to compare against, so the supersede proceeds — the dangling
+    // index is replaced, which is the cleanup this path would want anyway.
+    it('supersedes freely when the index names a record that is gone', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('invidx:') ? 'c'.repeat(64) : null)
+      )
+      mockRedis.eval.mockResolvedValue('c'.repeat(64))
+      mockRedis.set.mockResolvedValue('OK')
+      mockRedis.del.mockResolvedValue(true)
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
+      expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+    })
+
+    // Superseding DESTROYS a pending invitation — the same end state `revokeInvitation`
+    // produces, and that route is deliberately strict: the caller must out-rank the role the
+    // invitation grants, and an outranked one is answered as if no invitation existed so the
+    // endpoint is not an oracle. `create`'s own check is about the role being REQUESTED, which
+    // says nothing about the role being destroyed, so any tenant member could delete a pending
+    // ADMIN invitation by inviting the same address at MEMBER — a capability the revoke route
+    // refuses them and refuses even to confirm exists.
+    it('refuses to supersede an invitation the caller is outranked by', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key.startsWith('invidx:')
+            ? 'c'.repeat(64)
+            : JSON.stringify({
+                email: 'invited@example.com',
+                role: 'admin',
+                tenantId: 'tenant-1',
+                inviterUserId: 'someone-senior',
+                createdAt: new Date().toISOString()
+              })
+        )
+      )
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+      })
+
+      // Nothing was displaced, and no replacement was minted.
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
     })
   })
 })

@@ -20,6 +20,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { hasRole } from '../utils/roles.util'
@@ -183,12 +184,31 @@ export class InvitationService {
     // one. Two live tokens for one invitee is two chances for an intercepted link to be
     // redeemed, and revoking would only ever reach the newest — the older one would sit there
     // valid and unreferenced for the rest of its TTL.
-    await this.dropPendingInvitation(normalizedEmail, tenantId)
+    //
+    // Superseding DESTROYS a pending invitation, which is the same end state `revokeInvitation`
+    // produces — so it is held to the same bar. Without this, `hasRole(inviter.role, role)` was
+    // the only authorisation, and it is a check about the role being REQUESTED, not the role of
+    // the invitation being destroyed: any tenant member could `POST {email: bob, role: MEMBER}`
+    // and delete a pending ADMIN invitation for bob, a capability the revoke route refuses them
+    // and refuses even to confirm exists.
+    await this.assertMaySupersede(inviter, normalizedEmail, tenantId)
+
+    // The index is claimed FIRST, and atomically, because it is the serialization point: it is
+    // the only handle the issuing side has on a record keyed by a token nobody here ever saw.
+    // Writing the record first and the index second left two failures. A failed index write
+    // published a token that stays redeemable for its whole TTL while `revokeInvitation` reads
+    // an absent index and answers 204 — an operator told the withdrawal succeeded over an
+    // invitation that is still live. And two concurrent invites for one address interleaved
+    // into two live `inv:` records with the index naming only the newer, which is exactly the
+    // "two live tokens for one invitee" this supersede exists to prevent.
+    //
+    // Claiming the index first inverts the failure: a crash before the record is written leaves
+    // an index naming nothing, so the invitation is simply dead — the safe direction.
+    const supersededHash = await this.claimInviteeIndex(normalizedEmail, tenantId, tokenHash, ttl)
+    if (supersededHash !== null) {
+      await this.redis.del(`inv:${supersededHash}`)
+    }
     await this.redis.set(tokenKey, JSON.stringify(stored), ttl)
-    // The invitee index is what makes an invitation manageable at all: the record is keyed by
-    // the hash of a token only the recipient's mailbox holds, so without this nobody on the
-    // issuing side can name a pending invitation, let alone withdraw one.
-    await this.redis.set(this.inviteeKey(normalizedEmail, tenantId), tokenHash, ttl)
 
     const displayTenantName = tenantName ?? tenantId
     const expiresAt = new Date(Date.now() + ttl * 1_000)
@@ -203,7 +223,7 @@ export class InvitationService {
       expiresAt
     })
     this.logger.log(
-      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${tenantId} inviterUserId=${inviterUserId}`
+      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${logSafe(tenantId)} inviterUserId=${inviterUserId}`
     )
   }
 
@@ -296,11 +316,71 @@ export class InvitationService {
    * @param email - The normalized invitee address.
    * @param tenantId - The tenant the invitation was issued for.
    */
-  private async dropPendingInvitation(email: string, tenantId: string): Promise<void> {
-    const indexKey = this.inviteeKey(email, tenantId)
-    const tokenHash = await this.redis.getdel(indexKey)
+  /**
+   * Refuses a caller who may not destroy the invitation their new one would supersede.
+   *
+   * `create`'s own authorisation is `hasRole(inviter.role, requestedRole)` — a statement about
+   * the role being granted, which says nothing about the role of the record being replaced.
+   * `revokeInvitation` is deliberately strict about that second question, so reaching the same
+   * end state through `create` must be too, or the strictness is decoration.
+   *
+   * An unparseable record is superseded without a check, exactly as `revokeInvitation` treats
+   * it: it can no longer be accepted either, and leaving it behind would be worse.
+   *
+   * @param inviter - The authenticated caller, already known to be in the tenant.
+   * @param email - The normalized invitee address.
+   * @param tenantId - The tenant the invitation belongs to.
+   * @throws {@link AuthException} `INSUFFICIENT_ROLE` when the caller is outranked by the
+   *   pending invitation. Unlike the revoke route this cannot answer silently — the caller is
+   *   asking to create something, and a silent success would report an invitation that does
+   *   not exist.
+   */
+  private async assertMaySupersede(
+    inviter: { role: string; status: string },
+    email: string,
+    tenantId: string
+  ): Promise<void> {
+    const tokenHash = await this.redis.get(this.inviteeKey(email, tenantId))
     if (tokenHash === null) return
-    await this.redis.del(`inv:${tokenHash}`)
+    const raw = await this.redis.get(`inv:${tokenHash}`)
+    const pending = raw === null ? null : this.parseInvitation(raw)
+    if (pending !== null && !this.mayWithdraw(inviter, pending)) {
+      this.logger.warn(
+        `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
+          `inviterUserId=${inviter.role} — outranked by the pending invitation`
+      )
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    }
+  }
+
+  /**
+   * Atomically points the invitee index at `tokenHash`, answering with the hash it displaced.
+   *
+   * `SET` with `GET` is one round trip and one atomic step, so two concurrent invites for one
+   * address cannot both believe they superseded nothing: exactly one sees `null`, and the other
+   * sees the first one's hash and deletes its record. Reading the index and then writing it
+   * would let both read `null` and leave two live invitations for one invitee.
+   *
+   * @param email - The normalized invitee address.
+   * @param tenantId - The tenant the invitation belongs to.
+   * @param tokenHash - The new invitation's token hash.
+   * @param ttl - The invitation TTL, in seconds.
+   * @returns The displaced token hash, or `null` when there was no pending invitation.
+   */
+  private async claimInviteeIndex(
+    email: string,
+    tenantId: string,
+    tokenHash: string,
+    ttl: number
+  ): Promise<string | null> {
+    const previous = await this.redis.eval(
+      `local old = redis.call('GET', KEYS[1])
+       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+       return old`,
+      [this.inviteeKey(email, tenantId)],
+      [tokenHash, String(ttl)]
+    )
+    return typeof previous === 'string' ? previous : null
   }
 
   // ---------------------------------------------------------------------------
@@ -371,7 +451,7 @@ export class InvitationService {
     if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
       this.logger.warn(
         `revokeInvitation: refused email=${maskEmail(normalizedEmail)} ` +
-          `tenantId=${tenantId} revokerUserId=${revokerUserId} — outranked by the invitation`
+          `tenantId=${logSafe(tenantId)} revokerUserId=${revokerUserId} — outranked by the invitation`
       )
       return false
     }
@@ -380,7 +460,7 @@ export class InvitationService {
     const removed = await this.redis.del(`inv:${tokenHash}`)
     this.logger.log(
       `revokeInvitation: invitation withdrawn email=${maskEmail(normalizedEmail)} ` +
-        `tenantId=${tenantId} revokerUserId=${revokerUserId}`
+        `tenantId=${logSafe(tenantId)} revokerUserId=${revokerUserId}`
     )
     return removed
   }

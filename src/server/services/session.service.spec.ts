@@ -435,6 +435,41 @@ describe('SessionService', () => {
       expect(resolver).toHaveBeenCalledTimes(1)
     })
 
+    // The resolver is the host's code and its answer went straight into the eviction
+    // arithmetic. `NaN` — `Number(user.plan.maxSessions)` against a missing column, say —
+    // quietly disabled the cap: `length <= NaN` is false so eviction was entered,
+    // `length - NaN` is `NaN`, `slice(0, NaN)` is empty, nothing was evicted, and every path
+    // still reported success. Only a THROWN resolver was ever caught. A cap that silently
+    // stops applying is worse than one that is merely wrong, so anything that is not a
+    // positive whole number falls back to the configured default and says so.
+    it.each([
+      ['NaN', Number.NaN],
+      ['zero', 0],
+      ['a negative', -3],
+      ['a fraction', 2.5],
+      ['Infinity', Number.POSITIVE_INFINITY],
+      ['a non-number', 'five' as unknown as number]
+    ])('falls back to defaultMaxSessions when the resolver returns %s', async (_l, resolved) => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockOptions.sessions.maxSessionsResolver = jest
+        .fn<Promise<number>, [unknown]>()
+        .mockResolvedValue(resolved)
+      service = await buildModule()
+      // Seven members against the default of five: if the default took over, two are evicted;
+      // if the resolver's answer were used, `NaN` would evict nothing at all.
+      const hashes = Array.from({ length: 7 }, (_, i) => sha256(`bad-resolver-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockResolvedValue(makeDetailJson(Date.now() - 5000))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      // Two over the default of five, so the default's eviction actually runs. Under the
+      // unvalidated resolver `NaN` evicted nothing and reported success.
+      expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('maxSessionsResolver'))
+      errorSpy.mockRestore()
+    })
+
     // Verifies that falls back to defaultMaxSessions when maxSessionsResolver throws.
     it('falls back to defaultMaxSessions when maxSessionsResolver throws', async () => {
       const resolver = jest
@@ -1599,15 +1634,30 @@ describe('SessionService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
-    // Verifies that filters out rp: members and does not try to revoke them.
-    it('filters out rp: members and does not try to revoke them', async () => {
+    // `rp:` members are not refresh sessions, so the revocation loop must not try to revoke
+    // them through the Lua path — but they must not survive either.
+    //
+    // A grace pointer names a successor session that a predecessor token may still recover.
+    // For every session this call revokes that is harmless, since the grace branch requires the
+    // successor's `rt:` key and it is gone. The gap is the session deliberately KEPT: its
+    // predecessor's pointer names a hash that is still alive, so whoever holds that predecessor
+    // token could take the grace branch and mint a brand-new full-lifetime session for the rest
+    // of the window — after the user asked to sign out their other devices. The epoch bump does
+    // not close it: a recovered session signs its access token from the current epoch.
+    it('deletes every rp: grace pointer instead of merely skipping it', async () => {
       const currentHash = sha256('current-rp-filter')
       const rpHash = sha256('grace-pointer')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`, `rp:${rpHash}`])
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.srem.mockResolvedValue(1)
 
       await service.revokeAllExceptCurrent(userId, currentHash)
 
+      // Not routed through the session-revocation Lua — it is not a session.
       expect(mockRedis.eval).not.toHaveBeenCalled()
+      // …but the key is gone, and so is its entry in the per-user index.
+      expect(mockRedis.del).toHaveBeenCalledWith(`rp:${rpHash}`)
+      expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rp:${rpHash}`)
     })
 
     // Verifies that silently skips sessions that fail the ownership check (BOLA resistance via Lua).
