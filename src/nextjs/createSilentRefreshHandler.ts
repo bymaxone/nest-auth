@@ -302,10 +302,10 @@ export function resolveSafeDestination(
   }
 
   if (resolved.origin !== origin) return loginPath
-  // Return the relative form — `pathname + search + hash` — so the
-  // subsequent `NextResponse.redirect(new URL(path, origin))` call
-  // cannot accidentally alter the origin even if the caller rebuilds
-  // the destination against a different base.
+  // Return the relative form — `pathname + search + hash`. The handler now emits it through
+  // `redirectToPath` and never rebuilds an absolute URL, so this is the shape the `Location`
+  // carries verbatim; keeping the origin out of the returned value also means a caller that
+  // did rebuild it against some other base could not move it off-origin.
   return `${resolved.pathname}${resolved.search}${resolved.hash}`
 }
 

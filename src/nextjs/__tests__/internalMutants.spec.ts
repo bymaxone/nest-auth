@@ -275,7 +275,10 @@ describe('tokenState — readTokenState', () => {
       const state = await readTokenState(request as never, RESOLVED)
       expect(state.hasCookie).toBe(true)
       expect(state.authenticated).toBe(false)
-      expect(state.signatureVerified).toBe(false)
+      // The signature genuinely verified — that is the whole point of the case. Asserting it
+      // is what proves the refusal is on the token's TYPE and not on a signature that happened
+      // not to check out, which would make the test pass for the wrong reason.
+      expect(state.signatureVerified).toBe(true)
     }
   )
 
