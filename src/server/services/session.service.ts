@@ -507,6 +507,25 @@ export class SessionService {
       }
     }
 
+    // Every rotation grace pointer the account holds goes too.
+    //
+    // `revokeSession` only ever deletes `rt:`/`sd:` keys, and the loop above only visits `rt:`
+    // members, so a `rp:{predecessor}` pointer survived both. For a *revoked* session that is
+    // harmless — the grace branch requires the successor's `rt:` key, which is gone. The gap is
+    // the *preserved* session: its predecessor's pointer names a hash that is deliberately
+    // still alive, so anyone holding that predecessor token could take the grace branch and
+    // mint a brand-new full-lifetime session for the rest of the window. The epoch bump below
+    // does not help — a recovered session signs its access token from the current epoch.
+    //
+    // "Sign out my other devices" is a statement about right now, so no credential minted
+    // before this moment may still produce a session. `logout` clears the same pointer for the
+    // single token it is handed, for the same reason.
+    const gracePointers = members.filter((m) => m.startsWith('rp:'))
+    for (const member of gracePointers) {
+      await this.redis.del(member)
+      await this.redis.srem(`sess:${userId}`, member)
+    }
+
     // Last, and only once every refresh session is gone: a bump before the loop would be
     // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
     // rather than logging the user out of a device the loop never got to revoke.
@@ -739,7 +758,16 @@ export class SessionService {
    *
    * When `options.sessions.maxSessionsResolver` is configured, it is called with
    * the full user record. Falls back to `options.sessions.defaultMaxSessions` if
-   * the resolver is absent, the user cannot be found, or the resolver throws.
+   * the resolver is absent, the user cannot be found, the resolver throws, or it answers
+   * with something that is not a usable limit.
+   *
+   * That last case is the one that mattered. The resolver is the host's code and its return
+   * value went straight into the eviction arithmetic, where `NaN` — the result of, say,
+   * `Number(user.plan.maxSessions)` against a column that is missing — quietly disabled the cap
+   * altogether: `length <= NaN` is `false`, so eviction was entered, `length - NaN` is `NaN`,
+   * and `slice(0, NaN)` is empty, so nothing was evicted and every call path still reported
+   * success. A negative value evicted every other session on each login instead. Only a
+   * *thrown* resolver was ever caught.
    *
    * @param userId - Internal user ID to resolve the limit for.
    * @returns Maximum allowed concurrent sessions for the given user.
@@ -754,7 +782,16 @@ export class SessionService {
     try {
       const user = await this.userRepo.findById(userId)
       if (!user) return defaultMaxSessions
-      return await maxSessionsResolver(user)
+      const resolved = await maxSessionsResolver(user)
+      if (!Number.isInteger(resolved) || resolved < 1) {
+        this.logger.error(
+          `maxSessionsResolver returned ${String(resolved)}, which is not a positive whole ` +
+            `number of sessions — falling back to defaultMaxSessions. A cap that silently ` +
+            `stops applying is worse than one that is merely wrong.`
+        )
+        return defaultMaxSessions
+      }
+      return resolved
     } catch (err: unknown) {
       this.logger.error('maxSessionsResolver threw — falling back to defaultMaxSessions', err)
       return defaultMaxSessions
