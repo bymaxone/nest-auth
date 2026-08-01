@@ -582,7 +582,11 @@ export class AuthRedisService {
       ],
       [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
     )
-    return written === 1
+    // Narrowed rather than compared straight to `1`. `eval` answers `unknown`, and a client
+    // that surfaced the Lua integer reply as a string would make `=== 1` false — reporting a
+    // successful write as a sweep, and refusing a rotation whose session was already stored.
+    // The other script call sites in this file narrow for the same reason.
+    return typeof written === 'number' ? written === 1 : written === '1'
   }
 
   /**

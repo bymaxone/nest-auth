@@ -315,6 +315,59 @@ describe('AuthRedisService', () => {
     })
   })
 
+  describe('writeRecoveredSession', () => {
+    const RECOVERED = {
+      kind: 'dashboard' as const,
+      newHash: 'new-hash',
+      newSessionJson: '{"userId":"u1"}',
+      familyId: 'fam-1',
+      userId: 'u1',
+      refreshTtl: 604_800
+    }
+
+    // The gate the whole script exists for: the per-user session index is the witness that a
+    // revoke-all has not already swept the account, and the write and the check are one step.
+    it('passes the three keys the script gates and writes on', async () => {
+      mockRedis.eval.mockResolvedValue(1)
+
+      await expect(service.writeRecoveredSession(RECOVERED)).resolves.toBe(true)
+
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('EXISTS', KEYS[2])"),
+        3,
+        prefixed('rt:new-hash'),
+        prefixed('sess:u1'),
+        prefixed('fam:fam-1'),
+        '{"userId":"u1"}',
+        '604800',
+        'fam-1',
+        'rt',
+        'new-hash'
+      )
+    })
+
+    // `0` is the sweep: the account no longer has a session index, so a revoke-all ran between
+    // the rotation script's return and this write.
+    it('reports a sweep when the script refuses', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await expect(service.writeRecoveredSession(RECOVERED)).resolves.toBe(false)
+    })
+
+    // `eval` answers `unknown`. A client that surfaced the Lua integer as a string would make a
+    // bare `=== 1` false, reporting a successful write as a sweep and refusing a rotation whose
+    // session was already stored — so the reply is narrowed rather than compared straight.
+    it.each([
+      ['the string "1"', '1', true],
+      ['the string "0"', '0', false],
+      ['a nil reply', null, false]
+    ])('reads %s correctly', async (_label, reply, expected) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      await expect(service.writeRecoveredSession(RECOVERED)).resolves.toBe(expected)
+    })
+  })
+
   describe('rotateRefreshSession', () => {
     const BUNDLE = {
       kind: 'dashboard' as const,
