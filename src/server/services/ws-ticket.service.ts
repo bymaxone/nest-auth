@@ -15,20 +15,28 @@
  * @layer Service
  */
 
-import { HttpStatus, Injectable, Logger } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
 
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { IUserRepository } from '../interfaces/user-repository.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 
 @Injectable()
 export class WsTicketService {
   private readonly logger = new Logger(WsTicketService.name)
 
-  constructor(private readonly redis: AuthRedisService) {}
+  constructor(
+    private readonly redis: AuthRedisService,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository
+  ) {}
 
   /**
    * Mints a ticket from an already-verified access-token payload.
@@ -55,11 +63,24 @@ export class WsTicketService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED, HttpStatus.FORBIDDEN)
     }
 
+    // The snapshot is read from the ACCOUNT, not from the token.
+    //
+    // A ticket authorizes a socket for that socket's whole lifetime — there is no per-request
+    // gate behind it — so the snapshot is the last chance to describe the account correctly.
+    // Copying `payload.status` did not: rotation stamps that claim empty by construction, so
+    // every ticket minted from a rotated token carried no status at all, and the socket ran
+    // with a blank authorization field for as long as it stayed open. Re-reading also closes
+    // the window the `us:` cache leaves open on the route in front of this one, and gives the
+    // socket the role and tenant the account holds now rather than the ones its login did.
+    const user = await this.userRepo.findById(payload.sub)
+    if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    assertNotBlocked(user.status, this.options.blockedStatuses)
+
     const snapshot: WsTicketSnapshot = {
-      sub: payload.sub,
-      tenantId: payload.tenantId,
-      role: payload.role,
-      status: payload.status,
+      sub: user.id,
+      tenantId: user.tenantId,
+      role: user.role,
+      status: user.status,
       mfaEnabled: payload.mfaEnabled,
       mfaVerified: payload.mfaVerified
     }

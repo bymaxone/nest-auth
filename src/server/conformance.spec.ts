@@ -91,7 +91,11 @@ const contract = JSON.parse(
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
   jwt: { secret: 'x'.repeat(40) },
-  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+  // Required whenever rate limiting is on; see `validateClientIpSource` for why there is no
+  // default. Irrelevant to the derivation this suite pins, but a config that does not resolve
+  // cannot be used to check anything.
+  rateLimit: { clientIpSource: 'peer' as const }
 }
 
 describe('cross-implementation conformance', () => {
@@ -204,7 +208,19 @@ describe('cross-implementation conformance', () => {
       accessTokenBlacklist: 'guards/jwt-auth.guard.ts',
       totpReplayMarker: 'services/mfa.service.ts',
       passwordResetToken: 'services/password-reset.service.ts',
-      passwordResetVerifiedToken: 'services/password-reset.service.ts'
+      passwordResetVerifiedToken: 'services/password-reset.service.ts',
+      mfaTransitionLock: 'services/mfa.service.ts',
+      failedLoginCounter: 'services/brute-force.service.ts',
+      oneTimePassword: 'services/otp.service.ts',
+      otpResendCooldown: 'services/password-reset.service.ts',
+      oauthState: 'oauth/oauth.service.ts',
+      wsTicket: 'redis/auth-redis.service.ts',
+      invitation: 'services/invitation.service.ts',
+      invitationIndex: 'services/invitation.service.ts',
+      recoveryCodeClaim: 'services/mfa.service.ts',
+      emailChangeToken: 'services/email-change.service.ts',
+      pendingMfaSetup: 'services/mfa.service.ts',
+      mfaTempTokenMarker: 'services/token-manager.service.ts'
     }
 
     // Verifies each contract prefix is the one the code actually writes. A rename that lands on
@@ -223,6 +239,19 @@ describe('cross-implementation conformance', () => {
         expect(source.includes(`${prefix}:`) || source.includes(`'${prefix}'`)).toBe(true)
       }
     )
+
+    // The map above is hand-maintained, so a prefix added to the contract and never added
+    // here would be checked by nothing — which is how a contract entry becomes decoration.
+    // This asserts the map covers the contract, so forgetting is a failing test rather than a
+    // silent gap.
+    it('checks every prefix the contract declares', () => {
+      const declared = Object.keys(contract.redisKeyPrefixes)
+        .filter((name) => name !== '$comment')
+        .sort()
+      const checked = Object.keys(PREFIX_SOURCES).sort()
+
+      expect(checked).toEqual(declared)
+    })
 
     // Verifies the two planes never share an index prefix. They are keyed by ids from
     // different consumer repositories, which may collide, so one shared index would let a

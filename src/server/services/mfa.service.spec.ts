@@ -456,6 +456,9 @@ describe('MfaService', () => {
         jwt: { secret: JWT_SECRET },
         hmacKey: HMAC_KEY,
         previousHmacKeys: [],
+        // Every MFA entry point re-reads the account and refuses a blocked one, so even a
+        // fixture that is about the recovery-code count has to carry the resolved list.
+        blockedStatuses: ['banned', 'suspended'],
         mfa: {
           encryptionKey: VALID_ENCRYPTION_KEY,
           issuer: 'TestApp',
@@ -1178,6 +1181,225 @@ describe('MfaService', () => {
       // The keyed MAC replaces the KDF entirely on this path.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
       expect(result).toBe(MOCK_AUTH_RESULT)
+    })
+
+    // Every MFA transition rewrites one repository record carrying `mfaEnabled`, the secret and
+    // the recovery codes TOGETHER, and `updateMfa` replaces all three wholesale with no
+    // compare-and-set. Read-modify-write over that with no serialization is last-write-wins,
+    // and these are the three ways it bit. The `rcu:` claim does not cover them: it is keyed on
+    // the code, so it serializes two attempts at the SAME code and nothing else.
+    describe('MFA transitions are serialized against each other', () => {
+      // The splice must be computed against the record as it stands INSIDE the lock. Splicing
+      // the copy read at the top of `challenge` is what let a concurrent
+      // `regenerateRecoveryCodes` be rolled back wholesale: the challenge wrote back the entire
+      // OLD list minus one, un-replacing a set the user had just rotated — typically because it
+      // had leaked — while the codes they had just printed were gone.
+      it('splices against the record inside the lock, not the copy it read first', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+        const usedDigest = hmacSha256(plainRecovery, HMAC_KEY)
+        const staleSibling = 'a'.repeat(64)
+        const newerA = 'b'.repeat(64)
+        const newerB = 'c'.repeat(64)
+        const secret = encrypt(base32, VALID_ENCRYPTION_KEY)
+
+        // First read: the list as it was when the challenge began — the used code at index 1.
+        // Second read (inside the lock): a concurrent write has reshaped the list and the used
+        // code now sits at index 2. The stale index would splice out the WRONG entry and leave
+        // the spent code in place, so the two are distinguishable.
+        mockUserRepo.findById
+          .mockResolvedValueOnce({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [staleSibling, usedDigest]
+          })
+          .mockResolvedValue({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [newerA, newerB, usedDigest]
+          })
+
+        await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+        // The spent code is gone and both live siblings survive. Splicing the stale index 1
+        // would have produced [newerA, usedDigest] — the used code resurrected.
+        expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+          mfaEnabled: true,
+          mfaSecret: expect.any(String),
+          mfaRecoveryCodes: [newerA, newerB]
+        })
+      })
+
+      // A `disable` that has already completed must stay completed. The challenge used to write
+      // `mfaEnabled: true` back unconditionally with the pre-disable secret, putting the account
+      // under a factor the user had just removed — and if the disable was part of a device-loss
+      // recovery, under an authenticator they no longer hold.
+      it('abandons the splice when MFA was disabled while the challenge was in flight', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+        const usedDigest = hmacSha256(plainRecovery, HMAC_KEY)
+        const secret = encrypt(base32, VALID_ENCRYPTION_KEY)
+
+        mockUserRepo.findById
+          .mockResolvedValueOnce({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [usedDigest]
+          })
+          // Inside the lock: the disable landed. The codes are deliberately still listed —
+          // a host whose `updateMfa` only flips the flag leaves them, and that is the shape
+          // where the `mfaEnabled` guard is the only thing standing between a completed
+          // disable and a challenge writing `mfaEnabled: true` back with the old secret. A
+          // record that also cleared the list would be refused by the index lookup instead,
+          // and this test would prove nothing about the guard it is named for.
+          .mockResolvedValue({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaEnabled: false,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [usedDigest]
+          })
+
+        await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      })
+
+      // The losing caller is refused rather than made to wait: concurrent MFA state changes on
+      // one account are pathological, and "try again" is the honest answer.
+      it('refuses a transition while another one holds the lock', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+
+        mockUserRepo.findById.mockResolvedValue({
+          ...AUTH_USER_MFA_ENABLED,
+          mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+        })
+        mockRedis.setIfAbsent.mockResolvedValue(false)
+
+        await expect(
+          service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+        ).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.MFA_STATE_CONFLICT } }
+        })
+        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      })
+
+      // The code was already spent by something else while this challenge was in flight — a
+      // concurrent challenge that spliced the same code out first. Re-locating by value finds
+      // nothing, so nothing is written: writing the stale list back would restore every code a
+      // concurrent transition had removed, not just this one.
+      it('abandons the splice when the code is already gone from the live list', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+        const usedDigest = hmacSha256(plainRecovery, HMAC_KEY)
+        const sibling = 'a'.repeat(64)
+        const secret = encrypt(base32, VALID_ENCRYPTION_KEY)
+
+        mockUserRepo.findById
+          .mockResolvedValueOnce({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [sibling, usedDigest]
+          })
+          // Inside the lock: the code is no longer listed.
+          .mockResolvedValue({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [sibling]
+          })
+
+        await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      })
+
+      // A record whose codes were cleared while MFA stayed on — a host whose own admin surface
+      // wiped the list without flipping the flag. There is nothing to splice, so nothing is
+      // written; the alternative would restore a list this account no longer has.
+      it('abandons the splice when the live record lists no codes at all', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+        const secret = encrypt(base32, VALID_ENCRYPTION_KEY)
+
+        mockUserRepo.findById
+          .mockResolvedValueOnce({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+          })
+          .mockResolvedValue({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaSecret: secret,
+            mfaRecoveryCodes: null
+          })
+
+        await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      })
+
+      // `regenerateRecoveryCodes` derives a fresh set before it writes. If MFA was disabled in
+      // that gap, writing them would re-enable the account with the pre-disable secret — so the
+      // transition is abandoned and the caller is told the factor is gone.
+      it('refuses to regenerate onto an account whose MFA was disabled meanwhile', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32, base32: secretBase32 } = generateTotpSecret()
+        const secret = encrypt(base32, VALID_ENCRYPTION_KEY)
+        const { generateTotp } = await import('../crypto/totp')
+        const code = generateTotp(secretBase32)
+
+        mockUserRepo.findById
+          .mockResolvedValueOnce({ ...AUTH_USER_MFA_ENABLED, mfaSecret: secret })
+          // Inside the lock: the disable landed.
+          .mockResolvedValue({
+            ...AUTH_USER_MFA_ENABLED,
+            mfaEnabled: false,
+            mfaSecret: null,
+            mfaRecoveryCodes: null
+          })
+
+        await expect(
+          service.regenerateRecoveryCodes('user-1', code, '1.2.3.4', 'Browser')
+        ).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
+        })
+        expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      })
+
+      // The lock is released even when the write fails, so one failed transition does not leave
+      // the account unchangeable for the lock's whole TTL.
+      it('releases the lock when the write throws', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+
+        mockUserRepo.findById.mockResolvedValue({
+          ...AUTH_USER_MFA_ENABLED,
+          mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+        })
+        mockUserRepo.updateMfa.mockRejectedValueOnce(new Error('repository down'))
+
+        await expect(
+          service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+        ).rejects.toThrow('repository down')
+        expect(mockRedis.del).toHaveBeenCalledWith(
+          `mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
+        )
+      })
     })
 
     // Scenario: a recovery code whose digest was written under a secret since retired, with the
@@ -2593,6 +2815,9 @@ describe('MfaService', () => {
         jwt: { secret: JWT_SECRET },
         hmacKey: HMAC_KEY,
         previousHmacKeys: [],
+        // Every MFA entry point re-reads the account and refuses a blocked one, so even a
+        // fixture that is about the recovery-code count has to carry the resolved list.
+        blockedStatuses: ['banned', 'suspended'],
         mfa: {
           encryptionKey: VALID_ENCRYPTION_KEY,
           issuer: 'TestApp',
@@ -2929,6 +3154,71 @@ describe('MfaService', () => {
         { mfaRecoveryCodes: string[] }
       ]
       expect(update.mfaRecoveryCodes).toEqual([])
+    })
+  })
+  // A suspended or banned account must not be able to change its own authentication factor.
+  //
+  // `challenge` gated on status from the start; `setup`, `verifyAndEnable`, `disable` and
+  // `regenerateRecoveryCodes` did not. That left an operator's kill switch worth nothing
+  // against an attacker still holding an unexpired access token: they could turn the second
+  // factor off, or enrol their own authenticator over it, for the token's remaining lifetime.
+  // Nothing else covers that window — no status change bumps the token epoch, and neither MFA
+  // controller composes `UserStatusGuard` (the platform plane has no status guard at all), so
+  // this per-request check is the only defence.
+  //
+  // The gate lives in `fetchUserForContext`, which every one of these methods calls, so the
+  // check is inherited rather than remembered. These cases pin that it actually fires on each.
+  describe('account status gates every MFA state change', () => {
+    const BLOCKED = { ...AUTH_USER_MFA_ENABLED, status: 'SUSPENDED' }
+
+    beforeEach(() => {
+      mockUserRepo.findById.mockResolvedValue(BLOCKED)
+      mockPlatformUserRepo.findById.mockResolvedValue({ ...SAFE_ADMIN, status: 'BANNED' })
+    })
+
+    it.each([
+      ['setup', (svc: MfaService) => svc.setup('user-1', 'dashboard', PASSWORD)],
+      [
+        'verifyAndEnable',
+        (svc: MfaService) => svc.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+      ],
+      ['disable', (svc: MfaService) => svc.disable('user-1', '123456', '1.2.3.4', 'Browser')],
+      [
+        'regenerateRecoveryCodes',
+        (svc: MfaService) => svc.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      ]
+    ])('refuses %s for a blocked dashboard account', async (_label, call) => {
+      await expect(call(service)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } }
+      })
+      // Refused before anything was written, minted or spent.
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+    })
+
+    // The platform plane carries the higher-privilege identity and has no status guard of its
+    // own, so the service-level gate is the whole defence there.
+    it.each([
+      ['setup', (svc: MfaService) => svc.setup('admin-1', 'platform', PASSWORD)],
+      [
+        'verifyAndEnable',
+        (svc: MfaService) =>
+          svc.verifyAndEnable('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ],
+      [
+        'disable',
+        (svc: MfaService) => svc.disable('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ],
+      [
+        'regenerateRecoveryCodes',
+        (svc: MfaService) =>
+          svc.regenerateRecoveryCodes('admin-1', '123456', '1.2.3.4', 'Browser', 'platform')
+      ]
+    ])('refuses %s for a blocked platform admin', async (_label, call) => {
+      await expect(call(service)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_BANNED } }
+      })
+      expect(mockPlatformUserRepo.updateMfa).not.toHaveBeenCalled()
     })
   })
 })
