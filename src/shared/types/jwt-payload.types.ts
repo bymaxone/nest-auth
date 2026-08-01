@@ -126,6 +126,22 @@ export interface MfaTempPayload {
   /** Indicates which authentication context triggered the MFA challenge. */
   context: 'dashboard' | 'platform'
 
+  /**
+   * The subject's token **epoch** at issuance, in the plane named by `context`.
+   *
+   * The challenge token is a credential like any other — half of one, held by a caller who has
+   * already proved the password — and it must die with the rest when the account's credentials
+   * are rotated. Without this claim it did not: a password reset bumps the epoch and kills
+   * every access token, but nothing touched an outstanding challenge record, so a token minted
+   * before the reset stayed redeemable for its whole TTL and completing it issued a full
+   * session under the *new* epoch.
+   *
+   * Optional for the same reason the access-token epochs are: a token issued before the field
+   * existed carries none, which reads as `0` and is never rejected while the stored epoch is
+   * also `0`, so the mechanism stays inert until the first bump.
+   */
+  epoch?: number
+
   /** Issued-at timestamp (Unix seconds). */
   iat: number
 

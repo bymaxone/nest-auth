@@ -31,6 +31,7 @@ import { normalizeEmail } from '../utils/normalize-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
+import { tenantScoped } from '../utils/tenant-scoped'
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -189,7 +190,10 @@ export class PasswordResetService {
     }
 
     try {
-      const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail(dto.email, dto.tenantId),
+        dto.tenantId
+      )
 
       if (user && !this.isBlocked(user.status)) {
         const { method } = this.options.passwordReset
@@ -320,7 +324,10 @@ export class PasswordResetService {
     // After successful OTP verification, ensure the account still exists before
     // issuing the verifiedToken. Use PASSWORD_RESET_TOKEN_INVALID to prevent
     // distinguishing "OTP consumed for a deleted account" from other failures.
-    const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+    const user = tenantScoped(
+      await this.userRepo.findByEmail(dto.email, dto.tenantId),
+      dto.tenantId
+    )
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
@@ -374,7 +381,10 @@ export class PasswordResetService {
     }
 
     try {
-      const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail(dto.email, dto.tenantId),
+        dto.tenantId
+      )
       if (user && !this.isBlocked(user.status)) {
         // `sendOtp` stores the OTP in Redis synchronously, then fires the email
         // provider call as fire-and-forget (void). Timing normalization in the
@@ -445,7 +455,7 @@ export class PasswordResetService {
     const identifier = this.otpIdentifier(tenantId, email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, otp)
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (!user) {
       // OTP was consumed but user disappeared — treat as token invalid.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)

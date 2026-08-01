@@ -57,7 +57,10 @@ const mockRedis = {
   revokeFamily: jest.fn().mockResolvedValue({ removed: 1, ownerId: 'user-1' }),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined),
-  readSessionOwner: jest.fn().mockResolvedValue('user-1')
+  readSessionOwner: jest.fn().mockResolvedValue('user-1'),
+  // The grace arm writes its recovered session through one atomic script; the default is the
+  // ordinary "the account still has an index, the write landed".
+  writeRecoveredSession: jest.fn().mockResolvedValue(true)
 }
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
@@ -625,9 +628,12 @@ describe('TokenManagerService', () => {
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.set).toHaveBeenCalledTimes(1)
+      // The recovered session goes through the atomic write, so it is not a loose `set` at
+      // all — and no second grace pointer is planted anywhere.
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'dashboard', newHash: NEW_HASH })
+      )
       const keys = mockRedis.set.mock.calls.map((c: unknown[]) => String(c[0]))
-      expect(keys.some((k) => k.startsWith('rt:'))).toBe(true)
       expect(keys.some((k) => k.startsWith('rp:'))).toBe(false)
     })
 
@@ -638,11 +644,19 @@ describe('TokenManagerService', () => {
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
+      // Index and family membership are written by the same atomic step as the session — see
+      // `RECOVER_GRACE_LUA` for why they cannot be separate round trips.
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'dashboard',
+          newHash: NEW_HASH,
+          familyId: FAMILY,
+          userId: 'user-1',
+          refreshTtl: 7 * 86_400
+        })
+      )
       const addedKeys = (mockRedis.sadd.mock.calls as unknown[][]).map((c) => String(c[1]))
-      expect(addedKeys.some((k) => k.startsWith('rt:'))).toBe(true)
       expect(addedKeys.some((k) => k.startsWith('rp:'))).toBe(false)
-      expect(mockRedis.sadd).toHaveBeenCalledWith(`fam:${FAMILY}`, NEW_HASH)
-      expect(mockRedis.expire).toHaveBeenCalledWith(`fam:${FAMILY}`, 7 * 86_400)
     })
 
     // Scenario: a grace record carrying no family, so there is no index to join. Expected: no
@@ -836,13 +850,35 @@ describe('TokenManagerService', () => {
     })
 
     // Scenario: grace-window rotation registers the new rt: under the per-user SET and expires it.
+    // The whole point of moving the write inside a script: a `revoke_all` that lands between
+    // the rotation script's return and the recovered session's write swept an index the
+    // session was not yet in, so the session survived a revocation the user was told had
+    // happened — and its access token, signed afterwards, carried the POST-bump epoch and
+    // verified. The attacker gets one grace-eligible token per rotation, so they can keep a
+    // stream of these in flight for exactly as long as the victim's password reset takes.
+    it('refuses a grace recovery that a concurrent revoke-all swept', async () => {
+      armGraceRotation()
+      // The atomic write reports that the account no longer has a session index — which is
+      // precisely "a revoke-all ran between the script and this write".
+      mockRedis.writeRecoveredSession.mockResolvedValueOnce(false)
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID } }
+      })
+    })
+
     it('updates the sess:{userId} SET with exact key and TTL on grace-window rotation', async () => {
       armGraceRotation()
 
       await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+      // The index write is inside the atomic step now — a `revoke_all` arriving between the
+      // script's return and a loose SADD swept an index the recovered session was not yet in.
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1', newHash: NEW_HASH, refreshTtl: 7 * 86_400 })
+      )
     })
 
     // Scenario: the login this session descends from has outlived the configured cap.
@@ -1381,6 +1417,53 @@ describe('TokenManagerService', () => {
       expect(result).toEqual({ userId: 'user-1', context: 'dashboard', jti: FIXED_UUID })
     })
 
+    // The challenge token is half a credential, held by a caller who has already proved the
+    // password. A password reset bumps the epoch and kills every access token, but nothing
+    // deleted an outstanding `mfa:` record — so a challenge token minted before the reset
+    // stayed redeemable for its whole TTL, and completing it handed back a full session under
+    // the NEW epoch. The reset is supposed to end everything the old credential could reach.
+    it.each([['dashboard' as const], ['platform' as const]])(
+      'refuses a %s challenge token minted before the epoch was bumped',
+      async (context) => {
+        mockJwtService.verify.mockReturnValue({
+          jti: FIXED_UUID,
+          sub: 'user-1',
+          type: 'mfa_challenge',
+          context,
+          epoch: 2,
+          iat: 0,
+          exp: 9999999999
+        })
+        mockRedis.get.mockResolvedValue('user-1')
+        mockRedis.getUserTokenEpoch.mockResolvedValue(3)
+
+        await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
+        // Read from the plane the challenge names — the two epochs are separate counters.
+        expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith('user-1', context)
+      }
+    )
+
+    // The mechanism stays inert until the first bump: a token minted before the claim existed
+    // carries none, which reads as 0, and 0 is never below a stored 0.
+    it('accepts a challenge token carrying no epoch while the account was never bumped', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        iat: 0,
+        exp: 9999999999
+      })
+      mockRedis.get.mockResolvedValue('user-1')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).resolves.toEqual({
+        userId: 'user-1',
+        context: 'dashboard',
+        jti: FIXED_UUID
+      })
+    })
+
     // Verifies that verifyMfaTempToken uses GET (not GETDEL) so wrong-TOTP
     // attempts can retry under the same JWT. The matching consume step lives
     // in `consumeMfaTempToken` and is invoked only after the code is valid.
@@ -1528,6 +1611,50 @@ describe('TokenManagerService', () => {
   // reissuePlatformTokens
   // ---------------------------------------------------------------------------
 
+  describe('reissuePlatformAccessWithAuthority', () => {
+    // Platform rotation builds its claims from the `prt:` record written at login, so a
+    // demotion from `super_admin` to `support` had no effect on a live console session: it
+    // kept minting tokens with the old role for the refresh token's whole lifetime, and every
+    // role check reads that claim — on the highest-privilege identity in the system. The
+    // dashboard plane closed this and the platform plane was left with the identical hole.
+    it('re-signs the token with the role and MFA flag the admin holds now', async () => {
+      mockJwtService.sign.mockReturnValue('restamped.platform.jwt')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(4)
+
+      const token = await service.reissuePlatformAccessWithAuthority(
+        {
+          jti: FIXED_UUID,
+          sub: 'admin-1',
+          role: 'super_admin',
+          type: 'platform',
+          mfaEnabled: false,
+          mfaVerified: true,
+          iat: 0,
+          exp: 9999999999
+        },
+        'support',
+        true
+      )
+
+      expect(token).toBe('restamped.platform.jwt')
+      // The epoch is read from the PLATFORM counter — the two planes are separate generations.
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: 'admin-1',
+          role: 'support',
+          type: 'platform',
+          mfaEnabled: true,
+          // Carried across: a second factor already cleared on this session must not be
+          // silently demanded again by a re-stamp of the authority.
+          mfaVerified: true,
+          epoch: 4
+        }),
+        expect.anything()
+      )
+    })
+  })
+
   describe('reissuePlatformTokens', () => {
     const PLATFORM_FAMILY = 'pfam-old-1'
     /** Minimal valid platform session JSON — matches the RefreshSession shape used for platform admins. */
@@ -1626,9 +1753,13 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'platform', newHash: NEW_HASH })
+      )
       const keys = (mockRedis.set.mock.calls as unknown[][]).map((c) => String(c[0]))
-      expect(keys.filter((k) => k.startsWith('prt:'))).toHaveLength(1)
       expect(keys.filter((k) => k.startsWith('prp:'))).toHaveLength(0)
+      // The display-metadata record is still a loose write: it authenticates nothing, so a
+      // revocation racing it costs a listing row and no access.
       expect(keys.filter((k) => k.startsWith('psd:'))).toHaveLength(1)
     })
 
@@ -1771,26 +1902,46 @@ describe('TokenManagerService', () => {
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
       expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
-      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
       expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      // Session, index and family membership are one atomic step.
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'platform',
+          userId: 'admin-1',
+          newHash: NEW_HASH,
+          familyId: PLATFORM_FAMILY,
+          refreshTtl: 7 * 86_400
+        })
+      )
       // The superseded detail record is dropped by its exact key; a wrong key would leak
       // the old record until TTL and leave a listing describing a token that no longer exists.
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
-      // The recovered session stays inside its lineage, so a later reuse still revokes it.
-      expect(mockRedis.sadd).toHaveBeenCalledWith(`pfam:${PLATFORM_FAMILY}`, NEW_HASH)
-      expect(mockRedis.expire).toHaveBeenCalledWith(`pfam:${PLATFORM_FAMILY}`, 7 * 86_400)
     })
 
     // Scenario: the new platform session record must store an empty tenantId on grace-window
     // rotation. Why: kills the StringLiteral mutant on the grace-path buildSession tenantId.
+    // The platform twin of the dashboard case, on the plane where the surviving session is
+    // the highest-privilege identity in the system.
+    it('refuses a platform grace recovery that a concurrent revoke-all swept', async () => {
+      armPlatformGraceRotation()
+      mockRedis.writeRecoveredSession.mockResolvedValueOnce(false)
+
+      await expect(
+        service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID } }
+      })
+    })
+
     it('stores an empty tenantId in the rotated platform session on grace-window rotation', async () => {
       armPlatformGraceRotation()
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const call = mockRedis.writeRecoveredSession.mock.calls[0]?.[0] as {
+        newSessionJson: string
+      }
+      const session = JSON.parse(call.newSessionJson) as Record<string, unknown>
       expect(session['tenantId']).toBe('')
     })
 

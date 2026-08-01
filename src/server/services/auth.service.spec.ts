@@ -574,6 +574,27 @@ describe('AuthService', () => {
       mockHooks.afterLogin.mockResolvedValue(undefined)
     })
 
+    // The lookup passes `tenantId` and the repository contract says to scope by it — but the
+    // repository is the host's and an interface can only ask. A single-tenant host writing
+    // `findByEmail(email)` that ignores its second argument is the shape nobody notices, and
+    // under one every distinct `tenantId` in the body resolves the same account while deriving
+    // a DIFFERENT `lf:` counter. Rotating the field then hands the attacker an unlimited supply
+    // of fresh five-attempt budgets and the lockout never engages. Refusing the mismatch is
+    // also tenant isolation in its own right: an account in tenant A must not authenticate
+    // through a request naming tenant B, whatever the repository returns.
+    it('refuses an account the repository returned from another tenant', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, tenantId: 'someone-elses-tenant' })
+
+      await expect(service.login(dto, mockReq)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
+      // Refused on the not-found path: same generic code, and the password is never compared,
+      // so nothing distinguishes the three refusals to a caller.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      expect(mockPasswordService.compareDummy).toHaveBeenCalled()
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
     // Every other hook fires on a success path, which left the failure side of authentication
     // with no structured seam: the events that matter most to detection existed only as
     // English log lines whose wording is not a contract. ASVS v5 §16.3.1 expects the outcome
@@ -1369,6 +1390,18 @@ describe('AuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('refresh', () => {
+    // `refresh` decodes the token rotation just issued to compare its claims against the
+    // account it re-reads. The default here matches the fixture most tests in this block use,
+    // so a test that is not about the re-stamp does not have to restate it; the re-stamp tests
+    // below override it with claims that deliberately diverge.
+    beforeEach(() => {
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        role: 'member',
+        tenantId: 't1',
+        mfaVerified: false
+      })
+    })
+
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
     it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {
@@ -1508,12 +1541,22 @@ describe('AuthService', () => {
     // no effect on a live session: the user kept minting ADMIN-roled tokens for the refresh
     // token's whole lifetime, and every role guard in the system reads that claim. The status
     // gate already re-reads the account — the authority was sitting there, unused.
+    //
+    // `mfaEnabled` is in the list because naming a subset is what left it out: `MfaRequiredGuard`
+    // decides on `mfaEnabled && !mfaVerified`, so a session created while MFA was off kept
+    // clearing every MFA-gated route for the refresh token's whole lifetime once the host
+    // enabled MFA through its own admin surface rather than this library's `verifyAndEnable`.
+    //
+    // The stale claims live on the token rotation just issued — `verifyIgnoringExpiry` — not on
+    // the session record, because the token is what the comparison reads and what the caller is
+    // about to be handed.
     it.each([
-      ['a demotion', { role: 'member' }, { role: 'admin' }],
-      ['a tenant move', { tenantId: 't2' }, { tenantId: 't1' }]
-    ])('re-stamps the rotated access token after %s', async (_label, current, stale) => {
+      ['a demotion', { role: 'member' }],
+      ['a tenant move', { tenantId: 't2' }],
+      ['MFA being enabled out of band', { mfaEnabled: true }]
+    ])('re-stamps the rotated access token after %s', async (_label, current) => {
       mockTokenManager.reissueTokens.mockResolvedValue({
-        session: { userId: 'u1', tenantId: 't1', role: 'admin', ...stale },
+        session: { userId: 'u1', tenantId: 't1', role: 'admin' },
         accessToken: 'stale.access',
         rawRefreshToken: 'new-refresh'
       })
@@ -1526,7 +1569,12 @@ describe('AuthService', () => {
         mfaEnabled: false,
         ...current
       })
-      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ mfaVerified: false })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        role: 'admin',
+        tenantId: 't1',
+        mfaEnabled: false,
+        mfaVerified: false
+      })
       mockTokenManager.issueAccess.mockReturnValue('restamped.access')
       mockRedis.getUserTokenEpoch.mockResolvedValue(3)
 
@@ -1550,7 +1598,14 @@ describe('AuthService', () => {
         email: 'a@e.com',
         status: 'active',
         role: 'member',
-        tenantId: 't1'
+        tenantId: 't1',
+        mfaEnabled: false
+      })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        role: 'member',
+        tenantId: 't1',
+        mfaEnabled: false,
+        mfaVerified: false
       })
 
       const result = await service.refresh('old-refresh', '1.2.3.4', 'Browser')

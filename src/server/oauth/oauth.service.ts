@@ -49,6 +49,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
@@ -435,7 +436,7 @@ export class OAuthService {
     if (authUser.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(authUser.id, 'dashboard')
       this.logger.log(
-        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${tenantId} action=${hookResult.action}`
+        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
       )
       return { mfaRequired: true, mfaTempToken }
     }
@@ -451,7 +452,7 @@ export class OAuthService {
     }
 
     this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${tenantId} action=${hookResult.action}`
+      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
     )
     return result
   }

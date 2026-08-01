@@ -113,6 +113,7 @@ const mockTokenManager = {
   issuePlatformTokens: jest.fn(),
   issueMfaTempToken: jest.fn(),
   reissuePlatformTokens: jest.fn(),
+  reissuePlatformAccessWithAuthority: jest.fn(),
   verifyPlatformIgnoringExpiry: jest.fn()
 }
 
@@ -649,6 +650,19 @@ describe('PlatformAuthService', () => {
     const ip = '1.2.3.4'
     const userAgent = 'TestBrowser/1.0'
 
+    // `refresh` decodes the token rotation just issued to compare its claims against the
+    // administrator it re-reads. The default matches `PLATFORM_ADMIN`, so a test that is not
+    // about the re-stamp does not have to restate it; the re-stamp tests override it.
+    beforeEach(() => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: 'admin-1',
+        role: 'super_admin',
+        type: 'platform',
+        mfaEnabled: false,
+        mfaVerified: false
+      })
+    })
+
     // Verifies that refresh is a thin delegation to TokenManagerService.reissuePlatformTokens —
     // the caller only needs to pass the raw token; complex rotation logic lives in the manager.
     it('should delegate to tokenManager.reissuePlatformTokens and return its result', async () => {
@@ -668,6 +682,49 @@ describe('PlatformAuthService', () => {
         ip,
         userAgent
       )
+    })
+
+    // Rotation builds its claims from the `prt:` record written at login, so a demotion had no
+    // effect on a live console session: the operator kept minting `super_admin`-roled tokens
+    // for the refresh token's whole lifetime, and every role check reads that claim. The
+    // dashboard plane closed this; the platform plane — the higher-privilege identity — was
+    // left with the identical hole, which is the shape this whole class of bug keeps taking.
+    it.each([
+      ['a demotion', { role: 'support', mfaEnabled: false }],
+      ['MFA being enabled out of band', { role: 'super_admin', mfaEnabled: true }]
+    ])('should re-stamp the rotated platform access token after %s', async (_label, current) => {
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+        session: { userId: 'admin-1', tenantId: '', role: 'super_admin' },
+        accessToken: 'stale.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue({ ...PLATFORM_ADMIN, ...current })
+      mockTokenManager.reissuePlatformAccessWithAuthority.mockResolvedValue('restamped.access')
+
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result.accessToken).toBe('restamped.access')
+      expect(mockTokenManager.reissuePlatformAccessWithAuthority).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'admin-1' }),
+        current.role,
+        current.mfaEnabled
+      )
+    })
+
+    // …and the ordinary rotation, where nothing changed, pays nothing extra.
+    it('should leave the rotated platform token alone when the authority is unchanged', async () => {
+      const rotated = {
+        session: { userId: 'admin-1', tenantId: '', role: 'super_admin' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      }
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue(rotated)
+      mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
+
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result).toBe(rotated)
+      expect(mockTokenManager.reissuePlatformAccessWithAuthority).not.toHaveBeenCalled()
     })
 
     // The backstop the dashboard plane has carried since ASVS v5 §7.4.2 was applied to it, and
