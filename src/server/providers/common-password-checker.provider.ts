@@ -248,6 +248,35 @@ export const LEET_MAP: ReadonlyMap<string, string> = new Map([
 ])
 
 /**
+ * Whether `char` is decoration rather than a word letter: a digit, an underscore, or anything
+ * outside `[A-Za-z0-9_]`. Mirrors the `[\d\W_]` character class exactly.
+ *
+ * @param char - A single character.
+ * @returns `true` when the character is decoration.
+ */
+function isDecoration(char: string): boolean {
+  return /[\d\W_]/.test(char)
+}
+
+/**
+ * Strip a trailing run of digits, punctuation and underscores, without a regular expression.
+ *
+ * The obvious `replace(/[\d\W_]+$/, '')` is quadratic on such a run — the `$`-anchored `+`
+ * backtracks over every suffix — which CodeQL flags as a polynomial ReDoS. The input here is a
+ * candidate password, so it IS attacker-supplied; the DTO bounds it at 128 characters, which
+ * makes the quadratic term small, but "small" is a property of a bound living somewhere else.
+ * A single backwards scan is linear and depends on nothing.
+ *
+ * @param value - The lower-cased candidate.
+ * @returns `value` with its trailing decoration removed.
+ */
+function stripTrailingDecoration(value: string): string {
+  let end = value.length
+  while (end > 0 && isDecoration(value.charAt(end - 1))) end -= 1
+  return value.slice(0, end)
+}
+
+/**
  * Reduces a password to the base word its author started from.
  *
  * Lowercases, strips the trailing digits and punctuation people append to satisfy a complexity
@@ -266,7 +295,7 @@ export function reduceToBaseWord(password: string): string {
   // would turn the trailing `1` of `Password1` into an `i` and leave `passwordi`, which
   // matches nothing — the order is the difference between the mechanism working and the list
   // quietly covering only its literal entries.
-  const undecorated = password.toLowerCase().replace(/[\d\W_]+$/, '')
+  const undecorated = stripTrailingDecoration(password.toLowerCase())
 
   let reduced = ''
   for (const char of undecorated) {

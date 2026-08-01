@@ -247,4 +247,18 @@ describe('CommonPasswordChecker', () => {
   it('works without any options', async () => {
     expect(await new CommonPasswordChecker(undefined).isBreached('password')).toBe(true)
   })
+
+  // The trailing decoration used to come off with `replace(/[\d\W_]+$/, '')`, which is
+  // quadratic on such a run: the `$`-anchored `+` backtracks over every suffix. Unlike the
+  // route-prefix trimmers, this input IS attacker-supplied — it is a candidate password. The
+  // DTO bounds it at 128 characters, but that is a bound living in another file; the scan has
+  // to be linear on its own.
+  it('strips a long run of decoration linearly and to the same result', () => {
+    expect(reduceToBaseWord('password' + '1'.repeat(500))).toBe('password')
+    expect(reduceToBaseWord('password!@#_123')).toBe('password')
+
+    const started = Date.now()
+    reduceToBaseWord('a' + '!'.repeat(200_000))
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
 })
