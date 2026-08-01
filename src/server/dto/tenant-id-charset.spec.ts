@@ -89,6 +89,9 @@ describe('tenantId charset', () => {
       tenantId
     })
     const errors = await validate(dto)
-    expect(errors.map((e) => e.property)).not.toContain('tenantId')
+    // Zero errors, not merely "none on `tenantId`". The weaker assertion passes even when the
+    // DTO has started rejecting the payload for some unrelated reason, which is the state a
+    // positive case exists to rule out.
+    expect(errors).toHaveLength(0)
   })
 })

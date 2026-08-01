@@ -638,7 +638,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
 | **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                         |
 | **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                              |
-| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, `'peer'`                        |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                    |
 | **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                               |
 | **platform**          | `enabled`                                                                                                                                           | `false`                                 |
 | **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                 |
@@ -652,13 +652,17 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
 
 > [!IMPORTANT]
-> **`rateLimit.clientIpSource` defaults to `'peer'`** — the socket address, read from the
-> connection and never from a forwarding header. Behind a proxy with Express's `trust proxy`
-> set, `req.ip` is whatever the client wrote in `X-Forwarded-For` unless the hop count is
-> configured exactly right, and an attacker who can pick their own key is not rate-limited at
-> all. Keying on the peer address instead over-counts — every request behind one proxy shares a
-> bucket — which is visible and recoverable. Switch to `'trusted-proxy'` once `trust proxy` is
-> configured for your real hop count.
+> **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled — there is no
+> default, and the module refuses to start without it. Set `'peer'` when the application is
+> directly exposed: the limit keys on the socket address, read from the connection and never
+> from a forwarding header. Set `'trusted-proxy'` when it runs behind a proxy and `trust proxy`
+> is configured for the real hop count: the limit keys on `req.ip`, the forwarded client
+> address. Neither can be the default, because each is a working limiter in one deployment and
+> no limiter at all in the other — `'peer'` behind a proxy puts every client in **one** bucket,
+> so a single caller can rate-limit your whole user base with no credential, and
+> `'trusted-proxy'` without a proxy lets the caller choose their own key. Both look like a
+> working limiter at runtime. Pass `rateLimit.enabled: false` if the limits are enforced at the
+> edge instead.
 
 > [!TIP]
 > **Binding tokens to an issuer and an audience.** `jwt.issuer` and `jwt.audience` are off by

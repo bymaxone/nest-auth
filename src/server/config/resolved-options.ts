@@ -325,7 +325,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
  * shipping a control that reports success.
  *
  * @param rateLimit - The rate-limit option group, if any.
- * @throws When rate limiting is on and `clientIpSource` was not set.
+ * @throws When rate limiting is on and `clientIpSource` is absent, or is anything other than
+ *   `'peer'` or `'trusted-proxy'` — the union type binds a TypeScript consumer and nobody else.
  */
 function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']): void {
   if (rateLimit?.enabled === false) return
@@ -687,6 +688,15 @@ function validateBruteForce(bruteForce: BymaxAuthModuleOptions['bruteForce']): v
 const MAX_BRUTE_FORCE_ATTEMPTS = 100
 
 /**
+ * The per-derivation memory ceiling for the password KDF, in bytes.
+ *
+ * 512 MiB is four times the shipped default (`N = 131072`, `r = 8` → 128 MiB, the OWASP
+ * recommendation). A value above it is a misconfiguration rather than a stronger setting: see
+ * `validatePasswordMemoryParameters` for the arithmetic an operator needs to raise it knowingly.
+ */
+const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
+
+/**
  * Bounds the scrypt parameters that carry its memory hardness.
  *
  * `costFactor` has a floor, but scrypt's memory cost is `128 * N * r` — `blockSize` is a
@@ -698,14 +708,6 @@ const MAX_BRUTE_FORCE_ATTEMPTS = 100
  * @param password - The configured password group, if any.
  * @throws If either parameter is below its floor.
  */
-/**
- * The per-derivation memory ceiling for the password KDF, in bytes.
- *
- * 512 MiB is four times the shipped default (`N = 131072`, `r = 8` → 128 MiB, the OWASP
- * recommendation). A value above it is a misconfiguration rather than a stronger setting: see
- * `validatePasswordMemoryParameters` for the arithmetic an operator needs to raise it knowingly.
- */
-const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
 
 function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['password']): void {
   const blockSize = password?.blockSize
