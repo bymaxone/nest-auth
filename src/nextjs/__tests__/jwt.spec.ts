@@ -535,9 +535,39 @@ describe('claim accessors', () => {
 })
 
 describe('signatureVerified — proof that a signature was actually checked', () => {
+  // The two flags are independent, and the combination that surprises is REACHABLE on the
+  // ordinary path: the signature is checked before the expiry is read, so a genuinely signed
+  // token that simply ran out comes back `signatureVerified: true, isValid: false`. Anyone
+  // gating on `signatureVerified` alone — which the field's own JSDoc used to invite — accepts
+  // expired sessions forever. Pinning it here keeps that documented behaviour honest.
+  it('is true for a genuinely signed token that has expired, while isValid is false', async () => {
+    const expired = await signHs256Token(
+      { type: 'dashboard', sub: 'u_1', role: 'admin', exp: Math.floor(Date.now() / 1000) - 60 },
+      SECRET
+    )
+
+    const decoded = await verifyJwtToken(expired, SECRET)
+
+    expect(decoded.signatureVerified).toBe(true)
+    expect(decoded.isValid).toBe(false)
+    // Which is why the documented check is the conjunction, not either flag alone.
+    expect(decoded.isValid && decoded.signatureVerified).toBe(false)
+  })
+
+  // A token carrying no `exp` at all lands in the same place, and is the more dangerous of the
+  // two: nothing about it ever becomes false with time.
+  it('is true with isValid false for a signed token carrying no exp', async () => {
+    const noExpiry = await signHs256Token({ type: 'dashboard', sub: 'u_1', role: 'admin' }, SECRET)
+
+    const decoded = await verifyJwtToken(noExpiry, SECRET)
+
+    expect(decoded.signatureVerified).toBe(true)
+    expect(decoded.isValid).toBe(false)
+  })
+
   // `isValid` alone never proves authenticity: `decodeJwtToken` sets it from expiry only.
-  // `signatureVerified` is the flag an authorisation decision reads, and only a real HS256
-  // verification against a non-empty secret sets it.
+  // `signatureVerified` is the other half, and only a real HS256 verification against a
+  // non-empty secret sets it.
   it('is true only when a signature was actually checked', async () => {
     const genuine = await signHs256Token(
       { type: 'dashboard', sub: 'u_1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
