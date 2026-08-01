@@ -179,7 +179,8 @@ export function decodeJwtToken(token: string): DecodedToken {
  * to a decode. This function used to fall back to
  * {@link decodeJwtToken}, and the two branches returned the same
  * shape with the same `isValid: true` — so a caller writing
- * `if (verifyJwtToken(t).isValid && t.role === 'ADMIN')`, the natural
+ * `const d = await verifyJwtToken(t, secret)` and then
+ * `if (d.isValid && d.role === 'ADMIN')`, the natural
  * reading of the name, admitted a token an attacker minted with
  * `alg: none` the moment the secret went missing. An unset
  * environment variable was enough to arrange that. A function that
