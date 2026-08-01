@@ -131,9 +131,9 @@ const mockRedis = {
   get: jest.fn(),
   del: jest.fn(),
   getdel: jest.fn(),
-  // The invitee index is claimed atomically (read-and-set in one step), so the default is
-  // "nothing was displaced" — the ordinary first invitation for an address.
-  eval: jest.fn().mockResolvedValue(null)
+  // The invitee index is claimed by compare-and-swap, so the script answers 1 for "claimed".
+  // The default is the ordinary case: nothing pending, and this caller wins the claim.
+  eval: jest.fn().mockResolvedValue(1)
 }
 
 const mockPasswordService = {
@@ -1121,19 +1121,19 @@ describe('InvitationService', () => {
       // The pending invitation the supersede will displace: readable for the rank check, and
       // returned by the atomic index claim as the hash that was displaced.
       mockRedis.get.mockResolvedValue('c'.repeat(64))
-      mockRedis.eval.mockResolvedValue('c'.repeat(64))
+      mockRedis.eval.mockResolvedValue(1)
       mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      // The index is claimed atomically rather than read-then-written: two concurrent invites
-      // for one address must not both believe they displaced nothing.
+      // The claim is a compare-and-swap against the hash the rank check approved, so the two
+      // steps cannot disagree about WHICH invitation is being superseded.
       expect(mockRedis.eval).toHaveBeenCalledWith(
-        expect.stringContaining('SET'),
+        expect.stringContaining('~= ARGV[3]'),
         [`invidx:tenant-1:${hmacSha256('invited@example.com', HMAC_KEY)}`],
-        expect.arrayContaining([expect.any(String)])
+        expect.arrayContaining([expect.any(String), expect.any(String), 'c'.repeat(64)])
       )
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
     })
@@ -1142,7 +1142,7 @@ describe('InvitationService', () => {
     it('deletes nothing when there was none', async () => {
       mockUserRepo.findById.mockResolvedValue(INVITER)
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.eval.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(1)
       mockRedis.set.mockResolvedValue('OK')
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
 
@@ -1160,7 +1160,7 @@ describe('InvitationService', () => {
       mockRedis.get.mockImplementation((key: string) =>
         Promise.resolve(key.startsWith('invidx:') ? 'c'.repeat(64) : null)
       )
-      mockRedis.eval.mockResolvedValue('c'.repeat(64))
+      mockRedis.eval.mockResolvedValue(1)
       mockRedis.set.mockResolvedValue('OK')
       mockRedis.del.mockResolvedValue(true)
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
@@ -1169,6 +1169,63 @@ describe('InvitationService', () => {
 
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
       expect(mockRedis.del).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+    })
+
+    // The rank check and the index claim are separate round trips, so on their own they can
+    // disagree about WHICH invitation is being superseded: an outranked caller passes the check
+    // while the index is momentarily empty, then displaces a higher-ranked invitation created
+    // in between. The claim is a compare-and-swap against the hash the check approved, so a
+    // record that moved makes the claim fail and the approval is re-derived against what is
+    // actually there — where the rank check now sees the ADMIN invitation and refuses.
+    it('refuses when the pending invitation changes under the rank check', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      // First pass: the index is empty, so there is nothing to out-rank. Every pass after it
+      // sees an ADMIN invitation — the one that landed in between.
+      let pass = 0
+      mockRedis.get.mockImplementation((key: string) => {
+        if (key.startsWith('invidx:')) {
+          pass += 1
+          return Promise.resolve(pass === 1 ? null : 'c'.repeat(64))
+        }
+        return Promise.resolve(
+          JSON.stringify({
+            email: 'invited@example.com',
+            role: 'admin',
+            tenantId: 'tenant-1',
+            inviterUserId: 'someone-senior',
+            createdAt: new Date().toISOString()
+          })
+        )
+      })
+      // The compare-and-swap fails: the index no longer holds what the first pass approved.
+      mockRedis.eval.mockResolvedValue(0)
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+      })
+
+      // Nothing was displaced and no replacement was minted.
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+    })
+
+    // Contention between two callers who are BOTH allowed to supersede is not an authorisation
+    // failure, so the approval is re-derived and the retry proceeds rather than refusing.
+    it('re-derives its approval and proceeds when it loses one claim', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue('c'.repeat(64))
+      // Lose the first claim, win the second.
+      mockRedis.eval.mockResolvedValueOnce(0).mockResolvedValue(1)
+      mockRedis.set.mockResolvedValue('OK')
+      mockRedis.del.mockResolvedValue(true)
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
     // Superseding DESTROYS a pending invitation — the same end state `revokeInvitation`

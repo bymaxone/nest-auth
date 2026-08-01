@@ -87,6 +87,16 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
  *
  * @layer Service
  */
+/**
+ * How many times a supersede re-derives its approval before giving up.
+ *
+ * The rank check and the index claim are separate round trips, so a concurrent invite for the
+ * same address can move the record between them. Re-deriving is the right answer — the
+ * contention is between two legitimate inviters — but an unbounded retry turns a hot address
+ * into an unbounded loop, so the budget is small and exceeding it is refused.
+ */
+const SUPERSEDE_ATTEMPTS = 3
+
 @Injectable()
 export class InvitationService {
   private readonly logger = new Logger(InvitationService.name)
@@ -191,8 +201,14 @@ export class InvitationService {
     // the invitation being destroyed: any tenant member could `POST {email: bob, role: MEMBER}`
     // and delete a pending ADMIN invitation for bob, a capability the revoke route refuses them
     // and refuses even to confirm exists.
-    await this.assertMaySupersede(inviter, normalizedEmail, tenantId)
-
+    //
+    // The rank check and the claim must agree about WHICH invitation is being superseded. Two
+    // separate round trips do not: an outranked caller could pass the check while the index was
+    // momentarily empty, and then displace a higher-ranked invitation created in between. So
+    // the check reports the hash it approved, and the claim only proceeds if the index still
+    // holds exactly that — a compare-and-swap. Anything else means the record moved, and the
+    // approval no longer describes what is there.
+    //
     // The index is claimed FIRST, and atomically, because it is the serialization point: it is
     // the only handle the issuing side has on a record keyed by a token nobody here ever saw.
     // Writing the record first and the index second left two failures. A failed index write
@@ -204,7 +220,13 @@ export class InvitationService {
     //
     // Claiming the index first inverts the failure: a crash before the record is written leaves
     // an index naming nothing, so the invitation is simply dead — the safe direction.
-    const supersededHash = await this.claimInviteeIndex(normalizedEmail, tenantId, tokenHash, ttl)
+    const supersededHash = await this.supersedeApprovedInvitation(
+      inviter,
+      normalizedEmail,
+      tenantId,
+      tokenHash,
+      ttl
+    )
     if (supersededHash !== null) {
       await this.redis.del(`inv:${supersededHash}`)
     }
@@ -307,16 +329,6 @@ export class InvitationService {
   }
 
   /**
-   * Deletes the pending invitation for an address, if there is one, along with its index.
-   *
-   * Reports nothing: the one caller supersedes an invitation on the way to writing a new one,
-   * and whether there was an old one to remove changes nothing it does. A boolean nobody reads
-   * is a contract nobody can be held to.
-   *
-   * @param email - The normalized invitee address.
-   * @param tenantId - The tenant the invitation was issued for.
-   */
-  /**
    * Refuses a caller who may not destroy the invitation their new one would supersede.
    *
    * `create`'s own authorisation is `hasRole(inviter.role, requestedRole)` — a statement about
@@ -339,48 +351,99 @@ export class InvitationService {
     inviter: { role: string; status: string },
     email: string,
     tenantId: string
-  ): Promise<void> {
+  ): Promise<string | null> {
     const tokenHash = await this.redis.get(this.inviteeKey(email, tenantId))
-    if (tokenHash === null) return
+    if (tokenHash === null) return null
     const raw = await this.redis.get(`inv:${tokenHash}`)
     const pending = raw === null ? null : this.parseInvitation(raw)
     if (pending !== null && !this.mayWithdraw(inviter, pending)) {
       this.logger.warn(
         `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
-          `inviterUserId=${inviter.role} — outranked by the pending invitation`
+          `inviterRole=${logSafe(inviter.role)} — outranked by the pending invitation`
       )
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
     }
+    return tokenHash
   }
 
   /**
-   * Atomically points the invitee index at `tokenHash`, answering with the hash it displaced.
+   * Approves the supersede and claims the index in one agreed step, retrying if the record
+   * moves underneath the approval.
    *
-   * `SET` with `GET` is one round trip and one atomic step, so two concurrent invites for one
-   * address cannot both believe they superseded nothing: exactly one sees `null`, and the other
-   * sees the first one's hash and deletes its record. Reading the index and then writing it
-   * would let both read `null` and leave two live invitations for one invitee.
+   * The rank check and the claim are separate round trips, so on their own they can disagree
+   * about WHICH invitation is being superseded: an outranked caller could pass the check while
+   * the index was momentarily empty and then displace a higher-ranked invitation created in
+   * between. The claim is therefore a compare-and-swap against the hash the check approved —
+   * anything else means the record moved and the approval no longer describes what is there.
    *
+   * A displaced approval is re-derived rather than refused: the contention is between two
+   * legitimate inviters, and one of them losing a race is not an authorisation failure. The
+   * retry is bounded, because an unbounded one turns a hot address into an unbounded loop.
+   *
+   * @param inviter - The authenticated caller, already known to be in the tenant.
    * @param email - The normalized invitee address.
    * @param tenantId - The tenant the invitation belongs to.
    * @param tokenHash - The new invitation's token hash.
    * @param ttl - The invitation TTL, in seconds.
    * @returns The displaced token hash, or `null` when there was no pending invitation.
+   * @throws {@link AuthException} `INSUFFICIENT_ROLE` when the caller is outranked, or when the
+   *   index kept moving for the whole retry budget — the caller has not been shown to be
+   *   allowed to destroy whatever is there now.
    */
-  private async claimInviteeIndex(
+  private async supersedeApprovedInvitation(
+    inviter: { role: string; status: string },
     email: string,
     tenantId: string,
     tokenHash: string,
     ttl: number
   ): Promise<string | null> {
-    const previous = await this.redis.eval(
-      `local old = redis.call('GET', KEYS[1])
-       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-       return old`,
-      [this.inviteeKey(email, tenantId)],
-      [tokenHash, String(ttl)]
+    for (let attempt = 0; attempt < SUPERSEDE_ATTEMPTS; attempt += 1) {
+      const approved = await this.assertMaySupersede(inviter, email, tenantId)
+      const claim = await this.claimInviteeIndex(email, tenantId, tokenHash, ttl, approved)
+      if (claim.claimed) return approved
+    }
+    this.logger.warn(
+      `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
+        `— the pending invitation kept changing under the rank check`
     )
-    return typeof previous === 'string' ? previous : null
+    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+  }
+
+  /**
+   * Atomically points the invitee index at `tokenHash`, answering with the hash it displaced.
+   *
+   * A compare-and-swap, not a plain write: the claim proceeds only when the index still holds
+   * exactly what the rank check approved. Two concurrent invites for one address therefore
+   * cannot both believe they superseded nothing — exactly one wins, and the loser is told the
+   * record moved so it can re-derive its approval against what is actually there.
+   *
+   * @param email - The normalized invitee address.
+   * @param tenantId - The tenant the invitation belongs to.
+   * @param tokenHash - The new invitation's token hash.
+   * @param ttl - The invitation TTL, in seconds.
+   * @param expected - The hash the rank check approved, or `null` for "no pending invitation".
+   * @returns Whether this call claimed the index.
+   */
+  private async claimInviteeIndex(
+    email: string,
+    tenantId: string,
+    tokenHash: string,
+    ttl: number,
+    expected: string | null
+  ): Promise<{ claimed: boolean }> {
+    // `ARGV[3]` is the empty string for "the index must be absent", which is distinguishable
+    // from any real hash because a hash is always 64 hex characters.
+    const claimed = await this.redis.eval(
+      `local old = redis.call('GET', KEYS[1])
+       if (old or '') ~= ARGV[3] then return 0 end
+       redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+       return 1`,
+      [this.inviteeKey(email, tenantId)],
+      [tokenHash, String(ttl), expected ?? '']
+    )
+    // Narrowed rather than compared straight to `1`: `eval` answers `unknown`, and a client
+    // that surfaced the Lua integer as a string would read a successful claim as contention.
+    return { claimed: typeof claimed === 'number' ? claimed === 1 : claimed === '1' }
   }
 
   // ---------------------------------------------------------------------------
