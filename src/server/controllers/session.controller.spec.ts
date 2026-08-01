@@ -98,11 +98,18 @@ describe('SessionController', () => {
   // Guard metadata
   // ---------------------------------------------------------------------------
 
-  // Verifies that both JwtAuthGuard and UserStatusGuard are applied at the controller level so every session endpoint requires authentication.
-  it('should apply JwtAuthGuard and UserStatusGuard at the controller level', () => {
+  // The ORDER is the assertion, not the membership. Two stacked `@UseGuards` append through
+  // `extendArrayMetadata` and TypeScript applies decorators bottom-up, so the split form ran
+  // `[JwtAuthGuard, UserStatusGuard, TrustedOriginGuard, AuthRateLimitGuard]` — the inverse of
+  // the intent, with all four guards present. A membership check passes under both spellings
+  // and so cannot see the defect this pins: `JwtAuthGuard` rejecting first meant a garbage
+  // `Authorization` header 401'd before `AuthRateLimitGuard` ever ran, leaving the route's
+  // limiter permanently at zero while every request still paid `verifyWithRotation` — one HMAC
+  // per configured secret, every `previousSecrets` entry included — and a Redis round trip.
+  it('applies the controller guards in the order they are evaluated', () => {
     const guards: unknown[] = Reflect.getMetadata(GUARDS_METADATA, SessionController) as unknown[]
-    expect(guards).toContain(JwtAuthGuard)
-    expect(guards).toContain(UserStatusGuard)
+
+    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard])
   })
 
   // ---------------------------------------------------------------------------
