@@ -87,10 +87,12 @@ export interface DecodedToken {
   readonly isValid: boolean
   /**
    * `true` only when the signature was actually checked against a
-   * non-empty secret — i.e. only on {@link verifyJwtToken}'s
-   * authoritative branch. `false` on every {@link decodeJwtToken}
-   * result and on `verifyJwtToken`'s decode-only fallback, including
-   * the ones that carry `isValid: true` and a fully populated payload.
+   * non-empty secret — i.e. only on a successful {@link verifyJwtToken}.
+   * `false` on every {@link decodeJwtToken} result, including the ones
+   * that carry `isValid: true` and a fully populated payload, and on
+   * every `verifyJwtToken` failure (which returns an empty token, so
+   * `isValid` is `false` there as well — `verifyJwtToken` fails closed
+   * on a missing or empty secret rather than falling back to a decode).
    *
    * This flag exists because the two branches are otherwise
    * indistinguishable at runtime: a caller writing
