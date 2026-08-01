@@ -362,23 +362,24 @@ export interface BymaxAuthModuleOptions {
     enabled?: boolean
 
     /**
-     * How the client IP that keys the per-route limit is derived. Default: `'peer'`.
+     * How the client IP that keys the per-route limit is derived. **Required** whenever rate
+     * limiting is enabled — there is no default, and the module refuses to start without it.
      *
      * - `'peer'` — the socket peer address, read directly from the connection. Never consults
      *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
      * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting
      *   and therefore the forwarding headers it admits.
      *
-     * The default is `'peer'` because the failure modes are not symmetric. Behind a proxy with
-     * `trust proxy` set, `req.ip` is whatever the client put in `X-Forwarded-For` unless the
-     * hop count is configured exactly right — and an attacker who can pick their own key is not
-     * rate-limited at all. Keying on the peer address instead over-counts (every request behind
-     * one proxy shares a bucket), which is visible and recoverable; the other direction is a
-     * control that reports success while enforcing nothing.
+     * Neither can be the default, because each is a working limiter in one deployment and no
+     * limiter at all in the other. `'peer'` behind any proxy reads the proxy's address for
+     * every client, so all of them share one bucket and a single caller sending a handful of
+     * logins can lock out the whole user base — with no credential. `'trusted-proxy'` on a
+     * directly exposed app reads whatever the caller wrote in `X-Forwarded-For`, and a limiter
+     * whose key the attacker picks enforces nothing. Both look like a working limiter at
+     * runtime, and nothing detects the mismatch — so the deployment states which shape it is.
      *
-     * Set `'trusted-proxy'` once `trust proxy` is configured for the real hop count. rust-auth
-     * draws the same distinction (`ClientIpSource::PeerAddr` / `TrustedForwardedFor`) with the
-     * same default.
+     * Pass `enabled: false` instead if the limits are enforced at the edge. rust-auth draws the
+     * same distinction (`ClientIpSource::PeerAddr` / `TrustedForwardedFor`) and requires it too.
      */
     clientIpSource?: 'peer' | 'trusted-proxy'
   }
