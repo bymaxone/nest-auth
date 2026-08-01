@@ -31,14 +31,12 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
   AuthPlatformUser,
   IPlatformUserRepository,
-  SafeAuthPlatformUser,
-  UpdatePlatformMfaData
+  SafeAuthPlatformUser
 } from '../interfaces/platform-user-repository.interface'
 import type {
   AuthUser,
   IUserRepository,
-  SafeAuthUser,
-  UpdateMfaData
+  SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
@@ -107,6 +105,23 @@ interface MfaRecordUpdate {
  * any plausible backend.
  */
 const MFA_TRANSITION_LOCK_TTL_SECONDS = 10
+
+/**
+ * Releases a lock only if it still holds the nonce the releasing call wrote.
+ *
+ * `GET` then `DEL` from the client cannot express this: the key can expire and be retaken
+ * between the two round trips, which is the exact interleaving the nonce is there to catch.
+ * One script makes the read and the delete atomic.
+ *
+ * KEYS[1] the lock key
+ * ARGV[1] the nonce the caller wrote when it took the lock
+ *
+ * Returns 1 when this call's lock was released, 0 when it had already expired or been retaken.
+ */
+const RELEASE_LOCK_LUA = `if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`
 
 /** Number of recovery codes generated when MFA is enabled. */
 const DEFAULT_RECOVERY_CODE_COUNT = 8
@@ -253,7 +268,7 @@ export class MfaService {
     }
     try {
       if (context === 'platform' && this.platformUserRepo) {
-        await this.platformUserRepo.updateMfa(userId, update as UpdatePlatformMfaData)
+        await this.platformUserRepo.updateMfa(userId, update)
       } else {
         await this.userRepo.updateMfa(userId, update)
       }
@@ -305,7 +320,15 @@ export class MfaService {
     mutate: (current: AuthUser | AuthPlatformUser) => MfaRecordUpdate | null
   ): Promise<boolean> {
     const lockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
-    if (!(await this.redis.setIfAbsent(lockKey, '1', MFA_TRANSITION_LOCK_TTL_SECONDS))) {
+    // The lock carries a per-call nonce so it can only be released by the call that took it.
+    // A fixed value made the release unsafe: the TTL is short, and a transition that outlives
+    // it — the repository is the host's, and a read plus a write can stall past ten seconds
+    // under load — has already lost the lock by the time its `finally` runs. Deleting it
+    // unconditionally there removes the *successor's* lock, and a third caller then enters
+    // alongside the second. That is the serialization this method exists to provide, undone
+    // precisely under the load that makes concurrent transitions likely in the first place.
+    const lockToken = randomBytes(16).toString('hex')
+    if (!(await this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
     }
     try {
@@ -314,14 +337,28 @@ export class MfaService {
       const current = await this.fetchUserForContext(context, userId)
       const update = mutate(current)
       if (update === null) return false
+      // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
+      // `undefined` because the two planes' record types differ on the read side, but both
+      // `updateMfa` contracts declare `string | null` / `string[] | null` — required, not
+      // optional. A cast let `undefined` through to a consumer repository, where an ORM that
+      // reads it as "leave this column alone" would write `mfaEnabled: false` while keeping
+      // the secret and the recovery digests: MFA reported off, and every stored factor still
+      // able to satisfy a challenge. `?? null` states the clear explicitly, and dropping the
+      // casts means the compiler checks the two contracts from here on.
+      const write = {
+        mfaEnabled: update.mfaEnabled,
+        mfaSecret: update.mfaSecret ?? null,
+        mfaRecoveryCodes: update.mfaRecoveryCodes ?? null
+      }
       if (context === 'platform' && this.platformUserRepo) {
-        await this.platformUserRepo.updateMfa(userId, update as UpdatePlatformMfaData)
+        await this.platformUserRepo.updateMfa(userId, write)
       } else {
-        await this.userRepo.updateMfa(userId, update as UpdateMfaData)
+        await this.userRepo.updateMfa(userId, write)
       }
       return true
     } finally {
-      await this.redis.del(lockKey)
+      // Compare-and-delete: release only a lock still holding this call's nonce.
+      await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
     }
   }
 
