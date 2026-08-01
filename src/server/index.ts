@@ -75,7 +75,9 @@ export type {
 } from './interfaces/auth-hooks.interface'
 export type {
   BymaxAuthModuleOptions,
-  AuthModuleAsyncOptions
+  AuthModuleAsyncOptions,
+  BymaxAuthRateLimitOptions,
+  ClientIpSource
 } from './interfaces/auth-module-options.interface'
 export type {
   AuthResult,

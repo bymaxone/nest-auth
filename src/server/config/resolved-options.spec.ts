@@ -2563,10 +2563,14 @@ describe('resolveOptions — token binding', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveOptions — rateLimit.clientIpSource', () => {
-  const withoutSource: BymaxAuthModuleOptions = {
+  // Deliberately untyped: the option group is required and discriminated, so a TypeScript
+  // consumer cannot construct this — which is the point of the type. The runtime check still
+  // has to hold, because the type binds TypeScript and nobody else, and this is a published
+  // package configured from JavaScript, from JSON, and from environment plumbing.
+  const withoutSource = {
     jwt: { secret: VALID_SECRET },
     roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
-  }
+  } as unknown as BymaxAuthModuleOptions
 
   // There is no safe default, because the two failure modes are opposite and both silent.
   // `'peer'` reads the socket address, which behind ANY proxy is the proxy's address for every
@@ -2635,6 +2639,24 @@ describe('resolveOptions — rateLimit.clientIpSource', () => {
       expect(resolved.rateLimit.clientIpSource).toBe(clientIpSource)
     }
   )
+
+  // The type carries the same rule the validator does, so a TypeScript consumer hears it at
+  // compile time rather than at boot. These are assertions, not illustrations: if the union
+  // stopped rejecting a shape, `@ts-expect-error` would itself become an error and `typecheck`
+  // — a hard CI gate — would fail. Nothing that compiled before stops compiling for a reason
+  // that would not already have refused to start.
+  it('rejects the unsafe shapes at compile time', () => {
+    // @ts-expect-error — the limiter is on by default, so the source cannot be omitted.
+    const missingSource: BymaxAuthModuleOptions['rateLimit'] = {}
+    // @ts-expect-error — nor when `enabled: true` is stated outright.
+    const missingWithEnabled: BymaxAuthModuleOptions['rateLimit'] = { enabled: true }
+    // @ts-expect-error — and a value outside the union is not a source.
+    const wrongValue: BymaxAuthModuleOptions['rateLimit'] = { clientIpSource: 'trusted_proxy' }
+    // Turning the limiter off is the one shape that needs no source: it is never read.
+    const disabled: BymaxAuthModuleOptions['rateLimit'] = { enabled: false }
+
+    expect([missingSource, missingWithEnabled, wrongValue, disabled]).toHaveLength(4)
+  })
 
   // A deployment that limits at the edge has nothing to declare — the value is never read.
   it('does not demand a source when rate limiting is off', () => {

@@ -40,6 +40,57 @@ import type { AuthUser } from './user-repository.interface'
  * })
  * ```
  */
+/**
+ * How the client IP that keys the per-route limit is derived.
+ *
+ * - `'peer'` — the socket peer address, read directly from the connection. Never consults
+ *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
+ * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting and
+ *   therefore the forwarding headers it admits.
+ */
+export type ClientIpSource = 'peer' | 'trusted-proxy'
+
+/**
+ * Per-IP rate limiting, as a discriminated union on `enabled`.
+ *
+ * The limiter is on unless it is turned off, and while it is on the deployment must say which
+ * address keys it. Neither value can be the default, because each is a working limiter in one
+ * deployment and no limiter at all in the other: `'peer'` behind any proxy reads the proxy's
+ * address for every client, so all of them share one bucket and a single caller sending a
+ * handful of logins can lock out the whole user base with no credential; `'trusted-proxy'` on a
+ * directly exposed app reads whatever the caller wrote in `X-Forwarded-For`, and a limiter whose
+ * key the attacker picks enforces nothing. Both look like a working limiter at runtime, and
+ * nothing detects the mismatch.
+ *
+ * The union is what makes that a compile error rather than a startup one. `resolveOptions`
+ * still checks it — the type binds a TypeScript consumer and nobody else, and this is a
+ * published package that is also called from JavaScript and configured from JSON.
+ */
+export type BymaxAuthRateLimitOptions =
+  | {
+      /**
+       * Whether the library enforces the per-route limits in `AUTH_THROTTLE_CONFIGS`.
+       * Default: `true`.
+       *
+       * Those numbers used to be advisory — they took effect only if the host wired
+       * `ThrottlerModule` and registered its guard, and a deployment that did not ran every auth
+       * route unlimited without being told. The library now enforces them itself, backed by the
+       * same Redis counter as the brute-force lockout, so the limit also holds across instances.
+       */
+      readonly enabled?: true
+      /** Required while the limiter is on. See {@link ClientIpSource}. */
+      readonly clientIpSource: ClientIpSource
+    }
+  | {
+      /**
+       * Set `false` when the same limits are already enforced at the edge (an API gateway, a
+       * WAF, or a host-side `ThrottlerModule`) and counting twice is not wanted.
+       */
+      readonly enabled: false
+      /** Never read while the limiter is off, so it need not be stated. */
+      readonly clientIpSource?: ClientIpSource
+    }
+
 export interface BymaxAuthModuleOptions {
   /**
    * JWT signing configuration.
@@ -345,44 +396,13 @@ export interface BymaxAuthModuleOptions {
 
   /**
    * Per-IP rate limiting of the auth routes, enforced by the library itself.
+   *
+   * Required, and shaped so the compiler asks the question the module would otherwise only ask
+   * at startup: a deployment that leaves the limiter on must name the client-IP source, and one
+   * that turns it off need not. Nothing that compiles today stops compiling for a reason that
+   * would not already have refused to boot.
    */
-  rateLimit?: {
-    /**
-     * Whether the library enforces the per-route limits in `AUTH_THROTTLE_CONFIGS`.
-     * Default: `true`.
-     *
-     * Those numbers used to be advisory — they took effect only if the host wired
-     * `ThrottlerModule` and registered its guard, and a deployment that did not ran every auth
-     * route unlimited without being told. The library now enforces them itself, backed by the
-     * same Redis counter as the brute-force lockout, so the limit also holds across instances.
-     *
-     * Set `false` when the same limits are already enforced at the edge (an API gateway, a
-     * WAF, or a host-side `ThrottlerModule`) and counting twice is not wanted.
-     */
-    enabled?: boolean
-
-    /**
-     * How the client IP that keys the per-route limit is derived. **Required** whenever rate
-     * limiting is enabled — there is no default, and the module refuses to start without it.
-     *
-     * - `'peer'` — the socket peer address, read directly from the connection. Never consults
-     *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
-     * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting
-     *   and therefore the forwarding headers it admits.
-     *
-     * Neither can be the default, because each is a working limiter in one deployment and no
-     * limiter at all in the other. `'peer'` behind any proxy reads the proxy's address for
-     * every client, so all of them share one bucket and a single caller sending a handful of
-     * logins can lock out the whole user base — with no credential. `'trusted-proxy'` on a
-     * directly exposed app reads whatever the caller wrote in `X-Forwarded-For`, and a limiter
-     * whose key the attacker picks enforces nothing. Both look like a working limiter at
-     * runtime, and nothing detects the mismatch — so the deployment states which shape it is.
-     *
-     * Pass `enabled: false` instead if the limits are enforced at the edge. rust-auth draws the
-     * same distinction (`ClientIpSource::PeerAddr` / `TrustedForwardedFor`) and requires it too.
-     */
-    clientIpSource?: 'peer' | 'trusted-proxy'
-  }
+  rateLimit: BymaxAuthRateLimitOptions
 
   /**
    * Multi-factor authentication (MFA/TOTP) configuration.

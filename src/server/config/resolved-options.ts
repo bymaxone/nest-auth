@@ -79,7 +79,10 @@ export type ResolvedOptions = Omit<
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
   emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
-  rateLimit: Required<NonNullable<BymaxAuthModuleOptions['rateLimit']>>
+  // Stated outright rather than derived from the option union: by this point validation has
+  // run, so the discrimination that forces a consumer to name the source has done its job and
+  // the resolved value is simply both fields, always present.
+  rateLimit: { enabled: boolean; clientIpSource: 'peer' | 'trusted-proxy' }
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
   redisNamespace: string

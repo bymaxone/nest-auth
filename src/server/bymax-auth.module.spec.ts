@@ -29,6 +29,7 @@ import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
+import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
@@ -142,10 +143,13 @@ describe('BymaxAuthModule', () => {
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => ({
-                jwt: { secret: 'tooshort' },
-                roles: { hierarchy: { MEMBER: [] } }
-              }),
+              // Cast because `rateLimit` is a required discriminated group; this case is
+              // about the secret being refused before anything else is looked at.
+              useFactory: () =>
+                ({
+                  jwt: { secret: 'tooshort' },
+                  roles: { hierarchy: { MEMBER: [] } }
+                }) as unknown as BymaxAuthModuleOptions,
               extraProviders: [
                 { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
                 { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
@@ -165,10 +169,13 @@ describe('BymaxAuthModule', () => {
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => ({
-                jwt: { secret: weakSecret },
-                roles: { hierarchy: { MEMBER: [] } }
-              }),
+              // Cast because `rateLimit` is a required discriminated group; this case is
+              // about the secret being refused before anything else is looked at.
+              useFactory: () =>
+                ({
+                  jwt: { secret: weakSecret },
+                  roles: { hierarchy: { MEMBER: [] } }
+                }) as unknown as BymaxAuthModuleOptions,
               extraProviders: [
                 { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
                 { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }

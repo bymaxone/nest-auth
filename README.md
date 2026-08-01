@@ -653,7 +653,9 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 > [!IMPORTANT]
 > **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled — there is no
-> default, and the module refuses to start without it. Set `'peer'` when the application is
+> default. The option group is a discriminated union, so TypeScript refuses the omission at
+> compile time; the module also refuses to start without it, because the type binds TypeScript
+> and nothing else. Set `'peer'` when the application is
 > directly exposed: the limit keys on the socket address, read from the connection and never
 > from a forwarding header. Set `'trusted-proxy'` when it runs behind a proxy and `trust proxy`
 > is configured for the real hop count: the limit keys on `req.ip`, the forwarded client
