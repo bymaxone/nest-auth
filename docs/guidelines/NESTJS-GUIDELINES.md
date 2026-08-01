@@ -1047,9 +1047,7 @@ export class ExampleService {
   }
 
   private transformResult(data: RawData): SomeResult {
-    return {
-      /* ... */
-    }
+    return {/* ... */}
   }
 }
 ```
@@ -1396,9 +1394,7 @@ import { RouterModule } from '@nestjs/core'
 
 @Module({
   imports: [
-    BymaxAuthModule.registerAsync({
-      /* ... */
-    }),
+    BymaxAuthModule.registerAsync({/* ... */}),
     RouterModule.register([{ path: 'api/v1', module: BymaxAuthModule }])
   ]
 })
@@ -2119,11 +2115,7 @@ function createMockExecutionContext(request?: Partial<Request>): ExecutionContex
 
 ```typescript
 const module = await Test.createTestingModule({
-  imports: [
-    BymaxAuthModule.registerAsync({
-      /* ... */
-    })
-  ]
+  imports: [BymaxAuthModule.registerAsync({/* ... */})]
 })
   .overrideProvider(USER_REPOSITORY)
   .useValue(mockUserRepository)
