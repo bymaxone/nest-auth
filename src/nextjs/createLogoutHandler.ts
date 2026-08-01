@@ -20,12 +20,13 @@
  *     manages its own navigation.
  *
  * @remarks
- * HOST-HEADER TRUST — in `'redirect'` mode the destination URL is
- * emitted as a RELATIVE `Location`, so a forged `Host` cannot pick it. Self-
- * hosted Next.js deployments behind a reverse proxy MUST ensure the
- * proxy forwards only vetted `Host` values; otherwise an attacker
- * who controls the `Host` header can redirect the browser to an
- * off-site origin after logout.
+ * HOST-HEADER TRUST — in `'redirect'` mode the destination is emitted
+ * as a RELATIVE `Location` and the response never reads
+ * `request.nextUrl.origin`, so the browser resolves it against the
+ * URL it actually requested. A forged `Host` has nothing to influence
+ * here, and this handler needs no vetting of that header to be safe.
+ * That is a property of this response only — it says nothing about
+ * the rest of an application, where `Host` may still reach a URL.
  *
  * Edge-Runtime-safe.
  */
