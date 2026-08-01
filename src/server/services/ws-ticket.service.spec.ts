@@ -11,6 +11,7 @@ import { Test } from '@nestjs/testing'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
 
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
@@ -41,15 +42,30 @@ function payload(overrides: Partial<DashboardJwtPayload> = {}): DashboardJwtPayl
   } as DashboardJwtPayload
 }
 
+const mockUserRepo = { findById: jest.fn() }
+
 describe('WsTicketService', () => {
   let service: WsTicketService
 
   beforeEach(async () => {
     jest.clearAllMocks()
     mockRedis.mintWsTicket.mockResolvedValue('t'.repeat(64))
+    // The snapshot is read from the account, not the token, so the repository has to answer.
+    mockUserRepo.findById.mockResolvedValue({
+      id: 'user-1',
+      email: 'u@example.com',
+      tenantId: 'tenant-1',
+      role: 'MEMBER',
+      status: 'ACTIVE'
+    })
 
     const module = await Test.createTestingModule({
-      providers: [WsTicketService, { provide: AuthRedisService, useValue: mockRedis }]
+      providers: [
+        WsTicketService,
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: { blockedStatuses: ['BANNED', 'SUSPENDED'] } },
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+      ]
     }).compile()
 
     service = module.get(WsTicketService)
@@ -110,6 +126,54 @@ describe('WsTicketService', () => {
       const malformed = payload({ mfaEnabled: undefined as unknown as boolean })
 
       await expect(service.issue(malformed)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+      })
+      expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
+    })
+
+    // A ticket authorizes a socket for that socket's whole lifetime — there is no per-request
+    // gate behind it — so the snapshot is the last chance to describe the account correctly.
+    // Copying the token's `status` did not: rotation stamps that claim empty by construction,
+    // so a ticket minted from any rotated token carried no status at all and the socket ran
+    // with a blank authorization field for as long as it stayed open.
+    it('reads the snapshot from the account, not the rotated token', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'user-1',
+        email: 'u@example.com',
+        tenantId: 'tenant-live',
+        role: 'ADMIN',
+        status: 'ACTIVE'
+      })
+
+      // The token is the shape rotation produces: empty status, and authority frozen at login.
+      await service.issue(payload({ status: '', role: 'MEMBER', tenantId: 'tenant-old' }))
+
+      expect(mockRedis.mintWsTicket).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'ACTIVE', role: 'ADMIN', tenantId: 'tenant-live' }),
+        WS_TICKET_TTL_SECONDS
+      )
+    })
+
+    // The socket outlives every per-request check, so a blocked account must not get one at
+    // all — there is nothing downstream that would notice.
+    it.each([['BANNED'], ['SUSPENDED']])('refuses to mint for a %s account', async (status) => {
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'user-1',
+        email: 'u@example.com',
+        tenantId: 'tenant-1',
+        role: 'MEMBER',
+        status
+      })
+
+      await expect(service.issue(payload())).rejects.toThrow(AuthException)
+      expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
+    })
+
+    // The account was deleted while the token was still inside its lifetime.
+    it('refuses to mint when the account is gone', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.issue(payload())).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
       })
       expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()

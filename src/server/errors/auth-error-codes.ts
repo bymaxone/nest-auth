@@ -126,6 +126,19 @@ export const AUTH_ERROR_CODES = {
   /** MFA temporary token (5-minute JWT) is invalid or expired. */
   MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
 
+  /**
+   * Another MFA state change for the same account is already in flight.
+   *
+   * Every MFA transition is a read-modify-write over one repository record that carries
+   * `mfaEnabled`, the secret and the recovery codes together, and the write replaces all three
+   * wholesale. Interleaved, two of them silently undo each other: a challenge that read the
+   * codes before a `regenerate` and spliced after it restores the whole old set the user had
+   * just replaced, and a challenge that splices after a `disable` completes puts `mfaEnabled`
+   * back with the pre-disable secret. Refusing the second caller is how the library serializes
+   * them. Retryable — the losing caller may simply try again.
+   */
+  MFA_STATE_CONFLICT: 'auth.mfa_state_conflict',
+
   // ---------------------------------------------------------------------------
   // Password
   // ---------------------------------------------------------------------------
@@ -274,6 +287,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.mfa_not_enabled': 'MFA is not enabled',
   'auth.mfa_setup_required': 'MFA setup required',
   'auth.mfa_temp_token_invalid': 'Invalid or expired temporary MFA token',
+  'auth.mfa_state_conflict': 'Another MFA change is in progress. Please try again.',
   'auth.password_compromised':
     'This password has appeared in a data breach. Please choose a different one.',
   'auth.password_reset_token_invalid': 'Invalid password reset token',

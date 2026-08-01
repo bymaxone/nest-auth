@@ -43,6 +43,7 @@ export const AUTH_ERROR_CODES = {
   MFA_NOT_ENABLED: 'auth.mfa_not_enabled',
   MFA_SETUP_REQUIRED: 'auth.mfa_setup_required',
   MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
+  MFA_STATE_CONFLICT: 'auth.mfa_state_conflict',
 
   // Password
 

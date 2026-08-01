@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -37,7 +37,8 @@ import type {
 import type {
   AuthUser,
   IUserRepository,
-  SafeAuthUser
+  SafeAuthUser,
+  UpdateMfaData
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
@@ -83,6 +84,29 @@ function totpAntiReplayTtlSeconds(window: number): number {
   const effective = Math.min(Math.max(window, 0), MAX_VERIFY_WINDOW)
   return (2 * effective + 1) * TOTP_STEP_SECONDS
 }
+
+/**
+ * The three fields every MFA transition rewrites together.
+ *
+ * `mfaSecret` and `mfaRecoveryCodes` widen to `undefined` as well as `null` because the two
+ * planes' record types differ there — the dashboard user nulls them, the platform admin leaves
+ * them absent — and one transition point has to satisfy both.
+ */
+interface MfaRecordUpdate {
+  mfaEnabled: boolean
+  mfaSecret: string | null | undefined
+  mfaRecoveryCodes: string[] | null | undefined
+}
+
+/**
+ * TTL in seconds of the per-account MFA transition lock.
+ *
+ * Short on purpose: the lock is released in a `finally`, so this bound only matters when a
+ * process dies mid-transition, and an account whose MFA is briefly unchangeable is a worse
+ * outcome than a window this narrow. Long enough to cover a repository read plus a write on
+ * any plausible backend.
+ */
+const MFA_TRANSITION_LOCK_TTL_SECONDS = 10
 
 /** Number of recovery codes generated when MFA is enabled. */
 const DEFAULT_RECOVERY_CODE_COUNT = 8
@@ -235,6 +259,69 @@ export class MfaService {
       }
     } catch (err: unknown) {
       this.logger.error('re-encryption under the current MFA key failed', err)
+    }
+  }
+
+  /**
+   * Performs one MFA state transition as a serialized read-modify-write.
+   *
+   * Every MFA transition rewrites a single repository record that carries `mfaEnabled`, the
+   * encrypted secret and the recovery-code digests **together**, and `updateMfa` replaces all
+   * three wholesale — the interface offers no compare-and-set and the repository is the host's,
+   * so the library cannot add one. Read-modify-write over a shared record with no CAS is
+   * last-write-wins, and the three ways that bit were:
+   *
+   * - two challenges spending *different* recovery codes concurrently each write the full list
+   *   minus their own code, so the loser's code comes back and verifies again once the `rcu:`
+   *   claim expires. That claim is keyed on the code, so it serializes two attempts at the
+   *   *same* code and nothing else;
+   * - a challenge that read the list before `regenerateRecoveryCodes` and splices after it
+   *   restores the entire old set, unspending it — precisely when the user replaced it because
+   *   it leaked — while the codes they just printed are gone;
+   * - a challenge that splices after `disable` completes writes `mfaEnabled: true` back with
+   *   the pre-disable secret, putting the account under a factor the user removed and may no
+   *   longer hold.
+   *
+   * The fix is to serialize the whole read-modify-write per account and plane. `mutate` is
+   * handed the record as it stands **inside** the lock — never the copy the caller read
+   * earlier — and returns the update to write, or `null` to abandon the transition because
+   * the record moved underneath it.
+   *
+   * A caller that cannot take the lock is refused with `MFA_STATE_CONFLICT` rather than made to
+   * wait: concurrent MFA state changes on one account are pathological, and the honest answer
+   * is "try again". The lock's TTL is short so a process that dies mid-transition does not
+   * strand the account, and it is released in a `finally` so an ordinary failure does not
+   * either.
+   *
+   * @param context - Which identity plane the account belongs to.
+   * @param userId - The account being transitioned.
+   * @param mutate - Given the record inside the lock, returns the update or `null` to abandon.
+   * @returns `true` when a write happened, `false` when `mutate` abandoned the transition.
+   * @throws {@link AuthException} `MFA_STATE_CONFLICT` when another transition holds the lock.
+   */
+  private async transitionMfaRecord(
+    context: 'dashboard' | 'platform',
+    userId: string,
+    mutate: (current: AuthUser | AuthPlatformUser) => MfaRecordUpdate | null
+  ): Promise<boolean> {
+    const lockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
+    if (!(await this.redis.setIfAbsent(lockKey, '1', MFA_TRANSITION_LOCK_TTL_SECONDS))) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
+    }
+    try {
+      // Re-read inside the lock. The caller's copy was read before the lock existed and may
+      // already be stale — reusing it would leave exactly the window this method closes.
+      const current = await this.fetchUserForContext(context, userId)
+      const update = mutate(current)
+      if (update === null) return false
+      if (context === 'platform' && this.platformUserRepo) {
+        await this.platformUserRepo.updateMfa(userId, update as UpdatePlatformMfaData)
+      } else {
+        await this.userRepo.updateMfa(userId, update as UpdateMfaData)
+      }
+      return true
+    } finally {
+      await this.redis.del(lockKey)
     }
   }
 
@@ -562,7 +649,7 @@ export class MfaService {
     if (existingFast !== null) {
       const data = this.parseSetupData(existingFast)
       const existingSecret = this.decryptSecret(data.encryptedSecret)
-      const decryptedCodesJson = decrypt(data.encryptedPlainCodes, this.mfaOptions.encryptionKey)
+      const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
       const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
       const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
       return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
@@ -589,7 +676,7 @@ export class MfaService {
       if (existing !== null) {
         const data = this.parseSetupData(existing)
         const existingSecret = this.decryptSecret(data.encryptedSecret)
-        const decryptedCodesJson = decrypt(data.encryptedPlainCodes, this.mfaOptions.encryptionKey)
+        const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
         const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
@@ -679,16 +766,14 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
-    const enableData = {
-      mfaEnabled: true as const,
+    // Serialized against every other MFA transition. The `getdel` above already makes the
+    // enable single-shot among concurrent verify calls; this puts it in the same queue as
+    // `disable` and the challenge splice, which write the same three fields.
+    await this.transitionMfaRecord(context, userId, () => ({
+      mfaEnabled: true,
       mfaSecret: data.encryptedSecret,
       mfaRecoveryCodes: data.hashedCodes
-    }
-    if (context === 'platform' && this.platformUserRepo) {
-      await this.platformUserRepo.updateMfa(userId, enableData as UpdatePlatformMfaData)
-    } else {
-      await this.userRepo.updateMfa(userId, enableData)
-    }
+    }))
 
     // Atomically invalidate all existing refresh sessions so the user must re-login
     // with the MFA challenge, then advance the token epoch so outstanding ACCESS tokens die
@@ -777,13 +862,12 @@ export class MfaService {
     // Step 3: Fetch user from the correct repository.
     const user = await this.fetchUserForContext(context, userId)
 
-    // Re-check the account status. Login gated it before issuing the temp token, but that
-    // token outlives the check by its whole TTL: an account suspended in between would
-    // otherwise complete the challenge and receive a full session. Revoking access must not
-    // depend on how far through the login the holder already was. Running it before Step 4
-    // also keeps a blocked account from spending the KDF — the recovery-code path costs one
-    // derivation per stored code.
-    assertNotBlocked(user.status, this.options.blockedStatuses)
+    // The account status was re-checked by `fetchUserForContext` above. Login gated it before
+    // issuing the temp token, but that token outlives the check by its whole TTL: an account
+    // suspended in between would otherwise complete the challenge and receive a full session.
+    // Revoking access must not depend on how far through the login the holder already was.
+    // Running it before Step 4 also keeps a blocked account from spending the KDF — the
+    // recovery-code path costs one derivation per stored code.
 
     if (!user.mfaEnabled || !user.mfaSecret) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
@@ -849,20 +933,36 @@ export class MfaService {
         // Stryker disable next-line ArrayDeclaration: unreachable — this branch is only taken
         // when `verifyRecoveryCode` matched a code inside an array it had to iterate first.
         []
-      const updatedCodes = [...existingCodes]
-      updatedCodes.splice(usedRecoveryIndex, 1)
-      const mfaUpdate = {
-        mfaEnabled: true as const,
-        // Re-encrypted here when the secret opened under a retired key: the write is already
-        // happening, so the rotation drains for free.
-        mfaSecret: encryptedUnderRetiredKey ? this.encryptSecret(secretBase32) : user.mfaSecret,
-        mfaRecoveryCodes: updatedCodes
-      }
-      if (context === 'platform' && this.platformUserRepo) {
-        await this.platformUserRepo.updateMfa(userId, mfaUpdate as UpdatePlatformMfaData)
-      } else {
-        await this.userRepo.updateMfa(userId, mfaUpdate)
-      }
+      // Serialized, and spliced against the record as it stands INSIDE the lock rather than
+      // the copy read at the top of this method. Splicing the stale copy is what let a
+      // concurrent `regenerateRecoveryCodes` be rolled back wholesale and a completed
+      // `disable` be undone — see `transitionMfaRecord`.
+      await this.transitionMfaRecord(context, userId, (current) => {
+        // The account stopped having MFA while this challenge was in flight — a `disable`
+        // that has already completed. Writing here would re-enable it with the pre-disable
+        // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
+        // written back.
+        if (!current.mfaEnabled) return null
+        const currentCodes = current.mfaRecoveryCodes ?? []
+        // Re-locate the code in the CURRENT list: the index computed against the earlier read
+        // may name a different code, or none, after a concurrent write.
+        /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable: `usedRecoveryIndex >= 0` only after `verifyRecoveryCode` matched a code inside this very array */
+        // Stryker disable next-line StringLiteral: unreachable — the index came from a match found by iterating `existingCodes`, so the element always exists and the fallback's value can never be read
+        const spentDigest = existingCodes[usedRecoveryIndex] ?? ''
+        const liveIndex = currentCodes.indexOf(spentDigest)
+        if (liveIndex < 0) return null
+        const updatedCodes = [...currentCodes]
+        updatedCodes.splice(liveIndex, 1)
+        return {
+          mfaEnabled: true,
+          // Re-encrypted here when the secret opened under a retired key: the write is
+          // already happening, so the rotation drains for free.
+          mfaSecret: encryptedUnderRetiredKey
+            ? this.encryptSecret(secretBase32)
+            : current.mfaSecret,
+          mfaRecoveryCodes: updatedCodes
+        }
+      })
     } else if (encryptedUnderRetiredKey) {
       // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
       // Fire-and-forget: the challenge has already succeeded and the retired key still opens
@@ -987,12 +1087,13 @@ export class MfaService {
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
-    const disableData = { mfaEnabled: false as const, mfaSecret: null, mfaRecoveryCodes: null }
-    if (context === 'platform' && this.platformUserRepo) {
-      await this.platformUserRepo.updateMfa(userId, disableData)
-    } else {
-      await this.userRepo.updateMfa(userId, disableData)
-    }
+    // Serialized against every other MFA transition, so a challenge that read the record a
+    // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
+    await this.transitionMfaRecord(context, userId, () => ({
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null
+    }))
 
     // Invalidate all sessions so subsequent rotations produce tokens with mfaEnabled: false,
     // and advance the token epoch so outstanding access tokens die with them — an auth-state
@@ -1146,16 +1247,16 @@ export class MfaService {
     // and stale tokens would carry the wrong claim. Recovery-code rotation
     // is a hygiene action that does not change the auth posture, so forcing
     // a global re-login here would be punitive without security benefit.
-    const updateData = {
-      mfaEnabled: true as const,
-      mfaSecret: user.mfaSecret,
-      mfaRecoveryCodes: hashedCodes
-    }
-    if (context === 'platform' && this.platformUserRepo) {
-      await this.platformUserRepo.updateMfa(userId, updateData as UpdatePlatformMfaData)
-    } else {
-      await this.userRepo.updateMfa(userId, updateData)
-    }
+    // Serialized against every other MFA transition. The doc above promises the prior set is
+    // replaced wholesale so an old code can never coexist with the new one — which held only
+    // until a challenge that had read the old list spliced it back after this write.
+    const replaced = await this.transitionMfaRecord(context, userId, (current) => {
+      // MFA was disabled while the new codes were being derived. Writing them would re-enable
+      // it with the pre-disable secret, so the caller is told the factor is gone instead.
+      if (!current.mfaEnabled) return null
+      return { mfaEnabled: true, mfaSecret: current.mfaSecret, mfaRecoveryCodes: hashedCodes }
+    })
+    if (!replaced) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     this.logger.log(
       `regenerateRecoveryCodes: recovery codes regenerated userId=${userId} context=${context}`
@@ -1240,9 +1341,30 @@ export class MfaService {
   }
 
   /**
-   * Fetches a user from the correct repository based on the MFA context.
+   * Fetches a user from the correct repository based on the MFA context, and refuses one whose
+   * account is blocked.
    *
+   * The status gate lives here rather than in each caller because every entry point that
+   * reaches this method changes or spends an authentication factor, and every one of them
+   * must refuse a suspended or banned account. It used to live in `challenge` alone, so
+   * `setup`, `verifyAndEnable`, `disable` and `regenerateRecoveryCodes` had no gate at all:
+   * an operator who suspended a compromised account bought nothing against an attacker still
+   * holding an unexpired access token, who could turn the second factor off — or enrol their
+   * own authenticator over it — for the token's remaining lifetime. Nothing else covers that
+   * window: no status change bumps the token epoch, so the per-request check is the only
+   * defence, and neither MFA controller composes `UserStatusGuard` (the platform plane has no
+   * status guard at all). Every other authority-bearing route in the library does gate on
+   * status; changing an authentication factor is at least as privileged as minting an
+   * invitation.
+   *
+   * Gating the fetch rather than the callers is deliberate: a method added later inherits the
+   * check instead of having to remember it.
+   *
+   * @param context - Which identity plane the caller is acting on.
+   * @param userId - The subject taken from the verified token.
+   * @returns The account record, guaranteed to be in good standing.
    * @throws `TOKEN_INVALID` if the user is not found.
+   * @throws {@link AuthException} the status error when the account is blocked.
    */
   private async fetchUserForContext(
     context: 'dashboard' | 'platform',
@@ -1251,6 +1373,7 @@ export class MfaService {
     if (context === 'dashboard') {
       const user = await this.userRepo.findById(userId)
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      assertNotBlocked(user.status, this.options.blockedStatuses)
       return user
     }
 
@@ -1262,6 +1385,7 @@ export class MfaService {
     }
     const admin = await this.platformUserRepo.findById(userId)
     if (!admin) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    assertNotBlocked(admin.status, this.options.blockedStatuses)
     return admin
   }
 }
