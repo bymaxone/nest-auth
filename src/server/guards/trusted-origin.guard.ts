@@ -113,8 +113,13 @@ export class TrustedOriginGuard implements CanActivate {
    * attach the renamed cookie.
    *
    * An unreadable `request.cookies` (the `cookie-parser` middleware not mounted) is treated as
-   * "credential present" rather than "absent": the guard cannot prove the request is safe, and
-   * the safe direction is to demand a trusted `Origin` rather than wave it through.
+   * "credential present" rather than "absent". What that buys is precise: it keeps the request
+   * inside the `Sec-Fetch-Site` / `Origin` checks instead of short-circuiting past them on the
+   * `!carriesAuthCookie` early return, so a cross-site request that DOES announce itself is
+   * still refused. It does not turn a request carrying neither header into a refusal — those
+   * are admitted whatever this returns, by the deliberate choice documented above: no browser
+   * omits both, so their absence is evidence of a non-browser caller rather than a way around
+   * the check.
    *
    * The MFA challenge cookie counts too. It is planted by the OAuth callback with the
    * configured `sameSite` — `none` on exactly the deployments this guard exists for — and it
