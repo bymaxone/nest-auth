@@ -1316,6 +1316,25 @@ describe('resolveOptions — password.costFactor validation', () => {
     )
   })
 
+  // `crypto.scrypt` requires integral N, r and p, and throws when handed anything else — on
+  // the first derivation, which is the first login after a deploy rather than at startup.
+  // Nothing else here catches a fraction: the power-of-two test is a bitwise expression, and
+  // bitwise operators coerce to int32, so `16384.5 & 16383.5` is evaluated as `16384 & 16383`
+  // and reports a clean power of two. The lower bounds on the other two only compare.
+  it.each([
+    ['costFactor', { costFactor: 16_384.5 }],
+    ['blockSize', { blockSize: 8.5 }],
+    ['parallelization', { parallelization: 1.5 }],
+    // `Number.isInteger` answers false for these too, and they arrive the same way a fraction
+    // does — from JSON, from an environment variable, from untyped JavaScript.
+    ['a NaN costFactor', { costFactor: Number.NaN }],
+    ['an infinite blockSize', { blockSize: Number.POSITIVE_INFINITY }]
+  ])('should throw when %s is not an integer', (_case, password) => {
+    const options: BymaxAuthModuleOptions = { ...MINIMAL_OPTIONS, password }
+
+    expect(() => resolveOptions(options)).toThrow(/must be an integer/)
+  })
+
   // Verifies that a costFactor that is not a power of 2 is rejected (scrypt requirement).
   it('should throw when costFactor is not a power of 2', () => {
     const options: BymaxAuthModuleOptions = {
@@ -2557,7 +2576,39 @@ describe('resolveOptions — rateLimit.clientIpSource', () => {
   // key the attacker picks enforces nothing. Both look like a working limiter at runtime, so
   // the deployment states which one it is or the module refuses to start.
   it('refuses to resolve when rate limiting is on and the source was not declared', () => {
-    expect(() => resolveOptions(withoutSource)).toThrow(/clientIpSource is required/)
+    expect(() => resolveOptions(withoutSource)).toThrow(/clientIpSource must be/)
+  })
+
+  // The union type constrains a TypeScript consumer and nobody else. This is a published npm
+  // package: the value arrives from JavaScript, from JSON, from environment plumbing. A
+  // presence check would pass a misspelling straight through to the guard, whose
+  // `=== 'trusted-proxy'` then falls to the peer branch — the deployment asked to key on the
+  // forwarded address and got the proxy's own, so every client shares one bucket and a single
+  // caller can lock out the whole user base. That is the failure the required-ness exists to
+  // prevent, reachable by a typo.
+  it.each([
+    ['a misspelling', 'trusted_proxy'],
+    ['a near miss in case', 'Peer'],
+    ['an empty string', ''],
+    ['null from an untyped consumer', null]
+  ])('refuses %s rather than falling back to a default', (_case, clientIpSource) => {
+    const options = {
+      ...withoutSource,
+      rateLimit: { clientIpSource }
+    } as unknown as BymaxAuthModuleOptions
+
+    expect(() => resolveOptions(options)).toThrow(/clientIpSource must be/)
+  })
+
+  // The rejected value belongs in the message: an operator who mistyped it is looking for
+  // which of their several config layers supplied the wrong string.
+  it('quotes the offending value back', () => {
+    const options = {
+      ...withoutSource,
+      rateLimit: { clientIpSource: 'trusted_proxy' }
+    } as unknown as BymaxAuthModuleOptions
+
+    expect(() => resolveOptions(options)).toThrow(/"trusted_proxy"/)
   })
 
   // The message has to be actionable: an operator reading it must be able to pick the right
