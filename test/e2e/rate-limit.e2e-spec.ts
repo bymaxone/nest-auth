@@ -22,7 +22,10 @@ describe('per-IP rate limiting (E2E)', () => {
     const bootstrap = await bootstrapTestApp({
       tokenDelivery: 'bearer',
       jwt: { secret: JWT_SECRET },
-      rateLimit: { enabled: true }
+      // 'peer' is right here: the test drives the app directly, with no proxy in front, so
+      // the socket address IS the client. See `validateClientIpSource` for why there is no
+      // default to fall back on.
+      rateLimit: { enabled: true, clientIpSource: 'peer' as const }
     })
     app = bootstrap.app
   })

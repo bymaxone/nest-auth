@@ -5,9 +5,12 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   MaxLength,
   MinLength
 } from 'class-validator'
+
+import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
 /**
  * Data Transfer Object for the reset-password endpoint.
@@ -84,5 +87,6 @@ export class ResetPasswordDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
   tenantId!: string
 }

@@ -1,5 +1,7 @@
 import { Transform } from 'class-transformer'
-import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator'
+import { IsEmail, IsNotEmpty, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+
+import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
 /**
  * Data Transfer Object for the user registration endpoint.
@@ -57,5 +59,6 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
   tenantId!: string
 }

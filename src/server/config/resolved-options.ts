@@ -180,6 +180,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateMfaVerificationParameters(userOptions.mfa)
   validateBruteForce(userOptions.bruteForce)
   validateOAuthProviders(userOptions.oauth)
+  validateClientIpSource(userOptions.rateLimit)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
 
@@ -277,9 +278,15 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       userOptions.userStatusCacheTtlSeconds ?? DEFAULT_OPTIONS.userStatusCacheTtlSeconds,
 
     // Evaluated once at startup — not re-evaluated per request.
+    //
+    // `clientIpSource` has no default and `validateClientIpSource` has already refused a
+    // deployment that left it unset with limiting on. The fallback here is reached only when
+    // limiting is OFF, where the value is never read; `'peer'` is the inert choice because it
+    // consults no request header at all.
     rateLimit: {
       ...DEFAULT_OPTIONS.rateLimit,
-      ...userOptions.rateLimit
+      ...userOptions.rateLimit,
+      clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
     },
 
     secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
@@ -300,6 +307,40 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 // ---------------------------------------------------------------------------
 // Validation helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Requires a deployment with rate limiting on to say how the client IP is derived.
+ *
+ * There is no safe default, because the two failure modes are opposite and both are silent.
+ * `'peer'` reads the socket address: correct when the app is directly exposed, and behind any
+ * proxy it is the PROXY's address for every client — so all of them share one bucket and a
+ * single caller sending five logins in a minute locks every user out for the rest of the
+ * window, with no credential. `'trusted-proxy'` reads `req.ip`, which honours `trust proxy`:
+ * correct behind exactly the configured hop count, and directly exposed it is whatever the
+ * caller put in `X-Forwarded-For` — a limiter whose key the attacker picks enforces nothing.
+ *
+ * A default would pick one of those for a deployment shape this library cannot see. Nothing
+ * detects the mismatch at runtime either: both look like a working limiter. So the deployment
+ * states it, and a deployment that has not thought about it fails at startup rather than
+ * shipping a control that reports success.
+ *
+ * @param rateLimit - The rate-limit option group, if any.
+ * @throws When rate limiting is on and `clientIpSource` was not set.
+ */
+function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']): void {
+  if (rateLimit?.enabled === false) return
+  if (rateLimit?.clientIpSource !== undefined) return
+  throw new Error(
+    `[BymaxAuthModule] rateLimit.clientIpSource is required when rate limiting is enabled. ` +
+      `Set 'peer' when the application is directly exposed (the limit keys on the socket ` +
+      `address), or 'trusted-proxy' when it runs behind a proxy and 'trust proxy' is ` +
+      `configured for the real hop count (the limit keys on the forwarded client address). ` +
+      `There is no default: 'peer' behind a proxy puts every client in ONE bucket, so one ` +
+      `caller can rate-limit your whole user base, and 'trusted-proxy' without a proxy lets ` +
+      `the caller choose their own key. Both look like a working limiter. Pass ` +
+      `rateLimit.enabled: false if the limits are enforced at the edge instead.`
+  )
+}
 
 function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
   if (!jwt) {
@@ -618,6 +659,15 @@ const MAX_BRUTE_FORCE_ATTEMPTS = 100
  * @param password - The configured password group, if any.
  * @throws If either parameter is below its floor.
  */
+/**
+ * The per-derivation memory ceiling for the password KDF, in bytes.
+ *
+ * 512 MiB is four times the shipped default (`N = 131072`, `r = 8` → 128 MiB, the OWASP
+ * recommendation). A value above it is a misconfiguration rather than a stronger setting: see
+ * `validatePasswordMemoryParameters` for the arithmetic an operator needs to raise it knowingly.
+ */
+const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
+
 function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['password']): void {
   const blockSize = password?.blockSize
   if (blockSize !== undefined && blockSize < 8) {
@@ -633,6 +683,36 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
     throw new Error(
       `[BymaxAuthModule] password.parallelization must be at least 1 ` +
         `(current: ${parallelization}).`
+    )
+  }
+
+  // …and a ceiling, because the floor above only guarded one direction.
+  //
+  // scrypt's memory cost is `128 * N * r` bytes PER DERIVATION, and a derivation runs on a
+  // libuv threadpool thread — `UV_THREADPOOL_SIZE`, four by default. So the resident working
+  // set an unauthenticated login flood can pin is `threadpool * 128 * N * r`: at the shipped
+  // defaults that is ~512 MiB, which is deliberate and bounded by the route limiter. Nothing
+  // bounded it upwards, though, so a deployment that raised `costFactor` "for safety" could
+  // make one unauthenticated request cost gigabytes — and `compareDummy` runs the full
+  // derivation for an address that does not exist, by design, to close the timing oracle.
+  //
+  // The ceiling is not a recommendation. It is the line past which the value is a mistake
+  // rather than a stronger setting, and an operator who genuinely wants more should be told
+  // the arithmetic rather than discovering it under load.
+  const effectiveN = password?.costFactor ?? DEFAULT_OPTIONS.password.costFactor
+  const effectiveR = password?.blockSize ?? DEFAULT_OPTIONS.password.blockSize
+  const bytesPerDerivation = 128 * effectiveN * effectiveR
+  if (bytesPerDerivation > MAX_KDF_BYTES_PER_DERIVATION) {
+    throw new Error(
+      `[BymaxAuthModule] password.costFactor ${effectiveN} with blockSize ${effectiveR} ` +
+        `needs ${Math.round(bytesPerDerivation / 1024 / 1024)} MiB per derivation ` +
+        `(scrypt uses 128 * N * r), above the ${MAX_KDF_BYTES_PER_DERIVATION / 1024 / 1024} ` +
+        `MiB ceiling. Each derivation occupies one libuv threadpool thread ` +
+        `(UV_THREADPOOL_SIZE, 4 by default), and an unauthenticated login pays the full cost ` +
+        `even for an address that does not exist — the dummy derivation that closes the ` +
+        `timing oracle. So the resident working set a login flood can pin is ` +
+        `threadpool * that figure. Lower costFactor, or raise the ceiling deliberately if the ` +
+        `host is sized for it.`
     )
   }
 }

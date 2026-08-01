@@ -51,7 +51,11 @@ const JWT_SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 /** Minimal valid options factory. */
 const validOptions = {
   jwt: { secret: JWT_SECRET },
-  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+  // Required whenever rate limiting is on, which it is by default: there is no safe default
+  // for it, because neither value works in both deployment shapes and neither failure is
+  // visible at runtime. See `validateClientIpSource`.
+  rateLimit: { clientIpSource: 'peer' as const }
 }
 
 /** Minimal mock Redis client (ioredis shape). */
