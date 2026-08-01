@@ -595,6 +595,25 @@ describe('AuthService', () => {
       expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
     })
 
+    // The warning names a permanent property of the deployment — a repository ignoring its
+    // `tenantId` argument — so every line after the first carries nothing new. Repeating it per
+    // request would make the log a function of traffic and put a per-request side effect on one
+    // of three branches whose whole purpose is to be indistinguishable from each other.
+    it('reports the misconfigured repository once, not once per attempt', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, tenantId: 'someone-elses-tenant' })
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+      await expect(service.login(dto, mockReq)).rejects.toThrow(AuthException)
+
+      const mismatchWarnings = warnSpy.mock.calls.filter(([line]) =>
+        String(line).includes('outside the requested tenant')
+      )
+      expect(mismatchWarnings).toHaveLength(1)
+      warnSpy.mockRestore()
+    })
+
     // Every other hook fires on a success path, which left the failure side of authentication
     // with no structured seam: the events that matter most to detection existed only as
     // English log lines whose wording is not a contract. ASVS v5 §16.3.1 expects the outcome

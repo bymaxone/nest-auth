@@ -59,6 +59,17 @@ const ANTI_ENUM_MIN_MS = 300
 export class AuthService {
   private readonly logger = new Logger(AuthService.name)
 
+  /**
+   * Whether the tenant-mismatch misconfiguration has already been reported.
+   *
+   * The warning describes a permanent property of the deployment — a repository whose
+   * `findByEmail` ignores its `tenantId` argument — so the second line and every line after it
+   * carry no information the first did not. Emitting one per request would make the log a
+   * function of traffic, and put a side effect on the losing side of a refusal that is meant to
+   * be indistinguishable from the other two. Once is enough to make the defect visible.
+   */
+  private warnedTenantMismatch = false
+
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
@@ -277,7 +288,12 @@ export class AuthService {
     // Folded into the same condition as the not-found case so the refusal is byte- and
     // timing-identical: a caller learns nothing about which of the three it hit.
     const tenantMismatch = user !== null && user.tenantId !== tenantId
-    if (tenantMismatch) {
+    // Reported once per process, not once per request. The condition is a property of the
+    // deployment rather than of the caller, so repeating it says nothing new — and a per-request
+    // write is a side effect on one of the three branches that are supposed to be
+    // indistinguishable, however far below the KDF's noise floor a log line sits.
+    if (tenantMismatch && !this.warnedTenantMismatch) {
+      this.warnedTenantMismatch = true
       this.logger.warn(
         `login: repository returned an account outside the requested tenant — check that ` +
           `IUserRepository.findByEmail scopes by its tenantId argument`
