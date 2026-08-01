@@ -85,6 +85,30 @@ export function buildSilentRefreshUrl(request: RequestWithUrl, redirectTo?: stri
 }
 
 /**
+ * The same silent-refresh target, as a same-origin **path** rather than an absolute URL.
+ *
+ * This is what the proxy redirects to. The absolute form names an origin, and the only origin
+ * available to it is `request.url`'s — which Next derives from the `Host` header, so a
+ * self-hosted deployment answering on any host handed an attacker who controls that header a
+ * `Location: https://attacker.example/api/auth/silent-refresh?redirect=/dashboard`. Emitting
+ * the path alone removes the question, exactly as it was removed from the login and dashboard
+ * redirects: the browser resolves a relative `Location` against the URL it actually requested.
+ *
+ * {@link buildSilentRefreshUrl} keeps returning the absolute form. It is public API, and a
+ * consumer calling it directly may well want a URL; what must not name a Host-derived origin
+ * is the `Location` this proxy writes.
+ *
+ * @param request    - Request whose pathname and search are used for the fallback destination.
+ * @param redirectTo - Destination path after refresh. Optional; falls back to the current path.
+ * @returns `/api/auth/silent-refresh?redirect={encoded-destination}`.
+ * @throws {TypeError} When `request.url` is not a valid HTTP(S) URL.
+ */
+export function buildSilentRefreshPath(request: RequestWithUrl, redirectTo?: string): string {
+  const url = new URL(buildSilentRefreshUrl(request, redirectTo))
+  return `${url.pathname}${url.search}`
+}
+
+/**
  * Resolves and validates the post-refresh destination URL.
  *
  * Guards against prototype-pollution by using `Object.prototype.hasOwnProperty`

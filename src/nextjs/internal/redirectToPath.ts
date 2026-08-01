@@ -92,5 +92,8 @@ export function redirectToPath(path: string): NextResponse {
 export function withQueryParam(path: string, key: string, value: string): string {
   const parsed = new URL(toSameOriginPath(path), 'https://placeholder.invalid')
   parsed.searchParams.set(key, value)
-  return `${parsed.pathname}${parsed.search}`
+  // The fragment rides along. It never reaches the server, so nothing here can act on it — but
+  // a configured path that carries an anchor means the anchor to the browser, and dropping it
+  // silently changes where the page lands after the redirect.
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
