@@ -38,7 +38,13 @@ const ACCESS_TOKEN_TYPES: readonly string[] = ['dashboard', 'platform']
  *   signature verification.
  * - `signatureVerified`: `true` only when the token was validated
  *   against the configured `jwtSecret` via HMAC. `false` in
- *   decode-only mode even when `authenticated` is `true`.
+ *   decode-only mode even when `authenticated` is `true`. It carries
+ *   the signature fact and NOTHING else — it stays `true` for a
+ *   genuinely signed token that has expired, or that is the wrong
+ *   `type`, because the signature was checked before either was
+ *   read. Anything gating on identity reads `authenticated`, which
+ *   is the conjunction; this field alone answers only "was a
+ *   signature checked", which is never the whole question.
  */
 export interface TokenState {
   readonly token: DecodedToken | undefined
@@ -74,10 +80,12 @@ export async function readTokenState(
     token: decoded,
     hasCookie: true,
     authenticated: isSession,
-    // Sourced from the decode result rather than re-derived from `hasSecret`: the token itself
-    // now records whether a signature was checked, and reading the fact is one fewer inference
-    // to keep true if the branch above ever changes.
-    signatureVerified: decoded.signatureVerified && isSession
+    // Passed through, not conjoined with `isSession`. The name says "a signature was checked",
+    // and folding expiry and token-type into it made the same identifier mean one thing on
+    // `DecodedToken` and a stricter thing here — the kind of collision that is only ever
+    // discovered by someone trusting the looser reading. `authenticated` above is where the
+    // conjunction belongs, and it is the field every decision in this proxy actually reads.
+    signatureVerified: decoded.signatureVerified
   }
 }
 
