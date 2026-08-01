@@ -24,7 +24,7 @@ import {
 } from './proxyUtils'
 import { matchesPublicRoute } from './routeClassifier'
 import type { TokenState } from './tokenState'
-import { buildSilentRefreshUrl } from '../helpers/buildSilentRefreshUrl'
+import { buildSilentRefreshPath } from '../helpers/buildSilentRefreshUrl'
 import type { DecodedToken } from '../helpers/jwt'
 
 /**
@@ -79,8 +79,10 @@ export function handlePublicRoute(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    const silentRefreshUrl = new URL(buildSilentRefreshUrl(request, destination))
-    return NextResponse.redirect(silentRefreshUrl)
+    // Relative `Location`, like every other redirect this proxy issues: the absolute form
+    // named an origin, and the only one available was `request.url`'s — which Next derives
+    // from the `Host` header.
+    return redirectToPath(buildSilentRefreshPath(request, destination))
   }
 
   // No session cookie — nothing to refresh. Render the public page.
@@ -228,8 +230,10 @@ function handleUnauthenticatedOnProtected(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    const silentRefreshUrl = new URL(buildSilentRefreshUrl(request, destination))
-    return NextResponse.redirect(silentRefreshUrl)
+    // Relative `Location`, like every other redirect this proxy issues: the absolute form
+    // named an origin, and the only one available was `request.url`'s — which Next derives
+    // from the `Host` header.
+    return redirectToPath(buildSilentRefreshPath(request, destination))
   }
 
   // Cookie was present but invalid AND `has_session` missing —

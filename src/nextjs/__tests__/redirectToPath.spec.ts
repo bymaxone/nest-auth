@@ -57,4 +57,10 @@ describe('withQueryParam', () => {
   it('reduces a protocol-relative reference to the app root rather than salvaging its path', () => {
     expect(withQueryParam('//attacker.example/login', 'next', '/x')).toBe('/?next=%2Fx')
   })
+
+  // The fragment never reaches the server, so nothing here acts on it — but it is where the
+  // browser lands, and dropping it silently changes the destination of a configured path.
+  it('preserves a fragment on the path it was given', () => {
+    expect(withQueryParam('/docs#install', 'next', '/x')).toBe('/docs?next=%2Fx#install')
+  })
 })
