@@ -60,8 +60,14 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  */
 @UseInterceptors(NoStoreInterceptor)
 @Controller('sessions')
-@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
-@UseGuards(JwtAuthGuard, UserStatusGuard)
+// One decorator, in the order every other controller uses. Two stacked `@UseGuards` append
+// via `extendArrayMetadata` and TypeScript applies decorators bottom-up, so the split form
+// ran `[JwtAuthGuard, UserStatusGuard, TrustedOriginGuard, AuthRateLimitGuard]` — the inverse
+// of the intent. `JwtAuthGuard` rejecting first meant a garbage `Authorization` header 401'd
+// before `AuthRateLimitGuard` ever ran, so bad tokens were never metered: the route's limiter
+// sat permanently at zero while every request still paid `verifyWithRotation` (one HMAC per
+// configured secret, including every `previousSecrets` entry) and a Redis round trip.
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard)
 @UsePipes(createAuthValidationPipe())
 export class SessionController {
   constructor(
