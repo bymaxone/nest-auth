@@ -10,6 +10,7 @@ import type { Request } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -115,15 +116,31 @@ export class TrustedOriginGuard implements CanActivate {
    * "credential present" rather than "absent": the guard cannot prove the request is safe, and
    * the safe direction is to demand a trusted `Origin` rather than wave it through.
    *
+   * The MFA challenge cookie counts too. It is planted by the OAuth callback with the
+   * configured `sameSite` — `none` on exactly the deployments this guard exists for — and it
+   * is the sole credential for `POST /auth/mfa/challenge`. A victim mid-login holds it and no
+   * session cookie yet, so enumerating only the two session names concluded "no ambient
+   * credential" and waved the request through before the `Origin` check ran. Each cross-site
+   * POST with a wrong code then landed on the MFA brute-force counter, and five of them locked
+   * the account for the whole window: a drive-by lockout of anyone caught mid-MFA-login.
+   * Completing the challenge was never possible — the code is unknown — but denial did not
+   * need it. Its name is a library constant rather than a configurable, so it is read from the
+   * constant; the two session names come from the resolved options because a deployment can
+   * rename them.
+   *
    * @param request - The incoming request.
-   * @returns `true` when an access or refresh cookie is present, or when the cookies cannot
-   *   be read at all.
+   * @returns `true` when any module credential is present, or when the cookies cannot be read
+   *   at all.
    */
   private carriesAuthCookie(request: Request): boolean {
     const cookies: unknown = request.cookies
     if (typeof cookies !== 'object' || cookies === null) return true
     const jar = cookies as Record<string, unknown>
     const { accessTokenName, refreshTokenName } = this.options.cookies
-    return typeof jar[accessTokenName] === 'string' || typeof jar[refreshTokenName] === 'string'
+    return (
+      typeof jar[accessTokenName] === 'string' ||
+      typeof jar[refreshTokenName] === 'string' ||
+      typeof jar[MFA_TEMP_COOKIE_NAME] === 'string'
+    )
   }
 }

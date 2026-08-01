@@ -266,4 +266,32 @@ describe('TrustedOriginGuard', () => {
       expect(() => guard.canActivate(context)).toThrow(AuthException)
     })
   })
+
+  // The MFA challenge cookie is an ambient credential like any other: planted by the OAuth
+  // callback with the configured `sameSite` — `none` on exactly the deployments this guard
+  // exists for — and the sole credential for `POST /auth/mfa/challenge`. A victim mid-login
+  // holds it and no session cookie yet, so enumerating only the two session names concluded
+  // "nothing to spend" and skipped the Origin check. Each cross-site POST with a wrong code
+  // then hit the MFA brute-force counter; five of them locked the account for the window.
+  describe('the MFA challenge cookie counts as an ambient credential', () => {
+    it('demands a trusted Origin for a request carrying only mfa_temp_token', () => {
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://evil.example' },
+        cookies: { mfa_temp_token: 'temp.jwt' }
+      })
+
+      expect(() => guard.canActivate(context)).toThrow(AuthException)
+    })
+
+    it('admits the same request from a trusted Origin', () => {
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: TRUSTED },
+        cookies: { mfa_temp_token: 'temp.jwt' }
+      })
+
+      expect(guard.canActivate(context)).toBe(true)
+    })
+  })
 })
