@@ -21,7 +21,7 @@
  *
  * @remarks
  * HOST-HEADER TRUST — in `'redirect'` mode the destination URL is
- * built with `new URL(loginPath, request.nextUrl.origin)`. Self-
+ * emitted as a RELATIVE `Location`, so a forged `Host` cannot pick it. Self-
  * hosted Next.js deployments behind a reverse proxy MUST ensure the
  * proxy forwards only vetted `Host` values; otherwise an attacker
  * who controls the `Host` header can redirect the browser to an
@@ -30,7 +30,6 @@
  * Edge-Runtime-safe.
  */
 
-import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 import { AUTH_DASHBOARD_ROUTES, AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
@@ -43,6 +42,7 @@ import {
   serializeClearCookie,
   trimTrailingSlash
 } from './helpers/routeHandlerUtils'
+import { redirectToPath } from './internal/redirectToPath'
 
 /** Default upstream logout endpoint, matching the NestJS module defaults. */
 const DEFAULT_LOGOUT_PATH = `/auth/${AUTH_DASHBOARD_ROUTES.logout}`
@@ -198,8 +198,8 @@ function buildLogoutResponse(
   refreshCookiePath: string
 ): Response {
   if (config.mode === 'redirect') {
-    const loginUrl = new URL(config.loginPath, request.nextUrl.origin)
-    const response = NextResponse.redirect(loginUrl)
+    // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
+    const response = redirectToPath(config.loginPath)
     attachClearCookies(response, config, refreshCookiePath)
     response.headers.set('Cache-Control', 'no-store, no-cache')
     return response

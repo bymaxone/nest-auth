@@ -12,6 +12,11 @@ import {
 } from '..'
 import { makeMockRequest, base64UrlEncode } from './_testHelpers'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 describe('createLogoutHandler — factory validation', () => {
   // Redirect mode requires loginPath. Missing loginPath → throw.
   it('throws in redirect mode when loginPath is missing', () => {
@@ -108,7 +113,7 @@ describe('createSilentRefreshHandler — opaque-redirect and origin mismatch', (
     })
 
     const response = await handler(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.searchParams.get('reason')).toBe('expired')
     fetchSpy.mockRestore()
   })

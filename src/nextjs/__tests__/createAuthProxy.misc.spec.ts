@@ -19,6 +19,11 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 describe('createAuthProxy — validateConfig throw paths', () => {
@@ -334,7 +339,7 @@ describe('createAuthProxy — protected fallback', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
     expect(url.searchParams.get('reason')).toBeNull()
   })
@@ -410,7 +415,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     // Negative clamped to 0; guards not fired; redirect happens with _r=1.
     const location = response.headers.get('location')
     expect(location).not.toBeNull()
-    const destination = new URL(location ?? '').searchParams.get('redirect') ?? ''
+    const destination = new URL(location ?? '', RELATIVE_BASE).searchParams.get('redirect') ?? ''
     expect(destination).toMatch(/_r=1/)
   })
 
@@ -424,7 +429,8 @@ describe('createAuthProxy — branch coverage edge cases', () => {
 
     const response = await proxy(request as never)
     const destination =
-      new URL(response.headers.get('location') ?? '').searchParams.get('redirect') ?? ''
+      new URL(response.headers.get('location') ?? '', RELATIVE_BASE).searchParams.get('redirect') ??
+      ''
     expect(destination).toMatch(/_r=1/)
   })
 
@@ -446,10 +452,12 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    // Redirect target should be `/` (the fallback), not evil.com.
-    const location = new URL(response.headers.get('location') ?? '')
-    expect(location.origin).toBe('https://app.example.com')
-    expect(location.pathname).toBe('/')
+    // Redirect target should be `/` (the fallback), not evil.com — and it names no origin at
+    // all, so there is nothing for a forged `Host` to substitute either.
+    const raw = response.headers.get('location') ?? ''
+    expect(raw.startsWith('/')).toBe(true)
+    expect(raw.startsWith('//')).toBe(false)
+    expect(new URL(raw, RELATIVE_BASE).pathname).toBe('/')
   })
 
   // getDefaultDashboard returning an empty string → falls back to `/`.
@@ -469,7 +477,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/')
   })
 
@@ -491,7 +499,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/')
   })
 
@@ -511,7 +519,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     const response = await proxy(request as never)
     // No role → RBAC denies → redirect to default dashboard for
     // empty role = '/dashboard' (the else branch of getDefaultDashboard).
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.searchParams.get('error')).toBe('forbidden')
   })
 })

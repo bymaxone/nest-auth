@@ -74,7 +74,10 @@ export async function readTokenState(
     token: decoded,
     hasCookie: true,
     authenticated: isSession,
-    signatureVerified: hasSecret && isSession
+    // Sourced from the decode result rather than re-derived from `hasSecret`: the token itself
+    // now records whether a signature was checked, and reading the fact is one fewer inference
+    // to keep true if the branch above ever changes.
+    signatureVerified: decoded.signatureVerified && isSession
   }
 }
 

@@ -80,9 +80,27 @@ export interface DecodedToken {
    * while {@link verifyJwtToken} sets it after BOTH signature
    * verification and expiry validation. Callers must therefore track
    * which function they called and treat `isValid` as authoritative
-   * only when `verifyJwtToken` was invoked with a non-null secret.
+   * only when `verifyJwtToken` was invoked with a non-null secret —
+   * or, better, read {@link DecodedToken.signatureVerified}, which
+   * answers that question without the caller having to remember.
    */
   readonly isValid: boolean
+  /**
+   * `true` only when the signature was actually checked against a
+   * non-empty secret — i.e. only on {@link verifyJwtToken}'s
+   * authoritative branch. `false` on every {@link decodeJwtToken}
+   * result and on `verifyJwtToken`'s decode-only fallback, including
+   * the ones that carry `isValid: true` and a fully populated payload.
+   *
+   * This flag exists because the two branches are otherwise
+   * indistinguishable at runtime: a caller writing
+   * `if (decoded.isValid && decoded.role === 'ADMIN')` — the natural
+   * reading of a function called `verifyJwtToken` — would admit a
+   * token an attacker minted with `alg: none` and an arbitrary `sub`,
+   * `role` and `tenantId`. Any authorisation decision reads this
+   * field, never `isValid` alone.
+   */
+  readonly signatureVerified: boolean
   /** Raw header object, or `undefined` if the header failed to parse. */
   readonly header: JwtHeader | undefined
   /**
@@ -138,7 +156,7 @@ export function decodeJwtToken(token: string): DecodedToken {
   const payload = safeJsonParse<Record<string, unknown>>(base64UrlDecodeToString(payloadSegment))
   if (payload === undefined) return emptyDecoded()
 
-  return buildDecodedToken(header, payload)
+  return buildDecodedToken(header, payload, false)
 }
 
 /**
@@ -154,32 +172,36 @@ export function decodeJwtToken(token: string): DecodedToken {
  *   6. Verify the signature over `<header>.<payload>` (ASCII bytes).
  *   7. Validate `exp` is in the future.
  *
- * When `secret` is `undefined` or `null` this falls back to
- * {@link decodeJwtToken} (decode-only mode) — the caller has
- * explicitly opted out of signature verification. This is useful in
- * proxy deployments that delegate verification to the upstream API;
- * it is NOT safe when the proxy is the authorisation boundary.
+ * **A missing secret fails closed.** `undefined`, `null` and the
+ * empty string all return `emptyDecoded()` rather than falling back
+ * to a decode. This function used to fall back to
+ * {@link decodeJwtToken}, and the two branches returned the same
+ * shape with the same `isValid: true` — so a caller writing
+ * `if (verifyJwtToken(t).isValid && t.role === 'ADMIN')`, the natural
+ * reading of the name, admitted a token an attacker minted with
+ * `alg: none` the moment the secret went missing. An unset
+ * environment variable was enough to arrange that. A function that
+ * cannot verify must refuse, not quietly answer a weaker question;
+ * {@link decodeJwtToken} remains the explicit, correctly-named entry
+ * point for the non-authoritative read.
  *
- * When `secret` is the EMPTY STRING this function fails closed and
- * returns `emptyDecoded()`. An empty HMAC key is technically valid
- * from the Web Crypto API's perspective and would verify a token
- * signed with the same empty key — a common misconfiguration (e.g.,
- * `JWT_SECRET=""` in an environment file) that we refuse rather
- * than silently downgrade to a no-op.
+ * The empty string is refused for a second reason of its own: an
+ * empty HMAC key is technically valid to the Web Crypto API and
+ * would verify a token signed with the same empty key — a common
+ * misconfiguration (`JWT_SECRET=""` in an environment file) that
+ * must not silently downgrade to a no-op.
  *
  * @param token  - JWS compact serialisation.
- * @param secret - HS256 shared secret, or `undefined`/`null` for
- *                 decode-only mode.
+ * @param secret - HS256 shared secret. A missing or empty value
+ *                 makes every token invalid.
  * @returns A {@link DecodedToken} where `isValid` reflects BOTH the
- *          signature verification AND the expiry check.
+ *          signature verification AND the expiry check, and
+ *          `signatureVerified` is `true` only when a signature was
+ *          actually checked.
  */
 export async function verifyJwtToken(token: string, secret?: string | null): Promise<DecodedToken> {
-  if (secret === undefined || secret === null) {
-    return decodeJwtToken(token)
-  }
-  // Fail closed on an empty secret — see the JSDoc above for rationale.
-  // Stryker disable next-line ConditionalExpression,BlockStatement: empty-secret fail-closed guard is redundant: with it removed, importKey('') throws (Web Crypto rejects zero-length HMAC keys) and the catch returns the same invalid result
-  if (secret.length === 0) {
+  // Fail closed on a missing or empty secret — see the JSDoc above for rationale.
+  if (secret === undefined || secret === null || secret.length === 0) {
     return emptyDecoded()
   }
 
@@ -223,7 +245,9 @@ export async function verifyJwtToken(token: string, secret?: string | null): Pro
   )
   if (!signatureValid) return emptyDecoded()
 
-  return buildDecodedToken(header, payload)
+  // The one call site that may claim a verified signature: reached only past the algorithm
+  // pinning, the HMAC check and a non-empty secret.
+  return buildDecodedToken(header, payload, true)
 }
 
 /**
@@ -332,7 +356,8 @@ export function getTenantId(token: DecodedToken): string | undefined {
 
 function buildDecodedToken(
   header: JwtHeader | undefined,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  signatureVerified: boolean
 ): DecodedToken {
   // Bracket access is safe here: the keys are compile-time constants,
   // not user-controlled, so the `security/detect-object-injection`
@@ -349,6 +374,7 @@ function buildDecodedToken(
 
   return {
     isValid,
+    signatureVerified,
     header,
     payload,
     sub,
@@ -381,6 +407,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function emptyDecoded(): DecodedToken {
   return {
     isValid: false,
+    signatureVerified: false,
     header: undefined,
     payload: {},
     sub: undefined,
