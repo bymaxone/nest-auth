@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The scorecard analysis must run against the exact ref that was
           # pushed; with `persist-credentials: false` no token is left behind
