@@ -75,32 +75,48 @@ export interface DecodedToken {
   /**
    * `true` when the payload parses AND `exp` is in the future.
    *
-   * WARNING: this flag does NOT on its own imply signature
-   * verification. {@link decodeJwtToken} sets it from expiry only,
-   * while {@link verifyJwtToken} sets it after BOTH signature
-   * verification and expiry validation. Callers must therefore track
-   * which function they called and treat `isValid` as authoritative
-   * only when `verifyJwtToken` was invoked with a non-null secret —
-   * or, better, read {@link DecodedToken.signatureVerified}, which
-   * answers that question without the caller having to remember.
+   * Expiry ONLY. It says nothing about the signature:
+   * {@link decodeJwtToken} sets it without checking one at all. It is
+   * one half of the question an authorisation decision is asking —
+   * see {@link DecodedToken.signatureVerified} for the other half and
+   * for the check that uses both.
    */
   readonly isValid: boolean
   /**
    * `true` only when the signature was actually checked against a
-   * non-empty secret — i.e. only on a successful {@link verifyJwtToken}.
-   * `false` on every {@link decodeJwtToken} result, including the ones
-   * that carry `isValid: true` and a fully populated payload, and on
-   * every `verifyJwtToken` failure (which returns an empty token, so
-   * `isValid` is `false` there as well — `verifyJwtToken` fails closed
-   * on a missing or empty secret rather than falling back to a decode).
+   * non-empty secret — i.e. only past {@link verifyJwtToken}'s HMAC
+   * check. `false` on every {@link decodeJwtToken} result, including
+   * the ones that carry `isValid: true` and a fully populated payload,
+   * and on every `verifyJwtToken` failure (which returns an empty
+   * token, so `isValid` is `false` there as well — `verifyJwtToken`
+   * fails closed on a missing or empty secret rather than falling back
+   * to a decode).
    *
-   * This flag exists because the two branches are otherwise
-   * indistinguishable at runtime: a caller writing
-   * `if (decoded.isValid && decoded.role === 'ADMIN')` — the natural
-   * reading of a function called `verifyJwtToken` — would admit a
-   * token an attacker minted with `alg: none` and an arbitrary `sub`,
-   * `role` and `tenantId`. Any authorisation decision reads this
-   * field, never `isValid` alone.
+   * The two flags are INDEPENDENT, and neither is sufficient alone:
+   *
+   * - `isValid` without `signatureVerified` is a token that has not
+   *   expired and that nobody checked the signature of — including one
+   *   an attacker minted with `alg: none` and an arbitrary `sub`,
+   *   `role` and `tenantId`. This is the trap the flag exists for: the
+   *   two branches are otherwise indistinguishable at runtime, and
+   *   `if (decoded.isValid && decoded.role === 'ADMIN')` is the natural
+   *   reading of a function called `verifyJwtToken`.
+   * - `signatureVerified` without `isValid` is a **genuinely signed
+   *   token that has expired**, or one carrying no `exp` at all. The
+   *   signature is checked before the expiry is read, so this
+   *   combination is reachable on the ordinary path — a session that
+   *   simply ran out.
+   *
+   * So an authorisation decision reads BOTH:
+   *
+   * ```ts
+   * const decoded = await verifyJwtToken(token, secret)
+   * if (decoded.isValid && decoded.signatureVerified && decoded.role === 'ADMIN') {
+   * ```
+   *
+   * The proxy's own `TokenState.signatureVerified` is this conjunction
+   * already (`decoded.signatureVerified && decoded.isValid && …`); a
+   * caller using these helpers directly has to form it here.
    */
   readonly signatureVerified: boolean
   /** Raw header object, or `undefined` if the header failed to parse. */
