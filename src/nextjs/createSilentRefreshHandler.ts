@@ -41,9 +41,14 @@
  *   - **Rate limiting.** The handler makes one upstream `POST` per
  *     inbound `GET`. Apply route-level rate limiting in the consumer
  *     app to prevent DoS amplification.
- *   - **Host-header trust.** `origin` is derived from the request's
- *     `Host`. Self-hosted Next.js deployments must configure the
- *     reverse proxy to forward only trusted `Host` values.
+ *   - **Host-header trust.** No longer an obligation for this
+ *     handler's redirects: the `Location` it emits is relative, so
+ *     the browser resolves it against the URL it actually requested
+ *     and a forged `Host` has no destination to choose. The request
+ *     origin is still derived from `Host`, but only to REJECT a
+ *     cross-origin `?redirect=` — a comparison, not a destination,
+ *     where the worst a forged value buys is admitting a path that
+ *     lands on the real app anyway.
  *   - **`apiBase`.** Always points to your OWN NestJS backend — all
  *     incoming cookies are forwarded there.
  *
