@@ -19,9 +19,11 @@ import type { AuthUser } from './user-repository.interface'
 /**
  * Main configuration interface for BymaxAuthModule.
  *
- * Passed to `BymaxAuthModule.registerAsync()`. All groups except `jwt` and
- * `roles` are optional — unconfigured features are not registered in the
- * NestJS container (zero overhead).
+ * Passed to `BymaxAuthModule.registerAsync()`. All groups except `jwt`,
+ * `roles` and `rateLimit` are optional — unconfigured features are not
+ * registered in the NestJS container (zero overhead). `rateLimit` is required
+ * because it is on unless turned off, and while it is on the deployment has to
+ * name which address keys the limit — see {@link BymaxAuthRateLimitOptions}.
  *
  * @remarks
  * Only the asynchronous registration entry point (`registerAsync`) is exposed
