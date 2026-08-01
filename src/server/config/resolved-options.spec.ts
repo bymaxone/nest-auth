@@ -34,7 +34,11 @@ const VALID_SECRET = makeTestableHighEntropyString(48)
 
 const MINIMAL_OPTIONS: BymaxAuthModuleOptions = {
   jwt: { secret: VALID_SECRET },
-  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+  // Required whenever rate limiting is on, which it is by default: neither value is safe in
+  // the wrong deployment shape and neither failure is visible at runtime, so there is no
+  // default to fall back on. See `validateClientIpSource`.
+  rateLimit: { clientIpSource: 'peer' }
 }
 
 // ---------------------------------------------------------------------------
@@ -2532,5 +2536,105 @@ describe('resolveOptions — token binding', () => {
 
     expect(resolved.jwt.issuer).toBe(binding.issuer === '' ? undefined : binding.issuer)
     expect(resolved.jwt.audience).toBe(binding.audience === '' ? undefined : binding.audience)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// rateLimit.clientIpSource
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — rateLimit.clientIpSource', () => {
+  const withoutSource: BymaxAuthModuleOptions = {
+    jwt: { secret: VALID_SECRET },
+    roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  }
+
+  // There is no safe default, because the two failure modes are opposite and both silent.
+  // `'peer'` reads the socket address, which behind ANY proxy is the proxy's address for every
+  // client — so all of them share one bucket and a single caller sending five logins in a
+  // minute locks out the whole user base, with no credential. `'trusted-proxy'` reads `req.ip`,
+  // which directly exposed is whatever the caller put in `X-Forwarded-For` — a limiter whose
+  // key the attacker picks enforces nothing. Both look like a working limiter at runtime, so
+  // the deployment states which one it is or the module refuses to start.
+  it('refuses to resolve when rate limiting is on and the source was not declared', () => {
+    expect(() => resolveOptions(withoutSource)).toThrow(/clientIpSource is required/)
+  })
+
+  // The message has to be actionable: an operator reading it must be able to pick the right
+  // value without reading the source.
+  it('names both values and the consequence of each', () => {
+    let message = ''
+    try {
+      resolveOptions(withoutSource)
+    } catch (err: unknown) {
+      message = err instanceof Error ? err.message : ''
+    }
+
+    expect(message).toContain("'peer'")
+    expect(message).toContain("'trusted-proxy'")
+    expect(message).toContain('ONE bucket')
+    expect(message).toContain('rateLimit.enabled: false')
+  })
+
+  it.each([['peer' as const], ['trusted-proxy' as const]])(
+    'resolves when the deployment declares %s',
+    (clientIpSource) => {
+      const resolved = resolveOptions({ ...withoutSource, rateLimit: { clientIpSource } })
+
+      expect(resolved.rateLimit.clientIpSource).toBe(clientIpSource)
+    }
+  )
+
+  // A deployment that limits at the edge has nothing to declare — the value is never read.
+  it('does not demand a source when rate limiting is off', () => {
+    const resolved = resolveOptions({ ...withoutSource, rateLimit: { enabled: false } })
+
+    expect(resolved.rateLimit.enabled).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// password KDF memory ceiling
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — password KDF memory ceiling', () => {
+  // scrypt's memory cost is `128 * N * r` bytes PER DERIVATION, and each derivation occupies a
+  // libuv threadpool thread (`UV_THREADPOOL_SIZE`, four by default). An unauthenticated login
+  // pays the full cost even for an address that does not exist — the dummy derivation exists
+  // to close the timing oracle — so the resident set a login flood can pin is
+  // `threadpool * 128 * N * r`. There was a floor on `costFactor` and no ceiling, so a
+  // deployment raising it "for safety" could make one unauthenticated request cost gigabytes.
+  it('refuses a costFactor whose per-derivation memory exceeds the ceiling', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 21 } })).toThrow(
+      /per derivation/
+    )
+  })
+
+  // The message has to carry the arithmetic, or an operator who genuinely needs more cannot
+  // tell a mistake from a deliberate choice.
+  it('names the memory, the formula and the threadpool in the refusal', () => {
+    let message = ''
+    try {
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 21 } })
+    } catch (err: unknown) {
+      message = err instanceof Error ? err.message : ''
+    }
+
+    expect(message).toContain('128 * N * r')
+    expect(message).toContain('UV_THREADPOOL_SIZE')
+    expect(message).toContain('MiB per derivation')
+  })
+
+  // The shipped defaults are the OWASP recommendation and sit well inside the ceiling.
+  it('accepts the shipped defaults', () => {
+    expect(() => resolveOptions(MINIMAL_OPTIONS)).not.toThrow()
+  })
+
+  // The ceiling counts `blockSize` too: memory is the product, so a large `r` reaches it just
+  // as a large `N` does.
+  it('counts blockSize toward the ceiling', () => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 17, blockSize: 64 } })
+    ).toThrow(/per derivation/)
   })
 })

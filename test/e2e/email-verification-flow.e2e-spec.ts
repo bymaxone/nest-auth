@@ -93,6 +93,10 @@ async function bootstrapWithVerification(): Promise<VerificationFixture> {
           emailVerification: { required: true },
           sessions: { enabled: true },
           mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' },
+          // Off for this harness: it drives many requests from one address on purpose, and a
+          // 429 would mask what the scenario asserts. Declaring the source is only required
+          // when limiting is ON — see `validateClientIpSource`.
+          rateLimit: { enabled: false },
           secureCookies: false
         }),
         controllers: { auth: true, mfa: true, passwordReset: true, sessions: true },

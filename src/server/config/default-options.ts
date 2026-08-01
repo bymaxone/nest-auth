@@ -77,12 +77,11 @@ export const DEFAULT_OPTIONS = {
   rateLimit: {
     // On by default: the numbers existed before this and did nothing unless the host wired a
     // throttler, which is the kind of default that reads as protection and is not.
-    enabled: true,
-    // The socket address, never a forwarding header. Behind a misconfigured `trust proxy`,
-    // `req.ip` is attacker-chosen, and a limiter whose key the caller picks enforces nothing.
-    // Over-counting behind a proxy is the safer failure: it is visible, and it is recoverable
-    // by setting this to 'trusted-proxy' once the hop count is right.
-    clientIpSource: 'peer' as const
+    enabled: true
+    // No default for `clientIpSource`, deliberately — see `validateClientIpSource`. Neither
+    // value is safe in the wrong deployment shape and neither failure is visible at runtime,
+    // so the deployment states it and a deployment that has not thought about it fails at
+    // startup.
   },
   mfa: {
     recoveryCodeCount: 8,

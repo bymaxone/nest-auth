@@ -1,5 +1,7 @@
 import { Transform } from 'class-transformer'
-import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator'
+import { IsEmail, IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
+
+import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
 /**
  * Data Transfer Object for the resend-verification endpoint.
@@ -28,5 +30,6 @@ export class ResendVerificationDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
   tenantId!: string
 }
