@@ -281,16 +281,27 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
     expect(decoded.isValid).toBe(false)
   })
 
-  // Decode-only fallback: `undefined` / `null` secret bypasses
-  // signature verification — documented escape hatch for proxies
-  // that delegate verification to the upstream API.
-  it('falls back to decode-only when secret is undefined', async () => {
+  // A missing secret FAILS CLOSED. This used to fall back to a decode-only read that
+  // reported `isValid: true` for any well-formed token, forged ones included — an escape
+  // hatch for proxies delegating verification upstream. The two branches were
+  // indistinguishable at runtime, so a caller writing
+  // `if (verifyJwtToken(t).isValid && t.role === 'ADMIN')` — the natural reading of the
+  // name — admitted an attacker-minted token the moment the secret went missing, and an
+  // unset environment variable was enough. `decodeJwtToken` is the explicit,
+  // correctly-named entry point for that read; this one refuses.
+  it.each([
+    ['undefined', undefined],
+    ['null', null]
+  ])('fails closed when the secret is %s', async (_label, secret) => {
     const token = await signHs256Token(
       { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + ONE_HOUR },
       SECRET
     )
-    const decoded = await verifyJwtToken(token, undefined)
-    expect(decoded.isValid).toBe(true)
+    const decoded = await verifyJwtToken(token, secret)
+    expect(decoded.isValid).toBe(false)
+    expect(decoded.signatureVerified).toBe(false)
+    // No claims escape a refused result — a caller cannot read a role off it.
+    expect(decoded.role).toBeUndefined()
   })
 
   // Empty secret: FAIL CLOSED. Empty HMAC keys are technically valid
@@ -520,5 +531,63 @@ describe('claim accessors', () => {
       SECRET
     )
     expect(getTenantId(decodeJwtToken(token))).toBe('tenant-42')
+  })
+})
+
+describe('signatureVerified — proof that a signature was actually checked', () => {
+  // `isValid` alone never proves authenticity: `decodeJwtToken` sets it from expiry only.
+  // `signatureVerified` is the flag an authorisation decision reads, and only a real HS256
+  // verification against a non-empty secret sets it.
+  it('is true only when a signature was actually checked', async () => {
+    const genuine = await signHs256Token(
+      { type: 'dashboard', sub: 'u_1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      SECRET
+    )
+
+    const verified = await verifyJwtToken(genuine, SECRET)
+    expect(verified.isValid).toBe(true)
+    expect(verified.signatureVerified).toBe(true)
+
+    // Without a secret the call refuses outright rather than answering a weaker question.
+    for (const secret of [undefined, null, '']) {
+      const refused = await verifyJwtToken(genuine, secret)
+      expect(refused.isValid).toBe(false)
+      expect(refused.signatureVerified).toBe(false)
+    }
+  })
+
+  // A token signed with a secret the verifier does not hold still decodes and still carries
+  // whatever `role` the attacker chose — which is exactly why `decodeJwtToken`'s result must
+  // never claim a verified signature, and why the verifier rejects it outright.
+  it('is false for a forged token on both entry points', async () => {
+    const forged = await signHs256Token(
+      {
+        type: 'dashboard',
+        sub: 'attacker',
+        role: 'admin',
+        exp: Math.floor(Date.now() / 1000) + 600
+      },
+      'a-secret-the-verifier-does-not-hold'
+    )
+
+    const rejected = await verifyJwtToken(forged, SECRET)
+    expect(rejected.isValid).toBe(false)
+    expect(rejected.signatureVerified).toBe(false)
+
+    // `decodeJwtToken` happily reads it — that is its contract — but flags it as unverified.
+    const decoded = decodeJwtToken(forged)
+    expect(decoded.isValid).toBe(true)
+    expect(decoded.role).toBe('admin')
+    expect(decoded.signatureVerified).toBe(false)
+  })
+
+  // decodeJwtToken never checks a signature, so it can never claim one.
+  it('is never true on a decodeJwtToken result', async () => {
+    const genuine = await signHs256Token(
+      { type: 'dashboard', sub: 'u_1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      SECRET
+    )
+    expect(decodeJwtToken(genuine).signatureVerified).toBe(false)
+    expect(decodeJwtToken('not-a-token').signatureVerified).toBe(false)
   })
 })

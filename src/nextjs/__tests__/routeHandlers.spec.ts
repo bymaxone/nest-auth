@@ -29,6 +29,11 @@ import {
 } from '..'
 import { makeMockRequest } from './_testHelpers'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 /**
  * Build a stub upstream `Response` whose `headers.getSetCookie()`
  * returns exactly the array we configure. `new Response(null, { headers })`
@@ -203,7 +208,7 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/auth/login')
     expect(location.searchParams.get('reason')).toBe('expired')
     const cookies = getSetCookies(response)
@@ -221,7 +226,7 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.searchParams.get('reason')).toBe('expired')
   })
 
@@ -236,7 +241,7 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.searchParams.get('reason')).toBe('expired')
   })
 
@@ -257,8 +262,12 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
-    expect(location.origin).toBe('https://app.example.com')
+    const raw = response.headers.get('location') ?? ''
+    // The `Location` names no origin at all, so an external `?redirect=` cannot survive as a
+    // destination and a forged `Host` cannot substitute one — see `redirectToPath`.
+    expect(raw.startsWith('/')).toBe(true)
+    expect(raw.startsWith('//')).toBe(false)
+    const location = new URL(raw, RELATIVE_BASE)
     expect(location.pathname).toBe('/auth/login')
   })
 
@@ -370,7 +379,7 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/auth/login')
     expect(location.searchParams.get('reason')).toBe('expired')
     // Refreshed cookies must NOT be propagated on the failure path.
@@ -392,7 +401,7 @@ describe('createSilentRefreshHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.searchParams.get('reason')).toBe('expired')
     const cookies = getSetCookies(response)
     // All three cleared (Max-Age=0); the upstream cookie is not forwarded.
@@ -716,7 +725,7 @@ describe('createLogoutHandler', () => {
     })
 
     const response = await handler(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/auth/login')
     expect(getSetCookies(response).filter((c) => /Max-Age=0/i.test(c))).toHaveLength(3)
   })

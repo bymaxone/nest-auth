@@ -30,6 +30,11 @@
 import { signHs256Token, makeMockRequest, DEFAULT_PROXY_CONFIG } from './_testHelpers'
 import { createAuthProxy } from '../createAuthProxy'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 describe('createAuthProxy — background requests, RBAC, status blocking', () => {
@@ -114,7 +119,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       const response = await proxy(request as never)
       const location = response.headers.get('location')
       expect(location).not.toBeNull()
-      const url = new URL(location ?? '')
+      const url = new URL(location ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/dashboard')
       expect(url.searchParams.get('error')).toBe('forbidden')
     })
@@ -160,7 +165,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/custom/forbidden')
       expect(url.searchParams.get('error')).toBe('forbidden')
     })
@@ -187,7 +192,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('banned')
     })
@@ -212,7 +217,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.searchParams.get('reason')).toBe('inactive')
     })
 
@@ -237,7 +242,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.searchParams.get('reason')).toBe('banned')
     })
 
@@ -371,7 +376,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/dashboard/admin')
     })
 

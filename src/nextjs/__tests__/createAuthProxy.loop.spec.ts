@@ -27,6 +27,11 @@ import { NextResponse } from 'next/server'
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, extractRedirectParam, makeMockRequest } from './_testHelpers'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 describe('createAuthProxy — redirect loop prevention', () => {
   describe('public route (e.g. /auth/login) with has_session cookie', () => {
     // The proxy must redirect to silent-refresh when _r is absent AND
@@ -179,7 +184,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const location = response.headers.get('location')
       expect(location).not.toBeNull()
-      const url = new URL(location ?? '')
+      const url = new URL(location ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('expired')
     })
@@ -195,7 +200,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const response = await proxy(request as never)
 
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('expired')
     })
@@ -213,7 +218,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
       const response = await proxy(request as never)
 
       const location = response.headers.get('location')
-      const silentRefreshUrl = new URL(location ?? '')
+      const silentRefreshUrl = new URL(location ?? '', RELATIVE_BASE)
       expect(silentRefreshUrl.pathname).toBe('/api/auth/silent-refresh')
       const destination = silentRefreshUrl.searchParams.get('redirect') ?? ''
       expect(destination).toMatch(/_r=2/)
@@ -230,7 +235,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const response = await proxy(request as never)
 
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       // No reason signal here — this is a "never logged in" case,
       // not an expiry case, so the loop-break hint is absent.

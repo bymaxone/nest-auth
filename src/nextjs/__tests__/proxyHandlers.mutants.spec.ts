@@ -26,6 +26,11 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
+// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
+// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
+// never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 /** Future-dated `exp` (seconds) for tokens that must be valid. */
@@ -112,7 +117,7 @@ describe('createAuthProxy — publicRoutesRedirectIfAuthenticated matching', () 
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/dashboard/admin')
   })
 })
@@ -138,7 +143,7 @@ describe('createAuthProxy — empty-role default', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/empty-role')
     expect(url.searchParams.get('error')).toBe('forbidden')
   })
@@ -172,7 +177,7 @@ describe('createAuthProxy — has_session non-empty check', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
   })
 })
@@ -192,7 +197,7 @@ describe('createAuthProxy — straight-to-login guard', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
     expect(url.searchParams.get('reason')).toBeNull()
   })
@@ -241,5 +246,32 @@ describe('createAuthProxy — authorised response _r fast path', () => {
     const response = await proxy(request as never)
     expect(response.headers.get('location')).toBeNull()
     expect(response.headers.get('x-middleware-rewrite')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Relative Location — the Host header cannot pick the redirect target
+// ---------------------------------------------------------------------------
+
+describe('createAuthProxy — redirects name no origin', () => {
+  // Every redirect this proxy issues targets a path on its own app, and the path is validated
+  // as same-origin before it is used. The ORIGIN was supplied by `request.nextUrl.origin`,
+  // which Next derives from the `Host` header — so a self-hosted deployment answering on any
+  // host handed an attacker who controls that header a `Location: https://attacker/login`.
+  // The path validation could not see it: the path was fine, the origin was never checked.
+  // A relative `Location` (RFC 7231 §7.1.2) removes the question — the browser resolves it
+  // against the URL it actually requested, not against a header.
+  it('emits a relative Location when redirecting an unauthenticated protected route', async () => {
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({ url: 'https://attacker.example/dashboard' })
+
+    const response = await proxy(request as never)
+    const location = response.headers.get('location') ?? ''
+
+    // Relative, and NOT protocol-relative: `//attacker.example/x` is an absolute URL to a
+    // browser, so a leading `//` would reintroduce exactly what this removes.
+    expect(location.startsWith('/')).toBe(true)
+    expect(location.startsWith('//')).toBe(false)
+    expect(location).not.toContain('attacker.example')
   })
 })
