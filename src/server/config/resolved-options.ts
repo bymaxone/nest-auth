@@ -13,7 +13,10 @@ import { createHash } from 'node:crypto'
 import { DEFAULT_OPTIONS } from './default-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
 import { MAX_VERIFY_WINDOW } from '../crypto/totp'
-import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import type {
+  BymaxAuthModuleOptions,
+  ClientIpSource
+} from '../interfaces/auth-module-options.interface'
 
 /**
  * Domain-separation label for the HMAC key derivation. Changing this value is
@@ -79,10 +82,11 @@ export type ResolvedOptions = Omit<
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
   emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
-  // Stated outright rather than derived from the option union: by this point validation has
-  // run, so the discrimination that forces a consumer to name the source has done its job and
-  // the resolved value is simply both fields, always present.
-  rateLimit: { enabled: boolean; clientIpSource: 'peer' | 'trusted-proxy' }
+  // The shape is stated outright rather than derived from the option union: by this point
+  // validation has run, so the discrimination that forces a consumer to name the source has
+  // done its job and the resolved value is simply both fields, always present. The source's own
+  // type still comes from the contract, so the two cannot drift apart.
+  rateLimit: { enabled: boolean; clientIpSource: ClientIpSource }
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
   redisNamespace: string
@@ -327,7 +331,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
  * states it, and a deployment that has not thought about it fails at startup rather than
  * shipping a control that reports success.
  *
- * @param rateLimit - The rate-limit option group, if any.
+ * @param rateLimit - The rate-limit option group. Required by the contract; still checked
+ *   here, because the type binds a TypeScript consumer and nobody else.
  * @throws When rate limiting is on and `clientIpSource` is absent, or is anything other than
  *   `'peer'` or `'trusted-proxy'` — the union type binds a TypeScript consumer and nobody else.
  */
