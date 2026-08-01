@@ -1228,6 +1228,56 @@ describe('InvitationService', () => {
       expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
     })
 
+    // `eval` is typed `unknown`, and a client that surfaces the Lua integer reply as a string
+    // is within its rights. Comparing straight to `1` would read every successful claim as
+    // contention on such a client — three lost passes, then a refusal, for an invitation that
+    // was in fact claimed each time. Both spellings must mean the same thing here.
+    it.each([
+      ['a numeric reply', 1],
+      ['a string reply', '1']
+    ])('accepts %s from the claim script', async (_case, reply) => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue('c'.repeat(64))
+      mockRedis.eval.mockResolvedValue(reply)
+      mockRedis.set.mockResolvedValue('OK')
+      mockRedis.del.mockResolvedValue(true)
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
+    })
+
+    // The retry has to be bounded, and the bound has to fail closed. An address under sustained
+    // contention — the shape a script hammering one invitee produces — would otherwise spin
+    // here indefinitely, and giving up by *proceeding* would mint the invitation on an approval
+    // that no longer describes what the index holds. Neither is acceptable, so an exhausted
+    // budget refuses: the caller has not been shown to be allowed to destroy whatever is there.
+    it('refuses once the retry budget is exhausted, without minting anything', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue('c'.repeat(64))
+      // Every claim loses — the index keeps moving between the rank check and the swap.
+      mockRedis.eval.mockResolvedValue(0)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+      })
+
+      // Bounded, and the bound is the constant — not "eventually gives up".
+      expect(mockRedis.eval).toHaveBeenCalledTimes(3)
+      expect(mockRedis.set).not.toHaveBeenCalled()
+      expect(mockRedis.del).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('the pending invitation kept changing under the rank check')
+      )
+      warnSpy.mockRestore()
+    })
+
     // Superseding DESTROYS a pending invitation — the same end state `revokeInvitation`
     // produces, and that route is deliberately strict: the caller must out-rank the role the
     // invitation grants, and an outranked one is answered as if no invitation existed so the
