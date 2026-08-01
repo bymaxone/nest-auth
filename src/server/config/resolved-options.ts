@@ -329,9 +329,19 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
  */
 function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']): void {
   if (rateLimit?.enabled === false) return
-  if (rateLimit?.clientIpSource !== undefined) return
+  // The value is checked, not merely its presence. The union type constrains a TypeScript
+  // consumer and nobody else — this is a published npm package, so the option arrives from
+  // JavaScript, from JSON, and from environment plumbing that has no types at all. A misspelt
+  // `'trusted_proxy'` would satisfy a presence check and then fall through the guard's
+  // `=== 'trusted-proxy'` into the peer branch, which is the exact outcome the message below
+  // spends a paragraph warning about: every client behind the proxy in one bucket, one caller
+  // able to rate-limit the whole user base, and nothing anywhere reporting a problem.
+  if (rateLimit?.clientIpSource === 'peer' || rateLimit?.clientIpSource === 'trusted-proxy') {
+    return
+  }
   throw new Error(
-    `[BymaxAuthModule] rateLimit.clientIpSource is required when rate limiting is enabled. ` +
+    `[BymaxAuthModule] rateLimit.clientIpSource must be 'peer' or 'trusted-proxy' when rate ` +
+      `limiting is enabled (current: ${JSON.stringify(rateLimit?.clientIpSource)}). ` +
       `Set 'peer' when the application is directly exposed (the limit keys on the socket ` +
       `address), or 'trusted-proxy' when it runs behind a proxy and 'trust proxy' is ` +
       `configured for the real hop count (the limit keys on the forwarded client address). ` +
@@ -576,9 +586,38 @@ function validatePasswordResetOtpLength(
   }
 }
 
+/**
+ * Rejects a scrypt parameter that is not a whole number.
+ *
+ * `crypto.scrypt` requires integral `N`, `r` and `p` and throws when handed anything else — but
+ * it throws on the first derivation, which is the first login on a deployed instance, not at
+ * startup. Nothing else here catches it: the power-of-two test on `costFactor` is a bitwise
+ * expression, and bitwise operators coerce to int32, so `16384.5 & 16383.5` is evaluated as
+ * `16384 & 16383` and reports a clean power of two. `blockSize` and `parallelization` are only
+ * bounded from below. A fractional value therefore passes every check this module makes and
+ * fails in production, on the request that matters most.
+ *
+ * `Number.isInteger` also answers `false` for `NaN` and both infinities, which arrive the same
+ * way a fraction does — from JSON, from an environment variable, from untyped JavaScript.
+ *
+ * @param name - The option path, for the message.
+ * @param value - The configured value, if any.
+ * @throws When `value` is present and not an integer.
+ */
+function assertIntegralScryptParameter(name: string, value: number | undefined): void {
+  if (value === undefined || Number.isInteger(value)) return
+  throw new Error(
+    `[BymaxAuthModule] password.${name} must be an integer (current: ${value}). ` +
+      `Node's crypto.scrypt rejects a non-integral cost parameter, and it does so on the ` +
+      `first derivation — which is the first login after deploy, not at startup.`
+  )
+}
+
 function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']): void {
   const costFactor = password?.costFactor
   if (costFactor === undefined) return
+
+  assertIntegralScryptParameter('costFactor', costFactor)
 
   if (costFactor < 16_384) {
     throw new Error(
@@ -670,6 +709,7 @@ const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
 
 function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['password']): void {
   const blockSize = password?.blockSize
+  assertIntegralScryptParameter('blockSize', blockSize)
   if (blockSize !== undefined && blockSize < 8) {
     throw new Error(
       `[BymaxAuthModule] password.blockSize must be at least 8 (current: ${blockSize}). ` +
@@ -679,6 +719,7 @@ function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['pass
   }
 
   const parallelization = password?.parallelization
+  assertIntegralScryptParameter('parallelization', parallelization)
   if (parallelization !== undefined && parallelization < 1) {
     throw new Error(
       `[BymaxAuthModule] password.parallelization must be at least 1 ` +
