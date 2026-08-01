@@ -120,7 +120,7 @@ function handleAuthenticatedOnPublic(
   )
 
   if (isRedirectIfAuth && !reasonPresent) {
-    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
+    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
     const destination = safeRelativePath(config.getDefaultDashboard(role), '/')
     // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
     return redirectToPath(destination)
@@ -176,7 +176,7 @@ export function handleProtectedRoute(
 
   // RBAC check.
   if (!matched.allowedRoles.includes(role)) {
-    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
+    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
     const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)

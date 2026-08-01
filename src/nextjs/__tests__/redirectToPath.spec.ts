@@ -63,4 +63,16 @@ describe('withQueryParam', () => {
   it('preserves a fragment on the path it was given', () => {
     expect(withQueryParam('/docs#install', 'next', '/x')).toBe('/docs?next=%2Fx#install')
   })
+
+  // Two `Stryker disable next-line StringLiteral` directives in `proxyHandlers` rest on this:
+  // the mutant turns a `'/'` fallback into `''`, and the claim is that both reach the same
+  // emitted `Location`. That is only true because `toSameOriginPath` maps anything not
+  // beginning with `/` to `/`. Asserting it here means the day the reduction changes, the
+  // equivalence the disables assert fails visibly instead of silently becoming a lie.
+  it('treats an empty path and the app root identically, as the mutant suppressions assume', () => {
+    expect(redirectToPath('').headers.get('location')).toBe(
+      redirectToPath('/').headers.get('location')
+    )
+    expect(withQueryParam('', 'error', 'forbidden')).toBe(withQueryParam('/', 'error', 'forbidden'))
+  })
 })
