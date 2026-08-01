@@ -105,6 +105,7 @@ const mockRedis = {
   srem: jest.fn(),
   expire: jest.fn(),
   setIfAbsent: jest.fn(),
+  eval: jest.fn(),
   invalidateUserSessions: jest.fn(),
   bumpUserTokenEpoch: jest.fn()
 }
@@ -1396,9 +1397,85 @@ describe('MfaService', () => {
         await expect(
           service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
         ).rejects.toThrow('repository down')
-        expect(mockRedis.del).toHaveBeenCalledWith(
-          `mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
+        expect(mockRedis.eval).toHaveBeenCalledWith(
+          expect.any(String),
+          [`mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`],
+          [expect.any(String)]
         )
+      })
+
+      // The release must be a compare-and-delete against the nonce this call wrote, not a bare
+      // `DEL`. The lock's TTL is ten seconds and the transition calls into the host's
+      // repository twice; one that overruns has already lost the lock, and an unconditional
+      // delete in its `finally` removes whichever transition holds it now — letting a third
+      // caller in beside the second. Both halves are asserted: the nonce the script compares
+      // is the one `setIfAbsent` stored, and the script itself reads the key before deleting.
+      it('releases the lock only while it still holds this transition nonce', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const plainRecovery = '1234-5678-9012'
+
+        mockUserRepo.findById.mockResolvedValue({
+          ...AUTH_USER_MFA_ENABLED,
+          mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+        })
+
+        await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+        const lockKey = `mfalock:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
+        const acquire = mockRedis.setIfAbsent.mock.calls.find(([key]) => key === lockKey)
+        const release = mockRedis.eval.mock.calls.find(([, keys]) => keys[0] === lockKey)
+        expect(acquire).toBeDefined()
+        expect(release).toBeDefined()
+        // A fixed lock value would make these equal for every caller; the nonce is what makes
+        // "is this still my lock?" answerable at all, so it must be unpredictable per call.
+        expect(acquire?.[1]).toMatch(/^[0-9a-f]{32}$/)
+        expect(release?.[2]?.[0]).toBe(acquire?.[1])
+        expect(release?.[0]).toContain("redis.call('GET', KEYS[1]) == ARGV[1]")
+      })
+
+      // `MfaRecordUpdate` widens to `undefined` for the platform plane, whose record leaves the
+      // MFA fields absent rather than nulling them, but `updateMfa` declares `string | null`.
+      // An ORM handed `undefined` reads it as "do not touch this column", so a disable would
+      // persist `mfaEnabled: false` while leaving the secret and the recovery digests in place
+      // — MFA reported off, every factor still able to satisfy a challenge.
+      it('writes an explicit null when the platform record leaves an MFA field absent', async () => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+        const admin = {
+          id: 'admin-1',
+          email: 'admin@example.com',
+          password: 'hashed',
+          role: 'PLATFORM_ADMIN',
+          status: 'ACTIVE',
+          mfaEnabled: true
+        }
+
+        mockPlatformUserRepo.findById
+          // The read the TOTP is verified against carries the secret...
+          .mockResolvedValueOnce({ ...admin, mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY) })
+          // ...and the re-read inside the lock does not, as `AuthPlatformUser` permits: the
+          // field is optional on that plane, so a repository is free to omit it.
+          .mockResolvedValueOnce({ ...admin })
+
+        await service.regenerateRecoveryCodes(
+          'admin-1',
+          validCode,
+          '1.2.3.4',
+          'Browser',
+          'platform'
+        )
+
+        const [, written] = mockPlatformUserRepo.updateMfa.mock.calls[0] as [
+          string,
+          Record<string, unknown>
+        ]
+        expect(written['mfaSecret']).toBeNull()
+        expect(Object.values(written).every((value) => value !== undefined)).toBe(true)
       })
     })
 

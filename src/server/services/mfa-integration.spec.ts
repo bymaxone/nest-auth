@@ -133,6 +133,7 @@ const mockRedis = {
   srem: jest.fn(),
   expire: jest.fn(),
   setIfAbsent: jest.fn(),
+  eval: jest.fn(),
   invalidateUserSessions: jest.fn(),
   bumpUserTokenEpoch: jest.fn()
 }
