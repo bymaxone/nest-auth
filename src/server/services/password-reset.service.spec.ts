@@ -310,7 +310,11 @@ describe('PasswordResetService', () => {
     // guesses at a six-digit code — and each call also mails an address the caller merely has
     // to know.
     it('claims the shared resend cooldown before sending anything', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       await service.initiateReset(dto, mockReq)
 
@@ -323,7 +327,11 @@ describe('PasswordResetService', () => {
     // no mail. Silent success, so the throttle does not answer whether the account exists.
     it('sends nothing when the cooldown is already claimed', async () => {
       mockRedis.setnx.mockResolvedValue(false)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
 
@@ -336,7 +344,11 @@ describe('PasswordResetService', () => {
     // Both entry points must draw on ONE budget: a per-endpoint cooldown lets a caller
     // alternate between them and halve the effective wait.
     it('uses the same cooldown key as resendOtp', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       await service.initiateReset(dto, mockReq)
       const initiateKey = (mockRedis.setnx.mock.calls[0] as [string, number])[0]
@@ -360,7 +372,11 @@ describe('PasswordResetService', () => {
     // Verifies that does NOT throw when user is blocked (anti-enumeration).
     it('does NOT throw when user is blocked (anti-enumeration)', async () => {
       // Arrange
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'banned',
+        tenantId: 'tenant1'
+      })
 
       // Act & Assert
       await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
@@ -369,7 +385,11 @@ describe('PasswordResetService', () => {
     // Verifies that does NOT throw when user is suspended (blocked status).
     it('does NOT throw when user is suspended (blocked status)', async () => {
       // Arrange
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'suspended' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'suspended',
+        tenantId: 'tenant1'
+      })
 
       // Act & Assert
       await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
@@ -386,7 +406,11 @@ describe('PasswordResetService', () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
       try {
         // Arrange
-        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
         mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
 
         // Act & Assert
@@ -406,7 +430,11 @@ describe('PasswordResetService', () => {
     it('does NOT throw when both email AND rollback Redis del fail', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
       try {
-        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
         mockEmailProvider.sendPasswordResetToken.mockRejectedValue(new Error('SMTP error'))
         mockRedis.del.mockRejectedValueOnce(new Error('Redis down'))
 
@@ -425,7 +453,11 @@ describe('PasswordResetService', () => {
     // Verifies that calls sendToken path (token method) when user exists and is not blocked.
     it('calls sendToken path (token method) when user exists and is not blocked', async () => {
       // Arrange
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await service.initiateReset(dto, mockReq)
@@ -446,7 +478,11 @@ describe('PasswordResetService', () => {
       const module = await buildModule(null)
       const noEmailService = module.get(PasswordResetService)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await noEmailService.initiateReset(dto, mockReq)
@@ -509,7 +545,11 @@ describe('PasswordResetService', () => {
     // Verifies that does NOT send email to blocked user.
     it('does NOT send email to blocked user', async () => {
       // Arrange
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'banned',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await service.initiateReset(dto, mockReq)
@@ -548,7 +588,11 @@ describe('PasswordResetService', () => {
       // Verifies that calls sendOtp path when user exists and is not blocked.
       it('calls sendOtp path when user exists and is not blocked', async () => {
         // Arrange
-        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
 
         // Act
         await otpMethodService.initiateReset(dto, mockReq)
@@ -567,7 +611,11 @@ describe('PasswordResetService', () => {
       // OTP keyspace.
       it('stores the OTP under purpose=password_reset with the tenant:email HMAC identifier', async () => {
         // Arrange
-        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
 
         // Act
         await otpMethodService.initiateReset(dto, mockReq)
@@ -582,7 +630,11 @@ describe('PasswordResetService', () => {
       // Verifies that does NOT send OTP email to blocked user.
       it('does NOT send OTP email to blocked user', async () => {
         // Arrange
-        mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'banned',
+          tenantId: 'tenant1'
+        })
 
         // Act
         await otpMethodService.initiateReset(dto, mockReq)
@@ -1098,7 +1150,11 @@ describe('PasswordResetService', () => {
     it('resets password via direct OTP path when dto.otp is present', async () => {
       // Arrange
       mockOtpService.verify.mockResolvedValue(undefined)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u3', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u3',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
       const dto = { ...baseDto, otp: '654321' }
 
       // Act
@@ -1219,7 +1275,11 @@ describe('PasswordResetService', () => {
     it('returns a 64-character hex string on success', async () => {
       // Arrange
       mockOtpService.verify.mockResolvedValue(undefined)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       const result = await service.verifyOtp(dto, mockReq)
@@ -1234,7 +1294,11 @@ describe('PasswordResetService', () => {
     it('stores the verifiedToken in Redis with correct key prefix and 300s TTL', async () => {
       // Arrange
       mockOtpService.verify.mockResolvedValue(undefined)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await service.verifyOtp(dto, mockReq)
@@ -1250,7 +1314,11 @@ describe('PasswordResetService', () => {
     it('stores context JSON with userId, email, tenantId', async () => {
       // Arrange
       mockOtpService.verify.mockResolvedValue(undefined)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await service.verifyOtp(dto, mockReq)
@@ -1419,7 +1487,11 @@ describe('PasswordResetService', () => {
     it('does NOT throw when user is blocked', async () => {
       // Arrange
       mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'banned' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'banned',
+        tenantId: 'tenant1'
+      })
 
       // Act & Assert
       await expect(otpMethodService.resendOtp(dto, mockReq)).resolves.toBeUndefined()
@@ -1456,7 +1528,11 @@ describe('PasswordResetService', () => {
     it('returns early without generating an OTP when cooldown is active even if the user exists', async () => {
       // Arrange
       mockRedis.setnx.mockResolvedValue(false)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await otpMethodService.resendOtp(dto, mockReq)
@@ -1491,7 +1567,11 @@ describe('PasswordResetService', () => {
     it('sends OTP when cooldown not active and user found and not blocked', async () => {
       // Arrange
       mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await otpMethodService.resendOtp(dto, mockReq)
@@ -1604,7 +1684,11 @@ describe('PasswordResetService', () => {
       const noEmailOtpService = noEmailModule.get(PasswordResetService)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
 
       // Act
       await noEmailOtpService.resendOtp(dto, mockReq)
@@ -1619,7 +1703,11 @@ describe('PasswordResetService', () => {
     it('logs error when sendPasswordResetOtp fire-and-forget rejects', async () => {
       // Arrange
       mockRedis.setnx.mockResolvedValue(true)
-      mockUserRepo.findByEmail.mockResolvedValue({ id: 'u1', status: 'active' })
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
       mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(new Error('SMTP down'))
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 

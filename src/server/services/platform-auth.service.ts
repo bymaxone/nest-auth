@@ -255,6 +255,29 @@ export class PlatformAuthService {
       throw err
     }
 
+    // Re-stamp the access token from the administrator that was just re-read — the same fix
+    // the dashboard plane carries, on the plane where the authority is worth more. Rotation
+    // builds its claims from the `prt:` record written at login, so a demotion from
+    // `super_admin` to `support` had no effect on a live console session: it kept minting
+    // tokens with the old role for the refresh token's whole lifetime, and every role check
+    // reads that claim. `mfaEnabled` is re-stamped for the same reason it is on the dashboard
+    // plane — it gates whether a second factor is demanded at all.
+    //
+    // The account was already read a few lines above for the status gate; the authority was
+    // sitting there, unused. Only re-signed when a claim actually differs.
+    const rotated = this.tokenManager.verifyPlatformIgnoringExpiry(result.accessToken)
+    if (rotated.role !== admin.role || rotated.mfaEnabled !== admin.mfaEnabled) {
+      return {
+        ...result,
+        session: { ...result.session, role: admin.role },
+        accessToken: await this.tokenManager.reissuePlatformAccessWithAuthority(
+          rotated,
+          admin.role,
+          admin.mfaEnabled
+        )
+      }
+    }
+
     return result
   }
 

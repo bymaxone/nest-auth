@@ -30,11 +30,13 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
+import { tenantScoped } from '../utils/tenant-scoped'
 
 /** Minimum response time in ms for anti-enumeration endpoints. */
 const ANTI_ENUM_MIN_MS = 300
@@ -187,7 +189,7 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${tenantId}`)
+    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${logSafe(tenantId)}`)
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
@@ -239,7 +241,9 @@ export class AuthService {
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
-      this.logger.warn(`login: account locked email=${maskEmail(dto.email)} tenantId=${tenantId}`)
+      this.logger.warn(
+        `login: account locked email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
+      )
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
@@ -259,7 +263,27 @@ export class AuthService {
     // that enumerates which accounts exist despite the identical error message. The
     // cost matches one normal failed login — no new amplification — and route-level
     // rate limiting bounds it further.
-    if (!user || !user.passwordHash) {
+    //
+    // The tenant the repository answered with must be the tenant that was asked for. The
+    // lookup passes `tenantId` and the contract says to scope by it, but the repository is the
+    // host's and the trait can only ask — and a single-tenant host writing `findByEmail` that
+    // ignores its second argument is the shape nobody notices. Under one, every distinct
+    // `tenantId` in the request body resolves the same account while deriving a *different*
+    // `lf:` counter, so rotating the value gives an unlimited supply of fresh 5-attempt
+    // budgets and the lockout never engages. Refusing the mismatch is also tenant isolation in
+    // its own right: an account in tenant A must not authenticate through a request naming
+    // tenant B, whatever the repository returns.
+    //
+    // Folded into the same condition as the not-found case so the refusal is byte- and
+    // timing-identical: a caller learns nothing about which of the three it hit.
+    const tenantMismatch = user !== null && user.tenantId !== tenantId
+    if (tenantMismatch) {
+      this.logger.warn(
+        `login: repository returned an account outside the requested tenant — check that ` +
+          `IUserRepository.findByEmail scopes by its tenantId argument`
+      )
+    }
+    if (!user || !user.passwordHash || tenantMismatch) {
       await this.passwordService.compareDummy(dto.password)
       await this.recordLoginFailure(bfIdentifier, { email: dto.email, tenantId }, context)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
@@ -280,7 +304,7 @@ export class AuthService {
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
       this.logger.warn(
-        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${tenantId}`
+        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
       )
       await this.recordLoginFailure(
         bfIdentifier,
@@ -327,7 +351,7 @@ export class AuthService {
     // MFA challenge path.
     if (user.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(user.id, 'dashboard')
-      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${tenantId}`)
+      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${logSafe(tenantId)}`)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -339,7 +363,7 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`login: success userId=${safeUser.id} tenantId=${tenantId}`)
+    this.logger.log(`login: success userId=${safeUser.id} tenantId=${logSafe(tenantId)}`)
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
@@ -523,10 +547,31 @@ export class AuthService {
     // The status gate above already re-read the account; the authority was sitting right
     // there, unused.
     //
-    // Only re-signed when it actually differs, so the ordinary rotation costs nothing extra.
+    // The comparison covers every claim the token carries authority in, not just the two that
+    // motivated the original fix. Naming a subset is what left `mfaEnabled` stale:
+    // `MfaRequiredGuard` decides on `mfaEnabled && !mfaVerified`, so a session created while
+    // the account had no second factor kept minting `mfaEnabled: false` tokens for the refresh
+    // token's whole lifetime and every MFA-gated route waved it through — reachable whenever
+    // the host flips MFA through its own admin surface rather than this library's, since only
+    // `verifyAndEnable` revokes the sessions and bumps the epoch.
+    //
+    // `status` is deliberately NOT compared: `buildRotatedResult` stamps it empty by
+    // construction, because the session record carries no live status, so comparing it would
+    // differ on every refresh and prove nothing. It is re-validated per request against the
+    // `us:` cache instead — and when this branch does fire for another reason, the re-stamp
+    // below fills it from the account that was just read.
+    //
+    // The comparison reads the token rotation just issued rather than the session record,
+    // since the token is the thing whose claims are about to be trusted. Decoding it costs one
+    // HMAC and no round trip. Only re-signed when a claim actually differs, so the ordinary
+    // rotation still costs nothing extra.
+    const rotated = this.tokenManager.verifyIgnoringExpiry(result.accessToken)
     let authoritative = result.accessToken
-    if (user.role !== result.session.role || user.tenantId !== result.session.tenantId) {
-      const rotated = this.tokenManager.verifyIgnoringExpiry(result.accessToken)
+    if (
+      rotated.role !== user.role ||
+      rotated.tenantId !== user.tenantId ||
+      rotated.mfaEnabled !== user.mfaEnabled
+    ) {
       authoritative = this.tokenManager.issueAccess({
         sub: user.id,
         tenantId: user.tenantId,
@@ -681,7 +726,7 @@ export class AuthService {
     }
 
     this.logger.log(
-      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${safeUser.tenantId}`
+      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${logSafe(safeUser.tenantId)}`
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
@@ -737,7 +782,7 @@ export class AuthService {
     email = normalizeEmail(email)
     await this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (!user) {
       // Treat as OTP_INVALID rather than USER_NOT_FOUND to avoid a timing oracle
       // for callers probing email existence after a brute-forced OTP.
@@ -745,7 +790,7 @@ export class AuthService {
     }
 
     await this.userRepo.updateEmailVerified(user.id, true)
-    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${tenantId}`)
+    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${logSafe(tenantId)}`)
 
     if (this.hooks?.afterEmailVerified) {
       void Promise.resolve(
@@ -782,7 +827,7 @@ export class AuthService {
       return // Already sent recently — silently succeed.
     }
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (user && !user.emailVerified) {
       await this.sendVerificationOtp(tenantId, email, user.id)
     }
@@ -820,7 +865,7 @@ export class AuthService {
     const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
     await this.bruteForce.resetFailures(identifier)
     this.logger.log(
-      `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${tenantId}`
+      `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${logSafe(tenantId)}`
     )
   }
 

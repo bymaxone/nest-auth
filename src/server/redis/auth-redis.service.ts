@@ -103,6 +103,50 @@ function prefixesFor(
  * The script deliberately never decodes a stored record: every JSON value it touches is
  * returned to the caller and parsed there, by a real parser rather than Lua's `cjson`.
  */
+/**
+ * Writes the session a grace recovery produces — but only if the account still has one.
+ *
+ * The rotation script moved the session-index bookkeeping inside itself precisely to close the
+ * window in which "log out everywhere" could miss a session a rotation had just minted. The
+ * GRACE arm was left outside it: the script returned the recovered record and the caller then
+ * wrote `rt:`, `sess:` and `fam:` several awaits later. A `revoke_all` landing in between —
+ * from a password reset, an MFA enable, or a ban compensation — swept an index that did not yet
+ * contain the session, and the session survived a revocation the user was told had happened.
+ * Its access token is signed after the write, so it carries the *post-bump* epoch and verifies.
+ * An attacker holding a stolen token gets one grace-eligible token per rotation, so they can
+ * keep a continuous stream of these in flight for exactly as long as the victim's reset takes.
+ *
+ * The witness is the per-user session index. `sweepSessionIndex` deletes the set once it has
+ * removed every member, so its absence is precisely "a revoke-all has run"; the successor the
+ * grace pointer named is itself indexed, so a legitimate recovery always finds the set present.
+ * Checking it and writing in one script makes the two serialize: either the sweep runs first
+ * and the recovery is refused, or the recovery runs first and the sweep sees the session.
+ *
+ * The family index is re-checked here for the same reason — the caller's own `EXISTS` ran
+ * before the write, so a `revoke_family` in between would have been undone by the `SADD` that
+ * follows it.
+ *
+ * KEYS: `{live}:{newHash}`, `{index}:{userId}`, `{family}:{familyId}`.
+ * ARGV: session JSON, refresh TTL, family id (`''` for none), live prefix, new hash.
+ * Returns 1 when the session was written, 0 when the account had already been swept.
+ */
+const RECOVER_GRACE_LUA = `
+if redis.call('EXISTS', KEYS[2]) == 0 then
+  return 0
+end
+if ARGV[3] ~= '' and redis.call('EXISTS', KEYS[3]) == 0 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+if ARGV[3] ~= '' then
+  redis.call('SADD', KEYS[3], ARGV[5])
+  redis.call('EXPIRE', KEYS[3], ARGV[2])
+end
+return 1
+`
+
 const ROTATE_LUA = `
 local old = redis.call('GET', KEYS[1])
 if old then
@@ -506,6 +550,39 @@ export class AuthRedisService {
       return { kind: 'reused', familyId: raw.slice(REUSED_TAG.length) }
     }
     return { kind: 'rotated', sessionJson: raw }
+  }
+
+  /**
+   * Writes the session a grace recovery produced, atomically with the check that the account
+   * has not been swept out from under it.
+   *
+   * See {@link RECOVER_GRACE_LUA} for what this closes and why the per-user session index is
+   * the right witness.
+   *
+   * @param params - The same bundle a rotation takes, minus the pointer fields the grace arm
+   *   has already consumed.
+   * @returns `true` when the session was written; `false` when a revoke-all or a family
+   *   revocation had already run, in which case the caller must refuse the rotation.
+   */
+  async writeRecoveredSession(params: {
+    kind: 'dashboard' | 'platform'
+    newHash: string
+    newSessionJson: string
+    familyId: string
+    userId: string
+    refreshTtl: number
+  }): Promise<boolean> {
+    const p = prefixesFor(params.kind)
+    const written = await this.eval(
+      RECOVER_GRACE_LUA,
+      [
+        `${p.live}:${params.newHash}`,
+        `${p.index}:${params.userId}`,
+        `${p.family}:${params.familyId}`
+      ],
+      [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
+    )
+    return written === 1
   }
 
   /**

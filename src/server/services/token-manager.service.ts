@@ -24,6 +24,7 @@ import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repositor
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
@@ -585,13 +586,26 @@ export class TokenManagerService {
       graceSession.familyId,
       graceSession.familyCreatedAt
     )
-    await this.redis.set(`rt:${anotherNewHash}`, this.serializeSession(anotherSession), refreshTtl)
+    // One atomic step, not four. Written loose, these landed several awaits after the script
+    // returned, and a `revoke_all` arriving in that gap swept an index the recovered session
+    // was not in yet — so it survived a revocation the user was told had happened, and its
+    // access token, signed afterwards, carried the post-bump epoch and verified. See
+    // `RECOVER_GRACE_LUA`.
+    //
     // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
-    await this.redis.sadd(`sess:${graceSession.userId}`, `rt:${anotherNewHash}`)
-    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
-    if (graceSession.familyId !== '') {
-      await this.redis.sadd(`fam:${graceSession.familyId}`, anotherNewHash)
-      await this.redis.expire(`fam:${graceSession.familyId}`, refreshTtl)
+    const written = await this.redis.writeRecoveredSession({
+      kind: 'dashboard',
+      newHash: anotherNewHash,
+      newSessionJson: this.serializeSession(anotherSession),
+      familyId: graceSession.familyId,
+      userId: graceSession.userId,
+      refreshTtl
+    })
+    if (!written) {
+      // The account was swept while this recovery was in flight. The grace pointer is already
+      // consumed, so there is nothing left to retry against — which is the right end state:
+      // the revocation the sweep performed is what the caller must now obey.
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     return await this.buildRotatedResult(anotherSession, anotherNewRefresh)
   }
@@ -884,17 +898,22 @@ export class TokenManagerService {
       graceSession.familyCreatedAt
     )
 
-    await this.redis.set(`prt:${anotherNewHash}`, this.serializeSession(anotherSession), refreshTtl)
+    // The platform twin of the dashboard grace write, atomic for the same reason.
     // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
+    const written = await this.redis.writeRecoveredSession({
+      kind: 'platform',
+      newHash: anotherNewHash,
+      newSessionJson: this.serializeSession(anotherSession),
+      familyId: graceSession.familyId,
+      userId: graceSession.userId,
+      refreshTtl
+    })
+    if (!written) {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
     // Remove the consumed grace pointer from the per-user SET — the key itself is still live
     // (the script leaves it for its remaining window); the SET entry is what a revoke-all uses.
     await this.redis.srem(`psess:${graceSession.userId}`, `prp:${oldHash}`)
-    await this.redis.sadd(`psess:${graceSession.userId}`, `prt:${anotherNewHash}`)
-    await this.redis.expire(`psess:${graceSession.userId}`, refreshTtl)
-    if (graceSession.familyId !== '') {
-      await this.redis.sadd(`pfam:${graceSession.familyId}`, anotherNewHash)
-      await this.redis.expire(`pfam:${graceSession.familyId}`, refreshTtl)
-    }
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
@@ -928,6 +947,42 @@ export class TokenManagerService {
       accessToken,
       rawRefreshToken
     }
+  }
+
+  /**
+   * Re-signs a rotated platform access token with the authority the administrator holds *now*.
+   *
+   * The platform twin of the re-stamp the dashboard plane performs inline after its own
+   * account re-read. Platform rotation builds its claims from the `prt:` record written at
+   * login, so the role and MFA flag it carries are the ones the admin had then, inherited
+   * unchanged through every later rotation. Demoting a `super_admin` to `support` therefore had
+   * no effect on a live console session: it kept minting tokens carrying the old authority for
+   * the refresh token's whole lifetime, and every role check reads that claim — on the
+   * highest-privilege identity in the system. The dashboard plane closed this; the platform
+   * plane was left with the identical hole.
+   *
+   * Everything the rotated token already established is kept, including `mfaVerified`: a second
+   * factor already cleared on this session must not be silently demanded again. A fresh `jti`,
+   * window and epoch are issued — the token this replaces was never handed out.
+   *
+   * @param claims - The claims of the token rotation just produced.
+   * @param role - The administrator's current role.
+   * @param mfaEnabled - Whether the administrator currently has a second factor.
+   * @returns The re-signed platform access token.
+   */
+  async reissuePlatformAccessWithAuthority(
+    claims: PlatformJwtPayload,
+    role: string,
+    mfaEnabled: boolean
+  ): Promise<string> {
+    return this.issuePlatformAccess({
+      sub: claims.sub,
+      role,
+      type: 'platform',
+      mfaEnabled,
+      mfaVerified: claims.mfaVerified,
+      epoch: await this.redis.getUserTokenEpoch(claims.sub, 'platform')
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -1025,7 +1080,10 @@ export class TokenManagerService {
       jti,
       sub: userId,
       type: 'mfa_challenge',
-      context
+      context,
+      // Stamped so the challenge token dies with the rest of the account's credentials. See
+      // the claim's own documentation for what it was surviving.
+      epoch: await this.redis.getUserTokenEpoch(userId, context)
     }
 
     const token = this.jwtService.sign(payload, {
@@ -1103,6 +1161,21 @@ export class TokenManagerService {
     // In the current threat model this requires a forged JWT (which requires the secret),
     // but an explicit comparison makes the relationship between the two values auditable.
     if (storedUserId !== payload.sub) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
+
+    // The same bulk-revocation gate the access-token guards apply, on the plane the challenge
+    // was issued for. A password reset bumps the epoch and kills every access token, but
+    // nothing deleted an outstanding `mfa:` record — so a challenge token minted before the
+    // reset stayed redeemable for its whole TTL, and completing it handed back a full session
+    // under the new epoch. The reset is supposed to end everything the old credential could
+    // still reach, and this was the one credential it did not reach.
+    //
+    // The check lives here rather than in `MfaService.challenge` so every caller of the temp
+    // token inherits it.
+    if (
+      readStampedEpoch(payload) < (await this.redis.getUserTokenEpoch(payload.sub, payload.context))
+    ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
