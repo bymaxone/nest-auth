@@ -13,6 +13,7 @@ import {
   AUTH_REFRESH_COOKIE_NAME
 } from '../../shared/constants/cookie-defaults'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { TrustedOriginGuard } from './trusted-origin.guard'
@@ -278,7 +279,7 @@ describe('TrustedOriginGuard', () => {
       const context = contextFor({
         method: 'POST',
         headers: { origin: 'https://evil.example' },
-        cookies: { mfa_temp_token: 'temp.jwt' }
+        cookies: { [MFA_TEMP_COOKIE_NAME]: 'temp.jwt' }
       })
 
       expect(() => guard.canActivate(context)).toThrow(AuthException)
@@ -288,7 +289,7 @@ describe('TrustedOriginGuard', () => {
       const context = contextFor({
         method: 'POST',
         headers: { origin: TRUSTED },
-        cookies: { mfa_temp_token: 'temp.jwt' }
+        cookies: { [MFA_TEMP_COOKIE_NAME]: 'temp.jwt' }
       })
 
       expect(guard.canActivate(context)).toBe(true)
