@@ -5289,9 +5289,7 @@ export const AUTH_HAS_SESSION_COOKIE_NAME = 'has_session'
 export const AUTH_REFRESH_COOKIE_PATH = '/auth'
 
 // Error codes (same object as the server)
-export const AUTH_ERROR_CODES = {
-  /* ... */
-} as const
+export const AUTH_ERROR_CODES = {/* ... */} as const
 
 // Paths of the auth endpoints
 export const AUTH_ROUTES = {

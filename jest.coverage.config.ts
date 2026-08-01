@@ -66,6 +66,11 @@ const config: Config = {
     }
   },
   testTimeout: 30_000,
+  // Bound peak memory for the aggregated unit+E2E coverage run (the CI gate):
+  // cap the worker pool at half the cores and recycle any worker past ~1GB, so
+  // ts-jest's per-worker module graph cannot multiply memory unboundedly.
+  maxWorkers: '50%',
+  workerIdleMemoryLimit: '1GB',
   clearMocks: true,
   restoreMocks: true,
   passWithNoTests: process.env['CI'] !== 'true'

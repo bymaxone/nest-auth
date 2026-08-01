@@ -258,8 +258,7 @@ describe('OtpService', () => {
 
       expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       const call = mockRedis.eval.mock.calls[0] as unknown as
-        | [string, string[], string[]]
-        | undefined
+        [string, string[], string[]] | undefined
       const script = call?.[0] ?? ''
       const keys = call?.[1] ?? []
       const args = call?.[2] ?? []
