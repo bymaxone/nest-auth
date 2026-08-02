@@ -13,7 +13,12 @@ import type { NextRequest } from 'next/server'
 
 import { redirectToPathOnOrigin, withQueryParam } from './redirectToPath'
 import type { ProtectedRoutePattern, ResolvedAuthProxyConfig } from '../createAuthProxy'
-import { REASON_EXPIRED, REASON_PARAM, REFRESH_ATTEMPT_PARAM } from './constants'
+import {
+  NO_STORE_CACHE_CONTROL,
+  REASON_EXPIRED,
+  REASON_PARAM,
+  REFRESH_ATTEMPT_PARAM
+} from './constants'
 import {
   asString,
   buildRefreshDestination,
@@ -25,6 +30,7 @@ import {
 import { matchesPublicRoute } from './routeClassifier'
 import type { TokenState } from './tokenState'
 import { buildSilentRefreshPath } from '../helpers/buildSilentRefreshUrl'
+import { isBackgroundRequest } from '../helpers/isBackgroundRequest'
 import type { DecodedToken } from '../helpers/jwt'
 
 /**
@@ -174,7 +180,10 @@ export function handleProtectedRoute(
       (entry) => entry.toLocaleLowerCase('en-US') === statusLower
     )
     if (matchedStatus !== undefined) {
-      return redirectToLogin(request, config, matchedStatus.toLocaleLowerCase('en-US'))
+      return (
+        refuseBackground(request) ??
+        redirectToLogin(request, config, matchedStatus.toLocaleLowerCase('en-US'))
+      )
     }
   }
 
@@ -184,9 +193,12 @@ export function handleProtectedRoute(
     const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)
-    return redirectToPathOnOrigin(
-      withQueryParam(safeDestination, 'error', 'forbidden'),
-      request.nextUrl.origin
+    return (
+      refuseBackground(request) ??
+      redirectToPathOnOrigin(
+        withQueryParam(safeDestination, 'error', 'forbidden'),
+        request.nextUrl.origin
+      )
     )
   }
 
@@ -296,6 +308,37 @@ export function buildAuthorisedResponse(
   // `rewrite` keeps the browser URL as-is but feeds the downstream
   // request pipeline the cleaned URL — server components see no `_r`.
   return NextResponse.rewrite(cleanUrl, responseInit)
+}
+
+/**
+ * The refusal a background request gets when it authenticated and then failed a gate — a
+ * blocked account, or a role the route does not admit.
+ *
+ * The proxy already refuses an UNAUTHENTICATED background (RSC / prefetch / state-tree)
+ * request rather than redirecting it, because the client router caches the response against
+ * the route it asked for: answer a prefetch of `/dashboard` with a redirect to `/login` and a
+ * login document sits in the cache for `/dashboard`, rendering on the next genuine navigation
+ * there. The two gates below authenticate first, so they fell outside that guard and
+ * redirected anyway — poisoning the cache through the paths the module's own guarantee did
+ * not cover.
+ *
+ * Passing the request through is not the alternative: `RSC`, `Next-Router-Prefetch` and
+ * `Next-Router-State-Tree` are ordinary request headers, so a forged one would render the
+ * guarded page. The answer is a status with no body and no `Location`.
+ *
+ * 403 rather than 401 because the credential is genuine and re-authenticating cannot help. A
+ * 401 asks the client to refresh a token that is already valid, and for a blocked account that
+ * loop has no end.
+ *
+ * @param request - The incoming request.
+ * @returns The 403 when this is a background request, `null` when the caller should redirect.
+ */
+function refuseBackground(request: NextRequest): NextResponse | null {
+  if (!isBackgroundRequest(request)) return null
+  return new NextResponse(null, {
+    status: 403,
+    headers: { 'Cache-Control': NO_STORE_CACHE_CONTROL }
+  })
 }
 
 /**

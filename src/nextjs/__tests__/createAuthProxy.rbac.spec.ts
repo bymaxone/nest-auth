@@ -100,6 +100,75 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     })
   })
 
+  // The proxy already refuses an UNAUTHENTICATED background (RSC / prefetch / state-tree)
+  // request with a status rather than a redirect, because the client router caches the
+  // response against the route it asked for: answer a prefetch of `/dashboard` with a redirect
+  // to `/login` and a login document sits in the cache for `/dashboard`, rendering on the next
+  // genuine navigation there.
+  //
+  // These two gates authenticate FIRST and then refuse, so they fell outside that guard and
+  // redirected anyway — poisoning the same cache through the paths the module's own guarantee
+  // did not cover. Nothing in the suite covered the combination, which is how it survived.
+  describe('a background request that authenticated and then failed a gate', () => {
+    it.each([
+      [
+        'a blocked account',
+        { type: 'dashboard', sub: 'u1', role: 'admin', status: 'BANNED' },
+        'https://app.example.com/dashboard'
+      ],
+      [
+        'a role the route does not admit',
+        { type: 'dashboard', sub: 'u1', role: 'member' },
+        'https://app.example.com/admin/users'
+      ]
+    ])('refuses %s with a status and no Location', async (_label, claims, url) => {
+      const token = await signHs256Token(
+        { ...claims, exp: Math.floor(Date.now() / 1000) + 600 },
+        TEST_SECRET
+      )
+      const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+      const request = makeMockRequest({
+        url,
+        cookies: { access_token: token },
+        headers: { RSC: '1' }
+      })
+
+      const response = await proxy(request as never)
+
+      // No redirect: that is what would have been cached against the requested route.
+      expect(response.headers.get('location')).toBeNull()
+      // 403, not 401: the credential is genuine and re-authenticating cannot help. A 401 asks
+      // the client to refresh a token that is already valid, and for a blocked account that
+      // loop has no end.
+      expect(response.status).toBe(403)
+      expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
+      // And never a pass-through — `RSC` is an ordinary request header, so admitting it would
+      // render the guarded page for a caller both gates just refused.
+      expect(response.headers.get('x-middleware-request-x-user-id')).toBeNull()
+    })
+
+    // The same request without the background header still redirects, so the refusal shape is
+    // decided by the request being a background fetch and nothing else.
+    it('still redirects the same refusal on a normal navigation', async () => {
+      const token = await signHs256Token(
+        { type: 'dashboard', sub: 'u1', role: 'member', exp: Math.floor(Date.now() / 1000) + 600 },
+        TEST_SECRET
+      )
+      const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+      const request = makeMockRequest({
+        url: 'https://app.example.com/admin/users',
+        cookies: { access_token: token }
+      })
+
+      const response = await proxy(request as never)
+
+      expect(response.status).toBe(307)
+      expect(new URL(response.headers.get('location') ?? '').searchParams.get('error')).toBe(
+        'forbidden'
+      )
+    })
+  })
+
   describe('RBAC', () => {
     // Wrong role → redirect to getDefaultDashboard(role) with
     // error=forbidden. The user is not bounced to login because
