@@ -411,7 +411,13 @@ export function applyTestMiddleware(app: INestApplication): void {
       next()
       return
     }
-    const jar: Record<string, string> = {}
+    // Null-prototype: the key comes from a `Set-Cookie` header, so a cookie literally named
+    // `__proto__` would otherwise write through to `Object.prototype` and poison every plain
+    // object in the process. Nothing here is attacker-reachable — this harness parses headers
+    // the suite itself produced, and `test/` is not in the package's `files` — but a cookie
+    // parser that can be made to write to a prototype is the wrong thing to keep as the
+    // reference implementation in an auth library's own test setup.
+    const jar: Record<string, string> = Object.create(null) as Record<string, string>
     for (const part of header.split(';')) {
       const eq = part.indexOf('=')
       if (eq < 0) continue
