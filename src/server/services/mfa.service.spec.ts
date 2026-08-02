@@ -301,10 +301,52 @@ describe('MfaService', () => {
       )
     })
 
+    // `login` refuses an account after N wrong passwords. This door asks for the SAME secret
+    // and used to refuse nothing, so a caller holding a stolen access token but not the
+    // password could guess it here without limit — and winning it buys the whole account:
+    // enrol a factor, change the password, move the address. The per-route IP limit is not
+    // that control; a distributed caller sidesteps it.
+    it('should refuse enrolment once the re-proof budget for this account is spent', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.setup('user-1', 'dashboard', 'guess')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
+      })
+      // Refused before the KDF, so a locked account is not an amplifier either.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+    })
+
+    it('should count a wrong password against that budget and clear it on success', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
+      mockPasswordService.compare.mockResolvedValue(false)
+      mockBruteForce.recordFailure.mockClear()
+
+      await expect(service.setup('user-1', 'dashboard', 'wrong')).rejects.toThrow(AuthException)
+      expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+
+      mockPasswordService.compare.mockResolvedValue(true)
+      mockRedis.setIfAbsent.mockResolvedValue(true)
+      mockBruteForce.resetFailures.mockClear()
+
+      await service.setup('user-1', 'dashboard', 'right')
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
+    })
+
     // Scenario: an account provisioned purely through OAuth, which has no local password.
     // Expected: enrolment proceeds. Why: there is nothing to re-authenticate against, and
     // refusing would make MFA unreachable for those users — their credential belongs to the
     // provider, which this library cannot re-verify inline.
+    //
+    // The downside this reasoning does not weigh, recorded here because the trade-off is
+    // deliberate and shared with rust-auth: for such an account a STOLEN ACCESS TOKEN alone is
+    // enough to enrol a factor the attacker holds. The enable then invalidates every session
+    // and bumps the epoch, and `disable`/`regenerateRecoveryCodes` both demand a live TOTP code
+    // while the reset flow refuses an account with no password — so the library ships no way
+    // back, and the recovery codes were displayed only to the attacker. The owner IS notified
+    // (`sendMfaEnabledNotification`), so it is detectable rather than silent, but recovery
+    // needs the host to write to `IUserRepository.updateMfa` directly.
     it('should allow enrolment for an account with no password', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.setIfAbsent.mockResolvedValue(true)

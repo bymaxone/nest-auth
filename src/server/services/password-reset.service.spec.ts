@@ -27,6 +27,7 @@ import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordResetService } from './password-reset.service'
 import { sha256 } from '../crypto/secure-token'
@@ -103,6 +104,13 @@ const mockPasswordService = {
   assertNotCompromised: jest.fn().mockResolvedValue(undefined)
 }
 
+/** The current-password re-proof is counted like a login; unlocked unless a case says otherwise. */
+const mockBruteForce = {
+  isLockedOut: jest.fn().mockResolvedValue(false),
+  recordFailure: jest.fn(),
+  resetFailures: jest.fn()
+}
+
 const mockSessionService = {
   revokeAllExceptCurrent: jest.fn()
 }
@@ -135,7 +143,8 @@ async function buildModule(
       { provide: OtpService, useValue: mockOtpService },
       { provide: PasswordService, useValue: mockPasswordService },
       { provide: AuthRedisService, useValue: mockRedis },
-      { provide: SessionService, useValue: mockSessionService }
+      { provide: SessionService, useValue: mockSessionService },
+      { provide: BruteForceService, useValue: mockBruteForce }
     ]
   }).compile()
 }
@@ -233,6 +242,41 @@ describe('PasswordResetService', () => {
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
+    })
+
+    // `login` refuses an account after N wrong passwords. This door asks for the SAME secret
+    // and used to refuse nothing, so a caller holding a stolen access token but not the
+    // password could guess it here without limit — and winning replaces the credential, which
+    // locks the owner out of their own account. The per-route IP limit is not that control: a
+    // distributed caller sidesteps it, and it is not keyed to the account being attacked.
+    it('refuses once the re-proof failure budget for this account is spent', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
+      })
+      // Refused before the KDF, so a locked account is not an amplifier either.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    it('counts a wrong current password against that budget', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+      mockBruteForce.recordFailure.mockClear()
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toBeDefined()
+
+      expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    })
+
+    // Cleared on success, so a user who mistypes twice and then gets it right is not carrying
+    // a budget toward a lockout they never earned.
+    it('clears the budget once the current password is proved', async () => {
+      mockBruteForce.resetFailures.mockClear()
+
+      await service.changePassword('u1', dto, 'raw-refresh')
+
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
 
     // A verified token whose subject no longer exists answers the same way, rather than
@@ -579,7 +623,7 @@ describe('PasswordResetService', () => {
             { provide: PasswordService, useValue: mockPasswordService },
             { provide: AuthRedisService, useValue: mockRedis },
             { provide: SessionService, useValue: mockSessionService },
-            { provide: SessionService, useValue: mockSessionService }
+            { provide: BruteForceService, useValue: mockBruteForce }
           ]
         }).compile()
         otpMethodService = module.get(PasswordResetService)
@@ -1042,7 +1086,8 @@ describe('PasswordResetService', () => {
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BruteForceService, useValue: mockBruteForce }
         ]
       }).compile()
       otpMethodService = module.get(PasswordResetService)
@@ -1382,7 +1427,8 @@ describe('PasswordResetService', () => {
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BruteForceService, useValue: mockBruteForce }
         ]
       }).compile()
       const svc = module.get(PasswordResetService)
@@ -1467,7 +1513,8 @@ describe('PasswordResetService', () => {
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BruteForceService, useValue: mockBruteForce }
         ]
       }).compile()
       otpMethodService = module.get(PasswordResetService)
@@ -1678,7 +1725,8 @@ describe('PasswordResetService', () => {
           { provide: OtpService, useValue: mockOtpService },
           { provide: PasswordService, useValue: mockPasswordService },
           { provide: AuthRedisService, useValue: mockRedis },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BruteForceService, useValue: mockBruteForce }
         ]
       }).compile()
       const noEmailOtpService = noEmailModule.get(PasswordResetService)

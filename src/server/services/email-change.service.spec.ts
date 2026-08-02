@@ -22,6 +22,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { EmailChangeService } from './email-change.service'
+import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 
 const USER = {
@@ -61,7 +62,16 @@ const mockRedis = {
   getdel: jest.fn()
 }
 
+/** The password re-proof is counted like a login; unlocked and quiet unless a case says otherwise. */
+const mockBruteForce = {
+  isLockedOut: jest.fn().mockResolvedValue(false),
+  recordFailure: jest.fn(),
+  resetFailures: jest.fn()
+}
+
 const mockOptions = {
+  // The re-proof counter keys on an HMAC of the account id, so the fixture needs the key.
+  hmacKey: 'test-hmac-key',
   emailChange: { tokenTtlSeconds: 3600 },
   // The confirmation re-reads the account's standing, so the service needs the same blocked
   // set every other status gate reads.
@@ -99,7 +109,8 @@ describe('EmailChangeService', () => {
         { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
         { provide: PasswordService, useValue: mockPasswordService },
-        { provide: AuthRedisService, useValue: mockRedis }
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BruteForceService, useValue: mockBruteForce }
       ]
     }).compile()
 
@@ -121,7 +132,8 @@ describe('EmailChangeService', () => {
         mockUserRepo as never,
         providerWithout,
         mockPasswordService as never,
-        mockRedis as never
+        mockRedis as never,
+        mockBruteForce as never
       )
 
       // Both halves of the message: it has to name the flag that turned the flow on AND the
@@ -187,6 +199,40 @@ describe('EmailChangeService', () => {
       await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendEmailChangeVerification).not.toHaveBeenCalled()
+    })
+
+    // `login` refuses an account after N wrong passwords. This door asks for the SAME secret
+    // and used to refuse nothing, so a caller holding a stolen access token but not the
+    // password could guess it here without limit — and winning it moves the address the account
+    // recovers through, which is persistence rather than a single theft. The per-route IP limit
+    // is not that control: a distributed caller sidesteps it, and it is not keyed to the
+    // account under attack.
+    it('refuses once the re-proof failure budget for this account is spent', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.requestChange('user-1', dto)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
+      })
+      // Refused before the KDF, so a locked account is not an amplifier either.
+      expect(mockPasswordService.compare).not.toHaveBeenCalled()
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    it('counts a wrong current password against that budget', async () => {
+      mockPasswordService.compare.mockResolvedValue(false)
+      mockBruteForce.recordFailure.mockClear()
+
+      await expect(service.requestChange('user-1', dto)).rejects.toBeDefined()
+
+      expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears the budget once the current password is proved', async () => {
+      mockBruteForce.resetFailures.mockClear()
+
+      await service.requestChange('user-1', dto)
+
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
 
     // An account that cannot prove a password it does not have, and a subject that no longer
@@ -440,7 +486,8 @@ describe('EmailChangeService', () => {
         mockUserRepo as never,
         { sendEmailChangeVerification: jest.fn() } as never,
         mockPasswordService as never,
-        mockRedis as never
+        mockRedis as never,
+        mockBruteForce as never
       )
 
       await expect(silent.confirmChange({ token: TOKEN })).resolves.toBeUndefined()

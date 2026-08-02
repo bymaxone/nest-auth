@@ -310,8 +310,47 @@ describe('AuthService', () => {
       })
       await service.register(dto, mockReq)
       // role override applied — assert it reached the create payload, killing the
-      // `&& { role: augmented['role'] }` -> `&& {}` ObjectLiteral mutant at line 124.
+      // `&& { role: hookOverrides.role }` -> `&& {}` ObjectLiteral mutant.
       expect(mockUserRepo.create).toHaveBeenCalledWith(expect.objectContaining({ role: 'viewer' }))
+    })
+
+    // The mirror image, and the one that is a privilege boundary rather than a feature: the
+    // SAME fields arriving from the CALLER must not reach `create`.
+    //
+    // They used to. The hook's overrides were merged into `dto` and then read back off it, so a
+    // `role` the hook chose and a `role` the caller sent were the same value by the time it was
+    // read. Through the shipped controller that was unreachable — the validation pipe sets
+    // `whitelist` and `forbidNonWhitelisted`, so an extra body field is a 400 — but `AuthService`
+    // is exported precisely so a host can write its own registration route, and the moment one
+    // calls `register(req.body, req)` the only thing between an unauthenticated caller and
+    // `role: 'ADMIN'` was a decorator in a different file that the host is free not to use.
+    it('should ignore role, status and emailVerified supplied by the caller', async () => {
+      mockHooks.beforeRegister.mockResolvedValue({ allowed: true })
+
+      await service.register(
+        { ...dto, role: 'ADMIN', status: 'ACTIVE', emailVerified: true } as typeof dto,
+        mockReq
+      )
+
+      const payload = mockUserRepo.create.mock.calls.at(-1)?.[0] as Record<string, unknown>
+      expect(payload['role']).toBeUndefined()
+      expect(payload['status']).toBeUndefined()
+      expect(payload['emailVerified']).toBeUndefined()
+    })
+
+    // And the two must not be confusable in the other direction either: a hook that sets nothing
+    // cannot have its silence filled in by the caller's body.
+    it('should ignore a caller-supplied role even when the hook overrides a different field', async () => {
+      mockHooks.beforeRegister.mockResolvedValue({
+        allowed: true,
+        modifiedData: { status: 'pending_approval' }
+      })
+
+      await service.register({ ...dto, role: 'ADMIN' } as typeof dto, mockReq)
+
+      const payload = mockUserRepo.create.mock.calls.at(-1)?.[0] as Record<string, unknown>
+      expect(payload['status']).toBe('pending_approval')
+      expect(payload['role']).toBeUndefined()
     })
 
     // Verifies that when emailVerification.required is true, the OTP is generated and stored.
@@ -2621,6 +2660,13 @@ describe('AuthService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(USER)
       mockPasswordService.compare.mockResolvedValue(true)
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockUserRepo.updateLastLogin.mockResolvedValue(undefined)
+      // The upgrade re-reads the account before writing, so every case here has to say what the
+      // stored hash is at that moment. Set explicitly rather than left to whatever a previous
+      // test in this file happened to leave on the shared mock: the whole point of the cases
+      // below is which hash is in the row when the write is attempted.
+      mockUserRepo.findById.mockResolvedValue(USER)
+      mockUserRepo.updatePassword.mockClear()
     })
 
     // Scenario: a successful login whose stored hash was written under weaker parameters.
@@ -2638,6 +2684,42 @@ describe('AuthService', () => {
 
       expect(mockPasswordService.needsRehash).toHaveBeenCalledWith(USER.passwordHash)
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(USER.id, 'scrypt:131072:8:1:aa:bb')
+    })
+
+    // Scenario: the account's password changed between the login that scheduled the upgrade and
+    // the moment the upgrade tried to write. Expected: nothing written.
+    //
+    // Why this is the important case rather than an edge one. The task carries the PLAINTEXT it
+    // is upgrading and a KDF derivation is slow by construction, so it lands well after the
+    // login. The situation where a password changes in that window is not random — it is a user
+    // resetting BECAUSE the old password was compromised, where the attacker's own login is what
+    // scheduled the task. An unconditional write re-installs the compromised credential over the
+    // new one: the old password works again, the new one does not, and the "password changed"
+    // mail has already gone out. `needsRehash` is true for EVERY account during the parameter
+    // migration this feature exists to serve, so the alignment is not rare either.
+    it('should not overwrite a password that changed while the upgrade was deriving', async () => {
+      mockPasswordService.needsRehash.mockReturnValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
+      // The reset landed first: the row no longer holds the hash that was verified.
+      mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:1:1:1:zz:zz' })
+
+      await service.login(dto, mockReq)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+    })
+
+    // The account disappearing between the login and the write is the same decision: there is no
+    // row whose hash is the one that was verified, so there is nothing this upgrade may replace.
+    it('should not write when the account is gone by the time the upgrade lands', async () => {
+      mockPasswordService.needsRehash.mockReturnValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await service.login(dto, mockReq)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
     })
 
     // Scenario: the same login with a current hash. Expected: nothing written. Why: a rewrite

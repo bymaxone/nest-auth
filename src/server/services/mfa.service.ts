@@ -678,7 +678,7 @@ export class MfaService {
     // An account with no local password — provisioned purely through OAuth — has nothing to
     // re-authenticate against here, and refusing it would make MFA unreachable for those
     // users. Their credential is the provider's, which this library cannot re-verify inline.
-    await this.assertReauthenticated(user.passwordHash, password)
+    await this.assertReauthenticated(context, userId, user.passwordHash, password)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
     const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
@@ -1364,26 +1364,51 @@ export class MfaService {
   /**
    * Requires the caller to re-prove the account password before a factor is changed.
    *
+   * Counted like a login, and for the same reason. `login` refuses an account after N wrong
+   * passwords; this door asks for the same secret and used to refuse nothing, so a caller
+   * holding a stolen access token but not the password could guess it here indefinitely. The
+   * only control left was the per-route IP limit, which a distributed caller sidesteps — and
+   * winning the guess buys the whole account: enrol a factor, change the password, move the
+   * address. A door that takes the password has to carry the password's lockout.
+   *
+   * The identifier is namespaced by flow and by plane. Sharing one counter with `login` would
+   * let an authenticated caller lock the owner out of their own sign-in, and sharing it across
+   * planes would let a dashboard user and a platform admin holding the same id exhaust each
+   * other's budget — the same two reasons the challenge and disable counters are split.
+   *
+   * @param context - The authentication plane, part of the counter's key.
+   * @param userId - The account being changed, part of the counter's key.
    * @param passwordHash - The account's stored hash, or `null` for an OAuth-only account.
    * @param password - The password the caller submitted, if any.
-   * @throws {@link AuthException} `INVALID_CREDENTIALS` when the account has a password and
-   *   the submitted one is absent or wrong. The code is deliberately the same one a failed
-   *   login returns: an attacker holding a stolen token learns nothing from it beyond what
-   *   they already knew.
+   * @throws {@link AuthException} `ACCOUNT_LOCKED` once the failure budget for this flow is
+   *   spent, or `INVALID_CREDENTIALS` when the account has a password and the submitted one is
+   *   absent or wrong. The latter is deliberately the same code a failed login returns: an
+   *   attacker holding a stolen token learns nothing from it beyond what they already knew.
    */
   private async assertReauthenticated(
+    context: 'dashboard' | 'platform',
+    userId: string,
     passwordHash: string | null,
     password?: string
   ): Promise<void> {
     if (passwordHash === null) return
+
+    const bfIdentifier = hmacSha256(`reauth:${context}:${userId}`, this.options.hmacKey)
+    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(`reauthenticate: account locked userId=${userId} context=${context}`)
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+    }
 
     // A missing password still pays the KDF, so "no password sent" and "wrong password" take
     // the same time — otherwise the response separates them for free.
     const supplied = password ?? ''
     const matches = await this.passwordService.compare(supplied, passwordHash)
     if (!matches) {
+      await this.bruteForce.recordFailure(bfIdentifier)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
+
+    await this.bruteForce.resetFailures(bfIdentifier)
   }
 
   /**
