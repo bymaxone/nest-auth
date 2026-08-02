@@ -9,7 +9,7 @@ import { Injectable, Logger } from '@nestjs/common'
 
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
 
-/** The range endpoint. The last five characters of the path are the hash prefix. */
+/** The range endpoint. The digest prefix is appended to it, so the request is `/range/{prefix}`. */
 const HIBP_RANGE_URL = 'https://api.pwnedpasswords.com/range/'
 
 /** Characters of the SHA-1 hex sent to the service. The rest never leaves the process. */
@@ -74,9 +74,18 @@ export class HibpBreachChecker implements IPasswordBreachChecker {
 
     // Each line is `SUFFIX:COUNT`. A match at all means the password is in the corpus; the
     // count is not consulted, because "breached once" is already disqualifying.
-    return body
-      .split('\n')
-      .some((line) => line.slice(0, line.indexOf(':')).trim().toUpperCase() === suffix)
+    //
+    // The separator is required rather than assumed. `indexOf` answers -1 on a line without
+    // one, and `slice(0, -1)` then silently drops the last character — so a 36-character line
+    // of noise would be compared as its first 35, which is exactly the width of a suffix. That
+    // is a comparison against something the service never sent, and the outcome depends on
+    // bytes nobody validated. A line that is not `SUFFIX:COUNT` is not an answer about this
+    // password, so it is skipped.
+    return body.split('\n').some((line) => {
+      const separator = line.indexOf(':')
+      if (separator === -1) return false
+      return line.slice(0, separator).trim().toUpperCase() === suffix
+    })
   }
 
   /**

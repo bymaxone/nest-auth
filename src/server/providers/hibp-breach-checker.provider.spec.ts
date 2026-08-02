@@ -100,6 +100,24 @@ describe('HibpBreachChecker', () => {
     await expect(new HibpBreachChecker().isBreached(PASSWORD)).resolves.toBe(true)
   })
 
+  // A line carrying no `:` is not an answer about this password. Without the separator check
+  // `indexOf` gives -1, `slice(0, -1)` drops the final character, and a line one character
+  // wider than a suffix is compared as its first 35 — a match decided by bytes that were never
+  // part of any suffix the service published. The line here is exactly that shape.
+  it('ignores a line with no separator rather than comparing a truncated one', async () => {
+    stubFetch(`${SUFFIX}X\n`)
+
+    await expect(new HibpBreachChecker().isBreached(PASSWORD)).resolves.toBe(false)
+  })
+
+  // An empty trailing line is the ordinary case of the same thing: every CRLF-terminated body
+  // ends with one, so this runs on every real response.
+  it('ignores the empty line a terminated body ends with', async () => {
+    stubFetch(`${SUFFIX}:9\n`)
+
+    await expect(new HibpBreachChecker().isBreached(PASSWORD)).resolves.toBe(true)
+  })
+
   // Fail-open, the rule that keeps this from becoming a dependency: a service that is down,
   // rate-limiting, or slow must not stop someone changing their password — least of all during
   // an incident, when changing it is the urgent thing.
