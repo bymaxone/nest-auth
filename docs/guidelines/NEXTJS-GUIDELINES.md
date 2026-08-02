@@ -894,7 +894,9 @@ The `createAuthProxy` factory already uses the new naming convention. When consu
 ```typescript
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 
@@ -1558,7 +1560,9 @@ export function middleware(request: NextRequest) {
 // CORRECT -- use the proxy convention
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 
@@ -1631,7 +1635,9 @@ export function proxy(request: NextRequest) {
 ```typescript
 // CORRECT -- use createAuthProxy which implements _r counter and reason=expired guard
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
+const { proxy, config } = createAuthProxy({
+  /* ... */
+})
 export { proxy, config }
 ```
 
