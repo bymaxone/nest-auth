@@ -512,10 +512,11 @@ export class MfaService {
    * Compares a submitted recovery code against every stored digest.
    *
    * One storage format only: a keyed MAC over the code. Every digest is compared in constant
-   * time and the scan always runs to completion, so neither the position of a match nor the
-   * number of codes still unused is observable in the response time.
+   * time and the scan always runs to completion — including the step that picks the winner out
+   * of the recorded results — so neither the position of a match nor the number of codes still
+   * unused is observable in the response time.
    *
-   * @returns Index of the matching digest, or `-1` if none match.
+   * @returns Index of the first matching digest, or `-1` if none match.
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
     // One candidate per key in play: the current one, then any retired by a rotation. The
@@ -531,18 +532,26 @@ export class MfaService {
 
     for (const hashedCode of hashedCodes) {
       // Every candidate is compared, never short-circuited: stopping at the first hit would
-      // make the scan's duration report how many keys were tried before the match.
-      const hit = candidates
-        .map((candidate) => timingSafeCompare(candidate, hashedCode))
-        .includes(true)
+      // make the scan's duration report how many keys were tried before the match. `reduce`
+      // visits the whole list by construction, and the comparison is the left operand of `||`
+      // so it is evaluated on every step regardless of what has already matched.
+      const hit = candidates.reduce(
+        (found, candidate) => timingSafeCompare(candidate, hashedCode) || found,
+        false
+      )
       macMatches.push(hit)
     }
 
-    // Recording every comparison and picking the first hit afterwards, rather than tracking
-    // the winner inside the loop, keeps the scan uniform: the same work happens whether the
-    // match is at the front, at the back, or absent. `indexOf` also returns -1 for no match,
-    // which is the contract this method already had.
-    return macMatches.indexOf(true)
+    // Recording every comparison and picking the first hit afterwards, rather than tracking the
+    // winner inside the loop, keeps the scan uniform: the same work happens whether the match
+    // is at the front, at the back, or absent.
+    //
+    // Reduced rather than `indexOf`, which stops at the first hit — the tail of the scan then
+    // runs shorter for an early match than for a late one or none, which is the position signal
+    // the loop above exists to avoid, reintroduced on the last line of it. The reduction visits
+    // every entry, and the first hit wins because a later one cannot overwrite a set index.
+    // `-1` for no match is the contract this method already had.
+    return macMatches.reduce((found, hit, index) => (found === -1 && hit ? index : found), -1)
   }
 
   /**

@@ -1559,6 +1559,40 @@ describe('MfaService', () => {
       )
     })
 
+    // Scenario: ONE code that matches at two different positions, because the list is mixed —
+    // the same plaintext digested under the retired key and under the current one, which is
+    // exactly what the retired-key support exists to tolerate. Expected: the earlier position
+    // is the one consumed.
+    //
+    // The two-identical-digests case below cannot show this: removing either index from
+    // `[d, d]` leaves `[d]`, so it passes whichever position the scan reports. Here the two
+    // entries differ, so the surviving one names the index that was picked.
+    it('should consume the earliest position when one code matches at two of them', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const retiredKey = 'f'.repeat(64)
+      const plainRecovery = '1234-5678-9012'
+      const underRetired = hmacSha256(plainRecovery, retiredKey)
+      const underCurrent = hmacSha256(plainRecovery, HMAC_KEY)
+
+      const rotated = await buildService({ previousHmacKeys: [retiredKey] })
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [underRetired, underCurrent]
+      })
+
+      await rotated.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      // Index 0 consumed, so index 1 survives. Picking the later match would leave the other.
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ mfaRecoveryCodes: [underCurrent] })
+      )
+    })
+
     // Scenario: the same digest stored twice. Expected: the FIRST occurrence is consumed and
     // the duplicate survives. Why: the scan keeps the earliest match, so exactly one code is
     // spent per use — recording later matches too would consume the wrong entry and leave the
