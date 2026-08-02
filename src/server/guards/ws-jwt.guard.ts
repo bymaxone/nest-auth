@@ -7,6 +7,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { readStampedEpoch } from '../utils'
@@ -103,6 +104,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     const ticket = readUpgradeTicket(client)
     if (ticket !== undefined) {
       const snapshot = await this.wsTickets.redeem(ticket)
+      assertDashboardSnapshot(snapshot)
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
       // what the access token proved at mint time. It is deliberately not a token: it carries
       // no `jti` to revoke and no signature to re-verify, and it cannot be presented to the
@@ -163,6 +165,37 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
 }
 
 /**
+ * Refuses a redeemed snapshot that is not a dashboard one.
+ *
+ * A redemption proves the ticket existed and had not been spent. It does not prove which
+ * identity plane minted it: `wst:` is one keyspace, shared with rust-auth over one Redis, and
+ * {@link WsTicketSnapshot.tenantId} is optional precisely because a platform ticket omits it.
+ * This guard authorizes the socket as a dashboard identity, so redeeming whatever the keyspace
+ * happens to hold would let a platform-plane credential open a dashboard connection the moment
+ * either backend starts minting one — the shape is already reserved for it.
+ *
+ * Requiring the tenant costs nothing to the legitimate path: `AuthUser.tenantId` is not
+ * optional, so every ticket this library mints carries one. A snapshot without it was written
+ * by something else, and a socket is not the place to find out what.
+ *
+ * This also refuses a record that decoded but lost fields — an authorization whose scope is
+ * `undefined` is worse than a refusal, because the socket opens and every downstream tenant
+ * check silently compares against nothing.
+ *
+ * @param snapshot - The snapshot the ticket redeemed to.
+ * @throws AuthException `TOKEN_INVALID` when the snapshot is not a dashboard identity, matching
+ *   the refusal a bad ticket already produces so the two stay indistinguishable.
+ */
+function assertDashboardSnapshot(snapshot: WsTicketSnapshot): void {
+  if (typeof snapshot.sub !== 'string' || snapshot.sub === '') {
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  }
+  if (typeof snapshot.tenantId !== 'string' || snapshot.tenantId === '') {
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  }
+}
+
+/**
  * Reads the single-use `ticket` parameter from the upgrade request.
  *
  * This is the only place the library reads a credential from a query string, and what it reads
@@ -184,7 +217,18 @@ function readUpgradeTicket(client: WsClient): string | undefined {
   if (typeof url !== 'string' || url === '') return undefined
   // `URL` needs an absolute input; the base is a placeholder and never used for anything but
   // parsing the relative upgrade path.
-  const params = new URL(url, 'http://ws.invalid').searchParams
+  //
+  // A base does not make every input parseable — `http://[` and friends still throw, and this
+  // string comes off the wire from whatever opened the socket. Throwing here would turn "this
+  // upgrade carried no usable ticket", an ordinary authentication outcome, into an exception
+  // escaping the guard: unhandled, and reachable by anyone who can attempt a connection. An
+  // unparseable URL carries no ticket, which is the same answer as a URL carrying none.
+  let params: URLSearchParams
+  try {
+    params = new URL(url, 'http://ws.invalid').searchParams
+  } catch {
+    return undefined
+  }
   const all = params.getAll('ticket')
   return all.length === 1 && all[0] !== '' ? all[0] : undefined
 }

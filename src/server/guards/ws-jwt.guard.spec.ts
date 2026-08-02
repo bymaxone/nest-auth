@@ -464,12 +464,42 @@ describe('WsJwtGuard', () => {
       ['an empty query parameter', { ticket: '' }, undefined],
       ['an empty URL parameter', {}, '/socket?ticket='],
       ['no ticket at all', {}, '/socket'],
-      ['an empty URL', {}, '']
+      ['an empty URL', {}, ''],
+      // A base does not make every string parseable: `http://[` throws `ERR_INVALID_URL` even
+      // with one. The string comes off the wire, so a throw here would escape the guard —
+      // unhandled, and reachable by anyone who can attempt a connection. An unparseable URL
+      // carries no ticket, which is the answer a URL carrying none already gets.
+      ['an unparseable URL', {}, 'http://['],
+      ['a URL that is only a scheme delimiter', {}, '//']
     ])('should ignore %s', async (_label, query, url) => {
       const { context } = ticketContext(query as Record<string, string | string[]>, url)
 
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
       expect(mockWsTickets.redeem).not.toHaveBeenCalled()
+    })
+
+    // A redemption proves the ticket existed and was unspent. It does not prove which identity
+    // plane minted it: `wst:` is one keyspace, shared with rust-auth over one Redis, and
+    // `tenantId` is optional on the snapshot precisely because a platform ticket omits it. This
+    // guard authorizes a DASHBOARD identity, so it has to ask.
+    //
+    // `AuthUser.tenantId` is not optional, so every ticket this library mints carries one — a
+    // snapshot without it was written by something else. The refusal matches the one a bad
+    // ticket already produces, so the two stay indistinguishable to a caller probing the
+    // keyspace.
+    it.each([
+      ['a platform ticket, which carries no tenant', { ...snapshot, tenantId: undefined }],
+      ['a record whose tenant decoded empty', { ...snapshot, tenantId: '' }],
+      ['a record whose tenant is not a string', { ...snapshot, tenantId: 42 }],
+      ['a record that lost its subject', { ...snapshot, sub: '' }]
+    ])('should refuse %s rather than open the socket', async (_label, bad) => {
+      mockWsTickets.redeem.mockResolvedValue(bad)
+      const { client, context } = ticketContext({ ticket: 'raw-ticket' })
+
+      await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
+      // The point of the refusal: the socket must not be carrying an authorization whose scope
+      // is `undefined`, which every downstream tenant check would then compare against nothing.
+      expect(client.data['user']).toBeUndefined()
     })
   })
 })
