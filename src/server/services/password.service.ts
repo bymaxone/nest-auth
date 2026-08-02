@@ -6,7 +6,7 @@ import {
 } from 'node:crypto'
 import { promisify } from 'node:util'
 
-import { HttpStatus, Inject, Injectable } from '@nestjs/common'
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
 
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -125,6 +125,7 @@ function parseStoredHash(hash: string): ParsedHash | null {
 
 @Injectable()
 export class PasswordService {
+  private readonly logger = new Logger(PasswordService.name)
   private readonly N: number
   private readonly r: number
   private readonly p: number
@@ -164,14 +165,32 @@ export class PasswordService {
    * and never on login: refusing a breached password someone already has would lock them out
    * of the account they need to get into to change it.
    *
-   * The checker fails open by contract, so an unreachable corpus admits the password rather
-   * than blocking the credential path.
+   * The checker fails open by contract — {@link IPasswordBreachChecker.isBreached} is
+   * documented to answer `false`, never throw, when the corpus cannot be consulted — so an
+   * unreachable corpus admits the password rather than blocking the credential path.
+   *
+   * That contract is enforced here rather than assumed. The implementation is the consumer's:
+   * a `fetch` that rejects outside their own `try`, a client library that throws on a DNS
+   * failure, or an ordinary bug is enough to break it, and the exception would propagate out of
+   * every path that *sets* a password. Registration, reset and invitation acceptance would all
+   * start failing because an advisory corpus was unreachable — the exact inversion of the
+   * documented behaviour, and worst during an incident, when changing the password is the
+   * urgent thing. A refusal to answer is not evidence against the password.
+   *
+   * The plaintext is never passed to the logger; only the checker's own error is.
    *
    * @param plain - The plaintext password the user is trying to set.
    * @throws {@link AuthException} with `PASSWORD_COMPROMISED` when the corpus knows it.
    */
   async assertNotCompromised(plain: string): Promise<void> {
-    if (await this.breachChecker.isBreached(plain)) {
+    let breached: boolean
+    try {
+      breached = await this.breachChecker.isBreached(plain)
+    } catch (err: unknown) {
+      this.logger.error('breach check threw; admitting the password (the checker fails open)', err)
+      return
+    }
+    if (breached) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED, HttpStatus.BAD_REQUEST)
     }
   }

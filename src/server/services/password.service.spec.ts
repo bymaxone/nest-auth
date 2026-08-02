@@ -5,6 +5,7 @@
  * defensive branches for malformed hash strings.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
@@ -72,6 +73,39 @@ describe('PasswordService', () => {
       await expect(
         service.assertNotCompromised('a-long-unique-passphrase')
       ).resolves.toBeUndefined()
+    })
+
+    // The checker is documented to fail open and is the CONSUMER's implementation, so the
+    // contract is enforced here rather than assumed. A throw used to propagate out of every
+    // path that sets a password — registration, reset, invitation acceptance would all start
+    // failing because an advisory corpus was unreachable, which is the documented behaviour
+    // inverted and worst during an incident. A refusal to answer is not evidence against the
+    // password.
+    it.each([
+      ['a rejected promise', async () => Promise.reject(new Error('corpus unreachable'))],
+      [
+        'a synchronous throw',
+        () => {
+          throw new Error('client blew up')
+        }
+      ],
+      ['a non-Error rejection', async () => Promise.reject('string rejection')]
+    ])('admits the password when the checker answers with %s', async (_label, impl) => {
+      mockBreachChecker.isBreached.mockImplementation(impl)
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+
+      try {
+        await expect(
+          service.assertNotCompromised('a-long-unique-passphrase')
+        ).resolves.toBeUndefined()
+        // Silent admission would make an outage indistinguishable from a corpus that had
+        // nothing to say, so the operator gets a line.
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        // Never the plaintext, whatever else goes in the log.
+        expect(JSON.stringify(errorSpy.mock.calls[0])).not.toContain('a-long-unique-passphrase')
+      } finally {
+        errorSpy.mockRestore()
+      }
     })
   })
 
