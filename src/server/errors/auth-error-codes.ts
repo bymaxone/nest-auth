@@ -213,6 +213,17 @@ export const AUTH_ERROR_CODES = {
    */
   UNTRUSTED_ORIGIN: 'auth.untrusted_origin',
 
+  /**
+   * A change to how the account authenticates was attempted without a recent authentication.
+   *
+   * Raised when enrolling MFA on an account that has no local password to re-prove — one
+   * provisioned purely through OAuth. Those accounts have nothing this library can verify
+   * inline, so the proof is temporal instead: the caller must have completed a real
+   * authentication within the last few minutes. The client should send the user back through
+   * sign-in and retry, which is why this is its own code rather than `INVALID_CREDENTIALS`.
+   */
+  REAUTHENTICATION_REQUIRED: 'auth.reauthentication_required',
+
   // ---------------------------------------------------------------------------
   // Invitations
   // ---------------------------------------------------------------------------
@@ -299,6 +310,7 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.validation': 'Validation failed',
   'auth.too_many_requests': 'Too many requests. Please try again shortly.',
   'auth.untrusted_origin': 'Request origin not allowed',
+  'auth.reauthentication_required': 'Please sign in again to change your security settings.',
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',
   'auth.oauth_failed': 'OAuth authentication failed',
   'auth.oauth_email_mismatch': 'OAuth email does not match',

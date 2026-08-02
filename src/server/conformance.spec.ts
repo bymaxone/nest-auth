@@ -218,6 +218,9 @@ describe('cross-implementation conformance', () => {
       invitation: 'services/invitation.service.ts',
       invitationIndex: 'services/invitation.service.ts',
       recoveryCodeClaim: 'services/mfa.service.ts',
+      // Assembled in its own module rather than inline, because both the writer
+      // (`TokenManagerService`) and the reader (`MfaService`) have to derive it identically.
+      recentAuthMarker: 'constants/recent-auth.ts',
       emailChangeToken: 'services/email-change.service.ts',
       pendingMfaSetup: 'services/mfa.service.ts',
       mfaTempTokenMarker: 'services/token-manager.service.ts'

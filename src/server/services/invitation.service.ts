@@ -609,6 +609,24 @@ export class InvitationService {
   ): Promise<AuthResult> {
     const tokenKey = `inv:${sha256(dto.token)}`
 
+    // The breach screen runs BEFORE the token is spent, and the ordering is the point. The
+    // consume below is a single-use `GETDEL`, so anything that fails after it destroys the
+    // invitation rather than merely refusing the request — and a breached password is a
+    // RECOVERABLE client error: the invitee picks another one and retries. Screening after the
+    // consume told them their password was unacceptable and, in the same breath, that the only
+    // credential they had to fix it was gone; the whole mail round trip had to be repeated for
+    // a mistake the request itself carried. `PasswordResetService.resetPassword` was refactored
+    // away from exactly this shape and records the same reasoning.
+    //
+    // Judging first does mean a caller holding no valid token can drive the screen, which for
+    // the bundled HIBP checker is an outbound range query. That is the same exposure `register`
+    // already carries on the same screen, and this route is rate-limited — the burned
+    // invitation was the larger of the two costs by a wide margin.
+    //
+    // The duplicate-address guard below cannot move with it: it reads the invitee's address out
+    // of the stored record, which only the consume produces.
+    await this.passwordService.assertNotCompromised(dto.password)
+
     // Atomically read and delete — single-use enforcement prevents race conditions.
     const raw = await this.redis.getdel(tokenKey)
 
@@ -660,7 +678,7 @@ export class InvitationService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
-    await this.passwordService.assertNotCompromised(dto.password)
+    // The breach screen already ran, before the token was spent — see the top of this method.
     const passwordHash = await this.passwordService.hash(dto.password)
 
     const authUser = await this.userRepo.create({

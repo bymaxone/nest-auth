@@ -173,6 +173,17 @@ const mockSessionService = {
 /** The account password every enrolment test re-proves. */
 const PASSWORD = 'correct horse battery staple'
 
+/**
+ * Answer the recent-authentication marker and nothing else.
+ *
+ * `MfaService.setup` also does a fast-path `get` on the pending-setup key, so a blanket
+ * `mockResolvedValue` would feed `'1'` to the setup-record parser too. Keyed on the `ra:`
+ * prefix so each test says exactly which lookup it is arranging.
+ */
+function onlyRecentAuth(present: boolean) {
+  return async (key: string) => (present && key.startsWith('ra:') ? '1' : null)
+}
+
 describe('MfaService', () => {
   let service: MfaService
 
@@ -347,14 +358,50 @@ describe('MfaService', () => {
     // back, and the recovery codes were displayed only to the attacker. The owner IS notified
     // (`sendMfaEnabledNotification`), so it is detectable rather than silent, but recovery
     // needs the host to write to `IUserRepository.updateMfa` directly.
-    it('should allow enrolment for an account with no password', async () => {
+    it('should allow enrolment for an account with no password after a recent sign-in', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.setIfAbsent.mockResolvedValue(true)
+      // The marker `issueTokens` plants: a real authentication completed within the window.
+      mockRedis.get.mockImplementation(onlyRecentAuth(true))
 
       await expect(service.setup('user-1')).resolves.toMatchObject({
         secret: expect.any(String)
       })
+      // No password was asked for — there is none to ask for.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
+    })
+
+    // The case this gate exists for, and it was the single worst thing in the library.
+    //
+    // An access token lifted by XSS or from a shared machine used to be enough to enrol a
+    // factor the ATTACKER holds. The enable invalidates every session and bumps the epoch, so
+    // the owner — who still signs in with Google perfectly well — is stopped at a challenge
+    // they cannot pass, with the recovery codes having been displayed once, to the attacker.
+    // And there was no way back: `disable` and `regenerateRecoveryCodes` both demand a live
+    // TOTP code, and the reset flow refuses an account with no password. A fifteen-minute
+    // token theft became permanent, unrecoverable loss of the account.
+    it('should refuse enrolment on a passwordless account with no recent authentication', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
+      mockRedis.get.mockImplementation(onlyRecentAuth(false))
+
+      await expect(service.setup('user-1')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
+      })
+      // Nothing minted: the attacker cannot even obtain a secret they control.
+      expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
+    })
+
+    // A distinct code rather than `INVALID_CREDENTIALS`, because the two mean different things
+    // to the client: one says "that password is wrong", the other says "send the user back
+    // through sign-in and retry". Collapsing them would leave a legitimate OAuth user staring
+    // at a password error for an account that has no password.
+    it('should answer a code the client can act on, not a credential failure', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
+      mockRedis.get.mockImplementation(onlyRecentAuth(false))
+
+      await expect(service.setup('user-1')).rejects.not.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
+      })
     })
   })
 

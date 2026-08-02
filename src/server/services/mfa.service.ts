@@ -14,6 +14,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { recentAuthKey } from '../constants/recent-auth'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import {
@@ -1391,7 +1392,35 @@ export class MfaService {
     passwordHash: string | null,
     password?: string
   ): Promise<void> {
-    if (passwordHash === null) return
+    if (passwordHash === null) {
+      // No local password to re-prove — the account was provisioned through OAuth and its
+      // credential belongs to the provider, which this library cannot verify inline. So the
+      // proof is temporal instead of cryptographic: the caller must have completed a REAL
+      // authentication within the last few minutes.
+      //
+      // This branch used to return, and that was the single worst thing in the library. An
+      // access token lifted by XSS or from a shared machine was enough to enrol a factor the
+      // ATTACKER holds; the enable then invalidates every session and bumps the epoch, so the
+      // owner — who still signs in with Google perfectly well — is stopped at a challenge they
+      // cannot pass, with the recovery codes having been displayed once, to the attacker. And
+      // there was no way back: `disable` and `regenerateRecoveryCodes` both demand a live TOTP
+      // code, and the reset flow refuses an account with no password. A fifteen-minute token
+      // theft became permanent, unrecoverable loss of the account.
+      //
+      // The marker is written by `TokenManagerService.issueTokens` and NOT by `reissueTokens`,
+      // which is what makes it proof of anything: an attacker holding a stolen session can
+      // rotate it indefinitely and never make the mark fresh again. Producing one requires
+      // driving a real sign-in, which requires the provider credentials the theft did not
+      // include.
+      const recent = await this.redis.get(recentAuthKey(context, userId, this.options.hmacKey))
+      if (recent === null) {
+        this.logger.warn(
+          `reauthenticate: no recent authentication userId=${userId} context=${context}`
+        )
+        throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED, 403)
+      }
+      return
+    }
 
     const bfIdentifier = hmacSha256(`reauth:${context}:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {

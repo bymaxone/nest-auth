@@ -885,6 +885,37 @@ describe('InvitationService', () => {
   // `role` or `tenantId` is not a string would flow into the created account and the issued
   // session. The guard reads every field, and each field needs its own case — a record missing
   // one is otherwise refused by the neighbouring clause and the gap is invisible.
+  // The consume is a single-use `GETDEL`, so anything that fails after it destroys the
+  // invitation rather than merely refusing the request. A breached password is a RECOVERABLE
+  // client error — the invitee picks another one and retries — so screening after the consume
+  // told them their password was unacceptable and, in the same breath, that the only credential
+  // they had to fix it was gone. `PasswordResetService.resetPassword` was refactored away from
+  // exactly this shape; the reasoning had not reached here.
+  describe('a recoverable client error must not spend the invitation', () => {
+    it('screens the password before consuming the token', async () => {
+      // `Once`, so the rejection cannot leak into a later case — these mocks are shared and
+      // not reset between tests.
+      mockPasswordService.assertNotCompromised.mockRejectedValueOnce(
+        new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
+      )
+      mockRedis.getdel.mockClear()
+
+      await expect(
+        service.acceptInvitation(
+          { token: 'a'.repeat(64), name: 'N', password: 'password' },
+          '1.2.3.4',
+          'agent',
+          {}
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.PASSWORD_COMPROMISED } }
+      })
+
+      // THE property: the token was never spent, so the invitee can simply retry.
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
+    })
+  })
+
   describe('acceptInvitation record shape', () => {
     it.each([
       ['role', { ...VALID_STORED_INVITATION, role: 42 }],
