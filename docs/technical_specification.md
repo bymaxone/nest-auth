@@ -2698,35 +2698,39 @@ export class CreateInvitationDto {
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------- | ------ | ----------- |
 | `JwtAuthGuard` | Validates the dashboard/tenant JWT in the cookie or `Authorization: Bearer` header. Checks `payload.type === 'dashboard'` — rejects `platform` and `mfa_challenge` tokens with `auth.token_invalid`. Extracts the payload and populates `request.user`. Respects the `@Public()` decorator to skip validation. | Global or per-route guard for authenticated endpoints |
 | `JwtPlatformGuard` | Validates the platform JWT. Checks `payload.type === 'platform'` — rejects `dashboard` tokens with `auth.platform_auth_required`. Shares `jwt.secret` with `JwtAuthGuard` (isolation via the `type` claim, not via the key). | Platform admin endpoints |
-| `RolesGuard` | Checks whether the user's role satisfies the defined hierarchy. Uses metadata set by `@Roles()`. A parent role inherits all child roles. | Endpoint | Limit | Window | Description |
+| `RolesGuard` | Checks whether the user's role satisfies the defined hierarchy. Uses metadata set by `@Roles()`. A parent role inherits all child roles. | Endpoint, via `@Roles()` |
+
+The per-route throttle limits the controllers apply with `@Throttle()`:
+
+| Endpoint                              | Limit  | Window    | Description                                                                      |
 | ------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- |
-| `POST /auth/login` | 5 req | 1 minute | Protects against brute-force per IP |
-| `POST /auth/register` | 10 req | 1 hour | Protects against mass account creation |
-| `POST /auth/refresh` | 10 req | 1 minute | Limits refresh requests |
-| `POST /auth/logout` | 20 req | 1 minute | Public route: bounds the cost of an unauthenticated call |
-| `POST /auth/ws-ticket` | 20 req | 1 minute | Bounds socket-upgrade ticket minting |
-| `POST /auth/password/forgot-password` | 3 req | 5 minutes | Prevents spam of reset emails |
-| `POST /auth/password/reset-password` | 3 req | 5 minutes | Protects the reset endpoint |
-| `POST /auth/password/change` | 5 req | 1 minute | Protects the authenticated change against a stolen access token |
-| `POST /auth/password/verify-otp` | 3 req | 5 minutes | Protects OTP verification (aligned with the internal max. of 5 attempts per OTP) |
-| `POST /auth/password/resend-otp` | 3 req | 5 minutes | Prevents spam of password reset OTPs |
-| `POST /auth/verify-email` | 5 req | 1 minute | Limits email verification |
-| `POST /auth/resend-verification` | 3 req | 5 minutes | Prevents spam of verification emails |
-| `POST /auth/mfa/setup` | 5 req | 1 minute | Limits setup attempts |
-| `POST /auth/mfa/verify-enable` | 5 req | 1 minute | Limits enrolment confirmation attempts |
-| `POST /auth/mfa/challenge` | 5 req | 1 minute | Limits MFA attempts |
-| `POST /auth/mfa/disable` | 3 req | 5 minutes | Protects MFA deactivation |
-| `POST /auth/platform/login` | 5 req | 1 minute | Protects admin login |
-| `POST /auth/invitations` | 10 req | 1 hour | Limits invitation minting |
-| `POST /auth/invitations/accept` | 5 req | 1 minute | Protects invitation acceptance |
-| `POST /auth/invitations/revoke` | 10 req | 1 hour | Matches the mint, so withdrawing costs what issuing does |
-| `POST /auth/email/change` | 3 req | 5 minutes | Sends mail to a caller-supplied address; matches the reset-email limits |
-| `POST /auth/email/change/confirm` | 5 req | 1 minute | Bounds guessing at the address-change token |
-| `GET /auth/sessions` | 30 req | 1 minute | Limits session listing |
-| `DELETE /auth/sessions/:id` | 10 req | 1 minute | Limits per-session revocation |
-| `DELETE /auth/sessions/all` | 5 req | 1 minute | Limits bulk revocation |
-| `GET /auth/oauth/:provider` | 10 req | 1 minute | Limits OAuth starts |
-| `GET /auth/oauth/:provider/callback` | 10 req | 1 minute | Limits OAuth callbacks |
+| `POST /auth/login`                    | 5 req  | 1 minute  | Protects against brute-force per IP                                              |
+| `POST /auth/register`                 | 10 req | 1 hour    | Protects against mass account creation                                           |
+| `POST /auth/refresh`                  | 10 req | 1 minute  | Limits refresh requests                                                          |
+| `POST /auth/logout`                   | 20 req | 1 minute  | Public route: bounds the cost of an unauthenticated call                         |
+| `POST /auth/ws-ticket`                | 20 req | 1 minute  | Bounds socket-upgrade ticket minting                                             |
+| `POST /auth/password/forgot-password` | 3 req  | 5 minutes | Prevents spam of reset emails                                                    |
+| `POST /auth/password/reset-password`  | 3 req  | 5 minutes | Protects the reset endpoint                                                      |
+| `POST /auth/password/change`          | 5 req  | 1 minute  | Protects the authenticated change against a stolen access token                  |
+| `POST /auth/password/verify-otp`      | 3 req  | 5 minutes | Protects OTP verification (aligned with the internal max. of 5 attempts per OTP) |
+| `POST /auth/password/resend-otp`      | 3 req  | 5 minutes | Prevents spam of password reset OTPs                                             |
+| `POST /auth/verify-email`             | 5 req  | 1 minute  | Limits email verification                                                        |
+| `POST /auth/resend-verification`      | 3 req  | 5 minutes | Prevents spam of verification emails                                             |
+| `POST /auth/mfa/setup`                | 5 req  | 1 minute  | Limits setup attempts                                                            |
+| `POST /auth/mfa/verify-enable`        | 5 req  | 1 minute  | Limits enrolment confirmation attempts                                           |
+| `POST /auth/mfa/challenge`            | 5 req  | 1 minute  | Limits MFA attempts                                                              |
+| `POST /auth/mfa/disable`              | 3 req  | 5 minutes | Protects MFA deactivation                                                        |
+| `POST /auth/platform/login`           | 5 req  | 1 minute  | Protects admin login                                                             |
+| `POST /auth/invitations`              | 10 req | 1 hour    | Limits invitation minting                                                        |
+| `POST /auth/invitations/accept`       | 5 req  | 1 minute  | Protects invitation acceptance                                                   |
+| `POST /auth/invitations/revoke`       | 10 req | 1 hour    | Matches the mint, so withdrawing costs what issuing does                         |
+| `POST /auth/email/change`             | 3 req  | 5 minutes | Sends mail to a caller-supplied address; matches the reset-email limits          |
+| `POST /auth/email/change/confirm`     | 5 req  | 1 minute  | Bounds guessing at the address-change token                                      |
+| `GET /auth/sessions`                  | 30 req | 1 minute  | Limits session listing                                                           |
+| `DELETE /auth/sessions/:id`           | 10 req | 1 minute  | Limits per-session revocation                                                    |
+| `DELETE /auth/sessions/all`           | 5 req  | 1 minute  | Limits bulk revocation                                                           |
+| `GET /auth/oauth/:provider`           | 10 req | 1 minute  | Limits OAuth starts                                                              |
+| `GET /auth/oauth/:provider/callback`  | 10 req | 1 minute  | Limits OAuth callbacks                                                           |
 
 ### 16.4 Usage in controllers
 
@@ -2897,8 +2901,8 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "@nestjs/common": "^11.0.0",
-    "@nestjs/core": "^11.0.0",
+    "@nestjs/common": "^11.0.16",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/throttler": "^6.0.0",
     "@nestjs/websockets": "^11.0.0",
@@ -2906,7 +2910,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "class-validator": "^0.14.0",
     "ioredis": "^5.0.0",
     "react": "^19.0.0",
-    "next": "^16.0.0",
+    "next": "^16.2.11",
     "reflect-metadata": "^0.2.0"
   },
   "peerDependenciesMeta": {
