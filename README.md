@@ -1002,25 +1002,6 @@ thrown one.
 
 ---
 
-## 🗺️ Roadmap
-
-The items below are on deck for future minor / major releases. None are shipping today — the list exists so contributors can see where the library is headed and where help is most useful. Open an issue if you'd like to discuss priorities or propose a design.
-
-| Area                        | Item                                                                                                                                                                                                      | Status    |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core                                                                                    | Planned   |
-| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)                                                                                    | Planned   |
-| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API                                                                                   | Exploring |
-| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module                                                                                              | Exploring |
-| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                                                                                                    | Exploring |
-| Pluggable password policy   | `IPasswordPolicy` for complexity classes and per-tenant rules (the breach check already ships as `IPasswordBreachChecker`)                                                                                | Planned   |
-| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)                                                                                        | Exploring |
-| Generated shared types      | Emit `./shared` from one source of truth with a CI drift gate, the way `rust-auth` generates its TypeScript from the Rust types — today the two sides are held in step by the conformance tier and review | Planned   |
-
-> Track progress and discuss proposals on the [issues board](https://github.com/bymaxone/nest-auth/issues).
-
----
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please read our contributing guidelines before submitting a pull request.
