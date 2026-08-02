@@ -44,6 +44,7 @@ import {
   validateConfig,
   warnOnInsecureConfiguration
 } from './internal/configValidation'
+import { NO_STORE_CACHE_CONTROL } from './internal/constants'
 import { handleProtectedRoute, handlePublicRoute } from './internal/proxyHandlers'
 import { buildSanitizedRequestHeaders } from './internal/proxyUtils'
 import { classifyRoute, normalizePath } from './internal/routeClassifier'
@@ -266,7 +267,7 @@ async function runProxy(
     // authenticated users.
     return new NextResponse(null, {
       status: 401,
-      headers: { 'Cache-Control': 'no-store, no-cache' }
+      headers: { 'Cache-Control': NO_STORE_CACHE_CONTROL }
     })
   }
 
