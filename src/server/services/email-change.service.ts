@@ -36,18 +36,32 @@ interface EmailChangeContext {
   newEmail: string
   /** The tenant the account belongs to, for the uniqueness re-check at confirm time. */
   tenantId: string
-  /** Digest of the password hash in force when the token was minted. */
-  passwordFingerprint: string
+  /**
+   * Digest of the password hash in force when the token was minted, or `''` when the account
+   * had none. Optional because a record written before the binding existed carries no such
+   * field — that, and only that, is what absence means here.
+   */
+  passwordFingerprint?: string
 }
 
-/** Whether an unknown value is a stored address-change context. */
+/**
+ * Whether an unknown value is a stored address-change context.
+ *
+ * The fingerprint is validated here rather than trusted downstream. The wire contract makes it
+ * a string — the digest, or `''` — so a number, an object or a `null` is a record nobody wrote
+ * to spec, and it is refused as a whole rather than read field by field. Leaving it unchecked
+ * meant a corrupted value reached `assertStillBound`, which read "not a string" as "predates
+ * the binding" and skipped the check the record exists to carry.
+ */
 function isEmailChangeContext(value: unknown): value is EmailChangeContext {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
+  const fingerprint = v['passwordFingerprint']
   return (
     typeof v['userId'] === 'string' &&
     typeof v['newEmail'] === 'string' &&
-    typeof v['tenantId'] === 'string'
+    typeof v['tenantId'] === 'string' &&
+    (fingerprint === undefined || typeof fingerprint === 'string')
   )
 }
 
@@ -247,17 +261,24 @@ export class EmailChangeService implements OnModuleInit {
   /**
    * Refuses a token whose binding no longer matches the account's password.
    *
-   * An empty stored fingerprint means the token predates the binding — a rolling deploy, or a
-   * sibling implementation that has not taken this change — and is accepted, exactly as the
-   * reset flow accepts one: refusing them would break every change in flight for a window
-   * this narrow.
+   * A record with no fingerprint at all predates the binding — a rolling deploy, or a sibling
+   * implementation that has not taken this change — and is accepted, exactly as the reset flow
+   * accepts one: refusing them would break every change in flight for a window this narrow.
+   * The empty string is accepted for the same reason it is written, an account that had no
+   * password when the token was minted.
+   *
+   * Absence is the only tolerated departure from the contract, and it is the only one that can
+   * reach here: anything stored under this name that is not a string fails
+   * {@link isEmailChangeContext} and the token is refused before this runs. It used to be read
+   * as "predates the binding", which turned every corrupted record into a bypass of the
+   * property this method exists to enforce.
    *
    * @param context - The stored record.
    * @param user - The account it names.
    */
   private assertStillBound(context: EmailChangeContext, user: AuthUser): void {
     const stored = context.passwordFingerprint
-    if (typeof stored !== 'string' || stored === '') return
+    if (stored === undefined || stored === '') return
 
     // An account with no password cannot match a non-empty fingerprint — and `stored` is
     // non-empty by the guard above — so the comparison is decided before it is made. Written

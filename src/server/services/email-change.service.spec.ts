@@ -379,14 +379,22 @@ describe('EmailChangeService', () => {
       await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
     })
 
-    // A fingerprint of the wrong TYPE reads as no binding, like an absent one: the field comes
-    // from a record the engine did not necessarily write, and a number where a string belongs
-    // is a malformed value, not a mismatch to refuse on.
-    it('accepts a record whose fingerprint is not a string', async () => {
-      mockRedis.getdel.mockResolvedValue(storedContext({ passwordFingerprint: 42 }))
+    // A fingerprint of the wrong TYPE is a corrupted record, not a legacy one. This used to be
+    // read as "no binding" and accepted, on the reasoning that the field comes from a record
+    // the engine did not necessarily write — but that reasoning inverts: a value of unknown
+    // provenance is the last thing that should decide whether the binding is skipped, and the
+    // wire contract makes the field a string in every case (the digest, or `''`). Absence is
+    // the only shape that means "predates the binding", and it is spelled by the field being
+    // gone, not by it holding something else.
+    it.each([
+      ['a number', 42],
+      ['an object', { digest: 'x' }],
+      ['null, which is a value and not an absence', null]
+    ])('refuses a record whose fingerprint is %s', async (_label, fingerprint) => {
+      mockRedis.getdel.mockResolvedValue(storedContext({ passwordFingerprint: fingerprint }))
 
-      await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
     })
 
     // A record with no fingerprint field at all — what a sibling implementation that has not
