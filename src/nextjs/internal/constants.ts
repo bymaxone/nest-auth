@@ -47,3 +47,13 @@ export const IDENTITY_HEADERS_BASELINE = [
   'x-tenant-id',
   'x-tenant-domain'
 ]
+
+/**
+ * The `Cache-Control` every proxy refusal carries.
+ *
+ * A background (RSC / prefetch / state-tree) refusal is the reason it exists: without it a CDN
+ * or the client router cache can store the refusal against the route that was asked for and
+ * replay it to a later, genuinely authorized visitor. Both refusals — the unauthenticated 401
+ * and the authenticated-but-refused 403 — read it from here so they cannot drift apart.
+ */
+export const NO_STORE_CACHE_CONTROL = 'no-store, no-cache'
