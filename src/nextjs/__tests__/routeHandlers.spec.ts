@@ -997,3 +997,109 @@ describe('createLogoutHandler', () => {
     expect(SILENT_REFRESH_ROUTE).toBe('/api/auth/silent-refresh')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Cross-site refusal — the three handlers as a group
+// ---------------------------------------------------------------------------
+
+/**
+ * Every one of these handlers ends by writing `Set-Cookie`, so a cross-site caller does not
+ * need to read the response to get something out of it. That is what made them exploitable
+ * without any CORS cooperation:
+ *
+ *   - `POST /api/auth/logout` from an attacker's page sends no session cookie under `Lax`, so
+ *     the upstream revocation is a no-op — but the handler answered with three `Max-Age=0`
+ *     cookies regardless, and a form POST is a top-level navigation, so the browser applied
+ *     them first-party. Any page could sign a visitor out, repeatably.
+ *   - `GET /api/auth/silent-refresh` is the same shape reachable from an `<img>`: cookies
+ *     withheld, upstream 401, `buildLogoutRedirect` clears all three.
+ *   - `POST /api/auth/client-refresh` had a method guard written specifically against a
+ *     cross-origin `<img src>` GET, which covered only the GET half.
+ *
+ * The refusal is keyed on `Sec-Fetch-Site`, which a page cannot forge. `Origin` cannot decide
+ * it: a same-origin request sends one too, and a route handler has no configured notion of its
+ * own origin — `request.nextUrl.origin` comes from `Host`.
+ */
+describe('cross-site callers are refused before any cookie is written', () => {
+  let fetchSpy: jest.SpyInstance
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch' as never) as jest.SpyInstance
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  const cookieNames = {
+    access: 'access_token',
+    refresh: 'refresh_token',
+    hasSession: 'has_session'
+  }
+
+  const handlers = {
+    logout: () =>
+      createLogoutHandler({ apiBase: 'https://api.example.com', mode: 'status', cookieNames }),
+    silentRefresh: () =>
+      createSilentRefreshHandler({
+        apiBase: 'https://api.example.com',
+        loginPath: '/login',
+        cookieNames
+      }),
+    clientRefresh: () => createClientRefreshHandler({ apiBase: 'https://api.example.com' })
+  }
+
+  const methodFor = { logout: 'POST', silentRefresh: 'GET', clientRefresh: 'POST' } as const
+
+  const cases = (['logout', 'silentRefresh', 'clientRefresh'] as const).flatMap((name) =>
+    (['cross-site', 'same-site'] as const).map((site) => [name, site] as const)
+  )
+
+  it.each(cases)('%s refuses a %s caller with 403 and no Set-Cookie', async (name, site) => {
+    const handler = handlers[name]()
+    const request = makeMockRequest({
+      method: methodFor[name],
+      url: 'https://app.example.com/api/auth/x',
+      headers: { 'sec-fetch-site': site }
+    })
+
+    const response = await handler(request as never)
+
+    expect(response.status).toBe(403)
+    // The whole point: nothing to apply, so nothing the caller achieved.
+    expect(response.headers.get('set-cookie')).toBeNull()
+    // And no upstream call, so the handler is not an amplifier either.
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it.each(['same-origin', 'none'] as const)('logout still serves a %s caller', async (site) => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 204 }))
+    const handler = handlers.logout()
+    const request = makeMockRequest({
+      method: 'POST',
+      url: 'https://app.example.com/api/auth/logout',
+      headers: { 'sec-fetch-site': site }
+    })
+
+    const response = await handler(request as never)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
+  })
+
+  // A browser too old to send `Sec-Fetch-Site`, or a non-browser client, is admitted — the same
+  // shape the server-side `TrustedOriginGuard` admits, and for the same reason: no page can
+  // make a browser omit the header, so its absence is evidence rather than an opening.
+  it('logout still serves a caller that sends no Sec-Fetch-Site at all', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 204 }))
+    const handler = handlers.logout()
+    const request = makeMockRequest({
+      method: 'POST',
+      url: 'https://app.example.com/api/auth/logout'
+    })
+
+    const response = await handler(request as never)
+
+    expect(response.status).toBe(200)
+  })
+})

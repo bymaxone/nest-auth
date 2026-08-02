@@ -56,7 +56,9 @@
  * Headers API.
  */
 
-import type { NextResponse } from 'next/server'
+// A value import, not `import type`: the cross-site refusal below is the one response this
+// module builds itself rather than getting back from `redirectToPath`.
+import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 import { AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
@@ -70,6 +72,7 @@ import { dedupeSetCookieHeaders, getSetCookieHeaders } from './helpers/dedupeSet
 import {
   assertSafeCookieName,
   assertSafeCookiePath,
+  isCrossSiteRequest,
   isSafeSameOriginPath,
   serializeClearCookie
 } from './helpers/routeHandlerUtils'
@@ -202,6 +205,18 @@ export function createSilentRefreshHandler(
   const refreshUrl = buildRefreshUrl(config.apiBase, config.refreshPath)
 
   return async function silentRefreshHandler(request: NextRequest): Promise<NextResponse> {
+    // Refused before anything else, because every exit from this handler that is not a success
+    // ends in `buildLogoutRedirect`, which writes three `Max-Age=0` cookies. An attacker's
+    // `<img src="/api/auth/silent-refresh">` is a cross-site subresource GET: `Lax` withholds
+    // the session cookie, the upstream refresh 401s, and the handler answered with the clears.
+    // A bare 403 with no `Set-Cookie` is the only response a cross-site caller can extract.
+    if (isCrossSiteRequest(request)) {
+      return new NextResponse(null, {
+        status: 403,
+        headers: { 'Cache-Control': 'no-store, no-cache' }
+      })
+    }
+
     const origin = request.nextUrl.origin
     const rawDestination = request.nextUrl.searchParams.get('redirect')
     const destination = resolveSafeDestination(rawDestination, origin, config.loginPath)

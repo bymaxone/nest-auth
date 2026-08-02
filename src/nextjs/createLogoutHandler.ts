@@ -39,6 +39,7 @@ import { assertValidApiBase, assertValidUpstreamPath } from './helpers/buildRefr
 import {
   assertSafeCookieName,
   assertSafeCookiePath,
+  isCrossSiteRequest,
   isSafeSameOriginPath,
   serializeClearCookie,
   trimTrailingSlash
@@ -128,6 +129,15 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
         status: 405,
         headers: { Allow: 'POST', 'Cache-Control': 'no-store, no-cache' }
       })
+    }
+
+    // A cross-site caller gets nothing, and gets it before any cookie is written. The verb
+    // check alone did not cover this: a form POST from an attacker's page IS a POST, sends no
+    // session cookie under `Lax` so the upstream revocation no-ops, and used to be answered
+    // with the three `Max-Age=0` cookies anyway — applied first-party, because a form POST is a
+    // top-level navigation. Any page on the internet could sign a visitor out, repeatably.
+    if (isCrossSiteRequest(request)) {
+      return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache' } })
     }
 
     // Best-effort upstream logout. We intentionally ignore the

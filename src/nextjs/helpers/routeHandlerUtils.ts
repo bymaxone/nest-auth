@@ -9,6 +9,42 @@
  */
 
 /**
+ * `Sec-Fetch-Site` values that prove a request did not come from another site.
+ *
+ * `same-origin` is the app calling itself; `none` is a user-initiated navigation (a typed URL,
+ * a bookmark), which no attacker page can cause.
+ */
+const SAFE_FETCH_SITES = new Set(['same-origin', 'none'])
+
+/**
+ * Whether a request to one of the route handlers came from somewhere other than this app.
+ *
+ * These handlers sit in front of the auth backend and every one of them ends by writing
+ * `Set-Cookie`, so a cross-site caller does not need to read the response to get something out
+ * of them. `POST /api/auth/logout` from an attacker's page sends no session cookie under `Lax`,
+ * so the upstream revocation is a no-op — but the handler answers with three `Max-Age=0`
+ * cookies anyway, and a form POST is a top-level navigation, so the browser applies them
+ * first-party. Any page on the internet could sign a visitor out of the app, repeatably. The
+ * silent-refresh GET is the same shape reachable from an `<img>`.
+ *
+ * The check is `Sec-Fetch-Site` alone. `Origin` cannot decide it: a same-origin POST sends one
+ * too, and a route handler has no configured notion of its own origin to compare against —
+ * `request.nextUrl.origin` is derived from `Host`, which is client-controlled. `Sec-Fetch-Site`
+ * is not forgeable by a page and is sent by Chrome 76, Firefox 90 and Safari 16.4 onward; a
+ * request without it is either an older browser or a non-browser client, and is admitted for
+ * the same reason the server-side guard admits that shape.
+ *
+ * @param request - The incoming request.
+ * @returns `true` when the browser has stated the request came from another site.
+ */
+export function isCrossSiteRequest(request: {
+  headers: { get(name: string): string | null }
+}): boolean {
+  const fetchSite = request.headers.get('sec-fetch-site')
+  return fetchSite !== null && !SAFE_FETCH_SITES.has(fetchSite)
+}
+
+/**
  * Build a `Set-Cookie` string that clears a cookie with the given
  * name on the given path.
  *

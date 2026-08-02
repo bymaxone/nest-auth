@@ -1005,12 +1005,18 @@ function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions)
 /**
  * Validates that the trusted-origin allowlist and the `SameSite` posture agree.
  *
- * The allowlist only ever matters under `SameSite=None`: that is the one setting where the
- * browser sends the session cookie on a cross-site state-changing request, and therefore the
- * one setting where an origin needs authorizing. Either half without the other is a
- * misconfiguration that fails quietly — `'none'` with no list rejects every cross-site call,
- * a list under `'lax'` is never consulted — so both are refused at startup rather than
- * discovered in production.
+ * `SameSite=None` with no list is still refused: that setting sends the session cookie on every
+ * cross-site request, so leaving every origin unnamed means every cross-site state change is
+ * rejected — a deployment that cannot work, discovered at the first request rather than at boot.
+ *
+ * A list under `'lax'`/`'strict'` used to be refused too, on the reasoning that the browser
+ * withholds the cookie cross-site there so the list could never be consulted. That reasoning
+ * only ever covered requests that RIDE a cookie. It does not cover the ones that MINT one:
+ * `POST /auth/login` carries the credentials in its own body, needs no cookie, and its response
+ * plants a session — so an allowlist is exactly what a `lax` deployment needs to refuse a
+ * cross-site login. Refusing to accept one left those deployments with no configuration that
+ * could close it, which is why {@link TrustedOriginGuard} now consults the list under every
+ * posture and this check no longer exists.
  */
 function validateTrustedOrigins(userOptions: BymaxAuthModuleOptions): void {
   const sameSite = userOptions.cookies?.sameSite ?? DEFAULT_OPTIONS.cookies.sameSite
@@ -1022,27 +1028,6 @@ function validateTrustedOrigins(userOptions: BymaxAuthModuleOptions): void {
         `SameSite=None sends the session cookie on every cross-site request, so the origins ` +
         `allowed to make one must be named — with none listed, every cross-site call that ` +
         `changes state is rejected. Set cookies.trustedOrigins: ['https://app.example.com'].`
-    )
-  }
-
-  // A cookie-domain resolver puts the list back in play under 'lax'/'strict' too. Those
-  // withhold the cookie CROSS-SITE, not cross-ORIGIN: a deployment serving app.example.com and
-  // api.example.com from one `.example.com` cookie is same-site, so the browser sends it on a
-  // POST between them — and `Sec-Fetch-Site: same-site` is not one of the values that proves a
-  // request came from the app itself, so `TrustedOriginGuard` falls through to the origin
-  // check. Refusing the list there left that deployment with no configuration at all: the
-  // cookie arrives, the request is refused 403, and the one setting that would have allowed it
-  // was rejected at startup.
-  const sharesACookieDomain = userOptions.cookies?.resolveDomains !== undefined
-
-  if (sameSite !== 'none' && !sharesACookieDomain && trustedOrigins.length > 0) {
-    throw new Error(
-      `[BymaxAuthModule] cookies.trustedOrigins is set but cookies.sameSite is '${sameSite}' ` +
-        `and no cookies.resolveDomains is configured. The browser sends the session cookie ` +
-        `cross-origin under that posture only when a shared cookie domain makes the origins ` +
-        `same-site, so without one the allowlist is never consulted. Use ` +
-        `cookies.sameSite: 'none' (with secureCookies: true), add cookies.resolveDomains for a ` +
-        `subdomain deployment, or drop trustedOrigins.`
     )
   }
 

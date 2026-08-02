@@ -266,16 +266,16 @@ describe('TrustedOriginGuard', () => {
     })
   })
 
-  // `Origin` is sent on a SAME-origin POST too, and with no `Sec-Fetch-Site` the guard cannot
-  // tell the two apart. It assumed cross-site, which is right where a cross-site cookie can
-  // arrive and wrong where it cannot: under 'lax'/'strict' with no shared cookie domain, the
-  // browser withholds the cookie itself, `trustedOrigins` is required to be empty, and every
-  // same-origin POST from a browser that omits `Sec-Fetch-Site` was answered 403 — login
-  // included, on that browser only.
+  // The default configuration ships an empty allowlist, so what the guard does with one decides
+  // what it does on most deployments. It used to short-circuit to allowed, which made it inert
+  // there — and inert on `POST /auth/login`, where a cross-site request needs no cookie and the
+  // response mints a session. The cases below split that posture along the one axis that can
+  // decide it.
   //
-  // The empty list is the signal. Startup already refuses an empty list under `SameSite=None`
-  // and a non-empty one under 'lax'/'strict' without `resolveDomains`, so "nothing listed"
-  // means "the browser is doing this for us".
+  // `Origin` alone cannot: it is sent on a SAME-origin POST too, and this module never learns
+  // its own origin (reconstructing it from `Host` would trust the client). `Sec-Fetch-Site`
+  // can, and is not forgeable by a page — so it is authoritative wherever it is present, and
+  // the empty list only excuses the request that omits it.
   describe('a posture where no origin is authorized', () => {
     const noAllowlist = {
       cookies: {
@@ -293,6 +293,72 @@ describe('TrustedOriginGuard', () => {
         headers: { origin: 'https://app.internal' },
         cookies: { [AUTH_ACCESS_COOKIE_NAME]: 'a_1' }
       })
+
+      expect(lax.canActivate(context)).toBe(true)
+    })
+
+    // The empty list used to short-circuit the whole guard, so THIS request — the browser
+    // itself stating the POST came from another site — was admitted. That is a login CSRF:
+    // `POST /auth/login` carries the attacker's credentials in its own body, needs no cookie,
+    // and its response plants a session first-party because a form POST is a top-level
+    // navigation. The victim then works inside the attacker's account. `Sec-Fetch-Site` is
+    // unambiguous here and is not forgeable by a page, so the empty list no longer excuses it.
+    it.each(['cross-site', 'same-site'])(
+      'refuses a %s POST even with nothing allowlisted — the login-CSRF shape',
+      async (fetchSite) => {
+        const lax = await buildGuard(noAllowlist)
+        const context = contextFor({
+          method: 'POST',
+          headers: { origin: 'https://evil.example', 'sec-fetch-site': fetchSite }
+        })
+
+        expect(() => lax.canActivate(context)).toThrow(AuthException)
+      }
+    )
+
+    // No cookie at all, which is exactly what a login or register request looks like. The old
+    // guard reached the same allow via two independent skips; both are gone.
+    it('refuses a cross-site POST carrying no cookie whatsoever', async () => {
+      const lax = await buildGuard(noAllowlist)
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+        cookies: {}
+      })
+
+      expect(() => lax.canActivate(context)).toThrow(AuthException)
+    })
+
+    // `Sec-Fetch-Site` present and cross-site, `Origin` withheld. Refused before the change and
+    // after it, but for a different reason — the empty-list short-circuit used to run first and
+    // this branch was unreachable in that posture.
+    it('refuses a cross-site POST with no Origin header', async () => {
+      const lax = await buildGuard(noAllowlist)
+      const context = contextFor({
+        method: 'POST',
+        headers: { 'sec-fetch-site': 'cross-site' }
+      })
+
+      expect(() => lax.canActivate(context)).toThrow(AuthException)
+    })
+
+    // The other half of the same coin: the browser vouching for the request still admits it
+    // with nothing listed, so a normal same-origin deployment is untouched by the change.
+    it.each(['same-origin', 'none'])('still admits a %s POST', async (fetchSite) => {
+      const lax = await buildGuard(noAllowlist)
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://app.internal', 'sec-fetch-site': fetchSite }
+      })
+
+      expect(lax.canActivate(context)).toBe(true)
+    })
+
+    // A non-browser client sends neither header, and no page can make a browser omit `Origin`
+    // on a cross-site request — so the absence stays evidence of no browser, not a bypass.
+    it('still admits a request with neither header', async () => {
+      const lax = await buildGuard(noAllowlist)
+      const context = contextFor({ method: 'POST', headers: {} })
 
       expect(lax.canActivate(context)).toBe(true)
     })
