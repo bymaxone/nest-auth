@@ -136,7 +136,7 @@ const DEFAULT_RECOVERY_CODE_COUNT = 8
  *
  * @remarks
  * `recoveryCodes` must be displayed to the user **once** at setup time and never
- * stored in plain text — the service stores their scrypt hashes.
+ * stored in plain text — the service stores a keyed HMAC-SHA-256 of each one.
  * `secret` is provided for manual entry in authenticator apps that cannot scan a QR code.
  */
 export interface MfaSetupResult {
@@ -160,7 +160,7 @@ export interface MfaSetupResult {
 interface MfaSetupData {
   /** AES-256-GCM encrypted Base32 TOTP secret. */
   encryptedSecret: string
-  /** scrypt hashes of the recovery codes (stored in the DB after enable). */
+  /** Keyed HMAC-SHA-256 digests of the recovery codes (stored in the DB after enable). */
   hashedCodes: string[]
   /**
    * AES-256-GCM encrypted JSON array of plain-text recovery codes.
@@ -1182,8 +1182,8 @@ export class MfaService {
    * the supplied `context`. The TOTP secret on the user record is unchanged — only
    * the recovery code list is replaced.
    *
-   * Returns the plain-text codes once. They are NOT persisted in plain form; only
-   * scrypt hashes go into the database. The caller is responsible for showing the
+   * Returns the plain-text codes once. They are NOT persisted in plain form; only a
+   * keyed HMAC-SHA-256 of each goes into the database. The caller is responsible for showing the
    * codes to the user exactly once and warning them to save them safely.
    *
    * @remarks
@@ -1279,7 +1279,7 @@ export class MfaService {
     await this.bruteForce.resetFailures(bfIdentifier)
 
     // Generate a fresh code set using the existing helper — same entropy, same
-    // formatting, same scrypt hashing as the initial setup() path.
+    // formatting, same keyed-MAC digesting as the initial setup() path.
     const recoveryCount = this.mfaOptions.recoveryCodeCount ?? DEFAULT_RECOVERY_CODE_COUNT
     const { plainCodes, hashedCodes } = this.hashRecoveryCodes(recoveryCount)
 

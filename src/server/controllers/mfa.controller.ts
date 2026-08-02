@@ -326,7 +326,7 @@ export class MfaController {
    * Requires a valid TOTP code (recovery codes are not accepted by design — see
    * {@link MfaRegenerateRecoveryCodesDto} for the rationale). The freshly
    * generated plain-text codes are returned in the response body and are shown
-   * once. Only their scrypt hashes are persisted.
+   * once. Only a keyed HMAC-SHA-256 of each is persisted.
    *
    * Shares the disable throttle config because the security posture is identical
    * (authenticated, TOTP-gated, MFA-affecting state change).

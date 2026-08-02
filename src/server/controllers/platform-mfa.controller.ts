@@ -147,8 +147,8 @@ export class PlatformMfaController {
    * Regenerates the platform admin's MFA recovery codes.
    *
    * Requires a valid TOTP code (recovery codes are not accepted by design).
-   * Returns the fresh plain-text codes once — only their scrypt hashes are
-   * persisted.
+   * Returns the fresh plain-text codes once — only a keyed HMAC-SHA-256 of each
+   * is persisted.
    *
    * @param user - JWT payload of the authenticated platform admin.
    * @param dto - Contains the 6-digit TOTP code confirming the action.
