@@ -19,9 +19,9 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
-// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
-// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
-// never appears in the response.
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
 const RELATIVE_BASE = 'https://placeholder.invalid'
 
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
@@ -452,12 +452,12 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    // Redirect target should be `/` (the fallback), not evil.com — and it names no origin at
-    // all, so there is nothing for a forged `Host` to substitute either.
+    // Redirect target should be `/` (the fallback), not evil.com. The origin it names is the
+    // one that asked, which is the only one a middleware `Location` may carry — and evil.com
+    // reaching it is exactly what Next would NOT normalise away.
     const raw = response.headers.get('location') ?? ''
-    expect(raw.startsWith('/')).toBe(true)
-    expect(raw.startsWith('//')).toBe(false)
-    expect(new URL(raw, RELATIVE_BASE).pathname).toBe('/')
+    expect(new URL(raw).origin).toBe('https://app.example.com')
+    expect(new URL(raw).pathname).toBe('/')
   })
 
   // getDefaultDashboard returning an empty string → falls back to `/`.

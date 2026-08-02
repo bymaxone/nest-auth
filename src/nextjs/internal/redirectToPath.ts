@@ -46,7 +46,11 @@ function toSameOriginPath(path: string): string {
 /**
  * Builds a redirect to a same-origin `path`, without naming an origin at all.
  *
- * Every redirect this proxy issues targets a path on its own app, and the path is already
+ * **Route handlers only.** Middleware must use {@link redirectToPathOnOrigin} — Next re-parses
+ * the `Location` a middleware sets and a relative one throws there. A route handler's response
+ * is sent as written, so it keeps the stronger form.
+ *
+ * Every redirect this module issues targets a path on its own app, and the path is already
  * validated as same-origin before it gets here. The origin was being supplied by
  * `request.nextUrl.origin`, which Next derives from the `Host` header — so a self-hosted
  * deployment that answers on any host handed an attacker who controls that header a
@@ -70,6 +74,34 @@ function toSameOriginPath(path: string): string {
  */
 export function redirectToPath(path: string): NextResponse {
   return new NextResponse(null, { status: 307, headers: { location: toSameOriginPath(path) } })
+}
+
+/**
+ * Builds the same redirect for a **middleware**, where the `Location` has to be absolute.
+ *
+ * This is a constraint Next imposes, not a preference. A middleware's response does not go to
+ * the client as written: Next reads the `Location` back and hands it to
+ * `new NextURL(location, ...)`, passing options and no base. A relative value has nothing to
+ * resolve against there and throws `ERR_INVALID_URL` before the response is sent, so every
+ * request that redirects — which is every unauthenticated one — becomes a 500.
+ *
+ * Naming `origin` does not reintroduce the `Host` problem {@link redirectToPath} describes.
+ * Immediately after parsing, Next compares the redirect's host against the request's and, when
+ * they match, rewrites `Location` down to a path. They always match here: `origin` is this same
+ * request's. A forged `Host` therefore reaches the header and not the browser — it is stripped,
+ * and the browser resolves the remaining path against the URL it actually requested.
+ *
+ * What that normalisation does not cover is a `Location` on a genuinely different origin, which
+ * Next leaves absolute and the browser follows. That is the case {@link toSameOriginPath}
+ * refuses, and the reason `path` is reduced here rather than trusted.
+ *
+ * @param path - A same-origin path beginning with `/`, optionally carrying a query string.
+ * @param origin - The answering request's own origin, from `request.nextUrl.origin`.
+ * @returns A 307 response whose `Location` is absolute and on `origin`.
+ */
+export function redirectToPathOnOrigin(path: string, origin: string): NextResponse {
+  const url = new URL(toSameOriginPath(path), origin)
+  return new NextResponse(null, { status: 307, headers: { location: url.toString() } })
 }
 
 /**

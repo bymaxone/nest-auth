@@ -30,9 +30,9 @@
 import { signHs256Token, makeMockRequest, DEFAULT_PROXY_CONFIG } from './_testHelpers'
 import { createAuthProxy } from '../createAuthProxy'
 
-// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
-// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
-// never appears in the response.
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
 const RELATIVE_BASE = 'https://placeholder.invalid'
 
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'

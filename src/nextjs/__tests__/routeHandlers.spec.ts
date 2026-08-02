@@ -29,9 +29,9 @@ import {
 } from '..'
 import { makeMockRequest } from './_testHelpers'
 
-// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
-// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
-// never appears in the response.
+// A route handler's response is sent as written, so its `Location` stays RELATIVE and a
+// forged `Host` has nothing to name: see `redirectToPath`. Parsing needs a base for that
+// reason, and the base is a placeholder that never appears in the response.
 const RELATIVE_BASE = 'https://placeholder.invalid'
 
 /**

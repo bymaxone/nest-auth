@@ -26,9 +26,9 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
-// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
-// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
-// never appears in the response.
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
 const RELATIVE_BASE = 'https://placeholder.invalid'
 
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
@@ -250,28 +250,38 @@ describe('createAuthProxy — authorised response _r fast path', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Relative Location — the Host header cannot pick the redirect target
+// Location — absolute, as Next requires of a middleware, and never off-origin
 // ---------------------------------------------------------------------------
 
-describe('createAuthProxy — redirects name no origin', () => {
-  // Every redirect this proxy issues targets a path on its own app, and the path is validated
-  // as same-origin before it is used. The ORIGIN was supplied by `request.nextUrl.origin`,
-  // which Next derives from the `Host` header — so a self-hosted deployment answering on any
-  // host handed an attacker who controls that header a `Location: https://attacker/login`.
-  // The path validation could not see it: the path was fine, the origin was never checked.
-  // A relative `Location` (RFC 7231 §7.1.2) removes the question — the browser resolves it
-  // against the URL it actually requested, not against a header.
-  it('emits a relative Location when redirecting an unauthenticated protected route', async () => {
+describe('createAuthProxy — the Location Next can parse, on our own origin', () => {
+  // A middleware's response is not sent as written. Next reads the `Location` back and hands
+  // it to `new NextURL(location, ...)`, passing options and no base, so a relative value —
+  // legal per RFC 7231 §7.1.2, and what this proxy used to emit — throws `ERR_INVALID_URL`
+  // there and turns every unauthenticated request into a 500. `new URL` with no base is that
+  // same parse, which is why this asserts it rather than the shape of the string.
+  it('emits a Location that parses with no base, as Next parses it', async () => {
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({ url: 'https://app.example/dashboard' })
+
+    const response = await proxy(request as never)
+    const location = response.headers.get('location') ?? ''
+
+    expect(() => new URL(location)).not.toThrow()
+    expect(new URL(location).origin).toBe('https://app.example')
+  })
+
+  // The origin comes from `request.nextUrl.origin`, which Next derives from the `Host` header,
+  // so a forged host does reach the header — and stops there. Next compares the redirect's
+  // host against the request's and rewrites `Location` down to a path when they match, which
+  // here they always do. What Next leaves absolute is a redirect to a DIFFERENT origin, so
+  // naming only the requested one is the invariant that has to hold at this layer.
+  it('names the requested origin and never a third-party one', async () => {
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
     const request = makeMockRequest({ url: 'https://attacker.example/dashboard' })
 
     const response = await proxy(request as never)
     const location = response.headers.get('location') ?? ''
 
-    // Relative, and NOT protocol-relative: `//attacker.example/x` is an absolute URL to a
-    // browser, so a leading `//` would reintroduce exactly what this removes.
-    expect(location.startsWith('/')).toBe(true)
-    expect(location.startsWith('//')).toBe(false)
-    expect(location).not.toContain('attacker.example')
+    expect(new URL(location).origin).toBe('https://attacker.example')
   })
 })

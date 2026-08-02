@@ -27,9 +27,9 @@ import { NextResponse } from 'next/server'
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, extractRedirectParam, makeMockRequest } from './_testHelpers'
 
-// The proxy emits a RELATIVE `Location` so a forged `Host` cannot redirect anywhere: see
-// `redirectToPath`. Parsing needs a base for that reason, and the base is a placeholder that
-// never appears in the response.
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
 const RELATIVE_BASE = 'https://placeholder.invalid'
 
 describe('createAuthProxy — redirect loop prevention', () => {
@@ -224,26 +224,28 @@ describe('createAuthProxy — redirect loop prevention', () => {
       expect(destination).toMatch(/_r=2/)
     })
 
-    // The silent-refresh redirect was the last one still naming an origin, and the only origin
-    // available to it was `request.url`'s — which Next derives from the `Host` header. A
-    // self-hosted deployment answering on any host therefore handed an attacker who controls
-    // that header a `Location` pointing at their own origin, from the one redirect that had not
-    // been converted. Both silent-refresh sites (public route and protected route) are covered.
+    // Both silent-refresh sites (public route and protected route) must satisfy the same two
+    // things every middleware redirect here does: a `Location` Next can parse with no base,
+    // and an origin that is the requested one rather than any other. A forged `Host` reaches
+    // the header — Next strips it before the browser sees it — but it must never be able to
+    // put a DIFFERENT origin there, which is the case Next leaves alone.
     it.each([
       ['a public route', '/', { has_session: '1' }],
       ['a protected route', '/dashboard', { has_session: '1' }]
-    ])('emits the silent-refresh redirect relative from %s', async (_case, path, cookies) => {
-      const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
-      const request = makeMockRequest({ url: `https://attacker.example${path}`, cookies })
+    ])(
+      'emits the silent-refresh redirect on our own origin from %s',
+      async (_case, path, cookies) => {
+        const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+        const request = makeMockRequest({ url: `https://attacker.example${path}`, cookies })
 
-      const response = await proxy(request as never)
-      const location = response.headers.get('location') ?? ''
+        const response = await proxy(request as never)
+        const location = response.headers.get('location') ?? ''
 
-      expect(location.startsWith('/api/auth/silent-refresh')).toBe(true)
-      expect(location).not.toContain('attacker.example')
-      // Not protocol-relative either: `//host/x` is an absolute URL to a browser.
-      expect(location.startsWith('//')).toBe(false)
-    })
+        expect(() => new URL(location)).not.toThrow()
+        expect(new URL(location).origin).toBe('https://attacker.example')
+        expect(new URL(location).pathname).toBe('/api/auth/silent-refresh')
+      }
+    )
 
     // No cookies at all → straight to login, no refresh attempt. The
     // hasCookie + has_session discriminator lives in NEST-174; this

@@ -11,7 +11,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-import { redirectToPath, withQueryParam } from './redirectToPath'
+import { redirectToPathOnOrigin, withQueryParam } from './redirectToPath'
 import type { ProtectedRoutePattern, ResolvedAuthProxyConfig } from '../createAuthProxy'
 import { REASON_EXPIRED, REASON_PARAM, REFRESH_ATTEMPT_PARAM } from './constants'
 import {
@@ -79,10 +79,13 @@ export function handlePublicRoute(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    // Relative `Location`, like every other redirect this proxy issues: the absolute form
-    // named an origin, and the only one available was `request.url`'s — which Next derives
-    // from the `Host` header.
-    return redirectToPath(buildSilentRefreshPath(request, destination))
+    // Absolute `Location`: Next re-parses the header a middleware sets and a relative one
+    // throws there. Naming this request's own origin is safe — Next strips it back off
+    // before the browser sees it. See `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(
+      buildSilentRefreshPath(request, destination),
+      request.nextUrl.origin
+    )
   }
 
   // No session cookie — nothing to refresh. Render the public page.
@@ -122,8 +125,9 @@ function handleAuthenticatedOnPublic(
   if (isRedirectIfAuth && !reasonPresent) {
     // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
     const destination = safeRelativePath(config.getDefaultDashboard(role), '/')
-    // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
-    return redirectToPath(destination)
+    // Absolute `Location`, which Next requires of a middleware, and which it strips back to a
+    // path before the browser sees it — see `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(destination, request.nextUrl.origin)
   }
 
   return NextResponse.next({ request: { headers: sanitizedHeaders } })
@@ -180,7 +184,10 @@ export function handleProtectedRoute(
     const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)
-    return redirectToPath(withQueryParam(safeDestination, 'error', 'forbidden'))
+    return redirectToPathOnOrigin(
+      withQueryParam(safeDestination, 'error', 'forbidden'),
+      request.nextUrl.origin
+    )
   }
 
   // Authorised — inject identity headers, strip `_r` from URL.
@@ -230,10 +237,13 @@ function handleUnauthenticatedOnProtected(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    // Relative `Location`, like every other redirect this proxy issues: the absolute form
-    // named an origin, and the only one available was `request.url`'s — which Next derives
-    // from the `Host` header.
-    return redirectToPath(buildSilentRefreshPath(request, destination))
+    // Absolute `Location`: Next re-parses the header a middleware sets and a relative one
+    // throws there. Naming this request's own origin is safe — Next strips it back off
+    // before the browser sees it. See `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(
+      buildSilentRefreshPath(request, destination),
+      request.nextUrl.origin
+    )
   }
 
   // Cookie was present but invalid AND `has_session` missing —
@@ -306,6 +316,7 @@ export function redirectToLogin(
     reason !== undefined && reason.length > 0
       ? withQueryParam(loginPath, REASON_PARAM, reason)
       : loginPath
-  // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
-  return redirectToPath(destination)
+  // Absolute `Location`, which Next requires of a middleware, and which it strips back to a
+  // path before the browser sees it — see `redirectToPathOnOrigin`.
+  return redirectToPathOnOrigin(destination, request.nextUrl.origin)
 }
