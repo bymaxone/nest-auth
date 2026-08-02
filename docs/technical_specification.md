@@ -2897,8 +2897,8 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "@nestjs/common": "^11.0.0",
-    "@nestjs/core": "^11.0.0",
+    "@nestjs/common": "^11.0.16",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/throttler": "^6.0.0",
     "@nestjs/websockets": "^11.0.0",
@@ -2906,7 +2906,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "class-validator": "^0.14.0",
     "ioredis": "^5.0.0",
     "react": "^19.0.0",
-    "next": "^16.0.0",
+    "next": "^16.2.11",
     "reflect-metadata": "^0.2.0"
   },
   "peerDependenciesMeta": {

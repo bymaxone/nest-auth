@@ -272,6 +272,27 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 - **100% mutation score** ([docs/mutation_testing_results.md](docs/mutation_testing_results.md)) — 3,474 seeded faults killed, no survivors and nothing left uncovered, against a `break` threshold of 95. The pass closed 57 open mutants across 19 files; not one was a bug in the library, and every one was a test that could not see its own subject.
 - **2,458 tests** at 100% coverage on all four metrics, including a conformance tier that reads `conformance/wire-contract.json` — the same file `rust-auth` reads — and an adversarial suite for the credential paths.
 
+### Security
+
+- **Peer floors raised to exclude known-vulnerable versions.** Three declared
+  ranges admitted versions carrying published advisories:
+
+  | Peer             | Was       | Now        | Advisories cleared                                                                                                                          |
+  | ---------------- | --------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `@nestjs/common` | `^11.0.0` | `^11.0.16` | [GHSA-cj7v-w2c7-cp7c](https://github.com/advisories/GHSA-cj7v-w2c7-cp7c) — remote code execution via the `Content-Type` header              |
+  | `@nestjs/core`   | `^11.0.0` | `^11.1.18` | [GHSA-36xv-jgw5-4q75](https://github.com/advisories/GHSA-36xv-jgw5-4q75) — improper neutralization of special elements in downstream output |
+  | `next`           | `^16.0.0` | `^16.2.11` | 37 advisories, worst high — SSRF in Server Actions and in rewrites, middleware/proxy bypasses, several DoS paths                            |
+
+  A peer range is a statement about which versions this library supports. A floor
+  below a published advisory tells a consumer that a vulnerable install is a
+  supported one, and nothing in their tooling contradicts it — the install
+  resolves cleanly and silently. Dependabot does not catch this: it audits what
+  is installed in this repository, never what the package declares it supports.
+
+  Each new floor is the highest first-patched version among the advisories that
+  range admitted, which is what clears every one of them at once. No runtime
+  behaviour changed.
+
 ## [1.0.11] - 2026-05-30
 
 ### Security
