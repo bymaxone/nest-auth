@@ -10,7 +10,6 @@ import type { Request } from 'express'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 
@@ -44,8 +43,9 @@ const SAFE_FETCH_SITES = new Set(['same-origin', 'none'])
  * The decision uses only headers a page cannot forge:
  *
  * 1. A safe method changes nothing — allowed.
- * 2. A request carrying none of the module's auth cookies has no ambient credential to abuse,
- *    so a bearer-token client is never affected — allowed.
+ * 2. An empty `cookies.trustedOrigins` means no origin has been authorized and none needs to be:
+ *    startup refuses that combination wherever the list would be consulted, so an empty one is
+ *    a posture where the browser never delivers the cookie cross-origin — allowed.
  * 3. `Sec-Fetch-Site: same-origin` / `none` proves the request is not cross-site — allowed.
  * 4. An `Origin` present must be in `cookies.trustedOrigins` — allowed only then.
  * 5. `Sec-Fetch-Site` present and cross-site, with no `Origin`: a browser that sends one header
@@ -53,6 +53,16 @@ const SAFE_FETCH_SITES = new Set(['same-origin', 'none'])
  * 6. Neither header at all — a non-browser client (curl, a server-to-server call). Allowed:
  *    an attacker's page cannot make a browser *omit* `Origin` on a cross-site request, so the
  *    absence is evidence there is no browser involved, not a way around the check.
+ *
+ * **The check does not depend on the request already being authenticated.** It used to: a
+ * request carrying none of the module's cookies skipped straight to allowed, on the reasoning
+ * that there was no ambient credential to abuse. The reasoning missed the requests that MINT
+ * one. `POST /auth/login` and `/auth/register` carry no cookie and answer with a session, so
+ * under `SameSite=None` an attacker's page could log a victim's browser into the ATTACKER's
+ * account and then read whatever the victim did there believing it was theirs. Three separate
+ * bugs had already been found in "which requests may skip the origin check" — renamed cookies,
+ * an unreadable cookie jar, the MFA challenge cookie — and each was a new way to be on the
+ * wrong side of that skip. There is no skip now, so the class is gone rather than narrowed.
  *
  * The request's own origin is never reconstructed from `Host` or `X-Forwarded-Proto` — both are
  * client-controlled, and a check that trusts them is not a check. Same-origin requests are
@@ -79,7 +89,13 @@ export class TrustedOriginGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>()
 
     if (SAFE_METHODS.has(request.method)) return true
-    if (!this.carriesAuthCookie(request)) return true
+    // Nothing authorized means nothing to authorize against. Startup rejects an empty list under
+    // `SameSite=None`, and rejects a NON-empty one under 'lax'/'strict' with no shared cookie
+    // domain — so an empty list here is exactly the posture where the browser withholds the
+    // cookie cross-site on its own. Enforcing anyway would refuse legitimate SAME-origin POSTs
+    // from browsers that send `Origin` and omit `Sec-Fetch-Site`, which the checks below cannot
+    // tell apart from a cross-site one.
+    if (this.options.cookies.trustedOrigins.length === 0) return true
 
     const fetchSite = request.headers['sec-fetch-site']
     if (typeof fetchSite === 'string' && SAFE_FETCH_SITES.has(fetchSite)) return true
@@ -96,56 +112,5 @@ export class TrustedOriginGuard implements CanActivate {
     }
 
     return true
-  }
-
-  /**
-   * Whether the request carries one of the module's own auth cookies.
-   *
-   * Only the credential-bearing cookies count. The `has_session` signal cookie is readable by
-   * JavaScript by design and authenticates nothing, so a request carrying only that one has no
-   * ambient credential for an attacker page to spend.
-   *
-   * The names come from the resolved options, never from the shipped defaults. Reading the
-   * defaults meant that a deployment renaming its cookies — the `cookies.accessTokenName` /
-   * `refreshTokenName` options — carried a credential this method could not see, so the guard
-   * concluded "no ambient credential" and allowed the cross-site request. That failed open on
-   * exactly the configuration the guard exists for: `SameSite=None`, where the browser does
-   * attach the renamed cookie.
-   *
-   * An unreadable `request.cookies` (the `cookie-parser` middleware not mounted) is treated as
-   * "credential present" rather than "absent". What that buys is precise: it keeps the request
-   * inside the `Sec-Fetch-Site` / `Origin` checks instead of short-circuiting past them on the
-   * `!carriesAuthCookie` early return, so a cross-site request that DOES announce itself is
-   * still refused. It does not turn a request carrying neither header into a refusal — those
-   * are admitted whatever this returns, by the deliberate choice documented above: no browser
-   * omits both, so their absence is evidence of a non-browser caller rather than a way around
-   * the check.
-   *
-   * The MFA challenge cookie counts too. It is planted by the OAuth callback with the
-   * configured `sameSite` — `none` on exactly the deployments this guard exists for — and it
-   * is the sole credential for `POST /auth/mfa/challenge`. A victim mid-login holds it and no
-   * session cookie yet, so enumerating only the two session names concluded "no ambient
-   * credential" and waved the request through before the `Origin` check ran. Each cross-site
-   * POST with a wrong code then landed on the MFA brute-force counter, and five of them locked
-   * the account for the whole window: a drive-by lockout of anyone caught mid-MFA-login.
-   * Completing the challenge was never possible — the code is unknown — but denial did not
-   * need it. Its name is a library constant rather than a configurable, so it is read from the
-   * constant; the two session names come from the resolved options because a deployment can
-   * rename them.
-   *
-   * @param request - The incoming request.
-   * @returns `true` when any module credential is present, or when the cookies cannot be read
-   *   at all.
-   */
-  private carriesAuthCookie(request: Request): boolean {
-    const cookies: unknown = request.cookies
-    if (typeof cookies !== 'object' || cookies === null) return true
-    const jar = cookies as Record<string, unknown>
-    const { accessTokenName, refreshTokenName } = this.options.cookies
-    return (
-      typeof jar[accessTokenName] === 'string' ||
-      typeof jar[refreshTokenName] === 'string' ||
-      typeof jar[MFA_TEMP_COOKIE_NAME] === 'string'
-    )
   }
 }

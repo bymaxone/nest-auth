@@ -94,29 +94,27 @@ describe('TrustedOriginGuard', () => {
       expect(guard.canActivate(context)).toBe(true)
     })
 
-    // A bearer-token client has no ambient credential for an attacker page to spend: the token
-    // travels in a header the page cannot set on a cross-site request. Blocking it would break
-    // every non-browser caller for no security gain.
-    it('allows a cross-site POST that carries no auth cookie', () => {
+    // These two used to be allowed, on the reasoning that a request carrying no auth cookie has
+    // no ambient credential for an attacker page to spend. The reasoning missed the requests
+    // that MINT one: `POST /auth/login` and `/auth/register` carry no cookie and answer with a
+    // session, and this guard sits on that controller. Under `SameSite=None` an attacker's page
+    // could therefore log a victim's browser into the ATTACKER's account, and then read
+    // everything the victim did there believing it was their own.
+    //
+    // A non-browser bearer client is still unaffected: it sends neither `Origin` nor
+    // `Sec-Fetch-Site`, and that shape is admitted below. What is refused here announces itself
+    // as a browser on an origin nobody authorized.
+    it.each([
+      ['no cookies at all — the login/register shape', {}],
+      ['only the session-signal cookie, which authenticates nothing', { has_session: '1' }]
+    ])('refuses a cross-site POST carrying %s', (_label, cookies) => {
       const context = contextFor({
         method: 'POST',
         headers: { origin: 'https://evil.example.com', 'sec-fetch-site': 'cross-site' },
-        cookies: {}
+        cookies
       })
 
-      expect(guard.canActivate(context)).toBe(true)
-    })
-
-    // The session-signal cookie is readable by JavaScript by design and authenticates nothing,
-    // so a request carrying only that one still has no credential to abuse.
-    it('does not count the session-signal cookie as a credential', () => {
-      const context = contextFor({
-        method: 'POST',
-        headers: { origin: 'https://evil.example.com' },
-        cookies: { [AUTH_HAS_SESSION_COOKIE_NAME]: '1' }
-      })
-
-      expect(guard.canActivate(context)).toBe(true)
+      expect(() => guard.canActivate(context)).toThrow(AuthException)
     })
 
     // Scenario: no cookie jar at all — `cookie-parser` not mounted, or a framework that never
@@ -263,6 +261,50 @@ describe('TrustedOriginGuard', () => {
     // a different origin and still has to be listed.
     it('rejects a same-site fetch-site with no origin header', () => {
       const context = cookieBearingPost({ 'sec-fetch-site': 'same-site' })
+
+      expect(() => guard.canActivate(context)).toThrow(AuthException)
+    })
+  })
+
+  // `Origin` is sent on a SAME-origin POST too, and with no `Sec-Fetch-Site` the guard cannot
+  // tell the two apart. It assumed cross-site, which is right where a cross-site cookie can
+  // arrive and wrong where it cannot: under 'lax'/'strict' with no shared cookie domain, the
+  // browser withholds the cookie itself, `trustedOrigins` is required to be empty, and every
+  // same-origin POST from a browser that omits `Sec-Fetch-Site` was answered 403 — login
+  // included, on that browser only.
+  //
+  // The empty list is the signal. Startup already refuses an empty list under `SameSite=None`
+  // and a non-empty one under 'lax'/'strict' without `resolveDomains`, so "nothing listed"
+  // means "the browser is doing this for us".
+  describe('a posture where no origin is authorized', () => {
+    const noAllowlist = {
+      cookies: {
+        sameSite: 'lax',
+        trustedOrigins: [],
+        accessTokenName: AUTH_ACCESS_COOKIE_NAME,
+        refreshTokenName: AUTH_REFRESH_COOKIE_NAME
+      }
+    }
+
+    it('admits a same-origin POST from a browser that sends Origin and no Sec-Fetch-Site', async () => {
+      const lax = await buildGuard(noAllowlist)
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://app.internal' },
+        cookies: { [AUTH_ACCESS_COOKIE_NAME]: 'a_1' }
+      })
+
+      expect(lax.canActivate(context)).toBe(true)
+    })
+
+    // The same request under a configured allowlist is still refused — the gate is the empty
+    // list, not the method or the headers.
+    it('still refuses it once an origin has been authorized', () => {
+      const context = contextFor({
+        method: 'POST',
+        headers: { origin: 'https://app.internal' },
+        cookies: { [AUTH_ACCESS_COOKIE_NAME]: 'a_1' }
+      })
 
       expect(() => guard.canActivate(context)).toThrow(AuthException)
     })
