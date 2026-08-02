@@ -46,13 +46,22 @@ export function isCrossSiteRequest(request: {
 
 /**
  * Build a `Set-Cookie` string that clears a cookie with the given
- * name on the given path.
+ * name, path and — when the server planted one — domain.
  *
- * `HttpOnly`, `Secure`, and `SameSite=Strict` are re-applied to match
- * the attributes the NestJS server uses when the cookie was originally
- * set. RFC 6265bis requires the overwrite to carry the same (or
- * stricter) `SameSite` value, otherwise strict-mode browsers may
- * silently ignore the clear and leave the cookie alive after logout.
+ * **A browser matches a deletion on name, domain AND path** (RFC 6265 §5.3).
+ * `domain` used to be absent here, and the server plants a `Domain=` whenever
+ * `cookies.resolveDomains` is configured, so on a subdomain-sharing deployment
+ * this created a NEW host-only cookie and left the domain-scoped originals
+ * alive. The upstream logout still revoked the session, so what survived was a
+ * dead credential in the jar plus a `has_session` that kept driving the proxy
+ * into refresh → fail → `reason=expired` bounces after every logout. The 13-line
+ * note on `refreshCookiePath` explains this exact failure mode for `Path` and
+ * never mentioned `Domain`.
+ *
+ * `HttpOnly` and `Secure` are re-applied for the same reason. `SameSite=Strict`
+ * is deliberately NOT derived from config: RFC 6265bis asks the overwrite to
+ * carry the same or a stricter value, and `Strict` is the strictest, so it
+ * matches a `lax` or `none` plant as well as a `strict` one.
  *
  * PRE-CONDITION: `name` and `path` must have been validated against
  * CR/LF/NUL and other header-smuggling characters via
@@ -62,10 +71,13 @@ export function isCrossSiteRequest(request: {
  *
  * @param name - Cookie name (pre-validated by {@link assertSafeCookieName}).
  * @param path - Cookie path scope.
+ * @param domain - The `Domain` the cookie was planted with, or `undefined` for
+ *   the host-only default.
  * @returns A `Set-Cookie` header value that clears the named cookie.
  */
-export function serializeClearCookie(name: string, path: string): string {
-  return `${name}=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
+export function serializeClearCookie(name: string, path: string, domain?: string): string {
+  const scope = domain === undefined ? '' : `; Domain=${domain}`
+  return `${name}=; Path=${path}${scope}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
 }
 
 /**

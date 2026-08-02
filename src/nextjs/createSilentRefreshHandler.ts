@@ -137,6 +137,17 @@ export interface SilentRefreshHandlerConfig {
    * cookie outlives the logout (the session itself is revoked server-side either way).
    */
   readonly refreshCookiePath?: string
+
+  /**
+   * The cookie `Domain` the NestJS server planted the session with, when
+   * `cookies.resolveDomains` is configured there. Leave unset for the
+   * host-only default.
+   *
+   * A browser matches a deletion on **name, domain AND path** (RFC 6265 §5.3),
+   * so a clear that omits `Domain` cannot remove a cookie that carries one — it
+   * plants a new host-only cookie and the originals survive.
+   */
+  readonly cookieDomain?: string
 }
 
 /**
@@ -359,12 +370,13 @@ function buildLogoutRedirect(config: SilentRefreshHandlerConfig): NextResponse {
   response.headers.set('Cache-Control', 'no-store, no-cache')
 
   const clearCookies = [
-    serializeClearCookie(config.cookieNames.access, '/'),
+    serializeClearCookie(config.cookieNames.access, '/', config.cookieDomain),
     serializeClearCookie(
       config.cookieNames.refresh,
-      config.refreshCookiePath ?? DEFAULT_REFRESH_COOKIE_PATH
+      config.refreshCookiePath ?? DEFAULT_REFRESH_COOKIE_PATH,
+      config.cookieDomain
     ),
-    serializeClearCookie(config.cookieNames.hasSession, '/')
+    serializeClearCookie(config.cookieNames.hasSession, '/', config.cookieDomain)
   ]
   for (const cookie of clearCookies) {
     response.headers.append('set-cookie', cookie)

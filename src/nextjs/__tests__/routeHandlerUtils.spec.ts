@@ -367,3 +367,48 @@ describe('trimTrailingSlash', () => {
     expect(trimTrailingSlash('')).toBe('')
   })
 })
+
+// ---------------------------------------------------------------------------
+// The clear has to mirror the plant
+// ---------------------------------------------------------------------------
+
+/**
+ * A browser matches a deletion on name, domain AND path (RFC 6265 §5.3). The server plants a
+ * `Domain=` whenever `cookies.resolveDomains` is configured, and this helper used to emit none —
+ * so on a subdomain-sharing deployment the clear created a NEW host-only cookie and the
+ * domain-scoped originals survived the logout. The upstream revocation still landed, so what
+ * remained was a dead credential in the jar plus a `has_session` that kept driving the proxy
+ * into refresh → fail → `reason=expired` bounces after every logout.
+ */
+describe('serializeClearCookie — Domain', () => {
+  it('omits Domain entirely for a host-only cookie', () => {
+    const header = serializeClearCookie('access_token', '/')
+
+    expect(header).not.toContain('Domain')
+    expect(header).toBe('access_token=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict')
+  })
+
+  it('carries the Domain the cookie was planted with', () => {
+    const header = serializeClearCookie('access_token', '/', '.example.com')
+
+    expect(header).toContain('Domain=.example.com')
+    // Placed before Max-Age so the attribute list reads in the same order the server writes it.
+    expect(header).toBe(
+      'access_token=; Path=/; Domain=.example.com; Max-Age=0; HttpOnly; Secure; SameSite=Strict'
+    )
+  })
+
+  // The three attributes that decide whether a browser applies the deletion at all, asserted
+  // together so a future edit cannot drop one quietly.
+  it('keeps HttpOnly, Secure and the strictest SameSite on both shapes', () => {
+    for (const header of [
+      serializeClearCookie('refresh_token', '/auth'),
+      serializeClearCookie('refresh_token', '/auth', '.example.com')
+    ]) {
+      expect(header).toContain('HttpOnly')
+      expect(header).toContain('Secure')
+      expect(header).toContain('SameSite=Strict')
+      expect(header).toContain('Max-Age=0')
+    }
+  })
+})
