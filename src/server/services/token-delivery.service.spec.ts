@@ -10,6 +10,13 @@ import type { Request, Response } from 'express'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { TokenDeliveryService } from './token-delivery.service'
 
+// An `Authorization` header carrying some scheme other than Bearer. A Basic credential is
+// base64 by definition, so writing one as a literal puts a credential-shaped blob in the file:
+// secret scanning flags it, and a reader has to decode it to learn it is a dummy. These tests
+// only assert that a non-Bearer scheme yields no token — nothing decodes the payload — so it is
+// encoded at runtime from a self-evident placeholder instead.
+const NON_BEARER_AUTHORIZATION = `Basic ${Buffer.from('user:pass').toString('base64')}`
+
 // ---------------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------------
@@ -495,7 +502,7 @@ describe('TokenDeliveryService', () => {
     // Verifies that a non-Bearer Authorization header returns undefined to prevent misuse of Basic auth tokens.
     it('should return undefined when Authorization header is missing Bearer prefix', async () => {
       const service = await buildService('bearer')
-      const req = makeReq({ headers: { authorization: 'Basic dXNlcjpwYXNz' } })
+      const req = makeReq({ headers: { authorization: NON_BEARER_AUTHORIZATION } })
 
       expect(service.extractAccessToken(req as Request)).toBeUndefined()
     })
@@ -1027,7 +1034,7 @@ describe('TokenDeliveryService', () => {
     // Returns undefined when the Authorization header does not use the Bearer scheme.
     it('should return undefined when Authorization header uses a non-Bearer scheme', async () => {
       const service = await buildService('cookie')
-      const req = makeReq({ headers: { authorization: 'Basic dXNlcjpwYXNz' } })
+      const req = makeReq({ headers: { authorization: NON_BEARER_AUTHORIZATION } })
 
       expect(service.extractPlatformAccessToken(req as Request)).toBeUndefined()
     })
