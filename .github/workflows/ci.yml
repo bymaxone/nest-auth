@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
       - name: Build all subpaths
         run: pnpm build

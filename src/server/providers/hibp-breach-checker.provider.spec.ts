@@ -168,8 +168,7 @@ describe('HibpBreachChecker', () => {
     await new HibpBreachChecker(50).isBreached(PASSWORD)
 
     const signal = (globalThis.fetch as unknown as jest.Mock).mock.calls[0]?.[1]?.signal as
-      | AbortSignal
-      | undefined
+      AbortSignal | undefined
     expect(signal).toBeInstanceOf(AbortSignal)
   })
 })
