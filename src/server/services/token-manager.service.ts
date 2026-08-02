@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto'
 
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import type { JwtSignOptions } from '@nestjs/jwt'
 
-import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { hmacSha256, sha256 } from '../crypto/secure-token'
+import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
   AuthResult,
   PlatformAuthResult,
@@ -22,31 +23,19 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { createEmptyHookContext } from '../utils/sanitize-headers'
+import { readStampedEpoch } from '../utils/stamped-epoch'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 
 /** TTL in seconds for MFA temp tokens (5 minutes). */
 const MFA_TEMP_TOKEN_TTL_SECONDS = 300
 
 /**
- * Lua script for atomic refresh-token rotation.
- *
- * Atomically reads the old session and deletes the old key.
- * The new session and grace-window pointer are written by TypeScript AFTER
- * parsing the real user data from the returned old session JSON. This prevents
- * a window where the new session key holds a hollow placeholder record.
- *
- * KEYS[1] = old session key (`rt:{sha256(oldRefresh)}` — namespaced by AuthRedisService)
- *
- * Returns the old session JSON string, or nil if the old key does not exist.
- * The old key is deleted atomically, preventing double-use of the old token.
+ * Ceiling on the stored device and IP strings in a session detail record. Both are
+ * attacker-controlled request headers, so they are truncated before they reach Redis. 45
+ * characters is the longest possible textual IPv6 address (IPv4-mapped form).
  */
-const ROTATE_LUA = `
-local old_session = redis.call('GET', KEYS[1])
-if not old_session then
-  return nil
-end
-redis.call('DEL', KEYS[1])
-return old_session
-`
+const MAX_SESSION_FIELD_LENGTH = 45
 
 /**
  * Session record stored in Redis for each active refresh token.
@@ -59,6 +48,31 @@ interface RefreshSession {
   device: string
   ip: string
   createdAt: string
+  /**
+   * The refresh-token **family** (login lineage) this session belongs to.
+   *
+   * Minted at login and inherited unchanged by every rotation, so all descendants of one
+   * login share it. It is the unit of reuse-detection revocation: replaying an
+   * already-consumed refresh token past its grace window revokes the whole family, not the
+   * user's other legitimate devices.
+   *
+   * Empty only on the placeholder a replayed token produces, which is never stored. Such a
+   * record is never a reuse-revocation target, and the field is omitted from the wire when
+   * empty so the stored bytes match what rust-auth writes.
+   */
+  familyId: string
+  /**
+   * When the **family** was born — the moment of the login this session descends from, as an
+   * ISO-8601 string.
+   *
+   * Distinct from `createdAt`, which is this session's own creation and is reset on every
+   * rotation. Carried unchanged through the lineage so the absolute-lifetime cap has something
+   * to measure: without it, a client rotating every fifteen minutes renews its lifetime
+   * forever and a session established once never has to be established again.
+   *
+   * Absent on a record written before the field existed; such a session is simply not capped.
+   */
+  familyCreatedAt: string
   /**
    * Whether MFA is enabled on the account at the time the session was created.
    *
@@ -95,7 +109,12 @@ export class TokenManagerService {
   constructor(
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    private readonly redis: AuthRedisService
+    private readonly redis: AuthRedisService,
+    // Optional, and the only reason this otherwise dependency-light service knows about hooks:
+    // reuse detection happens here and nowhere else, and it is the strongest evidence of
+    // compromise the library produces. Routing it out through an exception would lose the
+    // family id, and losing it would leave a consumer with nothing to correlate against.
+    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -137,8 +156,38 @@ export class TokenManagerService {
   private accessSignOptions(): JwtSignOptions {
     return {
       expiresIn: this.options.jwt.accessExpiresIn,
-      algorithm: this.options.jwt.algorithm
+      algorithm: this.options.jwt.algorithm,
+      ...this.issuerAudience()
     } as unknown as JwtSignOptions
+  }
+
+  /**
+   * The `iss`/`aud` pair to stamp and to require, or nothing when the deployment configured
+   * neither.
+   *
+   * Spread into both the sign and the verify options so the two can never disagree — a token
+   * stamped with an issuer the verifier does not require, or required where none is stamped,
+   * is a deployment that rejects its own tokens.
+   *
+   * Absent by default. With HS256 the verifier can also sign, so audience binding is what
+   * stops a token minted for one service being replayed at another that trusts the same
+   * secret; it is opt-in because enabling it on one backend of a shared deployment and not the
+   * other splits them apart.
+   */
+  private issuerAudience(): { issuer?: string; audience?: string } {
+    // The key is OMITTED rather than set to `undefined`, and that asymmetry with the verifier
+    // is load-bearing: `jsonwebtoken` validates sign options by type and throws
+    // `"issuer" must be a string` on an explicit `undefined`, while its verify path reads the
+    // same value as "do not check". Signing is the side that cares, so this is the side that
+    // guards.
+    //
+    // `resolveOptions` has already dropped an empty value, so the only question left here is
+    // present-or-absent.
+    const { issuer, audience } = this.options.jwt
+    return {
+      ...(issuer === undefined ? {} : { issuer }),
+      ...(audience === undefined ? {} : { audience })
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -164,6 +213,9 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<AuthResult> {
+    // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
+    // token at verification, without the server having to enumerate outstanding tokens.
+    const epoch = await this.redis.getUserTokenEpoch(user.id)
     const accessToken = this.issueAccess({
       sub: user.id,
       tenantId: user.tenantId,
@@ -171,26 +223,35 @@ export class TokenManagerService {
       type: 'dashboard',
       status: user.status,
       mfaEnabled: user.mfaEnabled,
-      mfaVerified: overrides?.mfaVerified ?? false
+      mfaVerified: overrides?.mfaVerified ?? false,
+      epoch
     })
 
-    const rawRefreshToken = randomUUID()
+    const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
     const sessionKey = `rt:${tokenHash}`
+    // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
+    // whole lineage can be revoked together the moment one of its tokens is replayed.
+    const familyId = randomUUID()
     const session = this.buildSession(
       user.id,
       user.tenantId,
       user.role,
       ip,
       userAgent,
-      user.mfaEnabled
+      user.mfaEnabled,
+      familyId
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, JSON.stringify(session), ttl)
+    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
     // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
     await this.redis.sadd(`sess:${user.id}`, `rt:${tokenHash}`)
     await this.redis.expire(`sess:${user.id}`, ttl)
+    // The family index holds bare hashes: it only ever tracks live `rt:` sessions, so the
+    // prefix is implied. It carries the refresh TTL so it ages out with what it tracks.
+    await this.redis.sadd(`fam:${familyId}`, tokenHash)
+    await this.redis.expire(`fam:${familyId}`, ttl)
 
     return { user, accessToken, rawRefreshToken }
   }
@@ -217,26 +278,73 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
+    const epoch = await this.redis.getUserTokenEpoch(admin.id, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: admin.id,
       role: admin.role,
       type: 'platform',
       mfaEnabled: admin.mfaEnabled,
-      mfaVerified: overrides?.mfaVerified ?? false
+      mfaVerified: overrides?.mfaVerified ?? false,
+      epoch
     })
 
-    const rawRefreshToken = randomUUID()
+    const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
     const sessionKey = `prt:${tokenHash}`
-    const session = this.buildSession(admin.id, '', admin.role, ip, userAgent, admin.mfaEnabled)
+    // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
+    const familyId = randomUUID()
+    const session = this.buildSession(
+      admin.id,
+      '',
+      admin.role,
+      ip,
+      userAgent,
+      admin.mfaEnabled,
+      familyId
+    )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, JSON.stringify(session), ttl)
-    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
-    await this.redis.sadd(`sess:${admin.id}`, `prt:${tokenHash}`)
-    await this.redis.expire(`sess:${admin.id}`, ttl)
+    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
+    // Track the session in the platform-only index so MFA enable/disable and logout-all can
+    // invalidate every platform session atomically. The platform plane has its own `psess:`
+    // keyspace because the two id spaces come from different repositories and may collide:
+    // sharing one index let revoking a dashboard user log out the admin with the same id.
+    await this.redis.sadd(`psess:${admin.id}`, `prt:${tokenHash}`)
+    await this.redis.expire(`psess:${admin.id}`, ttl)
+    await this.redis.sadd(`pfam:${familyId}`, tokenHash)
+    await this.redis.expire(`pfam:${familyId}`, ttl)
+    await this.writePlatformSessionDetail(tokenHash, ip, userAgent, ttl)
 
     return { admin, accessToken, rawRefreshToken }
+  }
+
+  /**
+   * Writes the per-session detail record for a platform session under `psd:{hash}`.
+   *
+   * The dashboard plane gets the equivalent `sd:{hash}` record from {@link SessionService},
+   * but platform sessions never had one, so a session listing had nothing to describe them
+   * with. The field set and the Unix-millisecond timestamps mirror the dashboard record
+   * exactly, so either backend sharing this Redis reads the same shape.
+   *
+   * @param tokenHash - SHA-256 of the raw refresh token; the key's `{hash}` segment.
+   * @param ip - Client IP, truncated before storage against oversized forwarded values.
+   * @param userAgent - Raw User-Agent, stored as the device description.
+   * @param ttl - Record lifetime in seconds; matches the refresh session it describes.
+   */
+  private async writePlatformSessionDetail(
+    tokenHash: string,
+    ip: string,
+    userAgent: string,
+    ttl: number
+  ): Promise<void> {
+    const now = Date.now()
+    const detail = {
+      device: userAgent.slice(0, MAX_SESSION_FIELD_LENGTH),
+      ip: ip.slice(0, MAX_SESSION_FIELD_LENGTH),
+      createdAt: now,
+      lastActivityAt: now
+    }
+    await this.redis.set(`psd:${tokenHash}`, JSON.stringify(detail), ttl)
   }
 
   // ---------------------------------------------------------------------------
@@ -244,17 +352,27 @@ export class TokenManagerService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Atomically rotates a dashboard refresh token.
+   * Atomically rotates a dashboard refresh token, detecting reuse of a consumed one.
    *
-   * Uses a Lua script to atomically read and delete the old session key, returning
-   * the old session JSON. TypeScript then writes the new session and grace pointer
-   * with the real user data — no hollow placeholder is ever stored in Redis.
+   * One Lua script consumes the live session, writes the new one and the grace pointer, and
+   * moves the family bookkeeping — so a crash can never leave a token consumed without its
+   * successor and its reuse marker in place. The script reports which of four things the
+   * presented token was:
    *
-   * If the old session is not found, atomically checks and consumes the grace-window
-   * pointer (`rp:{sha256(old)}`). The grace pointer is deleted on first use
-   * (GETDEL) to prevent unlimited reuse of an already-rotated token. After
-   * consuming the grace pointer, a new grace pointer is written for the newly
-   * issued token to maintain symmetric rotation behavior.
+   * - **live** — the normal rotation;
+   * - **inside the grace window** — a concurrent retry of a token that was just rotated away,
+   *   served with a fresh session and no new grace pointer;
+   * - **consumed, past its grace window** — the RFC 6819 theft signal. The whole family (every
+   *   live descendant of that login) is revoked and the request is rejected. Deliberately
+   *   narrower than the old "revoke every session the user has": a theft no longer logs the
+   *   user's other legitimate devices out (the OWASP-recommended behaviour, and what
+   *   rust-auth does);
+   * - **never issued** — a plain invalid string; nothing is revoked.
+   *
+   * The live record is read once before the script so the new record can inherit its family
+   * (the script needs the family id to plant `cf:`/`fam:`). That read is non-destructive and
+   * cannot double-spend: the script re-reads and deletes the old key itself, so a concurrent
+   * rotation still finds the key gone and falls to the grace path.
    *
    * @param oldRefresh - The raw refresh token being exchanged.
    * @param ip - Client IP address for session audit.
@@ -270,122 +388,158 @@ export class TokenManagerService {
     userAgent: string
   ): Promise<RotatedTokenResult> {
     const oldHash = sha256(oldRefresh)
-    const newRawRefresh = randomUUID()
+    const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
 
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
-    const oldSessionKey = `rt:${oldHash}`
-    const newSessionKey = `rt:${newHash}`
-    const graceKey = `rp:${oldHash}`
+    const seed = await this.readSeedSession(`rt:${oldHash}`, ip, userAgent)
+    this.assertWithinAbsoluteLifetime(seed)
+    const newSession = this.buildSession(
+      seed.userId,
+      seed.tenantId,
+      seed.role,
+      ip,
+      userAgent,
+      seed.mfaEnabled,
+      seed.familyId,
+      seed.familyCreatedAt
+    )
 
-    // Atomically read old session and delete it. No data is written to Redis here —
-    // the new session is written AFTER we parse the real user data from the old session.
-    const oldSessionJson = (await this.redis.eval(ROTATE_LUA, [oldSessionKey], [])) as string | null
+    const outcome = await this.redis.rotateRefreshSession({
+      kind: 'dashboard',
+      oldHash,
+      newHash,
+      newSessionJson: this.serializeSession(newSession),
+      familyId: seed.familyId,
+      userId: seed.userId,
+      refreshTtl,
+      graceTtl
+    })
 
-    if (oldSessionJson !== null) {
-      return this.rotateFromPrimary(
-        oldSessionJson,
-        oldHash,
-        ip,
-        userAgent,
-        newRawRefresh,
-        newSessionKey,
-        graceKey,
-        refreshTtl,
-        graceTtl
+    if (outcome.kind === 'rotated') {
+      return this.rotateFromPrimary(newSession, newRawRefresh)
+    }
+    if (outcome.kind === 'grace') {
+      return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
+    }
+    if (outcome.kind === 'reused') {
+      this.logger.warn(
+        'reissueTokens: reuse of a consumed refresh token detected — revoking the token family'
       )
+      const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
+      // The one moment the library can say "this is not a guess about risk": a token that was
+      // already exchanged has been presented again, so one of its two holders is not the owner.
+      // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
+      // to a lineage that is already dead rather than one still being torn down.
+      this.emitReuseDetected(ownerId, outcome.familyId)
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-
-    // Grace window: atomically consume the pointer (GETDEL prevents unlimited reuse).
-    const graceSessionJson = await this.redis.getdel(graceKey)
-    if (graceSessionJson !== null) {
-      return this.rotateFromGrace(graceSessionJson, ip, userAgent, refreshTtl, graceTtl)
-    }
-
-    // Neither the live session nor the grace pointer exists. Distinguish a genuine
-    // theft signal (reuse of a rotated-away token) from a plain invalid string, then fail.
-    await this.handleReusedToken(oldHash)
+    this.logger.warn(
+      'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
+    )
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 
   /**
-   * Reacts to a refresh token that matched neither a live session nor a grace pointer.
+   * Refuses a rotation once the login it descends from has outlived the absolute cap.
    *
-   * If a reuse sentinel (`rused:{hash}`) still names a user, the presented token was a
-   * legitimately-issued refresh token that has been rotated away and had its grace
-   * window consumed — replaying it now is a theft signal (RFC 6819), so the whole token
-   * family is revoked and the user's access tokens are cut off, preventing a stolen
-   * refresh token from keeping a parallel session alive next to the victim's. Absent the
-   * sentinel the token is just an invalid/expired string and nothing is revoked. The
-   * caller always throws `REFRESH_TOKEN_INVALID` afterwards — this never resurrects it.
+   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
+   * every fifteen minutes renews that lifetime forever, so without this a session established
+   * once never has to be established again. The cap measures from the **family's** birth, which
+   * is carried unchanged through the lineage.
    *
-   * The sentinel is CONSUMED (GETDEL) on the first reaction: a second replay of the same
-   * stolen token then finds no sentinel and fails as a plain invalid token, so an attacker
-   * cannot loop the same token to re-revoke the account and repeatedly log the victim out
-   * (an availability/DoS vector). One replay = one revocation.
+   * A session with no birth time predates the field and is not capped — it ages out under the
+   * refresh lifetime like any other. A cap of `0` disables the check entirely.
    *
-   * @param oldHash - SHA-256 of the presented refresh token; the reuse-sentinel key.
+   * @param session - The presented session, or the placeholder when the token is not live.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
+   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
+   *   remedy is the same (sign in again) and the difference would only tell a holder of a
+   *   stolen token how old the account's session is.
    */
-  private async handleReusedToken(oldHash: string): Promise<void> {
-    const reusedUserId = await this.redis.getdel(`rused:${oldHash}`)
-    if (reusedUserId === null) {
-      this.logger.warn(
-        'reissueTokens: no valid session or grace window found — REFRESH_TOKEN_INVALID'
-      )
-      return
+  /**
+   * Emits {@link IAuthHooks.onRefreshTokenReuseDetected}, fire-and-forget.
+   *
+   * The owner is read from the stored session where it can be — a replay of a token whose live
+   * key is already gone leaves nothing to read, and the hook is skipped rather than fired with
+   * an empty identity that a consumer would have to guess about.
+   */
+  private emitReuseDetected(userId: string, familyId: string): void {
+    if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
+    try {
+      void Promise.resolve(
+        this.hooks.onRefreshTokenReuseDetected({ userId, familyId }, createEmptyHookContext())
+      ).catch((err: unknown) => {
+        this.logger.error('onRefreshTokenReuseDetected hook threw', err)
+      })
+    } catch (err: unknown) {
+      this.logger.error('onRefreshTokenReuseDetected hook threw synchronously', err)
     }
-    this.logger.warn(
-      `reissueTokens: reuse of a rotated refresh token detected — revoking all sessions userId=${reusedUserId}`
-    )
-    await this.redis.revokeAllUserTokens(reusedUserId, this.options.jwt.accessCookieMaxAgeMs)
+  }
+
+  private assertWithinAbsoluteLifetime(session: RefreshSession): void {
+    const capDays = this.options.jwt.absoluteSessionLifetimeDays
+    if (capDays <= 0) return
+
+    // An absent birth time parses to NaN, so the finite check covers both the family-less
+    // record and a malformed value with one guard. Neither is evidence the session is old, and
+    // ending a session on a field that cannot be read would be a self-inflicted outage.
+    const bornAt = Date.parse(session.familyCreatedAt)
+    // Stryker disable next-line ConditionalExpression: equivalent — `NaN > cap` is false, so
+    // dropping this guard reaches the same decision by a longer route. It states the intent.
+    if (!Number.isFinite(bornAt)) return
+
+    if (Date.now() - bornAt > capDays * 86_400_000) {
+      this.logger.warn('rotation refused: the session has outlived the absolute lifetime cap')
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
   }
 
   /**
-   * Handles the primary rotation path: old session found in Redis.
+   * Reads the presented token's live record to seed the rotated one.
    *
-   * Writes the new session and a grace pointer (using `oldHash` as the grace key)
-   * so that concurrent requests carrying the old token can still succeed within
-   * the grace window.
+   * The rotation script plants the family bookkeeping in the same step that consumes the old
+   * token, so it needs the family id up front — which lives in the old record. When the live
+   * key is already gone the rotation can only end in grace/reuse/invalid, none of which store
+   * the record being built here, so an empty placeholder is returned rather than failing early.
+   *
+   * @param sessionKey - The `rt:`/`prt:` key of the presented token.
+   * @param ip - Client IP, carried into the placeholder so its every field is the real one.
+   * @param userAgent - User-Agent, carried into the placeholder for the same reason.
+   * @returns The parsed live record, or an empty-identity placeholder when the key is gone.
+   */
+  private async readSeedSession(
+    sessionKey: string,
+    ip: string,
+    userAgent: string
+  ): Promise<RefreshSession> {
+    const json = await this.redis.get(sessionKey)
+    if (json === null) {
+      // Empty identity, MFA left enforcing, and no family — a placeholder must never be able
+      // to plant family bookkeeping or mint a token that clears the MFA gate.
+      return this.buildSession('', '', '', ip, userAgent, false, '')
+    }
+    return this.parseSession(json)
+  }
+
+  /**
+   * Handles the primary rotation path: the presented token was live and is now consumed.
+   *
+   * The rotation script wrote `rt:{new}`, the grace pointer, the family bookkeeping **and**
+   * the per-user session index. The index moved inside the script because doing it here left
+   * a window between the consume and the SADD in which "log out everywhere" could sweep the
+   * index without seeing the session this rotation had just minted — leaving it alive, and
+   * rotating, after a revocation the user was told had happened.
+   *
+   * What is left here is issuing the token pair.
    */
   private async rotateFromPrimary(
-    oldSessionJson: string,
-    oldHash: string,
-    ip: string,
-    userAgent: string,
-    newRawRefresh: string,
-    newSessionKey: string,
-    graceKey: string,
-    refreshTtl: number,
-    graceTtl: number
+    newSession: RefreshSession,
+    newRawRefresh: string
   ): Promise<RotatedTokenResult> {
-    const old = this.parseSession(oldSessionJson)
-    const newHash = sha256(newRawRefresh)
-    const newSession = this.buildSession(
-      old.userId,
-      old.tenantId,
-      old.role,
-      ip,
-      userAgent,
-      old.mfaEnabled
-    )
-    await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
-    await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
-    // Reuse-detection sentinel: record that this exact refresh token was once a
-    // legitimately-issued session that has now been rotated away. It outlives the
-    // short grace window (TTL = full refresh lifetime), so a replay of this token
-    // AFTER the grace window — i.e. once both `rt:` and `rp:` are gone — is provably
-    // a reuse of a superseded token (the RFC 6819 theft signal) rather than a random
-    // invalid string. `reissueTokens` reads it to decide whether to revoke the family.
-    await this.redis.set(`rused:${oldHash}`, old.userId, refreshTtl)
-    // Update the per-user session SET: remove the rotated-away session, add the new session
-    // AND the grace pointer so that invalidateUserSessions can delete both on logout/MFA change.
-    await this.redis.srem(`sess:${old.userId}`, `rt:${oldHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, `rt:${newHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, graceKey)
-    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
-    return this.buildRotatedResult(newSession, newRawRefresh)
+    return await this.buildRotatedResult(newSession, newRawRefresh)
   }
 
   /**
@@ -400,16 +554,27 @@ export class TokenManagerService {
    * Concurrent legitimate retries are served by the primary `rt:` session; the
    * grace pointer exists only to cover the narrow window in which the old token
    * was already consumed but the client has not yet received the new one.
+   *
+   * The recovered session keeps its family, and the fresh hash joins the family index, so a
+   * session born from a grace recovery stays revocable with the rest of its lineage. The
+   * script has already refused the recovery if that family was revoked in the meantime.
    */
   private async rotateFromGrace(
     graceSessionJson: string,
     ip: string,
     userAgent: string,
-    refreshTtl: number,
-    _graceTtl: number
+    refreshTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
-    const anotherNewRefresh = randomUUID()
+    // The cap is measured again here, against the RECOVERED record. The check at the top of
+    // `reissueTokens` ran against the seed — and on this path the seed is the placeholder
+    // `readSeedSession` returns when the live key is already gone, whose `familyCreatedAt` is
+    // `now`, so the cap it applied was `now - now`, i.e. none at all. Without this second
+    // check, a lineage that had just passed its absolute cap could still mint a fresh access
+    // token and a full-length refresh session by presenting a token inside its grace window:
+    // the one path where the cap is easiest to reach is the one where it did not apply.
+    this.assertWithinAbsoluteLifetime(graceSession)
+    const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
       graceSession.userId,
@@ -417,13 +582,32 @@ export class TokenManagerService {
       graceSession.role,
       ip,
       userAgent,
-      graceSession.mfaEnabled
+      graceSession.mfaEnabled,
+      graceSession.familyId,
+      graceSession.familyCreatedAt
     )
-    await this.redis.set(`rt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
+    // One atomic step, not four. Written loose, these landed several awaits after the script
+    // returned, and a `revoke_all` arriving in that gap swept an index the recovered session
+    // was not in yet — so it survived a revocation the user was told had happened, and its
+    // access token, signed afterwards, carried the post-bump epoch and verified. See
+    // `RECOVER_GRACE_LUA`.
+    //
     // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
-    await this.redis.sadd(`sess:${graceSession.userId}`, `rt:${anotherNewHash}`)
-    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
-    return this.buildRotatedResult(anotherSession, anotherNewRefresh)
+    const written = await this.redis.writeRecoveredSession({
+      kind: 'dashboard',
+      newHash: anotherNewHash,
+      newSessionJson: this.serializeSession(anotherSession),
+      familyId: graceSession.familyId,
+      userId: graceSession.userId,
+      refreshTtl
+    })
+    if (!written) {
+      // The account was swept while this recovery was in flight. The grace pointer is already
+      // consumed, so there is nothing left to retry against — which is the right end state:
+      // the revocation the sweep performed is what the caller must now obey.
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    return await this.buildRotatedResult(anotherSession, anotherNewRefresh)
   }
 
   /**
@@ -453,11 +637,40 @@ export class TokenManagerService {
     ) {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    // Older sessions written before `mfaEnabled` was added to RefreshSession will
-    // have an absent key. Build a new object with the defaulted field rather than
-    // mutating the parsed value to keep the function side-effect free.
-    const mfaEnabled = typeof rec['mfaEnabled'] === 'boolean' ? rec['mfaEnabled'] : false
-    return { ...(parsed as RefreshSession), mfaEnabled }
+    // `mfaEnabled` is required, deliberately. Defaulting a missing value to `false` would turn
+    // a truncated or corrupt record into a silent second-factor bypass: the gate refuses only a
+    // token whose claims say `mfaEnabled && !mfaVerified`, so an absent field reads as "no
+    // second factor here" and the rotated token clears every MFA-gated route. Refusing the
+    // record costs the holder a login; defaulting it costs the account.
+    if (typeof rec['mfaEnabled'] !== 'boolean') {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    const mfaEnabled = rec['mfaEnabled']
+    // The family, by contrast, is genuinely optional: the placeholder record a replay produces
+    // carries none, and the contract omits the key rather than writing an empty string. Absent
+    // reads as "no family", which skips the family bookkeeping — a real state, not a missing
+    // one.
+    const familyId = typeof rec['familyId'] === 'string' ? rec['familyId'] : ''
+    // Same for the birth time: no family means no cap to measure from, and the session still
+    // ages out under the refresh lifetime like any other.
+    const familyCreatedAt = typeof rec['familyCreatedAt'] === 'string' ? rec['familyCreatedAt'] : ''
+    return { ...(parsed as RefreshSession), mfaEnabled, familyId, familyCreatedAt }
+  }
+
+  /**
+   * Serializes a session record for storage, omitting an empty `familyId`.
+   *
+   * rust-auth skips the field when empty (`skip_serializing_if`), so emitting `"familyId":""`
+   * here would make the same session serialize to different bytes on each side and break the
+   * shared-Redis contract. A record with no family simply has no key.
+   *
+   * @param session - The record to store.
+   * @returns The JSON string written under an `rt:`/`prt:` key.
+   */
+  private serializeSession(session: RefreshSession): string {
+    if (session.familyId !== '') return JSON.stringify(session)
+    const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = session
+    return JSON.stringify(rest)
   }
 
   /**
@@ -469,6 +682,7 @@ export class TokenManagerService {
    * @param ip - Client IP address for session audit metadata.
    * @param device - Human-readable device description (parsed from User-Agent).
    * @param mfaEnabled - Whether MFA is enabled on the account at session creation time.
+   * @param familyId - Login lineage this session belongs to; `''` when it belongs to none.
    */
   private buildSession(
     userId: string,
@@ -476,9 +690,21 @@ export class TokenManagerService {
     role: string,
     ip: string,
     device: string,
-    mfaEnabled: boolean
+    mfaEnabled: boolean,
+    familyId: string,
+    familyCreatedAt: string = new Date().toISOString()
   ): RefreshSession {
-    return { userId, tenantId, role, device, ip, createdAt: new Date().toISOString(), mfaEnabled }
+    return {
+      userId,
+      tenantId,
+      role,
+      device,
+      ip,
+      createdAt: new Date().toISOString(),
+      mfaEnabled,
+      familyId,
+      familyCreatedAt
+    }
   }
 
   /**
@@ -495,10 +721,16 @@ export class TokenManagerService {
    * `mfaVerified: true` claim on the first token rotation. MFA guards should be aware
    * of this behaviour and direct users through the MFA challenge flow to re-acquire it.
    */
-  private buildRotatedResult(session: RefreshSession, rawRefreshToken: string): RotatedTokenResult {
+  private async buildRotatedResult(
+    session: RefreshSession,
+    rawRefreshToken: string
+  ): Promise<RotatedTokenResult> {
     // mfaEnabled is propagated from the stored session so MfaRequiredGuard continues
     // to enforce MFA after rotation. mfaVerified is always false — the user must
     // re-complete the MFA challenge after rotation to re-acquire a verified token.
+    // The epoch is re-read at rotation time, so a reset that lands mid-session is picked up
+    // by the very next rotation rather than being carried over from the old token.
+    const epoch = await this.redis.getUserTokenEpoch(session.userId)
     const accessToken = this.issueAccess({
       sub: session.userId,
       tenantId: session.tenantId,
@@ -506,7 +738,8 @@ export class TokenManagerService {
       type: 'dashboard',
       status: '',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false
+      mfaVerified: false,
+      epoch
     })
 
     return {
@@ -537,42 +770,61 @@ export class TokenManagerService {
     userAgent: string
   ): Promise<RotatedTokenResult> {
     const oldHash = sha256(oldRefresh)
-    const newRawRefresh = randomUUID()
+    const newRawRefresh = generateSecureToken()
     const newHash = sha256(newRawRefresh)
 
     const refreshTtl = this.options.jwt.refreshExpiresInDays * 86_400
     const graceTtl = this.options.jwt.refreshGraceWindowSeconds
 
-    const oldSessionKey = `prt:${oldHash}`
-    const newSessionKey = `prt:${newHash}`
-    const graceKey = `prp:${oldHash}`
+    const seed = await this.readSeedSession(`prt:${oldHash}`, ip, userAgent)
+    this.assertWithinAbsoluteLifetime(seed)
+    const newSession = this.buildSession(
+      seed.userId,
+      '',
+      seed.role,
+      ip,
+      userAgent,
+      seed.mfaEnabled,
+      seed.familyId,
+      seed.familyCreatedAt
+    )
 
-    const oldSessionJson = (await this.redis.eval(ROTATE_LUA, [oldSessionKey], [])) as string | null
+    const outcome = await this.redis.rotateRefreshSession({
+      kind: 'platform',
+      oldHash,
+      newHash,
+      newSessionJson: this.serializeSession(newSession),
+      familyId: seed.familyId,
+      userId: seed.userId,
+      refreshTtl,
+      graceTtl
+    })
 
-    if (oldSessionJson !== null) {
+    if (outcome.kind === 'rotated') {
       return this.rotatePlatformFromPrimary(
-        oldSessionJson,
         oldHash,
+        newHash,
+        newSession,
         ip,
         userAgent,
         newRawRefresh,
-        newSessionKey,
-        graceKey,
-        refreshTtl,
-        graceTtl
+        refreshTtl
       )
     }
-
-    const graceSessionJson = await this.redis.getdel(graceKey)
-    if (graceSessionJson !== null) {
-      return this.rotatePlatformFromGrace(
-        graceSessionJson,
-        oldHash,
-        ip,
-        userAgent,
-        refreshTtl,
-        graceTtl
+    if (outcome.kind === 'grace') {
+      return this.rotatePlatformFromGrace(outcome.sessionJson, oldHash, ip, userAgent, refreshTtl)
+    }
+    if (outcome.kind === 'reused') {
+      // #38 deferred platform reuse detection entirely; the family design closes that gap on
+      // both planes at once.
+      this.logger.warn(
+        'reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the token family'
       )
+      const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
+      // Both planes report reuse: an operator watching for account takeover cares about a
+      // replayed platform token at least as much as a dashboard one.
+      this.emitReuseDetected(ownerId, outcome.familyId)
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 
     this.logger.warn(
@@ -589,28 +841,23 @@ export class TokenManagerService {
    * the grace window.
    */
   private async rotatePlatformFromPrimary(
-    oldSessionJson: string,
     oldHash: string,
+    newHash: string,
+    newSession: RefreshSession,
     ip: string,
     userAgent: string,
     newRawRefresh: string,
-    newSessionKey: string,
-    graceKey: string,
-    refreshTtl: number,
-    graceTtl: number
+    refreshTtl: number
   ): Promise<RotatedTokenResult> {
-    const old = this.parseSession(oldSessionJson)
-    const newHash = sha256(newRawRefresh)
-    const newSession = this.buildSession(old.userId, '', old.role, ip, userAgent, old.mfaEnabled)
+    // The `psess:` index moved inside the rotation script, on this plane as on the other:
+    // maintaining it out here left a window in which a concurrent revoke-all could sweep past
+    // the session the rotation was minting. What remains is the per-session DETAIL, which the
+    // revocation never reaches through — a stale `psd:` costs a row in a session listing, not
+    // a session that should have died.
+    await this.redis.del(`psd:${oldHash}`)
+    await this.writePlatformSessionDetail(newHash, ip, userAgent, refreshTtl)
 
-    await this.redis.set(newSessionKey, JSON.stringify(newSession), refreshTtl)
-    await this.redis.set(graceKey, JSON.stringify(newSession), graceTtl)
-    await this.redis.srem(`sess:${old.userId}`, `prt:${oldHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, `prt:${newHash}`)
-    await this.redis.sadd(`sess:${old.userId}`, graceKey)
-    await this.redis.expire(`sess:${old.userId}`, refreshTtl)
-
-    return this.buildPlatformRotatedResult(newSession, newRawRefresh)
+    return await this.buildPlatformRotatedResult(newSession, newRawRefresh)
   }
 
   /**
@@ -627,11 +874,18 @@ export class TokenManagerService {
     oldHash: string,
     ip: string,
     userAgent: string,
-    refreshTtl: number,
-    _graceTtl: number
+    refreshTtl: number
   ): Promise<RotatedTokenResult> {
     const graceSession = this.parseSession(graceSessionJson)
-    const anotherNewRefresh = randomUUID()
+    // The same re-check the dashboard twin makes, for the same reason: the pre-script check
+    // ran against the seed, and on this path the seed is the placeholder `readSeedSession`
+    // returns when the live key is already gone — its `familyCreatedAt` is `now`, so the cap
+    // compared `now - now` and applied nothing. Without this, a platform lineage that had just
+    // passed its absolute cap could still mint a fresh access token and a full-length refresh
+    // session through its grace window. Adding the check to only one plane left the other with
+    // the identical hole, on the higher-privilege identity.
+    this.assertWithinAbsoluteLifetime(graceSession)
+    const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
       graceSession.userId,
@@ -639,18 +893,31 @@ export class TokenManagerService {
       graceSession.role,
       ip,
       userAgent,
-      graceSession.mfaEnabled
+      graceSession.mfaEnabled,
+      graceSession.familyId,
+      graceSession.familyCreatedAt
     )
 
-    await this.redis.set(`prt:${anotherNewHash}`, JSON.stringify(anotherSession), refreshTtl)
+    // The platform twin of the dashboard grace write, atomic for the same reason.
     // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
-    // Remove the consumed grace pointer from the per-user SET — the key was deleted
-    // atomically by getdel() in reissuePlatformTokens; the SET entry is now stale.
-    await this.redis.srem(`sess:${graceSession.userId}`, `prp:${oldHash}`)
-    await this.redis.sadd(`sess:${graceSession.userId}`, `prt:${anotherNewHash}`)
-    await this.redis.expire(`sess:${graceSession.userId}`, refreshTtl)
+    const written = await this.redis.writeRecoveredSession({
+      kind: 'platform',
+      newHash: anotherNewHash,
+      newSessionJson: this.serializeSession(anotherSession),
+      familyId: graceSession.familyId,
+      userId: graceSession.userId,
+      refreshTtl
+    })
+    if (!written) {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
+    }
+    // Remove the consumed grace pointer from the per-user SET — the key itself is still live
+    // (the script leaves it for its remaining window); the SET entry is what a revoke-all uses.
+    await this.redis.srem(`psess:${graceSession.userId}`, `prp:${oldHash}`)
+    await this.redis.del(`psd:${oldHash}`)
+    await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
-    return this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
+    return await this.buildPlatformRotatedResult(anotherSession, anotherNewRefresh)
   }
 
   /**
@@ -660,17 +927,19 @@ export class TokenManagerService {
    * `mfaVerified` is always `false` after rotation — same semantics as {@link buildRotatedResult}.
    * Platform admins must re-complete the MFA challenge flow to re-acquire a verified token.
    */
-  private buildPlatformRotatedResult(
+  private async buildPlatformRotatedResult(
     session: RefreshSession,
     rawRefreshToken: string
-  ): RotatedTokenResult {
+  ): Promise<RotatedTokenResult> {
     // mfaVerified is always false after rotation (same semantics as buildRotatedResult).
+    const epoch = await this.redis.getUserTokenEpoch(session.userId, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: session.userId,
       role: session.role,
       type: 'platform',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false
+      mfaVerified: false,
+      epoch
     })
 
     return {
@@ -678,6 +947,42 @@ export class TokenManagerService {
       accessToken,
       rawRefreshToken
     }
+  }
+
+  /**
+   * Re-signs a rotated platform access token with the authority the administrator holds *now*.
+   *
+   * The platform twin of the re-stamp the dashboard plane performs inline after its own
+   * account re-read. Platform rotation builds its claims from the `prt:` record written at
+   * login, so the role and MFA flag it carries are the ones the admin had then, inherited
+   * unchanged through every later rotation. Demoting a `super_admin` to `support` therefore had
+   * no effect on a live console session: it kept minting tokens carrying the old authority for
+   * the refresh token's whole lifetime, and every role check reads that claim — on the
+   * highest-privilege identity in the system. The dashboard plane closed this; the platform
+   * plane was left with the identical hole.
+   *
+   * Everything the rotated token already established is kept, including `mfaVerified`: a second
+   * factor already cleared on this session must not be silently demanded again. A fresh `jti`,
+   * window and epoch are issued — the token this replaces was never handed out.
+   *
+   * @param claims - The claims of the token rotation just produced.
+   * @param role - The administrator's current role.
+   * @param mfaEnabled - Whether the administrator currently has a second factor.
+   * @returns The re-signed platform access token.
+   */
+  async reissuePlatformAccessWithAuthority(
+    claims: PlatformJwtPayload,
+    role: string,
+    mfaEnabled: boolean
+  ): Promise<string> {
+    return this.issuePlatformAccess({
+      sub: claims.sub,
+      role,
+      type: 'platform',
+      mfaEnabled,
+      mfaVerified: claims.mfaVerified,
+      epoch: await this.redis.getUserTokenEpoch(claims.sub, 'platform')
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -698,6 +1003,44 @@ export class TokenManagerService {
    * @throws {@link AuthException} with `TOKEN_INVALID` if the payload is not an
    *   object or lacks required `jti` (string) and `sub` (string) claims.
    */
+  /**
+   * Verifies an access token's signature under the pinned algorithm while **ignoring its
+   * expiry**, returning the payload.
+   *
+   * Exactly one caller wants this: logout. An access token that expired while the user was
+   * away is the normal case there, and refusing the request would leave the refresh session —
+   * the long-lived credential logout exists to kill — alive for its whole lifetime. But the
+   * signature still has to hold: the payload's `jti` decides which token gets blacklisted, so
+   * reading it unverified would let a caller revoke an access token they do not own by naming
+   * its id. Retired signing secrets are accepted, as everywhere else.
+   *
+   * @param token - The raw access token.
+   * @returns The verified payload, expiry aside.
+   * @throws Whatever the verifier throws when no configured secret accepts the token.
+   */
+  verifyIgnoringExpiry(token: string): DashboardJwtPayload {
+    return verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token, {
+      ignoreExpiration: true
+    })
+  }
+
+  /**
+   * The platform twin of {@link verifyIgnoringExpiry}, for the same single caller: logout.
+   *
+   * An operator who walks away for longer than the access-token lifetime and then signs out is
+   * the ordinary case, and refusing them leaves the refresh session — seven days of the
+   * highest-privilege identity in the system — alive on a console they believed they had left.
+   *
+   * @param token - The raw platform access token.
+   * @returns The verified payload, expiry aside.
+   * @throws Whatever the verifier throws when no configured secret accepts the token.
+   */
+  verifyPlatformIgnoringExpiry(token: string): PlatformJwtPayload {
+    return verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token, {
+      ignoreExpiration: true
+    })
+  }
+
   decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload {
     const raw = this.jwtService.decode(token)
 
@@ -737,27 +1080,32 @@ export class TokenManagerService {
       jti,
       sub: userId,
       type: 'mfa_challenge',
-      context
+      context,
+      // Stamped so the challenge token dies with the rest of the account's credentials. See
+      // the claim's own documentation for what it was surviving.
+      epoch: await this.redis.getUserTokenEpoch(userId, context)
     }
 
     const token = this.jwtService.sign(payload, {
       expiresIn: `${MFA_TEMP_TOKEN_TTL_SECONDS}s`,
-      algorithm: this.options.jwt.algorithm
+      algorithm: this.options.jwt.algorithm,
+      // The challenge token is stamped and checked like every other: it grants no resource
+      // access on its own, but it is still a token this backend minted, and a verifier that
+      // exempted one shape would be a verifier an attacker aims at.
+      ...this.issuerAudience()
     } as unknown as JwtSignOptions)
 
     await this.redis.set(`mfa:${sha256(jti)}`, userId, MFA_TEMP_TOKEN_TTL_SECONDS)
 
-    // Reset the per-user MFA challenge brute-force counter so that failed attempts
-    // from a prior (now-abandoned) login session do not compound against the
-    // legitimate user. A fresh login proves renewed possession of the password
-    // and starts the MFA brute-force budget from zero. The counter still
-    // protects within a single session — five wrong codes under one issued temp
-    // token flow will lock the account as expected until `windowSeconds` elapses.
-    // Identifier must match the one MfaService uses in `challenge`: namespaced
-    // with `'challenge:'` and HMAC-keyed on the same derived `hmacKey` so the key
-    // space aligns exactly across issue and verify.
-    const bfIdentifier = hmacSha256(`challenge:${userId}`, this.options.hmacKey)
-    await this.redis.del(`lf:${bfIdentifier}`)
+    // The per-user MFA challenge counter is deliberately NOT reset here. It used to be, on
+    // the reasoning that "a fresh login proves renewed possession of the password" — but
+    // possession of the password is exactly the attacker's assumed capability in the threat
+    // model the second factor exists to cover. Resetting on every temp-token issuance let
+    // that attacker loop `login → five wrong codes → login` forever, so the per-account
+    // lockout never engaged and the only remaining control was the per-IP rate limit, which
+    // a distributed caller sidesteps. The counter is cleared by exactly one event: a
+    // SUCCESSFUL challenge (see `MfaService.challenge`), which is the only thing that proves
+    // possession of the factor being guessed.
 
     return token
   }
@@ -798,9 +1146,7 @@ export class TokenManagerService {
   async verifyMfaTempToken(
     token: string
   ): Promise<{ userId: string; context: 'dashboard' | 'platform'; jti: string }> {
-    const payload = this.jwtService.verify<MfaTempPayload>(token, {
-      algorithms: [this.options.jwt.algorithm]
-    })
+    const payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
 
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
     // retry under the same token. consumeMfaTempToken deletes it once
@@ -815,6 +1161,21 @@ export class TokenManagerService {
     // In the current threat model this requires a forged JWT (which requires the secret),
     // but an explicit comparison makes the relationship between the two values auditable.
     if (storedUserId !== payload.sub) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
+
+    // The same bulk-revocation gate the access-token guards apply, on the plane the challenge
+    // was issued for. A password reset bumps the epoch and kills every access token, but
+    // nothing deleted an outstanding `mfa:` record — so a challenge token minted before the
+    // reset stayed redeemable for its whole TTL, and completing it handed back a full session
+    // under the new epoch. The reset is supposed to end everything the old credential could
+    // still reach, and this was the one credential it did not reach.
+    //
+    // The check lives here rather than in `MfaService.challenge` so every caller of the temp
+    // token inherits it.
+    if (
+      readStampedEpoch(payload) < (await this.redis.getUserTokenEpoch(payload.sub, payload.context))
+    ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
@@ -833,7 +1194,7 @@ export class TokenManagerService {
    *
    * @param jti - The `jti` claim returned by {@link verifyMfaTempToken}.
    */
-  async consumeMfaTempToken(jti: string): Promise<void> {
-    await this.redis.del(`mfa:${sha256(jti)}`)
+  async consumeMfaTempToken(jti: string): Promise<boolean> {
+    return await this.redis.del(`mfa:${sha256(jti)}`)
   }
 }

@@ -9,22 +9,28 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { LoginDto } from '../dto/login.dto'
 import { RegisterDto } from '../dto/register.dto'
 import { ResendVerificationDto } from '../dto/resend-verification.dto'
 import { VerifyEmailDto } from '../dto/verify-email.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, MfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { AuthService } from '../services/auth.service'
 import type {
   BearerAuthResponse,
@@ -32,6 +38,7 @@ import type {
   CookieAuthResponse
 } from '../services/token-delivery.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 
 /**
  * Narrows `AuthResult | MfaChallengeResult` to `MfaChallengeResult` using the
@@ -60,12 +67,15 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller()
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UsePipes(createAuthValidationPipe())
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-    private readonly tokenDelivery: TokenDeliveryService
+    private readonly tokenDelivery: TokenDeliveryService,
+    private readonly wsTicketService: WsTicketService
   ) {}
 
   /**
@@ -78,6 +88,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.register)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.register)
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -100,6 +111,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.login)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.login)
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -118,23 +130,30 @@ export class AuthController {
   }
 
   /**
-   * Logs out the authenticated user by revoking tokens and clearing the session.
+   * Logs out the caller by revoking their refresh session and clearing the auth cookies.
    *
-   * @param user - JWT payload from the verified access token.
+   * Deliberately **not** behind the access-token guard. The common case is a user returning
+   * after the 15-minute access token expired and clicking "sign out" — under the guard that
+   * request answered 401, so `logout` never ran and the refresh session stayed live for its
+   * full seven days on a device the user had just told the system to sign out. The refresh
+   * token is the credential that authorizes this, and the service reads the session's owner
+   * from the stored record rather than from the access token's claims.
+   *
+   * Always 204: a caller presenting a token for an already-gone session gets their cookies
+   * cleared and learns nothing about whether a session existed.
+   *
    * @param req - Incoming request (used to extract tokens).
    * @param res - Response object (passthrough — used to clear cookies).
    */
-  @UseGuards(JwtAuthGuard)
+  @Public()
+  @Throttle(AUTH_THROTTLE_CONFIGS.logout)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
-  async logout(
-    @CurrentUser() user: DashboardJwtPayload,
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response
-  ): Promise<void> {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
     const accessToken = this.tokenDelivery.extractAccessToken(req) ?? ''
     const rawRefreshToken = this.tokenDelivery.extractRefreshToken(req) ?? ''
-    await this.authService.logout(accessToken, rawRefreshToken, user.sub)
+    await this.authService.logout(accessToken, rawRefreshToken)
     this.tokenDelivery.clearAuthSession(res, req)
   }
 
@@ -150,6 +169,7 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   async refresh(
@@ -160,11 +180,12 @@ export class AuthController {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
 
+    // `refresh` re-reads the account to re-apply the status gate, and hands the record back so
+    // this does not pay a second repository read to build the body.
     const rotated = await this.authService.refresh(rawRefreshToken, ip, userAgent)
-    const user = await this.authService.getMe(rotated.session.userId)
 
     const authResult: AuthResult = {
-      user,
+      user: rotated.user,
       accessToken: rotated.accessToken,
       rawRefreshToken: rotated.rawRefreshToken
     }
@@ -184,6 +205,37 @@ export class AuthController {
   }
 
   /**
+   * Mints a single-use ticket for authenticating a WebSocket upgrade.
+   *
+   * The browser `WebSocket` API cannot set handshake headers, so a browser client cannot send
+   * `Authorization: Bearer <token>` at the upgrade. Putting the access token in the query
+   * string instead writes a long-lived credential into access logs, browser history and proxy
+   * caches — which is why {@link WsJwtGuard} refuses it. The ticket is the supported path: it
+   * is opaque, lives ~30 seconds, and is consumed by the first redemption.
+   *
+   * The guard stack is the point. `UserStatusGuard` re-checks the account is in good standing:
+   * a token stays valid for its whole lifetime, and an account suspended in the meantime must
+   * not still be able to open a socket. The second-factor check lives in the service rather
+   * than in `MfaRequiredGuard`, which is only registered when MFA is configured — a route that
+   * named it would fail to resolve on a deployment without MFA, and this endpoint has to work
+   * on both. The rule applied is the guard's, unchanged. rust-auth composes the identical
+   * three checks.
+   *
+   * @param user - JWT payload from the verified access token.
+   * @returns The raw ticket and its lifetime in seconds.
+   */
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
+  @Throttle(AUTH_THROTTLE_CONFIGS.wsTicket)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.wsTicket)
+  @Post('ws-ticket')
+  @HttpCode(HttpStatus.OK)
+  async wsTicket(
+    @CurrentUser() user: DashboardJwtPayload
+  ): Promise<{ ticket: string; expiresIn: number }> {
+    return this.wsTicketService.issue(user)
+  }
+
+  /**
    * Verifies the user's email address using a one-time password.
    *
    * @param dto - Verification payload: tenantId, email, and OTP. The user is
@@ -192,10 +244,11 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.verifyEmail)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.verifyEmail)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-email')
-  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
-    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp)
+  async verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request): Promise<void> {
+    await this.authService.verifyEmail(dto.tenantId, dto.email, dto.otp, req)
   }
 
   /**
@@ -207,9 +260,10 @@ export class AuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.resendVerification)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.resendVerification)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('resend-verification')
-  async resendVerification(@Body() dto: ResendVerificationDto): Promise<void> {
-    await this.authService.resendVerificationEmail(dto.tenantId, dto.email)
+  async resendVerification(@Body() dto: ResendVerificationDto, @Req() req: Request): Promise<void> {
+    await this.authService.resendVerificationEmail(dto.tenantId, dto.email, req)
   }
 }

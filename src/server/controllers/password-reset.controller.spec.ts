@@ -13,8 +13,20 @@ import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import type { ResendOtpDto } from '../dto/resend-otp.dto'
 import type { ResetPasswordDto } from '../dto/reset-password.dto'
 import type { VerifyOtpDto } from '../dto/verify-otp.dto'
+import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
+import type { ChangePasswordDto } from '../dto/change-password.dto'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { PasswordResetService } from '../services/password-reset.service'
+import { TokenDeliveryService } from '../services/token-delivery.service'
+
+const mockTokenDelivery = {
+  extractRefreshToken: jest.fn()
+}
 import { PasswordResetController } from './password-reset.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import type { Request } from 'express'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -23,6 +35,7 @@ import { PasswordResetController } from './password-reset.controller'
 const mockPasswordResetService = {
   initiateReset: jest.fn(),
   resetPassword: jest.fn(),
+  changePassword: jest.fn(),
   verifyOtp: jest.fn(),
   resendOtp: jest.fn()
 }
@@ -41,6 +54,12 @@ function getErrorCode(err: unknown): string {
 // Suite
 // ---------------------------------------------------------------------------
 
+/** A minimal request double — the controller only forwards it to the service. */
+const mockReq = {
+  ip: '1.2.3.4',
+  headers: { 'user-agent': 'TestBrowser' }
+} as unknown as Request
+
 describe('PasswordResetController', () => {
   let controller: PasswordResetController
 
@@ -49,8 +68,20 @@ describe('PasswordResetController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PasswordResetController],
-      providers: [{ provide: PasswordResetService, useValue: mockPasswordResetService }]
-    }).compile()
+      providers: [
+        { provide: PasswordResetService, useValue: mockPasswordResetService },
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+      ]
+    })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
+      .useValue({ canActivate: () => true })
+      .compile()
 
     controller = module.get(PasswordResetController)
   })
@@ -66,9 +97,13 @@ describe('PasswordResetController', () => {
   })
 
   // Verifies that no access guards are attached at the controller level because @Public() marks it as open.
-  it('should not have guards metadata at the controller level', () => {
-    const guards: unknown = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController)
-    expect(guards).toBeUndefined()
+  // Neither class-level guard authorizes anything: one refuses a cross-site state-changing
+  // request riding in on the session cookie, the other enforces the per-IP limit. Every route
+  // here stays public — a password reset is performed by someone who cannot authenticate.
+  it('applies only the origin and rate-limit guards at the controller level', () => {
+    const guards = Reflect.getMetadata(GUARDS_METADATA, PasswordResetController) as unknown[]
+
+    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard])
   })
 
   // ---------------------------------------------------------------------------
@@ -82,10 +117,62 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.initiateReset with the dto', async () => {
       mockPasswordResetService.initiateReset.mockResolvedValue(undefined)
 
-      await controller.forgotPassword(dto)
+      await controller.forgotPassword(dto, mockReq)
 
-      expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.initiateReset).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.initiateReset).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // changePassword
+  // ---------------------------------------------------------------------------
+
+  describe('changePassword', () => {
+    const dto: ChangePasswordDto = {
+      currentPassword: 'the-old-one',
+      newPassword: 'gliding-walnut-forecast'
+    }
+
+    // The caller's own subject decides whose password changes — never the body. A change that
+    // took an id from the request would let anyone holding any session rewrite any account's
+    // credential, which is the whole of account takeover in one route.
+    it('should change the password of the authenticated caller, not of anyone the body names', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue('current-refresh')
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+
+      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith(
+        'user-1',
+        dto,
+        // The caller's own refresh token rides along so the service can spare THIS session
+        // while ending every other one. Without it the user is signed out of the device they
+        // just changed their password on, which reads as the change having failed.
+        'current-refresh'
+      )
+    })
+
+    // A bearer-mode caller sends no refresh cookie. The change still has to work — it just has
+    // no session to spare, so every session including this one ends.
+    it('should pass an absent refresh token through unchanged', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue(undefined)
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+
+      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith('user-1', dto, undefined)
+    })
+
+    // 204: the route answers with nothing, so a client cannot read anything about the account
+    // out of a successful change.
+    it('should return undefined (HTTP 204 No Content)', async () => {
+      mockTokenDelivery.extractRefreshToken.mockReturnValue('current-refresh')
+      mockPasswordResetService.changePassword.mockResolvedValue(undefined)
+
+      await expect(
+        controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+      ).resolves.toBeUndefined()
     })
   })
 
@@ -104,9 +191,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.resetPassword with the dto', async () => {
       mockPasswordResetService.resetPassword.mockResolvedValue(undefined)
 
-      await controller.resetPassword(dto)
+      await controller.resetPassword(dto, mockReq)
 
-      expect(mockPasswordResetService.resetPassword).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.resetPassword).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.resetPassword).toHaveBeenCalledTimes(1)
     })
 
@@ -118,7 +205,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword(dto)
+        await controller.resetPassword(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -134,7 +221,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -150,7 +237,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -166,7 +253,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.resetPassword({ ...dto, otp: '123456' })
+        await controller.resetPassword({ ...dto, otp: '123456' }, mockReq)
       } catch (err) {
         caught = err
       }
@@ -186,9 +273,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.verifyOtp with the dto', async () => {
       mockPasswordResetService.verifyOtp.mockResolvedValue('a'.repeat(64))
 
-      await controller.verifyOtp(dto)
+      await controller.verifyOtp(dto, mockReq)
 
-      expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.verifyOtp).toHaveBeenCalledTimes(1)
     })
 
@@ -197,7 +284,7 @@ describe('PasswordResetController', () => {
       const rawToken = 'c'.repeat(64)
       mockPasswordResetService.verifyOtp.mockResolvedValue(rawToken)
 
-      const result = await controller.verifyOtp(dto)
+      const result = await controller.verifyOtp(dto, mockReq)
 
       expect(result).toEqual({ verifiedToken: rawToken })
       expect(Object.keys(result)).toEqual(['verifiedToken'])
@@ -211,7 +298,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -227,7 +314,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -243,7 +330,7 @@ describe('PasswordResetController', () => {
 
       let caught: unknown
       try {
-        await controller.verifyOtp(dto)
+        await controller.verifyOtp(dto, mockReq)
       } catch (err) {
         caught = err
       }
@@ -263,9 +350,9 @@ describe('PasswordResetController', () => {
     it('should delegate to passwordResetService.resendOtp with the dto', async () => {
       mockPasswordResetService.resendOtp.mockResolvedValue(undefined)
 
-      await controller.resendOtp(dto)
+      await controller.resendOtp(dto, mockReq)
 
-      expect(mockPasswordResetService.resendOtp).toHaveBeenCalledWith(dto)
+      expect(mockPasswordResetService.resendOtp).toHaveBeenCalledWith(dto, mockReq)
       expect(mockPasswordResetService.resendOtp).toHaveBeenCalledTimes(1)
     })
   })

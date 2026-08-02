@@ -19,8 +19,8 @@
 
 import { createHash } from 'node:crypto'
 
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
-import type { Response } from 'express'
+import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import type { Request, Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
 import {
@@ -29,10 +29,15 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import {
+  OAUTH_STATE_COOKIE_MAX_AGE_SECONDS,
+  OAUTH_STATE_COOKIE_NAME,
+  OAUTH_STATE_COOKIE_SAME_SITE
+} from '../constants/oauth-state-cookie'
+import { generateSecureToken, sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
+import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type { AuthResult, OAuthMfaChallengeResult } from '../interfaces/auth-result.interface'
 import type { OAuthProviderPlugin } from '../interfaces/oauth-provider.interface'
 import type {
@@ -43,6 +48,10 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
+import { maskEmail } from '../utils/mask-email'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
@@ -58,9 +67,16 @@ interface StoredOAuthState {
   /**
    * PKCE `code_verifier` (RFC 7636), held server-side for the lifetime of the
    * authorization flow and forwarded to the provider's token endpoint on
-   * callback. Absent for legacy entries and plugins that do not support PKCE.
+   * callback.
+   *
+   * Required, deliberately. `getAuthorizationUrl` writes one on every flow regardless of
+   * provider, so a record without it is corrupt or forged — and treating it as "this flow
+   * had no PKCE" would hand an attacker a downgrade: present a state record with the field
+   * stripped and the exchange proceeds with no proof the caller started the flow.
+   * `rust-auth` types the field as a plain `String`, so a record missing it fails to
+   * deserialize there; refusing it here keeps the shared record readable by exactly one rule.
    */
-  codeVerifier?: string
+  codeVerifier: string
 }
 
 /** Narrows an unknown value to `StoredOAuthState` after `JSON.parse`. */
@@ -69,7 +85,7 @@ function isStoredOAuthState(value: unknown): value is StoredOAuthState {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   if (typeof v['tenantId'] !== 'string') return false
-  if (v['codeVerifier'] !== undefined && typeof v['codeVerifier'] !== 'string') return false
+  if (typeof v['codeVerifier'] !== 'string') return false
   return true
 }
 
@@ -128,15 +144,30 @@ export class OAuthService {
    * 5. Issues a 302 redirect via the Express `res` object.
    *
    * @param provider - Provider name matching a registered {@link OAuthProviderPlugin}.
-   * @param tenantId - Tenant the user will join on successful login.
-   *   **Warning:** Not validated against the database — implement `onOAuthLogin`
-   *   to enforce tenant membership. Without the hook, OAuth sign-in is disabled.
+   * @param tenantId - Tenant the user will join on successful login, as named by the caller.
+   *   Superseded by the configured `tenantIdResolver` when there is one, and never validated
+   *   against the database — implement `onOAuthLogin` to enforce tenant membership. Without
+   *   the hook, OAuth sign-in is disabled.
+   * @param req - Incoming Express request, read by the configured `tenantIdResolver`.
    * @param res - Express response in passthrough mode (used for the 302 redirect).
    * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`.
    */
-  async initiateOAuth(provider: string, tenantId: string, res: Response): Promise<void> {
+  async initiateOAuth(
+    provider: string,
+    tenantId: string,
+    req: Request,
+    res: Response
+  ): Promise<void> {
     // Validate and resolve early so the Redis write is never attempted for unknown providers.
     const plugin = this.resolvePlugin(provider)
+
+    // The configured resolver is authoritative, exactly as it is for login, register and the
+    // reset flows: a deployment that derives the tenant from the request has stated that the
+    // caller's value is not to be trusted. This was the one door that still took it verbatim —
+    // and it is the door that decides which tenant an account gets provisioned into, which is
+    // strictly more than the others were protecting. The resolved value is what goes into the
+    // state record, so the callback cannot be talked into a different one either.
+    tenantId = await resolveTenantId(tenantId, req, this.options.tenantIdResolver)
 
     // Generate a 64-char hex nonce for CSRF protection.
     const state = generateSecureToken(32)
@@ -150,6 +181,22 @@ export class OAuthService {
 
     const stored: StoredOAuthState = { tenantId, codeVerifier }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
+
+    // Bind the flow to THIS browser. The `state` parameter alone proves only that somebody
+    // started a flow: an attacker can begin their own authorization, complete consent at the
+    // provider, capture the resulting callback URL without visiting it, and lure the victim
+    // there — the victim's browser then receives the attacker's session, and everything they
+    // do next lands in the attacker's account. PKCE does not help, because the verifier lives
+    // server-side and is replayed for whoever presents the state. RFC 6749 §10.12 requires
+    // this binding. `SameSite` is forced to `lax`: the callback is a cross-site top-level GET
+    // and `strict` would withhold the cookie on exactly that hop.
+    res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
+      httpOnly: true,
+      secure: this.options.secureCookies,
+      sameSite: OAUTH_STATE_COOKIE_SAME_SITE,
+      path: '/',
+      maxAge: OAUTH_STATE_COOKIE_MAX_AGE_SECONDS * 1_000
+    })
 
     const authUrl = plugin.authorizeUrl(state, codeChallenge)
     res.redirect(authUrl)
@@ -184,6 +231,8 @@ export class OAuthService {
    * @param provider - Provider name matching a registered plugin.
    * @param code - Authorization code received on the callback URL.
    * @param state - CSRF nonce received on the callback URL (must match the stored value).
+   * @param stateCookie - Value of the `oauth_state` cookie planted by `initiateOAuth()`, or
+   *   `undefined` when the browser sent none. Must equal `state`; see the binding check below.
    * @param ip - Client IP for session audit (truncated to 64 chars).
    * @param userAgent - User-Agent string for session audit.
    * @param headers - Raw request headers passed to the `onOAuthLogin` hook context.
@@ -197,6 +246,7 @@ export class OAuthService {
     provider: string,
     code: string,
     state: string,
+    stateCookie: string | undefined,
     ip: string,
     userAgent: string,
     headers: Record<string, string | string[] | undefined>
@@ -206,6 +256,20 @@ export class OAuthService {
     // for an invalid provider — a user who encounters a misconfigured provider would
     // otherwise need to restart the entire flow.
     const plugin = this.resolvePlugin(provider)
+
+    // Bind the callback to the browser that started the flow (RFC 6749 §10.12). A `state`
+    // that merely exists in Redis proves only that *somebody* started a flow: an attacker can
+    // run their own authorization to the point of holding a valid `?code=…&state=…` URL, never
+    // visit it, and lure the victim there instead — the victim's browser would then be logged
+    // into the attacker's account, and anything they added afterwards would be the attacker's
+    // to read. Only the cookie distinguishes the two, so a missing one is as fatal as a wrong
+    // one. Checked before `getdel` so a callback that fails the binding cannot burn a state
+    // the legitimate browser is still entitled to complete. Hashes are compared rather than
+    // the raw values so the constant-time path is not skipped by a length mismatch.
+    if (stateCookie === undefined || !timingSafeCompare(sha256(state), sha256(stateCookie))) {
+      this.logger.warn(`handleCallback: OAuth state not bound to this browser provider=${provider}`)
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
 
     // Atomically read and delete the CSRF state — single-use enforcement.
     const stateKey = `os:${sha256(state)}`
@@ -219,8 +283,11 @@ export class OAuthService {
     let parsedState: unknown
     try {
       parsedState = JSON.parse(rawState)
-      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsedState` stays undefined, which isStoredOAuthState rejects, throwing the same OAUTH_FAILED — the catch body is a no-op either way
     } catch {
+      // A state key that exists but does not parse is corrupted storage, not a stale or
+      // forged callback — the two are indistinguishable to the caller (both answer
+      // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
+      this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 
@@ -254,7 +321,15 @@ export class OAuthService {
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
 
     // Build the hook context with properly sanitized headers.
-    const hookContext = {
+    //
+    // The tenant and the address travel with it. `onOAuthLogin` is the documented — and only —
+    // place a deployment can enforce tenant membership, and it was being asked to decide that
+    // without being told which tenant, or which address, the flow had resolved to. The values
+    // come from the server-side state record and the verified profile, never from the callback
+    // request.
+    const hookContext: HookContext = {
+      tenantId,
+      email: profile.email,
       ip,
       userAgent,
       sanitizedHeaders: sanitizeHeaders(headers)
@@ -277,11 +352,34 @@ export class OAuthService {
         // `?? profile.email` defence-in-depth branch is not expected at runtime.
         /* istanbul ignore next -- defensive fallback: split('@')[0] is always defined for a validated email */
         const derivedName = profile.name ?? profile.email.split('@')[0] ?? profile.email
+
+        // An account may already own this address without being linked to this OAuth identity
+        // — a local registration, or a link to a different provider. `findByOAuthId` above does
+        // not see it, so creating would violate the repository's uniqueness constraint and
+        // surface as an opaque 500. It is a conflict, and the caller can act on it (sign in and
+        // link instead), so it is reported as one. rust-auth answers the same 409
+        // `auth.oauth_email_mismatch` for the same collision.
+        //
+        // A concurrent create between this check and the insert still reaches the repository.
+        // Nothing portable can be done about that here — `IUserRepository` is host-implemented
+        // and its errors are untyped — so the check closes the deterministic case and leaves
+        // the race to the constraint.
+        if (await this.userRepo.findByEmail(profile.email, tenantId)) {
+          this.logger.warn(
+            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${tenantId}`
+          )
+          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH, HttpStatus.CONFLICT)
+        }
+
         authUser = await this.userRepo.createWithOAuth({
           email: profile.email,
           name: derivedName,
           tenantId,
-          emailVerified: true,
+          // What the provider actually asserted, not a convenient constant. An account created
+          // from an unverified address belongs to whoever controls the OAuth account, not to
+          // whoever controls the mailbox; marking it verified would make the consumer's
+          // "this email is proven" invariant false from the first login.
+          emailVerified: profile.emailVerified,
           oauthProvider: provider,
           oauthProviderId: profile.providerId
         })
@@ -309,6 +407,22 @@ export class OAuthService {
       }
     }
 
+    // Status gate. Every credential flow in this library runs it — password login, the MFA
+    // challenge, both password-reset steps, the platform login — and OAuth was the one that
+    // did not, so a BANNED or SUSPENDED account holding a linked provider identity walked
+    // straight back in. Ban is the primary account kill switch; a flow that ignores it makes
+    // it advisory. Run before the MFA branch so a blocked account cannot even obtain a temp
+    // token. `rust-auth` gates the same point.
+    assertNotBlocked(authUser.status, this.options.blockedStatuses)
+
+    // Email-verification gate, on the same footing as password login: when a deployment
+    // requires a verified address, an OAuth identity does not substitute for one. The `create`
+    // branch above records what the provider actually asserted, so an unverified provider
+    // profile stays unverified here rather than being promoted by the act of signing in.
+    if (this.options.emailVerification.required && !authUser.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED, HttpStatus.FORBIDDEN)
+    }
+
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only
     // proven control of the OAuth provider account — not the second factor. Issuing
     // a session with `mfaVerified: false` would be rejected on every request by the
@@ -322,7 +436,7 @@ export class OAuthService {
     if (authUser.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(authUser.id, 'dashboard')
       this.logger.log(
-        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${tenantId} action=${hookResult.action}`
+        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
       )
       return { mfaRequired: true, mfaTempToken }
     }
@@ -338,7 +452,7 @@ export class OAuthService {
     }
 
     this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${tenantId} action=${hookResult.action}`
+      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
     )
     return result
   }

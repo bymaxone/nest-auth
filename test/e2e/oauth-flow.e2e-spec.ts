@@ -68,7 +68,10 @@ const MOCK_PROFILE: OAuthProfile = {
   provider: 'google',
   providerId: MOCK_PROVIDER_ID,
   email: MOCK_EMAIL,
-  name: 'OAuth User'
+  name: 'OAuth User',
+  // The provider asserts it verified this address. A plugin that cannot assert it must send
+  // `false`, and the account is created unverified — the whole reason the field is required.
+  emailVerified: true
 }
 
 /**
@@ -166,6 +169,27 @@ function extractStateFromLocation(location: string | undefined): string {
   return state
 }
 
+/**
+ * Builds the `Cookie` header a browser would send back on the callback.
+ *
+ * `initiateOAuth` plants the raw state as an HttpOnly cookie so the callback can prove it
+ * reached the same browser that started the flow (RFC 6749 §10.12). Supertest does not keep a
+ * cookie jar between requests, so every callback here has to replay it explicitly — which also
+ * means a test that forgets it exercises the refusal path, not the flow.
+ */
+function stateCookie(state: string): string {
+  return `oauth_state=${state}`
+}
+
+/**
+ * Reads the `oauth_state` cookie value out of an initiation response's `Set-Cookie` header.
+ */
+function readStateCookie(setCookie: string | string[] | undefined): string | undefined {
+  const list = Array.isArray(setCookie) ? setCookie : setCookie === undefined ? [] : [setCookie]
+  const match = list.find((c) => c.startsWith('oauth_state='))
+  return match?.split(';')[0]?.split('=')[1]
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -251,6 +275,65 @@ describe('oauth flow (E2E)', () => {
       initiateState = state
     })
 
+    // Verifies the browser binding end-to-end: the initiation response plants the raw state as
+    // an HttpOnly cookie, and the callback refuses without it. Without the binding, an attacker
+    // can complete consent themselves, hold the resulting `?code=…&state=…` URL, and lure the
+    // victim there — the victim's browser lands in the attacker's account, and whatever they
+    // add next is the attacker's to read (RFC 6749 §10.12).
+    it('should plant an HttpOnly oauth_state cookie carrying the state', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/oauth/google')
+        .query({ tenantId: 'tenant-1' })
+
+      const state = extractStateFromLocation(res.headers['location'] as string | undefined)
+      const setCookie = res.headers['set-cookie']
+      expect(readStateCookie(setCookie)).toBe(state)
+
+      const list = Array.isArray(setCookie) ? setCookie : [String(setCookie)]
+      const cookie = list.find((c) => c.startsWith('oauth_state=')) ?? ''
+      expect(cookie).toContain('HttpOnly')
+      // Lax, not the configured value: the provider's callback is a cross-site top-level GET,
+      // and Strict would withhold the cookie on exactly that hop, breaking every OAuth login.
+      expect(cookie).toContain('SameSite=Lax')
+      expect(cookie).toContain('Path=/')
+    })
+
+    // The refusal half of the same binding, driven over real HTTP: a callback whose state is
+    // live in Redis but which carries no cookie is the lured-victim request.
+    it('should reject a callback that carries no state cookie', async () => {
+      const initiate = await request(app.getHttpServer())
+        .get('/oauth/google')
+        .query({ tenantId: 'tenant-1' })
+      const state = extractStateFromLocation(initiate.headers['location'] as string | undefined)
+      // Rejected by the hook, so this scenario provisions nothing and leaves the repo as the
+      // ordered create/link scenarios above expect to find it. The hook is the probe: reaching
+      // it at all means the state check let the request through.
+      hookController.current = { action: 'reject', reason: 'probe' }
+      hookController.lastCall = null
+
+      const res = await request(app.getHttpServer())
+        .get('/oauth/google/callback')
+        .query({ code: 'lured_victim_code', state })
+
+      expect(res.status).toBe(401)
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: 'auth.oauth_failed' })
+        })
+      )
+      // Refused before anything downstream ran — not merely refused somewhere.
+      expect(hookController.lastCall).toBeNull()
+
+      // The state survived the refusal — it is still spendable by the browser that owns it.
+      // A guard placed after `getdel` would have burned it, turning the lure into a denial of
+      // service against a login the victim never asked to start.
+      await request(app.getHttpServer())
+        .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(state))
+        .query({ code: 'legit_code', state })
+      expect(hookController.lastCall).not.toBeNull()
+    })
+
     // Verifies that the callback with a valid state and a `create` hook provisions a user and returns bearer tokens.
     it('should create a user and issue tokens when the hook returns action: create', async () => {
       // Arrange — wire the hook to request a fresh user account on this callback.
@@ -259,6 +342,7 @@ describe('oauth flow (E2E)', () => {
       // Act
       const res = await request(app.getHttpServer())
         .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(initiateState))
         .query({ code: 'fake_code', state: initiateState })
 
       // Assert — bearer-mode response carries access + refresh tokens and a user object.
@@ -311,6 +395,7 @@ describe('oauth flow (E2E)', () => {
       // Act
       const res = await request(app.getHttpServer())
         .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(freshState))
         .query({ code: 'fake_code2', state: freshState })
 
       // Assert — the existing user is returned, identified by the same id from scenario 2.
@@ -351,6 +436,7 @@ describe('oauth flow (E2E)', () => {
       // Act — supply a structurally valid (length-wise) but unknown state value.
       const res = await request(app.getHttpServer())
         .get('/oauth/google/callback')
+        .set('Cookie', stateCookie('a'.repeat(64)))
         .query({ code: 'foo', state: 'a'.repeat(64) })
 
       // Assert — AuthException(OAUTH_FAILED) maps to HTTP 401 via AuthExceptionFilter.
@@ -386,19 +472,30 @@ describe('oauth flow (E2E)', () => {
       )
       hookController.current = { action: 'create' }
       hookController.lastCall = null
+      // A distinct address and provider id: the scenarios above already created an account for
+      // MOCK_EMAIL, and a `create` onto an address that is already taken is now a 409 by
+      // design. This scenario is about query-param tolerance, so it needs a free address.
+      ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        email: 'extras@example.com',
+        providerId: 'google-extras-1'
+      })
 
       // Act — append every Google-specific query parameter the lib must
       // tolerate, exactly as accounts.google.com sends them on a successful
       // consent. The route used to 400 with "property iss should not exist".
-      const res = await request(app.getHttpServer()).get('/oauth/google/callback').query({
-        code: 'fake_code_with_extras',
-        state: freshState,
-        iss: 'https://accounts.google.com',
-        scope: 'openid email profile',
-        authuser: '0',
-        prompt: 'consent',
-        hd: 'example.com'
-      })
+      const res = await request(app.getHttpServer())
+        .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(freshState))
+        .query({
+          code: 'fake_code_with_extras',
+          state: freshState,
+          iss: 'https://accounts.google.com',
+          scope: 'openid email profile',
+          authuser: '0',
+          prompt: 'consent',
+          hd: 'example.com'
+        })
 
       // Assert — the request must complete the same way it does without the
       // extra params: a 200 with bearer tokens and the user object. The
@@ -409,7 +506,7 @@ describe('oauth flow (E2E)', () => {
           accessToken: expect.any(String),
           refreshToken: expect.any(String),
           user: expect.objectContaining({
-            email: MOCK_EMAIL,
+            email: 'extras@example.com',
             oauthProvider: 'google'
           })
         })
@@ -493,6 +590,7 @@ describe('oauth flow (E2E)', () => {
 
       const res = await request(app.getHttpServer())
         .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(state))
         .query({ code: 'redir_code', state })
 
       expect(res.status).toBe(302)
@@ -510,6 +608,13 @@ describe('oauth flow (E2E)', () => {
      */
     it('should still set auth cookies on the 302 response', async () => {
       hookController.current = { action: 'create' }
+      // Its own address, for the same reason as the query-param scenario: this describes
+      // cookie delivery on a redirect, not a second account for an address already taken.
+      ;(plugin.fetchProfile as jest.Mock).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        email: 'redirect-cookies@example.com',
+        providerId: 'google-redirect-1'
+      })
 
       const initiate = await request(app.getHttpServer()).get('/oauth/google').query({
         tenantId: 'tenant-1'
@@ -518,6 +623,7 @@ describe('oauth flow (E2E)', () => {
 
       const res = await request(app.getHttpServer())
         .get('/oauth/google/callback')
+        .set('Cookie', stateCookie(state))
         .query({ code: 'redir_cookie_code', state })
 
       expect(res.status).toBe(302)
@@ -650,6 +756,7 @@ describe('oauth flow (E2E)', () => {
 
         const res = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'mfa_code_1', state })
 
         expect(res.status).toBe(200)
@@ -701,6 +808,7 @@ describe('oauth flow (E2E)', () => {
 
         const callback = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'mfa_code_2', state })
 
         // Build the cookie header the way the browser would.
@@ -779,6 +887,7 @@ describe('oauth flow (E2E)', () => {
 
         const callback = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'mfa_code_retry', state })
 
         const setCookieHeader = callback.headers['set-cookie']
@@ -911,6 +1020,7 @@ describe('oauth flow (E2E)', () => {
 
         const res = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'mfa_redir_code', state })
 
         expect(res.status).toBe(302)
@@ -996,6 +1106,7 @@ describe('oauth flow (E2E)', () => {
 
         const res = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'fail_code', state })
 
         expect(res.status).toBe(302)
@@ -1061,6 +1172,7 @@ describe('oauth flow (E2E)', () => {
 
         const res = await request(app.getHttpServer())
           .get('/oauth/google/callback')
+          .set('Cookie', stateCookie(state))
           .query({ code: 'fail_code', state })
 
         expect(res.status).toBe(401)

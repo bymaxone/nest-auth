@@ -27,15 +27,21 @@ export class PlatformLoginDto {
    * Plaintext password supplied by the platform admin.
    *
    * @remarks
-   * A minimum of 12 characters is enforced as a library-level floor.
-   * The `@MaxLength` guard prevents DoS via oversized payloads.
+   * The floor is 1, not the deployment's policy length. This is a *login*: the password may
+   * predate whatever the policy says today, and refusing it here locks an operator out of the
+   * console with a validation error rather than an authentication one — while telling an
+   * unauthenticated caller what the policy is, before any key derivation runs. The policy
+   * belongs on the paths that SET a password. `@Matches(/\S/)` still rejects a blank value, so
+   * nobody buys a KDF derivation for free, and `@MaxLength` bounds the payload.
+   *
+   * rust-auth bounds this field the same way, and the dashboard login always has.
    * Credentials are provisioned externally — the consuming application
    * may add stricter validation at the provisioning layer.
    */
   @IsString()
   @IsNotEmpty()
   @Matches(/\S/, { message: 'password must not be blank' })
-  @MinLength(12)
+  @MinLength(1)
   @MaxLength(128)
   password!: string
 }

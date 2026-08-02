@@ -65,7 +65,8 @@ const mockRedis = {
   del: jest.fn<Promise<void>, [string]>(),
   srem: jest.fn<Promise<number>, [string, string]>(),
   smembers: jest.fn<Promise<string[]>, [string]>(),
-  eval: jest.fn<Promise<unknown>, [string, string[], string[]]>()
+  eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockUserRepo = {
@@ -432,6 +433,41 @@ describe('SessionService', () => {
       await service.createSession(userId, rawToken, ip, userAgent)
 
       expect(resolver).toHaveBeenCalledTimes(1)
+    })
+
+    // The resolver is the host's code and its answer went straight into the eviction
+    // arithmetic. `NaN` — `Number(user.plan.maxSessions)` against a missing column, say —
+    // quietly disabled the cap: `length <= NaN` is false so eviction was entered,
+    // `length - NaN` is `NaN`, `slice(0, NaN)` is empty, nothing was evicted, and every path
+    // still reported success. Only a THROWN resolver was ever caught. A cap that silently
+    // stops applying is worse than one that is merely wrong, so anything that is not a
+    // positive whole number falls back to the configured default and says so.
+    it.each([
+      ['NaN', Number.NaN],
+      ['zero', 0],
+      ['a negative', -3],
+      ['a fraction', 2.5],
+      ['Infinity', Number.POSITIVE_INFINITY],
+      ['a non-number', 'five' as unknown as number]
+    ])('falls back to defaultMaxSessions when the resolver returns %s', async (_l, resolved) => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockOptions.sessions.maxSessionsResolver = jest
+        .fn<Promise<number>, [unknown]>()
+        .mockResolvedValue(resolved)
+      service = await buildModule()
+      // Seven members against the default of five: if the default took over, two are evicted;
+      // if the resolver's answer were used, `NaN` would evict nothing at all.
+      const hashes = Array.from({ length: 7 }, (_, i) => sha256(`bad-resolver-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockResolvedValue(makeDetailJson(Date.now() - 5000))
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      // Two over the default of five, so the default's eviction actually runs. Under the
+      // unvalidated resolver `NaN` evicted nothing and reported success.
+      expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('maxSessionsResolver'))
+      errorSpy.mockRestore()
     })
 
     // Verifies that falls back to defaultMaxSessions when maxSessionsResolver throws.
@@ -1098,6 +1134,7 @@ describe('SessionService', () => {
 
     // Verifies that triggers async SREM for members where redis.get throws.
     it('triggers async SREM for members where redis.get throws', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const throwHash = sha256('throw-srem-token')
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`])
       mockRedis.get.mockRejectedValue(new Error('Redis connection lost'))
@@ -1108,6 +1145,16 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rt:${throwHash}`)
+      // A failed read and a genuinely stale member are pruned alike — both leave the index —
+      // so without this line a Redis outage reads as a tidy-up, and the sessions it silently
+      // dropped never come back.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session detail read failed'))
+      // Truncated: the full hash is the session's identifier in Redis, and a log line is the
+      // wrong place to put one. Eight characters is enough to correlate, not enough to use.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain(throwHash.slice(0, 8))
+      expect(warned).not.toContain(throwHash)
+      warnSpy.mockRestore()
     })
 
     // Verifies that logs error when fire-and-forget srem itself throws.
@@ -1447,6 +1494,33 @@ describe('SessionService', () => {
   // revokeAllExceptCurrent
   // =========================================================================
 
+  describe('revokeOtherSession', () => {
+    // Deleting the refresh session stops rotation but says nothing about the stateless access
+    // token its holder already carries — that token kept working for up to its full lifetime.
+    // Someone who opens their session list and revokes a device does so because they think it
+    // is compromised, which is a decision about right now.
+    it('bumps the token epoch so the revoked device loses its access token too', async () => {
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeOtherSession('user-1', 'a'.repeat(64))
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1')
+    })
+
+    // After the revoke, never before: a failure in the revoke must leave the epoch untouched
+    // and the operation visibly incomplete, rather than signing every device out of its access
+    // token for a session that is in fact still alive.
+    it('does not bump when the session was not revoked', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await expect(service.revokeOtherSession('user-1', 'a'.repeat(64))).rejects.toThrow(
+        AuthException
+      )
+
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+  })
+
   describe('revokeAllExceptCurrent', () => {
     const userId = 'user-revoke-all'
 
@@ -1560,15 +1634,30 @@ describe('SessionService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
-    // Verifies that filters out rp: members and does not try to revoke them.
-    it('filters out rp: members and does not try to revoke them', async () => {
+    // `rp:` members are not refresh sessions, so the revocation loop must not try to revoke
+    // them through the Lua path — but they must not survive either.
+    //
+    // A grace pointer names a successor session that a predecessor token may still recover.
+    // For every session this call revokes that is harmless, since the grace branch requires the
+    // successor's `rt:` key and it is gone. The gap is the session deliberately KEPT: its
+    // predecessor's pointer names a hash that is still alive, so whoever holds that predecessor
+    // token could take the grace branch and mint a brand-new full-lifetime session for the rest
+    // of the window — after the user asked to sign out their other devices. The epoch bump does
+    // not close it: a recovered session signs its access token from the current epoch.
+    it('deletes every rp: grace pointer instead of merely skipping it', async () => {
       const currentHash = sha256('current-rp-filter')
       const rpHash = sha256('grace-pointer')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`, `rp:${rpHash}`])
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.srem.mockResolvedValue(1)
 
       await service.revokeAllExceptCurrent(userId, currentHash)
 
+      // Not routed through the session-revocation Lua — it is not a session.
       expect(mockRedis.eval).not.toHaveBeenCalled()
+      // …but the key is gone, and so is its entry in the per-user index.
+      expect(mockRedis.del).toHaveBeenCalledWith(`rp:${rpHash}`)
+      expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rp:${rpHash}`)
     })
 
     // Verifies that silently skips sessions that fail the ownership check (BOLA resistance via Lua).
@@ -1581,6 +1670,34 @@ describe('SessionService', () => {
 
       // Should resolve (not throw) because SESSION_NOT_FOUND is swallowed
       await expect(service.revokeAllExceptCurrent('attacker', currentHash)).resolves.toBeUndefined()
+    })
+
+    // Scenario: the user signs out their other devices. Expected: the token epoch advances.
+    // Why: deleting a refresh session stops that device ROTATING, but its already-issued access
+    // token is stateless and keeps verifying for the rest of its lifetime — up to
+    // `jwt.accessExpiresIn` of continued access on a device the user just revoked. Someone who
+    // clicks this because they think a device is compromised means now.
+    it('should advance the token epoch so the revocation is immediate', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${'a'.repeat(64)}`, `rt:${'b'.repeat(64)}`])
+      mockRedis.eval.mockResolvedValue(1)
+
+      await service.revokeAllExceptCurrent(userId, 'a'.repeat(64))
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith(userId)
+    })
+
+    // Scenario: a revocation in the loop fails with something other than SESSION_NOT_FOUND.
+    // Expected: the error propagates and the epoch is NOT advanced. Why: bumping would sign the
+    // caller out of a device the loop never managed to revoke — the worst of both outcomes, and
+    // it would report success by leaving no trace of the failure.
+    it('should not advance the epoch when a revocation fails', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${'b'.repeat(64)}`])
+      mockRedis.eval.mockRejectedValue(new Error('redis down'))
+
+      await expect(service.revokeAllExceptCurrent(userId, 'a'.repeat(64))).rejects.toThrow(
+        'redis down'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
   })
 

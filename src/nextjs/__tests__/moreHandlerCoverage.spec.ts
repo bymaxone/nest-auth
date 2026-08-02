@@ -12,6 +12,11 @@ import {
 } from '..'
 import { makeMockRequest, base64UrlEncode } from './_testHelpers'
 
+// A route handler's response is sent as written, so its `Location` stays RELATIVE and a
+// forged `Host` has nothing to name: see `redirectToPath`. Parsing needs a base for that
+// reason, and the base is a placeholder that never appears in the response.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 describe('createLogoutHandler — factory validation', () => {
   // Redirect mode requires loginPath. Missing loginPath → throw.
   it('throws in redirect mode when loginPath is missing', () => {
@@ -108,7 +113,7 @@ describe('createSilentRefreshHandler — opaque-redirect and origin mismatch', (
     })
 
     const response = await handler(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.searchParams.get('reason')).toBe('expired')
     fetchSpy.mockRestore()
   })
@@ -141,7 +146,9 @@ describe('decodeJwtToken — invalid UTF-8 payload', () => {
   // Malformed header in verify mode → empty decoded (pre-signature).
   it('rejects a token whose header fails to parse in verify mode', async () => {
     const badHeader = base64UrlEncode('not-json')
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     const token = `${badHeader}.${payload}.sig`
     expect((await verifyJwtToken(token, 'a-secret')).isValid).toBe(false)
   })
@@ -157,7 +164,9 @@ describe('decodeJwtToken — invalid UTF-8 payload', () => {
   // Invalid signature segment (non-base64url chars) in verify mode.
   it('rejects a token whose signature segment is not valid base64url', async () => {
     const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = base64UrlEncode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+    const payload = base64UrlEncode(
+      JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 })
+    )
     const token = `${header}.${payload}.@@@`
     expect((await verifyJwtToken(token, 'a-secret')).isValid).toBe(false)
   })
@@ -183,7 +192,7 @@ describe('verifyJwtToken — Web Crypto failure paths', () => {
         './_testHelpers'
       ) as typeof import('./_testHelpers')
       const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-      const payload = encode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+      const payload = encode(JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 }))
       const token = `${header}.${payload}.sig`
       const decoded = await verify(token, 'secret')
       expect(decoded.isValid).toBe(false)
@@ -208,7 +217,7 @@ describe('verifyJwtToken — Web Crypto failure paths', () => {
         './_testHelpers'
       ) as typeof import('./_testHelpers')
       const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-      const payload = encode(JSON.stringify({ sub: 'u', exp: 9999999999 }))
+      const payload = encode(JSON.stringify({ type: 'dashboard', sub: 'u', exp: 9999999999 }))
       const token = `${header}.${payload}.sig`
       const decoded = await verify(token, 'secret')
       expect(decoded.isValid).toBe(false)

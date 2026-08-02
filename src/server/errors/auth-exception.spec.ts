@@ -39,8 +39,6 @@ describe('AUTH_ERROR_CODES', () => {
     expect(AUTH_ERROR_CODES.TOKEN_REVOKED).toBe('auth.token_revoked')
     expect(AUTH_ERROR_CODES.TOKEN_INVALID).toBe('auth.token_invalid')
     expect(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID).toBe('auth.refresh_token_invalid')
-    expect(AUTH_ERROR_CODES.SESSION_EXPIRED).toBe('auth.session_expired')
-    expect(AUTH_ERROR_CODES.SESSION_LIMIT_REACHED).toBe('auth.session_limit_reached')
     expect(AUTH_ERROR_CODES.SESSION_NOT_FOUND).toBe('auth.session_not_found')
   })
 
@@ -52,14 +50,11 @@ describe('AUTH_ERROR_CODES', () => {
     expect(AUTH_ERROR_CODES.MFA_NOT_ENABLED).toBe('auth.mfa_not_enabled')
     expect(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED).toBe('auth.mfa_setup_required')
     expect(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID).toBe('auth.mfa_temp_token_invalid')
-    expect(AUTH_ERROR_CODES.RECOVERY_CODE_INVALID).toBe('auth.recovery_code_invalid')
   })
 
   // Verifies that password and OTP-related error codes are present.
   it('should include all password and OTP codes', () => {
-    expect(AUTH_ERROR_CODES.PASSWORD_TOO_WEAK).toBe('auth.password_too_weak')
     expect(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID).toBe('auth.password_reset_token_invalid')
-    expect(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_EXPIRED).toBe('auth.password_reset_token_expired')
     expect(AUTH_ERROR_CODES.OTP_INVALID).toBe('auth.otp_invalid')
     expect(AUTH_ERROR_CODES.OTP_EXPIRED).toBe('auth.otp_expired')
     expect(AUTH_ERROR_CODES.OTP_MAX_ATTEMPTS).toBe('auth.otp_max_attempts')

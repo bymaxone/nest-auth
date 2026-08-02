@@ -9,7 +9,7 @@ import {
   Res,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
@@ -18,18 +18,24 @@ import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { MFA_TEMP_COOKIE_NAME } from '../constants/mfa-temp-cookie'
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { SkipMfa } from '../decorators/skip-mfa.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
+import { MfaSetupDto } from '../dto/mfa-setup.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
-import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
 import type {
@@ -113,10 +119,10 @@ function isTokenInvalidException(err: unknown): boolean {
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('mfa')
-@UsePipes(
-  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
-)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class MfaController {
   constructor(
     private readonly mfaService: MfaService,
@@ -169,9 +175,13 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
-  async setup(@CurrentUser() user: DashboardJwtPayload): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub)
+  async setup(
+    @CurrentUser() user: DashboardJwtPayload,
+    @Body() dto: MfaSetupDto
+  ): Promise<MfaSetupResult> {
+    return this.mfaService.setup(user.sub, 'dashboard', dto.password)
   }
 
   /**
@@ -188,6 +198,7 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
   async verifyEnable(
@@ -231,6 +242,7 @@ export class MfaController {
   @Public()
   @SkipMfa()
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
   @Post('challenge')
   async challenge(
@@ -291,17 +303,21 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
   async disable(
-    @CurrentUser() user: DashboardJwtPayload | PlatformJwtPayload,
+    @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaDisableDto,
     @Req() req: Request
   ): Promise<void> {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    const context = user.type === 'platform' ? 'platform' : 'dashboard'
-    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, context)
+    // Always the dashboard plane: `JwtAuthGuard` runs `assertTokenType(payload, 'dashboard')`,
+    // so a platform token cannot reach this controller at all. The platform surface has its
+    // own — `PlatformMfaController` — and the branch that used to read the plane off the
+    // payload here could never take its other arm.
+    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard')
   }
 
   /**
@@ -310,7 +326,7 @@ export class MfaController {
    * Requires a valid TOTP code (recovery codes are not accepted by design — see
    * {@link MfaRegenerateRecoveryCodesDto} for the rationale). The freshly
    * generated plain-text codes are returned in the response body and are shown
-   * once. Only their scrypt hashes are persisted.
+   * once. Only a keyed HMAC-SHA-256 of each is persisted.
    *
    * Shares the disable throttle config because the security posture is identical
    * (authenticated, TOTP-gated, MFA-affecting state change).
@@ -325,16 +341,17 @@ export class MfaController {
    */
   @UseGuards(JwtAuthGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
   async regenerateRecoveryCodes(
-    @CurrentUser() user: DashboardJwtPayload | PlatformJwtPayload,
+    @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaRegenerateRecoveryCodesDto,
     @Req() req: Request
   ): Promise<{ recoveryCodes: string[] }> {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    const context = user.type === 'platform' ? 'platform' : 'dashboard'
-    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, context)
+    // See `disable`: this controller is dashboard-only by its guard.
+    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'dashboard')
   }
 }

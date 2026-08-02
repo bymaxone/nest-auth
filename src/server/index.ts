@@ -11,6 +11,7 @@ export { BymaxAuthModule } from './bymax-auth.module'
 // ---------------------------------------------------------------------------
 
 export {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -74,7 +75,9 @@ export type {
 } from './interfaces/auth-hooks.interface'
 export type {
   BymaxAuthModuleOptions,
-  AuthModuleAsyncOptions
+  AuthModuleAsyncOptions,
+  BymaxAuthRateLimitOptions,
+  ClientIpSource
 } from './interfaces/auth-module-options.interface'
 export type {
   AuthResult,
@@ -110,6 +113,11 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { NoOpEmailProvider } from './providers/no-op-email.provider'
+export {
+  CommonPasswordChecker,
+  reduceToBaseWord
+} from './providers/common-password-checker.provider'
+export { AllowAllBreachChecker, HibpBreachChecker } from './providers/hibp-breach-checker.provider'
 
 // ---------------------------------------------------------------------------
 // Guards
@@ -122,8 +130,23 @@ export { OptionalAuthGuard } from './guards/optional-auth.guard'
 export { PlatformRolesGuard } from './guards/platform-roles.guard'
 export { RolesGuard } from './guards/roles.guard'
 export { SelfOrAdminGuard } from './guards/self-or-admin.guard'
+export { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
+export { TrustedOriginGuard } from './guards/trusted-origin.guard'
 export { UserStatusGuard } from './guards/user-status.guard'
 export { WsJwtGuard } from './guards/ws-jwt.guard'
+
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+export { AuthExceptionFilter } from './filters/auth-exception.filter'
+
+// ---------------------------------------------------------------------------
+// Pipes
+// ---------------------------------------------------------------------------
+
+export { createAuthValidationPipe } from './pipes/auth-validation.pipe'
+export type { AuthFieldError } from './pipes/auth-validation.pipe'
 
 // ---------------------------------------------------------------------------
 // Decorators
@@ -131,6 +154,7 @@ export { WsJwtGuard } from './guards/ws-jwt.guard'
 
 export { CurrentUser } from './decorators/current-user.decorator'
 export { PLATFORM_ROLES_KEY, PlatformRoles } from './decorators/platform-roles.decorator'
+export { Authenticated } from './decorators/authenticated.decorator'
 export { IS_PUBLIC_KEY, Public } from './decorators/public.decorator'
 export { ROLES_KEY, Roles } from './decorators/roles.decorator'
 export { SKIP_MFA_KEY, SkipMfa } from './decorators/skip-mfa.decorator'
@@ -151,6 +175,7 @@ export { PlatformLoginDto } from './dto/platform-login.dto'
 export { RegisterDto } from './dto/register.dto'
 export { ResendOtpDto } from './dto/resend-otp.dto'
 export { ResendVerificationDto } from './dto/resend-verification.dto'
+export { ChangePasswordDto } from './dto/change-password.dto'
 export { ResetPasswordDto } from './dto/reset-password.dto'
 export { VerifyEmailDto } from './dto/verify-email.dto'
 export { VerifyOtpDto } from './dto/verify-otp.dto'
@@ -160,6 +185,15 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+// NOTE: `EmailChangeService` is only registered when `controllers.emailChange !== false`
+// (the default). Importing it for a host module with the controller disabled causes an
+// injection error — register it in `extraProviders` in that case.
+export { EmailChangeService } from './services/email-change.service'
+// `BruteForceService` is exported for consumers building their own lockout tooling. The
+// administrative unlock itself lives on `AuthService.unlockAccount`, because the counter is
+// keyed by an HMAC of `{tenantId}:{email}` under the library's own `hmacKey` — a key no
+// consumer can derive, which made the lockout unclearable from outside until v1.0.12.
+export { BruteForceService } from './services/brute-force.service'
 // NOTE: MfaService is only registered in the NestJS container when
 // controllers.mfa: true OR controllers.platform: true. Importing it here for
 // use in a host-app module without those flags set will cause an injection error —
@@ -167,11 +201,19 @@ export { AuthService } from './services/auth.service'
 export { MfaService } from './services/mfa.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'
+// NOTE: `InvitationService` is only registered when `controllers.invitations` is enabled.
+// Same caveat as the services above.
+export { InvitationService } from './services/invitation.service'
 // NOTE: PasswordResetService is only registered in the NestJS container when
 // controllers.passwordReset !== false (the default). Importing it here for
 // use in a host-app module where passwordReset is disabled will cause an
 // injection error — register it in extraProviders in that case.
 export { PasswordResetService } from './services/password-reset.service'
+// NOTE: `PlatformAuthService` is only registered when `controllers.platform` is enabled.
+// Same caveat as the services above. Exported because the platform identity surface has the
+// same reason to be driven from consumer code the dashboard one does — a custom console
+// route that issues an operator session without going through the bundled controller.
+export { PlatformAuthService } from './services/platform-auth.service'
 export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).
@@ -183,6 +225,9 @@ export type { SessionInfo as ActiveSessionInfo } from './services/session.servic
 // (or another password-less path) and needs to deliver them to the browser
 // with the canonical attribute set.
 export { TokenDeliveryService } from './services/token-delivery.service'
+export { WsTicketService } from './services/ws-ticket.service'
+export { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
+export type { WsTicketSnapshot } from './interfaces/ws-ticket.interface'
 export type {
   BearerAuthResponse,
   BothAuthResponse,
@@ -199,3 +244,6 @@ export { OAuthService } from './oauth/oauth.service'
 // ---------------------------------------------------------------------------
 
 export { hasRole, sanitizeHeaders, sleep } from './utils'
+export type { IPasswordBreachChecker } from './interfaces/password-breach-checker.interface'
+export { AuthRateLimit } from './decorators/auth-rate-limit.decorator'
+export type { AuthRateLimitWindow } from './decorators/auth-rate-limit.decorator'

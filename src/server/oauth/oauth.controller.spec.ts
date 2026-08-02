@@ -17,6 +17,7 @@
  * All tests follow the AAA pattern and use jest.resetAllMocks() in beforeEach.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { Request, Response } from 'express'
 
@@ -25,6 +26,8 @@ import { OAuthService } from './oauth.service'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -79,7 +82,12 @@ describe('OAuthController', () => {
         { provide: TokenDeliveryService, useValue: mockTokenDelivery },
         { provide: BYMAX_AUTH_OPTIONS, useValue: buildOptions(oauth) }
       ]
-    }).compile()
+    })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .compile()
 
     controller = module.get(OAuthController)
   }
@@ -94,16 +102,23 @@ describe('OAuthController', () => {
   // ---------------------------------------------------------------------------
 
   describe('initiate()', () => {
-    // Verifies the happy path: initiateOAuth is called with the correct provider,
-    // tenantId from the query DTO, and the response object.
-    it('should call oauthService.initiateOAuth with provider, tenantId, and res', async () => {
+    // Verifies the happy path: initiateOAuth is called with the correct provider, the tenantId
+    // from the query DTO, the request (which the configured resolver reads, and which decides
+    // the tenant when there is one), and the response object.
+    it('should call oauthService.initiateOAuth with provider, tenantId, req and res', async () => {
       mockOAuthService.initiateOAuth.mockResolvedValue(undefined)
       const mockRes = { redirect: jest.fn() } as unknown as Response
+      const mockReq = { headers: {} } as unknown as Request
       const query = { tenantId: 'tenant-abc' }
 
-      await controller.initiate('google', query as never, mockRes)
+      await controller.initiate('google', query as never, mockReq, mockRes)
 
-      expect(mockOAuthService.initiateOAuth).toHaveBeenCalledWith('google', 'tenant-abc', mockRes)
+      expect(mockOAuthService.initiateOAuth).toHaveBeenCalledWith(
+        'google',
+        'tenant-abc',
+        mockReq,
+        mockRes
+      )
     })
 
     // Verifies that initiate() returns void (undefined) — the redirect is performed
@@ -113,7 +128,12 @@ describe('OAuthController', () => {
       const mockRes = { redirect: jest.fn() } as unknown as Response
       const query = { tenantId: 'tenant-1' }
 
-      const result = await controller.initiate('google', query as never, mockRes)
+      const result = await controller.initiate(
+        'google',
+        query as never,
+        { headers: {} } as unknown as Request,
+        mockRes
+      )
 
       expect(result).toBeUndefined()
     })
@@ -127,19 +147,20 @@ describe('OAuthController', () => {
     const makeReq = (
       ip = '1.2.3.4',
       userAgent = 'TestBrowser/1.0',
-      extraHeaders: Record<string, string> = {}
+      extraHeaders: Record<string, string> = {},
+      cookies: Record<string, unknown> = { oauth_state: 'csrf-state-abc' }
     ) =>
       ({
         ip,
         headers: { 'user-agent': userAgent, ...extraHeaders },
-        cookies: {}
+        cookies
       }) as unknown as Request
 
     // Verifies the happy path: handleCallback is called with all correct arguments,
     // and the return value of deliverAuthResponse is returned to the caller.
     it('should call handleCallback with correct args and return deliverAuthResponse result', async () => {
       const mockReq = makeReq()
-      const mockRes = { cookie: jest.fn() } as unknown as Response
+      const mockRes = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'auth-code-xyz', state: 'csrf-state-abc' }
 
       mockOAuthService.handleCallback.mockResolvedValue({ accessToken: 'at' })
@@ -150,6 +171,7 @@ describe('OAuthController', () => {
       expect(mockOAuthService.handleCallback).toHaveBeenCalledWith(
         'google',
         'auth-code-xyz',
+        'csrf-state-abc',
         'csrf-state-abc',
         '1.2.3.4',
         'TestBrowser/1.0',
@@ -168,7 +190,7 @@ describe('OAuthController', () => {
     it('should truncate ip to 64 characters', async () => {
       const longIp = 'a'.repeat(90)
       const mockReq = makeReq(longIp)
-      const mockRes = {} as unknown as Response
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
       mockOAuthService.handleCallback.mockResolvedValue({})
@@ -176,7 +198,7 @@ describe('OAuthController', () => {
 
       await controller.callback('google', query as never, mockReq, mockRes)
 
-      const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]
+      const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
       expect(typeof ipArg).toBe('string')
       expect((ipArg as string).length).toBe(64)
       expect(ipArg).toBe(longIp.slice(0, 64))
@@ -187,7 +209,7 @@ describe('OAuthController', () => {
     it('should truncate userAgent to 512 characters', async () => {
       const longUA = 'B'.repeat(600)
       const mockReq = makeReq('1.2.3.4', longUA)
-      const mockRes = {} as unknown as Response
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
       mockOAuthService.handleCallback.mockResolvedValue({})
@@ -195,7 +217,7 @@ describe('OAuthController', () => {
 
       await controller.callback('google', query as never, mockReq, mockRes)
 
-      const uaArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
+      const uaArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[5]
       expect(typeof uaArg).toBe('string')
       expect((uaArg as string).length).toBe(512)
       expect(uaArg).toBe(longUA.slice(0, 512))
@@ -209,7 +231,7 @@ describe('OAuthController', () => {
         headers: { 'user-agent': 'UA' },
         cookies: {}
       } as unknown as Request
-      const mockRes = {} as unknown as Response
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
       mockOAuthService.handleCallback.mockResolvedValue({})
@@ -217,8 +239,277 @@ describe('OAuthController', () => {
 
       await controller.callback('google', query as never, mockReq, mockRes)
 
-      const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]
+      const ipArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
       expect(ipArg).toBe('')
+    })
+
+    // A provider that refuses before minting a code (RFC 6749 §4.1.2.1) — the response Google
+    // sends when the user clicks "Cancel". It carries `error` and no `code`, which the
+    // ValidationPipe used to 400 for the missing required field: a user who simply changed
+    // their mind saw a raw validation envelope instead of the configured error redirect.
+    it('should route a provider error callback to the error redirect', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const result = await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', error: 'access_denied' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(result).toBeUndefined()
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+      // The provider never reaches the exchange: there is no code to exchange, and calling
+      // the service would burn the state on a flow that is already over.
+      expect(mockOAuthService.handleCallback).not.toHaveBeenCalled()
+      // The single-use state cookie is spent either way.
+      expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', expect.anything())
+    })
+
+    // Neither value may reach the log verbatim. `error` is a query parameter with only a
+    // length bound and `provider` is a percent-decoded path segment logged before the plugin
+    // shape check runs, so a newline in either forges whole log records — a fabricated "login
+    // success userId=admin" line sitting in the operator's SIEM.
+    it.each([
+      ['a newline in the provider error', { error: 'a\nFAKE LOG LINE' }],
+      ['a carriage return in the provider error', { error: 'a\rFAKE' }],
+      ['an uppercase value', { error: 'ACCESS_DENIED' }],
+      ['an over-long value', { error: 'a'.repeat(65) }]
+    ])('should not let %s reach the log verbatim', async (_label, extra) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', ...extra } as never,
+        mockReq,
+        mockRes
+      )
+
+      const logged = warn.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(logged).toContain('<malformed>')
+      expect(logged).not.toContain('FAKE')
+      expect(logged).not.toContain('ACCESS_DENIED')
+      warn.mockRestore()
+    })
+
+    // A recognisable code is logged as-is — the point is to keep the useful signal, not to
+    // blank every value.
+    it('should log a well-formed provider error code verbatim', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        { state: 'csrf-state-abc', error: 'access_denied' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain('access_denied')
+      warn.mockRestore()
+    })
+
+    // The provider's own string never reaches the redirect. It is provider-chosen text landing
+    // in a URL the browser follows, and `oauth_failed` already tells the caller everything the
+    // library is willing to vouch for.
+    it('should not echo the provider error code into the redirect', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback(
+        'google',
+        {
+          state: 'csrf-state-abc',
+          error: 'temporarily_unavailable',
+          error_description: 'try later'
+        } as never,
+        mockReq,
+        mockRes
+      )
+
+      const redirectTo = (mockRes.redirect as jest.Mock).mock.calls[0]?.[0] as string
+      expect(redirectTo).not.toContain('temporarily_unavailable')
+      expect(redirectTo).not.toContain('try later')
+    })
+
+    // A callback carrying neither `code` nor `error` — the ValidationPipe rejects it before
+    // the handler in production, so this pins the handler's own refusal. Defaulting the
+    // missing code to an empty string instead would send it to the provider's token endpoint
+    // and surface their error rather than ours.
+    it('should refuse a callback carrying neither code nor error', async () => {
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      await controller.callback('google', { state: 'csrf-state-abc' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
+      expect(mockOAuthService.handleCallback).not.toHaveBeenCalled()
+    })
+
+    // With no error redirect configured the refusal propagates as the library's own
+    // AuthException — the same shape any other OAuth failure takes on that deployment.
+    it('should throw OAUTH_FAILED for a provider error when no error redirect is configured', async () => {
+      const { AuthException } = await import('../errors/auth-exception')
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.callback(
+          'google',
+          { state: 'csrf-state-abc', error: 'access_denied' } as never,
+          mockReq,
+          mockRes
+        )
+      ).rejects.toThrow(AuthException)
+    })
+
+    // Verifies the controller reads the `oauth_state` cookie and hands it to the service —
+    // the service does the comparison, but it can only do so if the controller forwards what
+    // the browser sent. Pinned separately because a controller that silently forwards
+    // `undefined` would leave the service's binding check permanently unsatisfiable.
+    it('should forward the oauth_state cookie to handleCallback', async () => {
+      const mockReq = makeReq('1.2.3.4', 'UA', {}, { oauth_state: 'cookie-state' })
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+      const query = { code: 'code', state: 'state' }
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback('google', query as never, mockReq, mockRes)
+
+      const cookieArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]
+      expect(cookieArg).toBe('cookie-state')
+    })
+
+    // A jar without the cookie, a non-string value, and an app that never mounted
+    // cookie-parser all reach the service as `undefined` — which it treats as a refusal. The
+    // non-string case is the one worth pinning: `req.cookies` is parsed from client input, so
+    // a caller can put an array there, and `String(value)` would turn that into a comparison
+    // against something that never was a cookie.
+    it.each([
+      ['an empty jar', {}],
+      ['a non-string value', { oauth_state: ['a', 'b'] }],
+      ['an empty string', { oauth_state: '' }]
+    ])('should forward undefined for %s', async (_label, cookies) => {
+      const mockReq = makeReq('1.2.3.4', 'UA', {}, cookies)
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback(
+        'google',
+        { code: 'code', state: 'state' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect((mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]).toBeUndefined()
+    })
+
+    // An app that never mounted cookie-parser leaves `req.cookies` undefined entirely — a
+    // different branch from an empty jar, and one that would throw rather than refuse if the
+    // guard were dropped.
+    it('should forward undefined when cookie-parser is not mounted', async () => {
+      const mockReq = { ip: '1.2.3.4', headers: {} } as unknown as Request
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback(
+        'google',
+        { code: 'code', state: 'state' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect((mockOAuthService.handleCallback.mock.calls[0] as unknown[])[3]).toBeUndefined()
+    })
+
+    // The cookie is single-use and must be cleared whatever the callback's outcome; a stale
+    // one left behind would never match the next flow's freshly minted state, turning one
+    // failed login into a permanently broken one. The clear attributes must match the plant
+    // attributes or the browser keeps the original cookie.
+    it('should clear the oauth_state cookie on the callback', async () => {
+      const mockReq = makeReq()
+      const mockRes = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback(
+        'google',
+        { code: 'code', state: 'csrf-state-abc' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/'
+      })
+    })
+
+    // The clear only fires when the browser actually sent the cookie. This route is a GET, so
+    // `SameSite=Lax` withholds the cookie from a cross-site subresource — an `<img
+    // src=…/callback>` on any page the victim loads carries none — but a `Set-Cookie` deleting
+    // it would take effect anyway. Clearing unconditionally let any page kill an OAuth login
+    // that was still at the consent screen, repeatably, from anywhere.
+    it('should not clear the state cookie when the request did not carry one', async () => {
+      const mockReq = makeReq('1.2.3.4', 'UA', {}, {})
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+      mockOAuthService.handleCallback.mockResolvedValue({})
+      mockTokenDelivery.deliverAuthResponse.mockResolvedValue({})
+
+      await controller.callback(
+        'google',
+        { code: 'code', state: 'csrf-state-abc' } as never,
+        mockReq,
+        mockRes
+      )
+
+      expect(mockRes.clearCookie).not.toHaveBeenCalled()
+    })
+
+    // Same clearing on the failure path: a callback that the service refused must not leave
+    // the cookie behind either, or the user's retry inherits a cookie from the attempt that
+    // just failed.
+    it('should clear the oauth_state cookie even when handleCallback throws', async () => {
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = { clearCookie: jest.fn(), redirect: jest.fn() } as unknown as Response
+
+      mockOAuthService.handleCallback.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      )
+
+      // No `errorRedirectUrl` on the default fixture, so the refusal propagates — the point
+      // is that the cookie was already gone by then.
+      await expect(
+        controller.callback(
+          'google',
+          { code: 'code', state: 'csrf-state-abc' } as never,
+          mockReq,
+          mockRes
+        )
+      ).rejects.toThrow(AuthException)
+
+      expect(mockRes.clearCookie).toHaveBeenCalledWith('oauth_state', expect.anything())
     })
 
     // Verifies that when the user-agent header is absent, the userAgent falls back
@@ -229,7 +520,7 @@ describe('OAuthController', () => {
         headers: {},
         cookies: {}
       } as unknown as Request
-      const mockRes = {} as unknown as Response
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
       mockOAuthService.handleCallback.mockResolvedValue({})
@@ -237,7 +528,7 @@ describe('OAuthController', () => {
 
       await controller.callback('google', query as never, mockReq, mockRes)
 
-      const uaArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[4]
+      const uaArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[5]
       expect(uaArg).toBe('')
     })
 
@@ -246,7 +537,7 @@ describe('OAuthController', () => {
     it('should forward req.headers as the 6th argument to handleCallback', async () => {
       const headers = { 'user-agent': 'UA', 'x-request-id': 'req-001' }
       const mockReq = { ip: '1.2.3.4', headers, cookies: {} } as unknown as Request
-      const mockRes = {} as unknown as Response
+      const mockRes = { clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
 
       mockOAuthService.handleCallback.mockResolvedValue({})
@@ -254,7 +545,7 @@ describe('OAuthController', () => {
 
       await controller.callback('google', query as never, mockReq, mockRes)
 
-      const headersArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[5]
+      const headersArg = (mockOAuthService.handleCallback.mock.calls[0] as unknown[])[6]
       expect(headersArg).toBe(headers)
     })
 
@@ -262,7 +553,7 @@ describe('OAuthController', () => {
     // correct response object (res) as the first argument so cookie delivery works.
     it('should call deliverAuthResponse with (res, result, req) in the correct order', async () => {
       const mockReq = makeReq()
-      const mockRes = { cookie: jest.fn() } as unknown as Response
+      const mockRes = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
       const query = { code: 'code', state: 'state' }
       const authResult = { accessToken: 'tok', user: {} }
 
@@ -290,6 +581,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -316,6 +608,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -347,6 +640,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -414,6 +708,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -453,12 +748,18 @@ describe('OAuthController', () => {
             } as unknown as ResolvedOptions
           }
         ]
-      }).compile()
+      })
+        .overrideGuard(TrustedOriginGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(AuthRateLimitGuard)
+        .useValue({ canActivate: () => true })
+        .compile()
       controller = module.get(OAuthController)
 
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -499,6 +800,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -511,6 +813,81 @@ describe('OAuthController', () => {
 
       expect(mockRes.redirect).toHaveBeenCalledWith('/auth/error?error=oauth_failed')
       expect(result).toBeUndefined()
+    })
+
+    /**
+     * The code that reaches the query string is read out of the exception's
+     * envelope, and every step of that read has a fallback. None of them is
+     * reachable through `AuthException`'s own constructor — a thrown value can
+     * carry any shape once a custom filter or a future subclass is in play — so
+     * they are driven directly here. The fallback is what keeps a malformed
+     * envelope from putting `undefined` (or an internal message) in a URL the
+     * user's browser follows.
+     */
+    it.each([
+      ['a non-object envelope', 'just a string', 'oauth_failed'],
+      ['a null envelope', null, 'oauth_failed'],
+      // The `typeof` half and the `null` half are independent: a callable is the
+      // one value that fails `typeof x === 'object'` and can still carry an
+      // `error.code`, so without the type check its code would reach the URL.
+      [
+        'a callable envelope carrying a code',
+        Object.assign(() => undefined, { error: { code: 'auth.smuggled' } }),
+        'oauth_failed'
+      ],
+      ['an envelope with no error object', { statusCode: 400 }, 'oauth_failed'],
+      ['an envelope whose code is not a string', { error: { code: 42 } }, 'oauth_failed'],
+      ['an envelope whose code is empty', { error: { code: '' } }, 'oauth_failed'],
+      ['a code with no namespace prefix', { error: { code: 'bare_code' } }, 'bare_code'],
+      ['a code that is only a prefix separator', { error: { code: '.suffix' } }, 'suffix']
+    ])('should fall back sensibly on %s', async (_label, response, expected) => {
+      await bootstrap({ errorRedirectUrl: '/auth/error' })
+
+      const { AuthException } = await import('../errors/auth-exception')
+      const { AUTH_ERROR_CODES } = await import('../errors/auth-error-codes')
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        clearCookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+
+      const exception = new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+      jest.spyOn(exception, 'getResponse').mockReturnValue(response as never)
+      mockOAuthService.handleCallback.mockRejectedValue(exception)
+
+      await controller.callback('google', { code: 'c', state: 's' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(`/auth/error?error=${expected}`)
+    })
+
+    /**
+     * The MFA branch is chosen by a literal `true`, not by the key's presence.
+     * A result that carries the key set to `false` is a completed sign-in, and
+     * routing it to the challenge page would strand a user who has already
+     * authenticated — with tokens issued and no way back to them.
+     */
+    it('should treat mfaRequired: false as a completed sign-in', async () => {
+      await bootstrap({ successRedirectUrl: '/dashboard', mfaRedirectUrl: '/mfa' })
+
+      const mockReq = makeReq()
+      const mockRes = {
+        cookie: jest.fn(),
+        clearCookie: jest.fn(),
+        redirect: jest.fn()
+      } as unknown as Response
+
+      mockOAuthService.handleCallback.mockResolvedValue({
+        mfaRequired: false,
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        user: { id: 'u1', email: 'u@e.com' }
+      } as never)
+
+      await controller.callback('google', { code: 'c', state: 's' } as never, mockReq, mockRes)
+
+      expect(mockRes.redirect).toHaveBeenCalledWith('/dashboard')
     })
 
     /**
@@ -527,6 +904,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -556,6 +934,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -582,6 +961,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -606,6 +986,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -635,6 +1016,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }
@@ -661,6 +1043,7 @@ describe('OAuthController', () => {
       const mockReq = makeReq()
       const mockRes = {
         cookie: jest.fn(),
+        clearCookie: jest.fn(),
         redirect: jest.fn()
       } as unknown as Response
       const query = { code: 'code', state: 'state' }

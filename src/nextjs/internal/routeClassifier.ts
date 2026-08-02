@@ -95,7 +95,8 @@ export function matchesRoutePattern(pathname: string, pattern: string): boolean 
 
   for (let i = 0; i < patternSegments.length; i += 1) {
     /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable within the loop bounds */
-    // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop counter.
+
+    // Stryker disable next-line StringLiteral: unreachable — `i` is bounded by the array's own length, so the fallback's value can never be read
     const patternSegment = patternSegments[i] ?? ''
     const isTrailingGlob =
       // Stryker disable next-line ConditionalExpression,StringLiteral: `patternSegment === '*'` is subsumed by `patternSegment.endsWith('*')`, so dropping it or comparing against '' cannot change the match
@@ -115,7 +116,8 @@ export function matchesRoutePattern(pathname: string, pattern: string): boolean 
     }
 
     /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback, unreachable within the loop bounds */
-    // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop counter.
+
+    // Stryker disable next-line StringLiteral: unreachable within the loop bounds — the length guard above returns before `i` can pass the end
     const pathSegment = pathSegments[i] ?? ''
 
     if (patternSegment.startsWith(':')) {

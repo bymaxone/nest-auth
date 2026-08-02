@@ -37,12 +37,14 @@ export class AuthException extends HttpException {
   /**
    * @param code - Stable machine-readable error code from `AUTH_ERROR_CODES`.
    * @param statusCode - HTTP status code for the response. Defaults to `401 UNAUTHORIZED`.
-   * @param details - Optional structured payload attached to the error body under `error.details`.
+   * @param details - Optional structured payload attached to the error body under
+   *   `error.details`. An array where the failure is a list — `auth.validation` renders its
+   *   per-field failures that way, matching what rust-auth serializes for the same code.
    */
   constructor(
     code: AuthErrorCode,
     statusCode: number = HttpStatus.UNAUTHORIZED,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown> | readonly unknown[]
   ) {
     super(
       {

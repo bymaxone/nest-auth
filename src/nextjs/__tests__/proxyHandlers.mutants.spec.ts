@@ -26,6 +26,11 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 /** Future-dated `exp` (seconds) for tokens that must be valid. */
@@ -74,7 +79,10 @@ describe('createAuthProxy — sanitised-header forwarding on next() exits', () =
   // `ObjectLiteral` mutants on the authenticated-on-public return
   // (line 117) and confirms `.some(...)` returns false for `/about`.
   it('forwards sanitised request headers for an authenticated user on a non-redirect public route', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
     const request = makeMockRequest({
       url: 'https://app.example.com/about',
@@ -94,7 +102,10 @@ describe('createAuthProxy — publicRoutesRedirectIfAuthenticated matching', () 
   // redirected to their dashboard. Kills the `.some(...)`→`.every(...)`
   // mutant, which would require the path to match every entry.
   it('redirects via .some when only one configured route matches', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy({
       ...DEFAULT_PROXY_CONFIG,
       publicRoutes: ['/', '/auth/login', '/about'],
@@ -106,7 +117,7 @@ describe('createAuthProxy — publicRoutesRedirectIfAuthenticated matching', () 
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/dashboard/admin')
   })
 })
@@ -117,7 +128,10 @@ describe('createAuthProxy — empty-role default', () => {
   // `?? ''`→`?? 'Stryker was here!'` mutant: the dashboard function
   // must receive the empty string, routing to the empty-role branch.
   it('feeds an empty-string role to getDefaultDashboard on the RBAC-denied fallback', async () => {
-    const token = await signHs256Token({ sub: 'u', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy({
       ...DEFAULT_PROXY_CONFIG,
       protectedRoutes: [{ pattern: '/dashboard/:path*', allowedRoles: ['admin'] }],
@@ -129,7 +143,7 @@ describe('createAuthProxy — empty-role default', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/empty-role')
     expect(url.searchParams.get('error')).toBe('forbidden')
   })
@@ -163,7 +177,7 @@ describe('createAuthProxy — has_session non-empty check', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
   })
 })
@@ -183,7 +197,7 @@ describe('createAuthProxy — straight-to-login guard', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
     expect(url.searchParams.get('reason')).toBeNull()
   })
@@ -198,7 +212,7 @@ describe('createAuthProxy — empty-status skip guard', () => {
   // admin to the login page.
   it('does not block an authorised user whose status claim is the empty string', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', status: '', exp: futureExp() },
+      { type: 'dashboard', sub: 'u', role: 'admin', status: '', exp: futureExp() },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({ ...DEFAULT_PROXY_CONFIG, blockedUserStatuses: [''] })
@@ -219,7 +233,10 @@ describe('createAuthProxy — authorised response _r fast path', () => {
   // would force the rewrite path and emit an `x-middleware-rewrite`
   // header even when there is nothing to strip.
   it('does not rewrite when there is no _r param to strip', async () => {
-    const token = await signHs256Token({ sub: 'u', role: 'admin', exp: futureExp() }, TEST_SECRET)
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: futureExp() },
+      TEST_SECRET
+    )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
     const request = makeMockRequest({
       url: 'https://app.example.com/dashboard',
@@ -229,5 +246,42 @@ describe('createAuthProxy — authorised response _r fast path', () => {
     const response = await proxy(request as never)
     expect(response.headers.get('location')).toBeNull()
     expect(response.headers.get('x-middleware-rewrite')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Location — absolute, as Next requires of a middleware, and never off-origin
+// ---------------------------------------------------------------------------
+
+describe('createAuthProxy — the Location Next can parse, on our own origin', () => {
+  // A middleware's response is not sent as written. Next reads the `Location` back and hands
+  // it to `new NextURL(location, ...)`, passing options and no base, so a relative value —
+  // legal per RFC 7231 §7.1.2, and what this proxy used to emit — throws `ERR_INVALID_URL`
+  // there and turns every unauthenticated request into a 500. `new URL` with no base is that
+  // same parse, which is why this asserts it rather than the shape of the string.
+  it('emits a Location that parses with no base, as Next parses it', async () => {
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({ url: 'https://app.example/dashboard' })
+
+    const response = await proxy(request as never)
+    const location = response.headers.get('location') ?? ''
+
+    expect(() => new URL(location)).not.toThrow()
+    expect(new URL(location).origin).toBe('https://app.example')
+  })
+
+  // The origin comes from `request.nextUrl.origin`, which Next derives from the `Host` header,
+  // so a forged host does reach the header — and stops there. Next compares the redirect's
+  // host against the request's and rewrites `Location` down to a path when they match, which
+  // here they always do. What Next leaves absolute is a redirect to a DIFFERENT origin, so
+  // naming only the requested one is the invariant that has to hold at this layer.
+  it('names the requested origin and never a third-party one', async () => {
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({ url: 'https://attacker.example/dashboard' })
+
+    const response = await proxy(request as never)
+    const location = response.headers.get('location') ?? ''
+
+    expect(new URL(location).origin).toBe('https://attacker.example')
   })
 })

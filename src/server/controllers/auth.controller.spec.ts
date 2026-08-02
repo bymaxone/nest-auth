@@ -9,9 +9,13 @@ import type { Request, Response } from 'express'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import { AuthService } from '../services/auth.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { WsTicketService } from '../services/ws-ticket.service'
 import { AuthController } from './auth.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -73,6 +77,11 @@ const mockTokenDelivery = {
   clearAuthSession: jest.fn()
 }
 
+/** The ticket service — the controller only delegates, so the mock is the whole surface. */
+const mockWsTickets = {
+  issue: jest.fn()
+}
+
 const mockReq = {
   ip: '1.2.3.4',
   headers: { 'user-agent': 'TestBrowser' },
@@ -98,11 +107,18 @@ describe('AuthController', () => {
       controllers: [AuthController],
       providers: [
         { provide: AuthService, useValue: mockAuthService },
-        { provide: TokenDeliveryService, useValue: mockTokenDelivery }
+        { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+        { provide: WsTicketService, useValue: mockWsTickets }
       ]
     })
       // Override guards applied via @UseGuards() — unit tests should not instantiate guard deps.
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .compile()
 
@@ -214,15 +230,13 @@ describe('AuthController', () => {
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 
-      await controller.logout(JWT_PAYLOAD as never, mockReq, mockRes)
+      await controller.logout(mockReq, mockRes)
 
       expect(mockTokenDelivery.extractAccessToken).toHaveBeenCalledWith(mockReq)
       expect(mockTokenDelivery.extractRefreshToken).toHaveBeenCalledWith(mockReq)
-      expect(mockAuthService.logout).toHaveBeenCalledWith(
-        'access.jwt',
-        'raw-refresh-token',
-        JWT_PAYLOAD.sub
-      )
+      // No user id: the service reads the session's owner from the stored record, because
+      // this route no longer requires a valid access token to carry one.
+      expect(mockAuthService.logout).toHaveBeenCalledWith('access.jwt', 'raw-refresh-token')
       expect(mockTokenDelivery.clearAuthSession).toHaveBeenCalledWith(mockRes, mockReq)
     })
 
@@ -233,9 +247,9 @@ describe('AuthController', () => {
       mockAuthService.logout.mockResolvedValue(undefined)
       mockTokenDelivery.clearAuthSession.mockReturnValue(undefined)
 
-      await controller.logout(JWT_PAYLOAD as never, mockReq, mockRes)
+      await controller.logout(mockReq, mockRes)
 
-      expect(mockAuthService.logout).toHaveBeenCalledWith('', '', JWT_PAYLOAD.sub)
+      expect(mockAuthService.logout).toHaveBeenCalledWith('', '')
     })
   })
 
@@ -247,14 +261,15 @@ describe('AuthController', () => {
     // Verifies that refresh rotates the token, fetches the user, and delivers new tokens.
     it('should rotate refresh token, fetch user, and deliver new tokens', async () => {
       mockTokenDelivery.extractRefreshToken.mockReturnValue('old-refresh')
-      mockAuthService.refresh.mockResolvedValue(ROTATED_RESULT)
-      mockAuthService.getMe.mockResolvedValue(SAFE_USER)
+      mockAuthService.refresh.mockResolvedValue({ ...ROTATED_RESULT, user: SAFE_USER })
       mockTokenDelivery.deliverRefreshResponse.mockReturnValue({ user: SAFE_USER })
 
       const result = await controller.refresh(mockReq, mockRes)
 
       expect(mockAuthService.refresh).toHaveBeenCalledWith('old-refresh', '1.2.3.4', 'TestBrowser')
-      expect(mockAuthService.getMe).toHaveBeenCalledWith(ROTATED_RESULT.session.userId)
+      // The account rides back with the rotation — `refresh` re-reads it to re-apply the
+      // status and verification gates, so a second repository round trip here would be waste.
+      expect(mockAuthService.getMe).not.toHaveBeenCalled()
       expect(mockTokenDelivery.deliverRefreshResponse).toHaveBeenCalledWith(
         mockRes,
         {
@@ -291,6 +306,30 @@ describe('AuthController', () => {
   // me
   // ---------------------------------------------------------------------------
 
+  describe('wsTicket', () => {
+    // Scenario: an authenticated request to the mint endpoint. Expected: the controller hands
+    // the verified payload to the service and returns what it produces, unmodified. Why: the
+    // controller must stay a delegation — a ticket assembled here would be a second place the
+    // snapshot's contents are decided, and the two would drift.
+    it('should mint from the verified payload and return the ticket', async () => {
+      mockWsTickets.issue.mockResolvedValue({ ticket: 'a'.repeat(64), expiresIn: 30 })
+
+      const result = await controller.wsTicket(JWT_PAYLOAD as never)
+
+      expect(mockWsTickets.issue).toHaveBeenCalledWith(JWT_PAYLOAD)
+      expect(result).toStrictEqual({ ticket: 'a'.repeat(64), expiresIn: 30 })
+    })
+
+    // Scenario: the service refuses (an unsatisfied second factor, a store failure). Expected:
+    // the refusal propagates untouched. Why: a controller that swallowed it would answer 200
+    // with no ticket, and the client would open a socket that cannot authenticate.
+    it('should propagate a refusal from the service', async () => {
+      mockWsTickets.issue.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED))
+
+      await expect(controller.wsTicket(JWT_PAYLOAD as never)).rejects.toThrow(AuthException)
+    })
+  })
+
   describe('me', () => {
     // Verifies that the me endpoint returns the safe user object for the authenticated user.
     it('should return the safe user for the authenticated user', async () => {
@@ -325,16 +364,21 @@ describe('AuthController', () => {
     it('should call verifyEmail without accepting a client-supplied userId', async () => {
       mockAuthService.verifyEmail.mockResolvedValue(undefined)
 
-      await controller.verifyEmail(body as never)
+      await controller.verifyEmail(body as never, mockReq)
 
-      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(body.tenantId, body.email, body.otp)
+      expect(mockAuthService.verifyEmail).toHaveBeenCalledWith(
+        body.tenantId,
+        body.email,
+        body.otp,
+        mockReq
+      )
     })
 
     // Verifies that OTP validation errors from the service are propagated to the caller.
     it('should propagate OTP errors from the service', async () => {
       mockAuthService.verifyEmail.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.OTP_INVALID))
 
-      await expect(controller.verifyEmail(body as never)).rejects.toThrow(AuthException)
+      await expect(controller.verifyEmail(body as never, mockReq)).rejects.toThrow(AuthException)
     })
   })
 
@@ -349,11 +393,12 @@ describe('AuthController', () => {
     it('should call resendVerificationEmail with tenantId and email', async () => {
       mockAuthService.resendVerificationEmail.mockResolvedValue(undefined)
 
-      await controller.resendVerification(body as never)
+      await controller.resendVerification(body as never, mockReq)
 
       expect(mockAuthService.resendVerificationEmail).toHaveBeenCalledWith(
         body.tenantId,
-        body.email
+        body.email,
+        mockReq
       )
     })
 
@@ -361,7 +406,7 @@ describe('AuthController', () => {
     it('should always resolve regardless of whether email exists (anti-enumeration)', async () => {
       mockAuthService.resendVerificationEmail.mockResolvedValue(undefined)
 
-      await expect(controller.resendVerification(body as never)).resolves.toBeUndefined()
+      await expect(controller.resendVerification(body as never, mockReq)).resolves.toBeUndefined()
     })
   })
 })

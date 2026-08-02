@@ -194,6 +194,90 @@ export interface IAuthHooks {
   afterLogout?(userId: string, context: HookContext): Promise<void> | void
 
   /**
+   * Called when a login attempt is refused.
+   *
+   * Every other hook on this interface fires on a success path, which leaves the failure side
+   * of authentication with no structured seam at all: the events that matter most to detection
+   * — a burst of wrong passwords, an account tripping its lockout, a stolen refresh token being
+   * replayed — existed only as English log lines whose wording is not a contract and whose
+   * change is not semver-visible. ASVS v5 §16.3.1 expects authentication operations to be
+   * logged with their outcome, and §6.1.1 expects an *adaptive* response, which needs a signal
+   * to adapt to.
+   *
+   * The email is passed rather than a user id because the common case has no user: a failure
+   * against an address that does not exist is exactly the credential-stuffing signal a consumer
+   * wants. `userId` is present only when the account resolved and the credential did not match.
+   *
+   * Fire-and-forget, like every hook here: a throw is logged and swallowed, never turned into a
+   * different answer for the caller.
+   *
+   * @param details - What failed, and for whom, as far as it is known.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  onLoginFailed?(
+    details: {
+      /** The address the attempt was made against, as submitted. */
+      email: string
+      /** The tenant the attempt was scoped to. */
+      tenantId: string
+      /** Present only when the account exists and the password did not match. */
+      userId?: string
+      /**
+       * Why it was refused. `invalid_credentials` covers both an unknown address and a wrong
+       * password — the two are deliberately indistinguishable to the *caller*, but not to the
+       * hook, which the `userId` above tells apart.
+       */
+      reason: 'invalid_credentials' | 'account_blocked' | 'email_not_verified' | 'locked_out'
+    },
+    context: HookContext
+  ): Promise<void> | void
+
+  /**
+   * Called when an identifier crosses the brute-force threshold and is locked out.
+   *
+   * The single highest-value moment for alerting: one account under sustained attack, or —
+   * seen across many identifiers at once — a credential-stuffing run in progress. It is also
+   * the moment a support queue is about to receive a call, since the lockout is indiscriminate
+   * about who is doing the guessing.
+   *
+   * @param details - The locked identifier and the window it is locked for.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  onLockout?(
+    details: {
+      /** The address that was locked, as submitted. */
+      email: string
+      /** The tenant the lockout is scoped to. */
+      tenantId: string
+      /** Seconds until the window expires and attempts are accepted again. */
+      retryAfterSeconds: number
+    },
+    context: HookContext
+  ): Promise<void> | void
+
+  /**
+   * Called when a consumed refresh token is replayed after its grace window — the signature of
+   * a stolen token — and its family is revoked.
+   *
+   * This is the strongest evidence of compromise the library produces. It is not a guess about
+   * risk: a token that was already exchanged has been presented again by *someone*, and one of
+   * the two holders is not the owner. A consumer wanting to force a password reset, page an
+   * on-call, or raise the account's risk score has nothing else to key on.
+   *
+   * @param details - Whose lineage was revoked.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  onRefreshTokenReuseDetected?(
+    details: {
+      /** The account whose token family was revoked. */
+      userId: string
+      /** The revoked lineage, for correlating with a session listing. */
+      familyId: string
+    },
+    context: HookContext
+  ): Promise<void> | void
+
+  /**
    * Called after MFA has been successfully enabled on a user account.
    *
    * Use this hook to send security notifications (via `IEmailProvider`),

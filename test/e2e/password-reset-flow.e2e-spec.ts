@@ -16,6 +16,7 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
+import type { Redis } from 'ioredis'
 import request from 'supertest'
 
 import type { CapturedEmail, MockEmailProvider } from './setup'
@@ -60,7 +61,7 @@ function instrumentPasswordResetEmails(email: MockEmailProvider): CapturedEmail[
  */
 async function waitForEmail(
   sentEmails: CapturedEmail[],
-  predicate: (email: CapturedEmail) => boolean,
+  predicate: (email: CapturedEmail, index: number) => boolean,
   timeoutMs = 1_000
 ): Promise<CapturedEmail> {
   const deadline = Date.now() + timeoutMs
@@ -232,6 +233,224 @@ describe('password reset flow (E2E)', () => {
   // in a single `beforeAll` and the assertions are split across focused `it()`
   // blocks. The shared variables below mutate step-by-step inside that hook.
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // A completed reset invalidates the tokens issued beside it
+  // ---------------------------------------------------------------------------
+
+  describe('sibling reset tokens', () => {
+    let app: INestApplication
+    let sentEmails: CapturedEmail[]
+    let redis: Redis
+
+    beforeAll(async () => {
+      const bootstrap = await bootstrapTestApp({
+        tokenDelivery: 'bearer',
+        passwordReset: { method: 'token', tokenTtlSeconds: 3_600 }
+      })
+      app = bootstrap.app
+      redis = bootstrap.redis
+      sentEmails = instrumentPasswordResetEmails(bootstrap.email)
+    })
+
+    afterAll(async () => {
+      await app.close()
+    })
+
+    // Each `forgot-password` writes its own `pw_reset:` key, so several can be alive at once.
+    // Completing a reset with one used to leave the others valid — the wrong end state exactly
+    // when it matters: a victim who resets *because* an attacker read a link from their mailbox
+    // had not closed the link the attacker read, and the attacker could set the password again
+    // for the rest of the TTL.
+    it('refuses a token issued before the password changed', async () => {
+      const email = 'siblings@example.com'
+      await request(app.getHttpServer())
+        .post('/register')
+        .send({ email, password: 'OldSecret123!', name: 'Sib', tenantId: 'tenant-1' })
+
+      /**
+       * Requests a reset and returns the token from the mail it produced.
+       *
+       * Anchored on the capture count taken *before* the request: `waitForEmail` finds the
+       * first match, so a second call would otherwise return the first link again and the test
+       * would compare a token against itself.
+       */
+      async function requestToken(): Promise<string> {
+        const before = sentEmails.length
+        await request(app.getHttpServer())
+          .post('/password/forgot-password')
+          .send({ email, tenantId: 'tenant-1' })
+        const mail = await waitForEmail(
+          sentEmails,
+          (e, index) => index >= before && e.to === email && e.subject === 'Password reset'
+        )
+        return /token=([a-f0-9]{64})/.exec(mail.html ?? '')?.[1] ?? ''
+      }
+
+      const first = await requestToken()
+      // Release the 60-second send cooldown the way waiting would, so the second request is
+      // issued at all — the cooldown is a separate control with its own tests.
+      for (const key of await redis.keys('*resend:password_reset:*')) {
+        await redis.del(key)
+      }
+      const second = await requestToken()
+      expect(first).not.toBe(second)
+      expect(first).toBeTruthy()
+
+      // The victim completes the reset with the second link.
+      const completed = await request(app.getHttpServer()).post('/password/reset-password').send({
+        email,
+        tenantId: 'tenant-1',
+        token: second,
+        newPassword: 'VictimChosen456!'
+      })
+      expect(completed.status).toBe(204)
+
+      // The first link — the one the attacker read — no longer works.
+      const replayed = await request(app.getHttpServer()).post('/password/reset-password').send({
+        email,
+        tenantId: 'tenant-1',
+        token: first,
+        newPassword: 'AttackerChosen789!'
+      })
+      expect(replayed.status).toBeGreaterThanOrEqual(400)
+
+      // And the victim's password is the one that stands.
+      const login = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'VictimChosen456!', tenantId: 'tenant-1' })
+      expect(login.status).toBe(200)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // POST /password/change — the authenticated rotation
+  // ---------------------------------------------------------------------------
+
+  describe('authenticated change', () => {
+    let app: INestApplication
+
+    beforeAll(async () => {
+      const bootstrap = await bootstrapTestApp({ tokenDelivery: 'bearer' })
+      app = bootstrap.app
+    })
+
+    afterAll(async () => {
+      await app.close()
+    })
+
+    /** Registers an account and returns its tokens. */
+    async function register(email: string): Promise<{ access: string; refresh: string }> {
+      const res = await request(app.getHttpServer()).post('/register').send({
+        email,
+        password: 'OldSecret123!',
+        name: 'Changer',
+        tenantId: 'tenant-1'
+      })
+      const body = res.body as { accessToken: string; refreshToken: string }
+      return { access: body.accessToken, refresh: body.refreshToken }
+    }
+
+    // The whole point of the flow: rotate a password you already know, from inside a session,
+    // without going through the mailbox. ASVS v5 §6.2.2 asks for it at Level 1.
+    it('rotates the password and lets the new one log in', async () => {
+      const email = 'change-happy@example.com'
+      const { access, refresh } = await register(email)
+
+      const changed = await request(app.getHttpServer())
+        .post('/password/change')
+        .set('Authorization', `Bearer ${access}`)
+        .send({
+          currentPassword: 'OldSecret123!',
+          newPassword: 'BrandNewSecret456!',
+          refreshToken: refresh
+        })
+      expect(changed.status).toBe(204)
+
+      const withNew = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'BrandNewSecret456!', tenantId: 'tenant-1' })
+      expect(withNew.status).toBe(200)
+
+      const withOld = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+      expect(withOld.status).toBe(401)
+    })
+
+    // The reason the current password is required: a stolen session must not be enough to
+    // rotate the credential, lock the owner out, and keep the attacker in.
+    it('refuses a session that cannot produce the current password', async () => {
+      const email = 'change-thief@example.com'
+      const { access, refresh } = await register(email)
+
+      const refused = await request(app.getHttpServer())
+        .post('/password/change')
+        .set('Authorization', `Bearer ${access}`)
+        .send({
+          currentPassword: 'not-the-password',
+          newPassword: 'AttackerChosen789!',
+          refreshToken: refresh
+        })
+      expect(refused.status).toBe(401)
+      expect((refused.body as { error?: { code?: string } }).error?.code).toBe(
+        'auth.invalid_credentials'
+      )
+
+      // The original password still works — nothing was written.
+      const stillWorks = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+      expect(stillWorks.status).toBe(200)
+    })
+
+    // Unauthenticated callers never reach the handler: the route is inside a controller marked
+    // `@Public()` at the class level, so `@Authenticated()` is what un-exempts it. Without that
+    // decorator the guard returns before it looks at anything — the route would mount, the
+    // guard would run, and everyone would be let through.
+    it('refuses an unauthenticated caller', async () => {
+      const anonymous = await request(app.getHttpServer()).post('/password/change').send({
+        currentPassword: 'OldSecret123!',
+        newPassword: 'BrandNewSecret456!'
+      })
+
+      expect(anonymous.status).toBe(401)
+    })
+
+    // ASVS v5 §7.4.3: the other sessions end. The caller's own survives, so the device that
+    // made the change is not signed out by making it.
+    it('ends the other sessions and keeps the caller signed in', async () => {
+      const email = 'change-sessions@example.com'
+      const { access, refresh } = await register(email)
+
+      // A second device.
+      const other = await request(app.getHttpServer())
+        .post('/login')
+        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+      const otherRefresh = (other.body as { refreshToken: string }).refreshToken
+
+      await request(app.getHttpServer())
+        .post('/password/change')
+        .set('Authorization', `Bearer ${access}`)
+        .send({
+          currentPassword: 'OldSecret123!',
+          newPassword: 'BrandNewSecret456!',
+          refreshToken: refresh
+        })
+
+      // The other device can no longer rotate — its session is gone.
+      const otherRotates = await request(app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken: otherRefresh })
+      expect(otherRotates.status).toBeGreaterThanOrEqual(400)
+
+      // The caller's own session survives, so its client silently re-mints an access token.
+      const mine = await request(app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken: refresh })
+      expect(mine.status).toBe(200)
+    })
+  })
 
   describe('otp method', () => {
     let app: INestApplication

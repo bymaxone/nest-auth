@@ -107,6 +107,27 @@ describe('isSafeSameOriginPath — rejected inputs', () => {
     expect(isSafeSameOriginPath('/path\\back')).toBe(false)
   })
 
+  // The other C0 controls and DEL. None of them smuggles a header the way CR/LF does, but
+  // none of them belongs in a path either, and enumerating only the three that are known to
+  // be dangerous is the kind of allowlist-by-omission that looks complete right up until
+  // someone finds the character nobody thought of.
+  it.each([
+    ['TAB', '/path\tafter'],
+    ['VT', '/path\v'],
+    ['FF', '/path\f'],
+    ['BEL', '/path\u0007'],
+    ['ESC', '/path\u001b'],
+    ['DEL', '/path\u007f']
+  ])('returns false for a path containing %s', (_label, candidate) => {
+    expect(isSafeSameOriginPath(candidate)).toBe(false)
+  })
+
+  // Printable characters stay allowed, including the ones that need percent-encoding: the
+  // helper guards against smuggling, not against a path a `new URL()` will encode correctly.
+  it('returns true for a path containing a space', () => {
+    expect(isSafeSameOriginPath('/my dashboard')).toBe(true)
+  })
+
   // Defensive: callers are typed against `string`, but a JS-only
   // consumer could slip a non-string through. The helper must not
   // throw — it must return `false`.

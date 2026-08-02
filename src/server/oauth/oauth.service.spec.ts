@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
 import { OAuthService } from './oauth.service'
@@ -30,6 +30,7 @@ import {
 } from '../bymax-auth.constants'
 import { sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { maskEmail } from '../utils/mask-email'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
@@ -72,6 +73,7 @@ const OAUTH_PROFILE = {
   provider: 'google',
   providerId: 'g-123',
   email: 'user@example.com',
+  emailVerified: true,
   name: 'Test User'
 }
 
@@ -83,7 +85,7 @@ const AUTH_RESULT = {
 
 // Stored state payload JSON that would be stored in Redis.
 const STORED_STATE = JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 'verifier-xyz' })
-/** Legacy stored state without PKCE — used to exercise the backward-compatible branch. */
+/** A state record with the PKCE verifier stripped — corrupt, or a downgrade attempt. */
 const STORED_STATE_NO_PKCE = JSON.stringify({ tenantId: 'tenant-1' })
 
 // Mock plugin — implements the OAuthProviderPlugin interface.
@@ -96,6 +98,7 @@ const mockPlugin = {
 
 const mockUserRepo = {
   findByOAuthId: jest.fn(),
+  findByEmail: jest.fn(),
   createWithOAuth: jest.fn(),
   linkOAuth: jest.fn(),
   findById: jest.fn()
@@ -124,12 +127,22 @@ const mockSessionService = {
 
 // Default options with sessions disabled — tests that need sessions override this.
 const MOCK_OPTIONS = {
-  sessions: { enabled: false }
+  sessions: { enabled: false },
+  secureCookies: true,
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
+  emailVerification: { required: false }
 }
 
 const mockRes = {
-  redirect: jest.fn()
+  redirect: jest.fn(),
+  cookie: jest.fn()
 } as unknown as Response
+
+/** A minimal request double — `initiateOAuth` only hands it to the tenant resolver. */
+const mockReq = {
+  ip: '1.2.3.4',
+  headers: { 'user-agent': 'TestBrowser' }
+} as unknown as Request
 
 /**
  * Builds an OAuthService backed by a single plugin whose `name` is provided by
@@ -160,6 +173,26 @@ async function buildServiceWithPluginName(pluginName: string): Promise<OAuthServ
   return module.get(OAuthService)
 }
 
+/**
+ * Builds an OAuthService against the shared mocks with `options` overridden — for the handful
+ * of tests whose subject is a config value rather than a flow.
+ */
+async function buildServiceWithOptions(options: object): Promise<OAuthService> {
+  const module = await Test.createTestingModule({
+    providers: [
+      OAuthService,
+      { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: TokenManagerService, useValue: mockTokenManager },
+      { provide: SessionService, useValue: mockSessionService },
+      { provide: BYMAX_AUTH_OPTIONS, useValue: options }
+    ]
+  }).compile()
+  return module.get(OAuthService)
+}
+
 // ---------------------------------------------------------------------------
 // OAuthService — initiateOAuth
 // ---------------------------------------------------------------------------
@@ -170,6 +203,9 @@ describe('OAuthService', () => {
   beforeEach(async () => {
     jest.resetAllMocks()
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+    // No email collision unless a test arranges one — `create` is the common arrangement here,
+    // and every one of those cases assumes the address is free.
+    mockUserRepo.findByEmail.mockResolvedValue(null)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -188,6 +224,25 @@ describe('OAuthService', () => {
   })
 
   describe('initiateOAuth', () => {
+    // Every other entry point runs the configured resolver, on the stated principle that a
+    // deployment deriving the tenant from the request has said the caller's value is not to be
+    // trusted. This was the one door that took it verbatim — and it is the door that decides
+    // which tenant an account gets provisioned into, which is more than the others protect.
+    it('lets a configured resolver override the tenant the caller named', async () => {
+      const svc = await buildServiceWithOptions({
+        ...MOCK_OPTIONS,
+        tenantIdResolver: () => 'tenant-from-request'
+      })
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example/authorize')
+
+      await svc.initiateOAuth('google', 'tenant-the-caller-asked-for', mockReq, mockRes)
+
+      // The RESOLVED tenant is what lands in the state record, so the callback — which reads
+      // the account's tenant from there and nowhere else — cannot be talked into the other one.
+      const [, payload] = mockRedis.set.mock.calls[0] as [string, string, number]
+      expect(JSON.parse(payload)).toMatchObject({ tenantId: 'tenant-from-request' })
+    })
+
     // Verifies the happy path: a valid provider name resolves the plugin, stores
     // the CSRF state in Redis with the correct key format and TTL, and redirects
     // the user to the URL returned by plugin.authorizeUrl().
@@ -196,7 +251,7 @@ describe('OAuthService', () => {
         'https://accounts.google.com/o/oauth2/v2/auth?state=abc'
       )
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       // Verify that the plugin's authorizeUrl was called with the generated state
       // and a PKCE code challenge (second positional parameter).
@@ -231,7 +286,7 @@ describe('OAuthService', () => {
     // that binds the authorize URL to the server-held verifier.
     it('should pass the SHA-256 base64url(code_verifier) as the PKCE challenge', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [, codeChallenge] = mockPlugin.authorizeUrl.mock.calls[0] as [
         string,
@@ -251,7 +306,7 @@ describe('OAuthService', () => {
     it('should generate a 64-char hex state nonce', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const [state] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
       expect(state).toMatch(/^[0-9a-f]{64}$/)
@@ -261,16 +316,55 @@ describe('OAuthService', () => {
     it('should store state with a TTL of 600 seconds', async () => {
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
 
-      await service.initiateOAuth('google', 'tenant-1', mockRes)
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
 
       const ttlArg = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
       expect(ttlArg).toBe(600)
     })
 
+    // Verifies the browser binding required by RFC 6749 §10.12: the raw state is planted as
+    // an HttpOnly cookie so the callback can prove it reached the same browser that started
+    // the flow. Without it, an attacker who holds a valid `?code=…&state=…` URL can have a
+    // victim's browser complete THEIR login and inherit whatever the victim does next.
+    it('should plant the raw state as an HttpOnly oauth_state cookie', async () => {
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
+
+      await service.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
+
+      const [generatedState] = mockPlugin.authorizeUrl.mock.calls[0] as [string, string | undefined]
+      expect(mockRes.cookie).toHaveBeenCalledWith('oauth_state', generatedState, {
+        httpOnly: true,
+        secure: true,
+        // Always 'lax', never the configured value: the provider's callback is a cross-site
+        // top-level GET, and 'strict' would withhold the cookie on exactly that hop.
+        sameSite: 'lax',
+        path: '/',
+        // Matches OAUTH_STATE_TTL_SECONDS so neither half of the pair outlives the other.
+        maxAge: 600_000
+      })
+    })
+
+    // Verifies the `secure` attribute tracks the deployment setting rather than being pinned
+    // true — a cookie marked Secure is dropped outright over plain HTTP, which would break
+    // every local development login.
+    it('should mirror options.secureCookies on the state cookie', async () => {
+      const svc = await buildServiceWithOptions({ ...MOCK_OPTIONS, secureCookies: false })
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example.com/auth')
+
+      await svc.initiateOAuth('google', 'tenant-1', mockReq, mockRes)
+
+      const [, , attrs] = (mockRes.cookie as jest.Mock).mock.calls[0] as [
+        string,
+        string,
+        { secure: boolean }
+      ]
+      expect(attrs.secure).toBe(false)
+    })
+
     // Verifies that an unknown provider name triggers OAUTH_FAILED before any Redis
     // write — the validation happens before the state is stored.
     it('should throw AuthException(OAUTH_FAILED) for an unknown provider', async () => {
-      await expect(service.initiateOAuth('github', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('github', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
       expect(mockRedis.set).not.toHaveBeenCalled()
@@ -279,21 +373,23 @@ describe('OAuthService', () => {
     // Verifies that provider names with uppercase letters fail format validation
     // before the plugin registry is consulted.
     it('should throw OAUTH_FAILED for a provider with uppercase letters', async () => {
-      await expect(service.initiateOAuth('GOOGLE', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('GOOGLE', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
     })
 
     // Verifies that path-traversal style provider names are rejected by format validation.
     it('should throw OAUTH_FAILED for a provider with path-traversal characters', async () => {
-      await expect(service.initiateOAuth('../etc', 'tenant-1', mockRes)).rejects.toThrow(
+      await expect(service.initiateOAuth('../etc', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
         AuthException
       )
     })
 
     // Verifies that an empty string is rejected by format validation (requires 1+ chars).
     it('should throw OAUTH_FAILED for an empty provider string', async () => {
-      await expect(service.initiateOAuth('', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(service.initiateOAuth('', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Pins that the format guard runs at all (and is not stubbed away). Even when a
@@ -304,7 +400,9 @@ describe('OAuthService', () => {
     it('should reject an uppercase provider even if a plugin is registered under that exact name', async () => {
       const svc = await buildServiceWithPluginName('GOOGLE')
 
-      await expect(svc.initiateOAuth('GOOGLE', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth('GOOGLE', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRes.redirect).not.toHaveBeenCalled()
     })
@@ -316,7 +414,9 @@ describe('OAuthService', () => {
     it('should reject a provider with a leading space even if a plugin matches that name (pins ^)', async () => {
       const svc = await buildServiceWithPluginName(' google')
 
-      await expect(svc.initiateOAuth(' google', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth(' google', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
@@ -327,7 +427,9 @@ describe('OAuthService', () => {
     it('should reject a provider with a trailing space even if a plugin matches that name (pins $)', async () => {
       const svc = await buildServiceWithPluginName('google ')
 
-      await expect(svc.initiateOAuth('google ', 'tenant-1', mockRes)).rejects.toThrow(AuthException)
+      await expect(svc.initiateOAuth('google ', 'tenant-1', mockReq, mockRes)).rejects.toThrow(
+        AuthException
+      )
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
   })
@@ -347,10 +449,80 @@ describe('OAuthService', () => {
         'google',
         'auth-code-xyz',
         'csrf-state-abc',
+        'csrf-state-abc',
         '1.2.3.4',
         'TestBrowser/1.0',
         { 'x-request-id': 'req-123' }
       )
+
+    // A callback that arrives without the `oauth_state` cookie cannot prove it belongs to the
+    // browser that started the flow — which is exactly the shape of the attack: the attacker
+    // runs their own authorization, never visits the resulting callback URL, and lures the
+    // victim there instead. The victim's browser carries no cookie for the attacker's flow.
+    // Refusing BEFORE `getdel` matters twice over: it keeps a lured victim from burning a
+    // state the legitimate browser is still entitled to complete.
+    it('should refuse a callback that carries no state cookie', async () => {
+      setupHappyPathCreate()
+
+      await expect(
+        service.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          undefined,
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_FAILED } }
+      })
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
+      expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
+    })
+
+    // The same refusal for a cookie that exists but belongs to a different flow — a stale
+    // cookie from an abandoned attempt, or one an attacker managed to plant.
+    it('should refuse a callback whose state cookie does not match the query state', async () => {
+      setupHappyPathCreate()
+
+      await expect(
+        service.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          'a-different-state',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_FAILED } }
+      })
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
+    })
+
+    // An empty cookie value must not be treated as "no check needed" — it is a mismatch like
+    // any other. Pinned separately because the falsy-vs-undefined distinction is exactly the
+    // kind of guard a refactor rewrites into `if (stateCookie)`.
+    it('should refuse a callback whose state cookie is empty', async () => {
+      setupHappyPathCreate()
+
+      await expect(
+        service.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          '',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_FAILED } }
+      })
+      expect(mockRedis.getdel).not.toHaveBeenCalled()
+    })
 
     // Sets up the default happy-path mock state. Tests that diverge from this
     // arrange their own overrides.
@@ -363,6 +535,116 @@ describe('OAuthService', () => {
       mockUserRepo.createWithOAuth.mockResolvedValue(AUTH_USER)
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
     }
+
+    // Scenario: a BANNED account whose OAuth identity is already linked signs in with the
+    // provider. Expected: refused before any token is issued. Why: every other credential
+    // flow in this library gates on status — password login, the MFA challenge, both reset
+    // steps, the platform login — and OAuth was the one that did not, so a ban was fully
+    // reversible by anyone holding the linked provider account. Ban is the primary account
+    // kill switch; a flow that ignores it makes it advisory.
+    it.each([
+      ['BANNED', AUTH_ERROR_CODES.ACCOUNT_BANNED],
+      ['SUSPENDED', AUTH_ERROR_CODES.ACCOUNT_SUSPENDED],
+      ['INACTIVE', AUTH_ERROR_CODES.ACCOUNT_INACTIVE]
+    ])('should refuse an OAuth sign-in for a %s account', async (status, expectedCode) => {
+      setupHappyPathCreate()
+      // Linked identity: the hook resolves to the existing (blocked) account. The link branch
+      // re-fetches by primary key, so `findById` is what supplies the resolved user.
+      const blocked = { ...AUTH_USER, status }
+      mockUserRepo.findByOAuthId.mockResolvedValue(blocked)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(blocked)
+
+      await expect(callCallback()).rejects.toMatchObject({
+        // The status gate specifically — not OAUTH_FAILED from an earlier step, which would
+        // make this test pass while proving nothing.
+        response: { error: { code: expectedCode } }
+      })
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a blocked account that ALSO has MFA enabled. Expected: refused without even
+    // an MFA temp token. Why: the gate runs before the MFA branch, so a blocked account
+    // cannot obtain the intermediate credential either — otherwise the ban would be
+    // enforced only at the second step, and only for accounts that have a second step.
+    it('should refuse a blocked MFA-enabled account before issuing a temp token', async () => {
+      setupHappyPathCreate()
+      const blocked = { ...AUTH_USER, status: 'BANNED', mfaEnabled: true }
+      mockUserRepo.findByOAuthId.mockResolvedValue(blocked)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(blocked)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Scenario: `emailVerification.required` is on and the provider asserted an UNVERIFIED
+    // address. Expected: refused, exactly as password login refuses it. Why: an OAuth
+    // identity is not a substitute for a proven mailbox — signing in must not promote an
+    // unverified address, or the deployment's "this email is proven" invariant is false for
+    // every OAuth account.
+    it('should refuse an unverified address when email verification is required', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          OAuthService,
+          { provide: OAUTH_PLUGINS, useValue: [mockPlugin] },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: SessionService, useValue: mockSessionService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, emailVerification: { required: true } }
+          }
+        ]
+      }).compile()
+      const strict = module.get<OAuthService>(OAuthService)
+
+      setupHappyPathCreate()
+      const unverified = { ...AUTH_USER, emailVerified: false }
+      mockUserRepo.findByOAuthId.mockResolvedValue(unverified)
+      mockHooks.onOAuthLogin.mockResolvedValue({ action: 'link' })
+      mockUserRepo.linkOAuth.mockResolvedValue(undefined)
+      mockUserRepo.findById.mockResolvedValue(unverified)
+
+      await expect(
+        strict.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          'csrf-state-abc',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        // The EMAIL_NOT_VERIFIED gate specifically — not OAUTH_FAILED from some earlier step,
+        // which would make this test pass while proving nothing.
+        response: { error: { code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED } }
+      })
+      expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the provider hands back an address it has NOT verified.
+    // Expected: the account is created unverified, so the consumer's own verification flow
+    // still has to run. Why: the account belongs to whoever controls the OAuth account, not to
+    // whoever controls the mailbox — marking it verified anyway would make "this email is
+    // proven" false from the first login, which is how an account gets taken over by
+    // registering with someone else's address at a provider that does not check.
+    it('creates the account unverified when the provider did not verify the email', async () => {
+      setupHappyPathCreate()
+      mockPlugin.fetchProfile.mockResolvedValue({ ...OAUTH_PROFILE, emailVerified: false })
+
+      await callCallback()
+
+      expect(mockUserRepo.createWithOAuth).toHaveBeenCalledWith(
+        expect.objectContaining({ emailVerified: false })
+      )
+    })
 
     // Verifies that the 'create' action provisions a new user, strips credentials
     // before calling issueTokens, and returns the full AuthResult.
@@ -413,13 +695,17 @@ describe('OAuthService', () => {
       expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', 'verifier-xyz')
     })
 
-    // Verifies backward compatibility: a legacy stored state without codeVerifier
-    // still completes the flow — exchangeCode receives `undefined` for the verifier.
-    it('should forward undefined verifier when the stored state predates PKCE', async () => {
+    // Scenario: a stored state with no `codeVerifier` at all. Expected: refused, and the
+    // exchange never runs. Why: every flow this library starts writes a verifier, so a record
+    // without one is corrupt or forged — accepting it is a PKCE downgrade, where stripping one
+    // field buys an attacker an exchange with no proof they started the flow. `rust-auth`
+    // types the field as a plain `String` and cannot even deserialize such a record.
+    it('should refuse a stored state carrying no codeVerifier', async () => {
       setupHappyPathCreate()
       mockRedis.getdel.mockResolvedValue(STORED_STATE_NO_PKCE)
-      await callCallback()
-      expect(mockPlugin.exchangeCode).toHaveBeenCalledWith('auth-code-xyz', undefined)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
     })
 
     // Verifies that a stored state whose `codeVerifier` is not a string is rejected
@@ -487,12 +773,15 @@ describe('OAuthService', () => {
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_OPTIONS, useValue: { sessions: { enabled: true } } }
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, sessions: { enabled: true } }
+          }
         ]
       }).compile()
 
       const svc = moduleWithSessions.get(OAuthService)
-      await svc.handleCallback('google', 'code', 'state', '1.2.3.4', 'UA', {})
+      await svc.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         SAFE_USER.id,
@@ -522,12 +811,15 @@ describe('OAuthService', () => {
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: TokenManagerService, useValue: mockTokenManager },
           { provide: SessionService, useValue: mockSessionService },
-          { provide: BYMAX_AUTH_OPTIONS, useValue: { sessions: { enabled: true } } }
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...MOCK_OPTIONS, sessions: { enabled: true } }
+          }
         ]
       }).compile()
 
       const svc = moduleWithSessions.get(OAuthService)
-      await svc.handleCallback('google', 'code', 'state', '1.2.3.4', 'UA', {})
+      await svc.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         SAFE_USER.id,
@@ -544,6 +836,41 @@ describe('OAuthService', () => {
       await callCallback()
 
       expect(mockSessionService.createSession).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the hook says 'create', but the address already belongs to an account that is
+    // not linked to this OAuth identity — a local registration, or a link to a different
+    // provider. Expected: a 409 `auth.oauth_email_mismatch`, and no create attempted. Why:
+    // `findByOAuthId` cannot see that account, so creating would hit the repository's
+    // uniqueness constraint and surface as an opaque 500 the caller can do nothing with. It is
+    // a conflict, and it is actionable (sign in and link instead). rust-auth answers the same
+    // 409 for the same collision.
+    it('should reject a create whose email already belongs to another account', async () => {
+      setupHappyPathCreate()
+      mockUserRepo.findByEmail.mockResolvedValue(AUTH_USER)
+
+      await expect(callCallback()).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH } },
+        status: 409
+      })
+      expect(mockUserRepo.createWithOAuth).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the collision above. Expected: the warning names the tenant and a MASKED
+    // address. Why: an operator correlating repeated collisions needs to know which tenant and
+    // roughly which account, and the log must not become a store of full addresses.
+    it('should log the refused create with a masked address', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      setupHappyPathCreate()
+      mockUserRepo.findByEmail.mockResolvedValue(AUTH_USER)
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+
+      const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(logged).toContain('oauth: create refused')
+      expect(logged).toContain(maskEmail(OAUTH_PROFILE.email))
+      expect(logged).not.toContain(OAUTH_PROFILE.email)
+      warnSpy.mockRestore()
     })
 
     // Verifies that 'reject' action from the hook triggers OAUTH_FAILED.
@@ -580,9 +907,15 @@ describe('OAuthService', () => {
     // Verifies that malformed JSON in the stored state value results in OAUTH_FAILED,
     // not an unhandled JSON.parse exception.
     it('should throw OAUTH_FAILED when the stored state contains malformed JSON', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.getdel.mockResolvedValue('{invalid-json')
 
       await expect(callCallback()).rejects.toThrow(AuthException)
+      // Corrupted storage and a stale callback answer the caller identically, so the log is
+      // the only place they are distinguishable — and the difference decides whether an
+      // operator goes looking at Redis or at the user's browser.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unparseable OAuth state'))
+      warnSpy.mockRestore()
     })
 
     // Verifies that a valid JSON object that is missing the tenantId field fails the
@@ -626,7 +959,7 @@ describe('OAuthService', () => {
     // preserving the CSRF state for the user to retry with a corrected request.
     it('should throw OAUTH_FAILED for invalid provider format without consuming Redis state', async () => {
       await expect(
-        service.handleCallback('GOOGLE', 'code', 'state', '1.2.3.4', 'UA', {})
+        service.handleCallback('GOOGLE', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
       ).rejects.toThrow(AuthException)
 
       expect(mockRedis.getdel).not.toHaveBeenCalled()
@@ -637,7 +970,7 @@ describe('OAuthService', () => {
     // preserved for the user to retry after configuration is corrected.
     it('should NOT consume Redis state for a valid-format but unregistered provider', async () => {
       await expect(
-        service.handleCallback('github', 'code', 'state', '1.2.3.4', 'UA', {})
+        service.handleCallback('github', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
       ).rejects.toThrow(AuthException)
 
       expect(mockRedis.getdel).not.toHaveBeenCalled()
@@ -667,7 +1000,7 @@ describe('OAuthService', () => {
 
       const svc = moduleNullHooks.get(OAuthService)
       await expect(
-        svc.handleCallback('google', 'code', 'state', '1.2.3.4', 'UA', {})
+        svc.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
       ).rejects.toThrow(AuthException)
     })
 
@@ -740,6 +1073,25 @@ describe('OAuthService', () => {
       await expect(callCallback()).rejects.toThrow(AuthException)
     })
 
+    // `onOAuthLogin` is the documented — and only — place a deployment can enforce tenant
+    // membership, and it is what stands between an unconfigured install and an unauthenticated
+    // OAuth sign-in. It was being asked to make that call without being told which tenant, or
+    // which address, the flow had resolved to. Both come from server-side state (the `os:`
+    // record and the verified profile), never from the callback request.
+    it('tells the onOAuthLogin hook which tenant and address the flow resolved to', async () => {
+      setupHappyPathCreate()
+
+      await service.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
+
+      const [, , context] = mockHooks.onOAuthLogin.mock.calls[0] as [
+        unknown,
+        unknown,
+        { tenantId?: string; email?: string }
+      ]
+      expect(context.tenantId).toBe('tenant-1')
+      expect(context.email).toBe(OAUTH_PROFILE.email)
+    })
+
     // Verifies that the headers passed to handleCallback reach the onOAuthLogin hook
     // context as sanitized headers — sensitive values like 'authorization' are stripped.
     it('should pass sanitized headers to the onOAuthLogin hook context', async () => {
@@ -751,7 +1103,15 @@ describe('OAuthService', () => {
         'user-agent': 'TestBrowser'
       }
 
-      await service.handleCallback('google', 'code', 'state', '1.2.3.4', 'UA', headersWithSensitive)
+      await service.handleCallback(
+        'google',
+        'code',
+        'state',
+        'state',
+        '1.2.3.4',
+        'UA',
+        headersWithSensitive
+      )
 
       const hookContext = (
         mockHooks.onOAuthLogin.mock.calls[0] as [
@@ -771,7 +1131,7 @@ describe('OAuthService', () => {
       setupHappyPathCreate()
       const state = 'my-test-state-value'
 
-      await service.handleCallback('google', 'code', state, '1.2.3.4', 'UA', {})
+      await service.handleCallback('google', 'code', state, state, '1.2.3.4', 'UA', {})
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(`os:${sha256(state)}`)
     })
@@ -811,7 +1171,7 @@ describe('OAuthService', () => {
       mockUserRepo.createWithOAuth.mockResolvedValue(AUTH_USER)
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
 
-      await service.handleCallback('google', 'code', 'state', '1.2.3.4', 'UA', {})
+      await service.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
 
       expect(mockUserRepo.createWithOAuth).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'user' }) // local part of 'user@example.com'
@@ -854,7 +1214,7 @@ describe('OAuthService', () => {
     // all OAUTH_FAILED exceptions, not a generic error.
     it('should throw AuthException with OAUTH_FAILED code for unknown provider', async () => {
       await expect(
-        service.handleCallback('github', 'code', 'state', '1.2.3.4', 'UA', {})
+        service.handleCallback('github', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
       ).rejects.toMatchObject({
         getResponse: expect.any(Function)
       })

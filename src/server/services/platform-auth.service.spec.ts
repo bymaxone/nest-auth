@@ -105,13 +105,16 @@ const mockPlatformUserRepo = {
 
 const mockPasswordService = {
   hash: jest.fn(),
-  compare: jest.fn()
+  compare: jest.fn(),
+  compareDummy: jest.fn()
 }
 
 const mockTokenManager = {
   issuePlatformTokens: jest.fn(),
   issueMfaTempToken: jest.fn(),
-  reissuePlatformTokens: jest.fn()
+  reissuePlatformTokens: jest.fn(),
+  reissuePlatformAccessWithAuthority: jest.fn(),
+  verifyPlatformIgnoringExpiry: jest.fn()
 }
 
 const mockBruteForce = {
@@ -125,17 +128,27 @@ const mockRedis = {
   set: jest.fn(),
   del: jest.fn(),
   srem: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  readSessionOwner: jest.fn(),
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
-  hmacKey: HMAC_KEY
+  hmacKey: HMAC_KEY,
+  previousHmacKeys: [],
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED']
 }
 
 // ---------------------------------------------------------------------------
 // Suite — PlatformAuthService
 // ---------------------------------------------------------------------------
+
+/** The wire code carried by a thrown `AuthException`. */
+function getErrorCode(err: unknown): string {
+  if (!(err instanceof AuthException)) throw new Error(`not an AuthException: ${String(err)}`)
+  return (err.getResponse() as { error: { code: string } }).error.code
+}
 
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
@@ -175,6 +188,7 @@ describe('PlatformAuthService', () => {
       mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(120)
       mockPlatformUserRepo.findByEmail.mockResolvedValue(PLATFORM_ADMIN)
       mockPasswordService.compare.mockResolvedValue(true)
+      mockPasswordService.compareDummy.mockResolvedValue(false)
       mockTokenManager.issuePlatformTokens.mockResolvedValue(PLATFORM_AUTH_RESULT)
       mockPlatformUserRepo.updateLastLogin.mockResolvedValue(undefined)
     })
@@ -283,6 +297,107 @@ describe('PlatformAuthService', () => {
       warnSpy.mockRestore()
     })
 
+    // Verifies the anti-enumeration decoy: an unknown admin address must still pay the
+    // scrypt cost. Without it the not-found path returns in single-digit milliseconds
+    // while a wrong password takes tens, and that delta enumerates which administrator
+    // accounts exist even though both responses carry the identical error body.
+    it('should run the dummy KDF when the admin address is unknown', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue(null)
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockPasswordService.compareDummy).toHaveBeenCalledWith(dto.password)
+    })
+
+    // Verifies the status gate refuses a suspended administrator that presents the
+    // correct password. Without it a revoked operator keeps full platform access for as
+    // long as the credential is known — the password check alone says nothing about
+    // whether the account is still permitted to authenticate.
+    it('should reject a blocked admin even when the password is correct', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({
+        ...PLATFORM_ADMIN,
+        status: 'SUSPENDED'
+      })
+
+      let caught: AuthException | undefined
+      try {
+        await service.login(dto, ip, userAgent)
+      } catch (e) {
+        caught = e instanceof AuthException ? e : undefined
+      }
+
+      expect(caught).toBeInstanceOf(AuthException)
+      const response = caught!.getResponse() as { error: { code: string } }
+      expect(response.error.code).toBe(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
+      expect(caught!.getStatus()).toBe(403)
+      expect(mockTokenManager.issuePlatformTokens).not.toHaveBeenCalled()
+    })
+
+    // Verifies the status gate runs BEFORE the KDF. Ordering is the security property:
+    // if it ran after, an attacker knowing a disabled address could force unbounded
+    // scrypt work with attempts that could never succeed.
+    // This used to assert the opposite — that a blocked admin was refused WITHOUT paying the
+    // KDF. That saving answered with the administrator's own status in a millisecond, which
+    // enumerated operator accounts and read their moderation state on the highest-privilege
+    // plane. The password is proved first now, and the state is described only to whoever
+    // proved it.
+    it('should refuse a blocked admin only after proving the password', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({ ...PLATFORM_ADMIN, status: 'BANNED' })
+      mockPasswordService.compare.mockResolvedValue(true)
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockPasswordService.compare).toHaveBeenCalled()
+    })
+
+    // …and a WRONG password on a blocked admin is indistinguishable from a wrong password on
+    // any other account: same code, and the attempt is counted so probing is bounded by the
+    // lockout rather than only by the per-IP limit.
+    it('should answer a wrong password on a blocked admin like any other wrong password', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({ ...PLATFORM_ADMIN, status: 'BANNED' })
+      mockPasswordService.compare.mockResolvedValue(false)
+
+      const err = await service.login(dto, ip, userAgent).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(AuthException)
+      expect(getErrorCode(err)).toBe(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+      expect(mockBruteForce.recordFailure).toHaveBeenCalled()
+    })
+
+    // Verifies an MFA-enrolled admin whose account is blocked never receives a temp
+    // token. The MFA branch sits after the gate, so a blocked account must fail before
+    // it — otherwise the challenge flow would hand out a path back to a live session.
+    it('should not issue an MFA challenge for a blocked admin', async () => {
+      mockPlatformUserRepo.findByEmail.mockResolvedValue({
+        ...PLATFORM_ADMIN_MFA,
+        status: 'INACTIVE'
+      })
+
+      await expect(service.login(dto, ip, userAgent)).rejects.toBeInstanceOf(AuthException)
+
+      expect(mockTokenManager.issueMfaTempToken).not.toHaveBeenCalled()
+    })
+
+    // Verifies the lockout identifier is derived from the CANONICAL email. Without
+    // normalization each casing of one address is a distinct brute-force bucket that
+    // resolves the same admin, so an attacker rotates the case to reset the counter and
+    // the lockout never trips — the case-rotation bypass.
+    it('should derive the brute-force identifier from the normalized email', async () => {
+      await service.login({ ...dto, email: '  ADMIN@Example.COM  ' }, ip, userAgent)
+
+      const canonicalIdentifier = hmacSha256('platform:admin@example.com', HMAC_KEY)
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
+    })
+
+    // Verifies the repository lookup also receives the canonical address, so the stored
+    // identity and the lockout bucket can never be keyed on different values.
+    it('should look the admin up by the normalized email', async () => {
+      await service.login({ ...dto, email: 'ADMIN@EXAMPLE.COM' }, ip, userAgent)
+
+      expect(mockPlatformUserRepo.findByEmail).toHaveBeenCalledWith('admin@example.com')
+    })
+
     // Verifies INVALID_CREDENTIALS when the password does not match and recordFailure is called.
     it('should record failure and throw INVALID_CREDENTIALS when password is wrong', async () => {
       mockPasswordService.compare.mockResolvedValue(false)
@@ -354,13 +469,19 @@ describe('PlatformAuthService', () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.srem.mockResolvedValue(1)
+      // The stored record names the owner — logout no longer takes it from token claims.
+      mockRedis.readSessionOwner.mockResolvedValue(userId)
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000) + 3600
+      })
     })
 
     // Verifies that when the access token still has remaining TTL, the JTI is
     // blacklisted in Redis (rv:{jti}) to prevent it being used after logout.
     it('should blacklist the JTI in Redis when the token is not yet expired', async () => {
-      const futureExp = Math.floor(Date.now() / 1000) + 3600
-      await service.logout(userId, jti, futureExp, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.set).toHaveBeenCalledWith('rv:' + jti, '1', expect.any(Number))
       const ttl = (mockRedis.set.mock.calls[0] as [string, string, number])[2]
       expect(ttl).toBeGreaterThan(0)
@@ -369,14 +490,123 @@ describe('PlatformAuthService', () => {
     // Verifies that when the token is already expired (exp <= now), no revocation entry
     // is written — there is nothing to blacklist since the token cannot be reused anyway.
     it('should NOT set rv:{jti} when the token has already expired', async () => {
-      const pastExp = Math.floor(Date.now() / 1000) - 1
-      await service.logout(userId, jti, pastExp, rawRefreshToken)
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000) - 1
+      })
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The boundary itself: a token expiring on this very second has zero seconds left. Writing
+    // the entry with a TTL of zero is not a shorter blacklist — Redis rejects `EX 0` outright,
+    // so the whole logout would throw on a token that needed no blacklisting at all.
+    it('should NOT set rv:{jti} when the token expires on this very second', async () => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: userId,
+        jti,
+        exp: Math.floor(Date.now() / 1000)
+      })
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The log line names the owner the STORED RECORD gave, and says so plainly when there was
+    // none. An operator reading "adminId=" with nothing after it cannot tell an admin whose id
+    // is empty from a session that was already gone.
+    it.each([
+      ['admin-1', 'admin-1'],
+      ['', '(no live session)']
+    ])('logs the owner as %s when the record names %s', async (owner, expected) => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+      mockRedis.readSessionOwner.mockResolvedValue(owner)
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(logSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        `logout: adminId=${expected}`
+      )
+      logSpy.mockRestore()
+    })
+
+    // The operator stepped away for longer than the fifteen-minute access lifetime. The route
+    // used to sit behind a guard that refuses an expired token, so they could not sign out at
+    // all and the seven-day refresh session of the highest-privilege identity in the system
+    // stayed live on a console they believed they had left.
+    it('should still revoke the session when the access token is absent or unverifiable', async () => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockImplementation(() => {
+        throw new Error('jwt malformed')
+      })
+
+      const owner = await service.logout('', rawRefreshToken)
+
+      expect(owner).toBe(userId)
+      expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
+      expect(mockRedis.del).toHaveBeenCalledWith('prp:' + tokenHash)
+      // Nothing to blacklist without a verifiable token — and nothing that needed to be.
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // No live session matched the presented refresh token — already signed out, or expired.
+    // There is no owner to prune the index for, and the operation is still a success: logout
+    // is idempotent, and answering an error would tell a caller whether a token was live.
+    it('should not touch the session index when no live session matched', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('')
+
+      const owner = await service.logout('access.jwt', rawRefreshToken)
+
+      expect(owner).toBe('')
+      expect(mockRedis.srem).not.toHaveBeenCalled()
+      // The keys are still deleted — a DEL of an absent key is a harmless no-op, and doing it
+      // unconditionally is what makes a half-rotated session final.
+      expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
+    })
+
+    // A forged access token must not be able to blacklist a `jti` it does not own: the
+    // signature is still checked, only the expiry is waived.
+    it('should read the owner from the stored record, not from the token claims', async () => {
+      mockRedis.readSessionOwner.mockResolvedValue('the-real-owner')
+
+      const owner = await service.logout('access.jwt', rawRefreshToken)
+
+      expect(owner).toBe('the-real-owner')
+      expect(mockRedis.readSessionOwner).toHaveBeenCalledWith('prt:' + tokenHash)
+    })
+
+    // Scenario: logout must prune the session from the platform index and drop its detail
+    // record. Expected: the exact psess:/psd: keys, spelled out. Why: the platform plane has
+    // its own keyspace, and a prefix typo here would leave the member behind — the session
+    // would keep showing up in a listing and, worse, a later revoke-all would try to delete a
+    // key that no longer matches the one logout wrote.
+    it('should prune both platform index members and the detail record on logout', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 3600
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.del).toHaveBeenCalledWith('psd:' + tokenHash)
+    })
+
+    // Scenario: the same logout, watching the dashboard index. Expected: untouched. Why: the
+    // two planes have separate id spaces that may collide, so a platform logout reaching into
+    // `sess:` would prune a member belonging to an unrelated user. `rust-auth` never touches
+    // the other plane's index either.
+    it('should leave the dashboard index alone on a platform logout', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 3600
+
+      await service.logout('access.jwt', rawRefreshToken)
+
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
     })
 
     // Verifies that the primary platform refresh token key (prt:{hash}) is deleted from Redis.
     it('should delete prt:{sha256(rawRefreshToken)} from Redis', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.del).toHaveBeenCalledWith('prt:' + tokenHash)
     })
 
@@ -385,7 +615,7 @@ describe('PlatformAuthService', () => {
     // logout otherwise has only Redis side effects, no return value.
     it('should log the logout event with the admin id', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       const logged = logSpy.mock.calls.map((c) => String(c[0])).join(' ')
       expect(logged).toContain('logout: adminId=')
       logSpy.mockRestore()
@@ -394,21 +624,21 @@ describe('PlatformAuthService', () => {
     // Verifies that the grace-pointer key (prp:{hash}) is also deleted during logout
     // so a partially-rotated session cannot be reused after the admin logs out.
     it('should delete prp:{sha256(rawRefreshToken)} from Redis', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
+      await service.logout('access.jwt', rawRefreshToken)
       expect(mockRedis.del).toHaveBeenCalledWith('prp:' + tokenHash)
     })
 
-    // Verifies that prt:{hash} is removed from the per-user sess: SET so that
+    // Verifies that prt:{hash} is removed from the per-user psess: SET so that
     // a future revokeAllPlatformSessions call does not try to delete an already-gone key.
-    it('should srem prt:{hash} from sess:{userId}', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prt:' + tokenHash)
+    it('should srem prt:{hash} from psess:{userId}', async () => {
+      await service.logout('access.jwt', rawRefreshToken)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
     })
 
-    // Verifies that prp:{hash} is also removed from the per-user sess: SET.
-    it('should srem prp:{hash} from sess:{userId}', async () => {
-      await service.logout(userId, jti, Math.floor(Date.now() / 1000) + 3600, rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('sess:' + userId, 'prp:' + tokenHash)
+    // Verifies that prp:{hash} is also removed from the per-user psess: SET.
+    it('should srem prp:{hash} from psess:{userId}', async () => {
+      await service.logout('access.jwt', rawRefreshToken)
+      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
     })
   })
 
@@ -417,18 +647,119 @@ describe('PlatformAuthService', () => {
   // ---------------------------------------------------------------------------
 
   describe('refresh', () => {
+    const ip = '1.2.3.4'
+    const userAgent = 'TestBrowser/1.0'
+
+    // `refresh` decodes the token rotation just issued to compare its claims against the
+    // administrator it re-reads. The default matches `PLATFORM_ADMIN`, so a test that is not
+    // about the re-stamp does not have to restate it; the re-stamp tests override it.
+    beforeEach(() => {
+      mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
+        sub: 'admin-1',
+        role: 'super_admin',
+        type: 'platform',
+        mfaEnabled: false,
+        mfaVerified: false
+      })
+    })
+
     // Verifies that refresh is a thin delegation to TokenManagerService.reissuePlatformTokens —
     // the caller only needs to pass the raw token; complex rotation logic lives in the manager.
     it('should delegate to tokenManager.reissuePlatformTokens and return its result', async () => {
-      mockTokenManager.reissuePlatformTokens.mockResolvedValue(ROTATED_TOKEN_RESULT)
+      const rotated = {
+        session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      }
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue(rotated)
+      mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
 
-      const result = await service.refresh('raw-refresh', '1.2.3.4', 'Browser/1')
-      expect(result).toBe(ROTATED_TOKEN_RESULT)
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result).toBe(rotated)
       expect(mockTokenManager.reissuePlatformTokens).toHaveBeenCalledWith(
-        'raw-refresh',
-        '1.2.3.4',
-        'Browser/1'
+        'old-refresh',
+        ip,
+        userAgent
       )
+    })
+
+    // Rotation builds its claims from the `prt:` record written at login, so a demotion had no
+    // effect on a live console session: the operator kept minting `super_admin`-roled tokens
+    // for the refresh token's whole lifetime, and every role check reads that claim. The
+    // dashboard plane closed this; the platform plane — the higher-privilege identity — was
+    // left with the identical hole, which is the shape this whole class of bug keeps taking.
+    it.each([
+      ['a demotion', { role: 'support', mfaEnabled: false }],
+      ['MFA being enabled out of band', { role: 'super_admin', mfaEnabled: true }]
+    ])('should re-stamp the rotated platform access token after %s', async (_label, current) => {
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+        session: { userId: 'admin-1', tenantId: '', role: 'super_admin' },
+        accessToken: 'stale.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue({ ...PLATFORM_ADMIN, ...current })
+      mockTokenManager.reissuePlatformAccessWithAuthority.mockResolvedValue('restamped.access')
+
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result.accessToken).toBe('restamped.access')
+      expect(mockTokenManager.reissuePlatformAccessWithAuthority).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'admin-1' }),
+        current.role,
+        current.mfaEnabled
+      )
+    })
+
+    // …and the ordinary rotation, where nothing changed, pays nothing extra.
+    it('should leave the rotated platform token alone when the authority is unchanged', async () => {
+      const rotated = {
+        session: { userId: 'admin-1', tenantId: '', role: 'super_admin' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      }
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue(rotated)
+      mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
+
+      const result = await service.refresh('old-refresh', ip, userAgent)
+
+      expect(result).toBe(rotated)
+      expect(mockTokenManager.reissuePlatformAccessWithAuthority).not.toHaveBeenCalled()
+    })
+
+    // The backstop the dashboard plane has carried since ASVS v5 §7.4.2 was applied to it, and
+    // which this plane went without: rotation works entirely from the stored `prt:` record, so
+    // a SUSPENDED or BANNED operator kept renewing access every fifteen minutes for the
+    // refresh token's whole lifetime — on the highest-privilege identity in the system.
+    it.each([['BANNED'], ['SUSPENDED'], ['INACTIVE']])(
+      'should refuse the rotation and end every platform session for a %s admin',
+      async (status) => {
+        mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+          session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+          accessToken: 'new.access',
+          rawRefreshToken: 'new-refresh'
+        })
+        mockPlatformUserRepo.findById.mockResolvedValue({ ...PLATFORM_ADMIN, status })
+
+        await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
+        // Compensated, not merely refused: the rotation already minted a live pair, and
+        // leaving it would hand back the access this gate exists to end.
+        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      }
+    )
+
+    // The account was deleted while the session outlived it.
+    it('should refuse the rotation when the admin no longer exists', async () => {
+      mockTokenManager.reissuePlatformTokens.mockResolvedValue({
+        session: { userId: 'admin-1', tenantId: '', role: 'SUPER_ADMIN' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockPlatformUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
     })
 
     // Verifies that errors thrown by reissuePlatformTokens propagate without wrapping —
@@ -497,13 +828,32 @@ describe('PlatformAuthService', () => {
     it('should delegate to redis.invalidateUserSessions with the userId', async () => {
       mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
       await service.revokeAllPlatformSessions('admin-1')
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
     })
 
-    // Verifies that errors from invalidateUserSessions propagate so the caller can handle them.
-    it('should propagate errors from redis.invalidateUserSessions', async () => {
+    // Scenario: the same call, watching the token epoch. Expected: bumped, on the PLATFORM
+    // plane, after the sweep. Why: "log out everywhere" that leaves every outstanding access
+    // token working to expiry is not what those words promise — the epoch is the only thing
+    // that reaches stateless tokens. Bumped last so a failed sweep leaves the operation
+    // visibly incomplete instead of reading as done while the sessions live on.
+    it('should bump the platform token epoch after the sweep', async () => {
+      mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+      mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
+
+      await service.revokeAllPlatformSessions('admin-1')
+
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      const sweepOrder = mockRedis.invalidateUserSessions.mock.invocationCallOrder[0] as number
+      const bumpOrder = mockRedis.bumpUserTokenEpoch.mock.invocationCallOrder[0] as number
+      expect(sweepOrder).toBeLessThan(bumpOrder)
+    })
+
+    // Verifies that errors from invalidateUserSessions propagate so the caller can handle
+    // them — and that the epoch is then NOT bumped, keeping the failure visible.
+    it('should propagate errors from redis.invalidateUserSessions and skip the bump', async () => {
       mockRedis.invalidateUserSessions.mockRejectedValue(new Error('Redis timeout'))
       await expect(service.revokeAllPlatformSessions('admin-1')).rejects.toThrow('Redis timeout')
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
   })
 })

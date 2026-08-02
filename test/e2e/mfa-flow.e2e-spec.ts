@@ -78,6 +78,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${accessToken}`)
+        .send({ password: 'SetupSecret123!' })
       setupResponseBody = setup.body as Record<string, unknown>
       secret = setupResponseBody['secret'] as string
       // Recovery codes are returned at the SETUP step (single-use display per the
@@ -98,13 +99,13 @@ describe('mfa flow (E2E)', () => {
       // Capture the verify response separately for assertions.
       ;(setupResponseBody as { verifyStatus: number }).verifyStatus = verify.status
 
-      // Step 5 — logout. The access token used here remains valid up to its TTL
-      // for the consumer's perspective but the refresh session is revoked.
-      const logout = await request(app.getHttpServer())
-        .post('/logout')
+      // Step 5 — probe the PRE-ENABLE access token against a route that still requires a live
+      // one. `/logout` is deliberately public (a user whose token expired must still be able
+      // to sign out), so it is no longer a probe for token validity — `/me` is.
+      const probe = await request(app.getHttpServer())
+        .get('/me')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ refreshToken })
-      logoutStatus = logout.status
+      logoutStatus = probe.status
     })
 
     afterAll(async () => {
@@ -160,16 +161,18 @@ describe('mfa flow (E2E)', () => {
       expect((setupResponseBody as { verifyStatus: number }).verifyStatus).toBe(204)
     })
 
-    // Verifies that POST /logout returns 204 once MFA is enabled on the account.
-    it('should log out the user after MFA is enabled', () => {
+    // Verifies that the PRE-enable access token is refused once MFA is enabled. Enabling a
+    // second factor advances the token epoch: every token issued before that moment is
+    // stamped `mfaEnabled: false` and would clear the MFA gate for its remaining lifetime —
+    // at the exact moment the user enabled MFA because they suspected that theft. Probed with
+    // `/me`, which requires a live access token; `/logout` no longer does, by design.
+    it('should refuse the pre-enable access token after MFA is enabled', () => {
       // Arrange — performed in beforeAll.
 
       // Act — performed in beforeAll.
 
-      // Assert — AuthController.logout is decorated with @HttpCode(NO_CONTENT).
-      // The task brief mentions 200 but the actual contract is 204; the test
-      // asserts the actual contract.
-      expect(logoutStatus).toBe(204)
+      // Assert — the pre-enable token is dead the moment the state changed.
+      expect(logoutStatus).toBe(401)
     })
   })
 
@@ -209,6 +212,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${initialAccessToken}`)
+        .send({ password: 'TotpSecret456!' })
       secret = setup.body.secret as string
 
       // Use the current step's TOTP for the enable step.
@@ -333,6 +337,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${initialAccessToken}`)
+        .send({ password: 'RecoverySecret789!' })
       const secret = setup.body.secret as string
       // Step 2 — save the first recovery code for use in the challenge.
       const recoveryCodes = setup.body.recoveryCodes as string[]

@@ -274,9 +274,13 @@ export class TokenDeliveryService {
   /**
    * Resolves cookie domains for the current request.
    *
-   * If `cookies.resolveDomains` is configured, delegates to that function
-   * (passing the validated hostname). Otherwise falls back to an array
-   * containing `extractDomain(req)`, or an empty array if req is absent.
+   * With no `cookies.resolveDomains` configured the answer is empty, and an empty answer means
+   * **no `Domain` attribute** — a host-only cookie, which is what a session cookie should be.
+   * A cookie that carries `Domain=app.example.com` is sent to every subdomain of that name
+   * (RFC 6265 §5.2.3), so deriving the attribute from the request host would silently hand the
+   * session to a marketing site, a user-content host, or a stale DNS record that someone else
+   * now answers for. Sharing across subdomains is a deliberate deployment decision, and
+   * `resolveDomains` is where it is made; `rust-auth` is host-only for the same reason.
    *
    * @param req - Incoming request (may be undefined in non-HTTP contexts).
    * @returns Array of domain strings for cookie attributes. Empty array means
@@ -287,8 +291,7 @@ export class TokenDeliveryService {
       const hostname = this.extractDomain(req) ?? ''
       return this.options.cookies.resolveDomains(hostname)
     }
-    const domain = req ? this.extractDomain(req) : undefined
-    return domain ? [domain] : []
+    return []
   }
 
   /**

@@ -19,9 +19,11 @@ import type { AuthUser } from './user-repository.interface'
 /**
  * Main configuration interface for BymaxAuthModule.
  *
- * Passed to `BymaxAuthModule.registerAsync()`. All groups except `jwt` and
- * `roles` are optional — unconfigured features are not registered in the
- * NestJS container (zero overhead).
+ * Passed to `BymaxAuthModule.registerAsync()`. All groups except `jwt`,
+ * `roles` and `rateLimit` are optional — unconfigured features are not
+ * registered in the NestJS container (zero overhead). `rateLimit` is required
+ * because it is on unless turned off, and while it is on the deployment has to
+ * name which address keys the limit — see {@link BymaxAuthRateLimitOptions}.
  *
  * @remarks
  * Only the asynchronous registration entry point (`registerAsync`) is exposed
@@ -40,6 +42,57 @@ import type { AuthUser } from './user-repository.interface'
  * })
  * ```
  */
+/**
+ * How the client IP that keys the per-route limit is derived.
+ *
+ * - `'peer'` — the socket peer address, read directly from the connection. Never consults
+ *   `X-Forwarded-For`, so a spoofed header cannot buy an attacker a fresh budget.
+ * - `'trusted-proxy'` — Express's `req.ip`, which honours the app's `trust proxy` setting and
+ *   therefore the forwarding headers it admits.
+ */
+export type ClientIpSource = 'peer' | 'trusted-proxy'
+
+/**
+ * Per-IP rate limiting, as a discriminated union on `enabled`.
+ *
+ * The limiter is on unless it is turned off, and while it is on the deployment must say which
+ * address keys it. Neither value can be the default, because each is a working limiter in one
+ * deployment and no limiter at all in the other: `'peer'` behind any proxy reads the proxy's
+ * address for every client, so all of them share one bucket and a single caller sending a
+ * handful of logins can lock out the whole user base with no credential; `'trusted-proxy'` on a
+ * directly exposed app reads whatever the caller wrote in `X-Forwarded-For`, and a limiter whose
+ * key the attacker picks enforces nothing. Both look like a working limiter at runtime, and
+ * nothing detects the mismatch.
+ *
+ * The union is what makes that a compile error rather than a startup one. `resolveOptions`
+ * still checks it — the type binds a TypeScript consumer and nobody else, and this is a
+ * published package that is also called from JavaScript and configured from JSON.
+ */
+export type BymaxAuthRateLimitOptions =
+  | {
+      /**
+       * Whether the library enforces the per-route limits in `AUTH_THROTTLE_CONFIGS`.
+       * Default: `true`.
+       *
+       * Those numbers used to be advisory — they took effect only if the host wired
+       * `ThrottlerModule` and registered its guard, and a deployment that did not ran every auth
+       * route unlimited without being told. The library now enforces them itself, backed by the
+       * same Redis counter as the brute-force lockout, so the limit also holds across instances.
+       */
+      readonly enabled?: true
+      /** Required while the limiter is on. See {@link ClientIpSource}. */
+      readonly clientIpSource: ClientIpSource
+    }
+  | {
+      /**
+       * Set `false` when the same limits are already enforced at the edge (an API gateway, a
+       * WAF, or a host-side `ThrottlerModule`) and counting twice is not wanted.
+       */
+      readonly enabled: false
+      /** Never read while the limiter is off, so it need not be stated. */
+      readonly clientIpSource?: ClientIpSource
+    }
+
 export interface BymaxAuthModuleOptions {
   /**
    * JWT signing configuration.
@@ -62,6 +115,24 @@ export interface BymaxAuthModuleOptions {
     secret: string
 
     /**
+     * Secrets retired by a rotation, accepted for **verification only**. Default: none.
+     *
+     * Rotating `jwt.secret` without this signs every outstanding token out at once, and
+     * invalidates every stored recovery-code digest — those are keyed by an HMAC derived from
+     * the secret, so a rotation would lock users out of the codes they printed and filed.
+     * Listing the previous secret here keeps both readable while tokens issued under it drain,
+     * so a rotation is a rollout rather than a mass logout.
+     *
+     * Signing always uses `jwt.secret`. Entries here are only ever tried after it, and only to
+     * verify, so a rotation is one-way: nothing new is ever produced under a retired secret.
+     *
+     * Remove an entry once the longest-lived thing signed under it has expired — every entry is
+     * a key that still opens the door. Each is validated exactly like `jwt.secret`: a weak
+     * previous secret is as forgeable as a weak current one.
+     */
+    previousSecrets?: string[]
+
+    /**
      * Access token expiration expressed as a time string (e.g. `'15m'`, `'1h'`).
      * Default: `'15m'`
      */
@@ -80,6 +151,26 @@ export interface BymaxAuthModuleOptions {
     refreshExpiresInDays?: number
 
     /**
+     * Hard cap on how long one login can be extended by rotation, in days.
+     * Default: `0` — no cap.
+     *
+     * `refreshExpiresInDays` bounds how long a single refresh token lives, not how long a
+     * *session* lives: a client that rotates every fifteen minutes renews that lifetime
+     * indefinitely, so a session established once can outlive the laptop it was established
+     * on. This caps the whole lineage — the family's birth time is stamped at login and
+     * carried through every rotation, and once the cap is passed the rotation is refused and
+     * the user signs in again.
+     *
+     * Left off by default because switching it on ends sessions that are already older than
+     * the cap. Pick a value the product can justify asking a user to re-authenticate at (30
+     * or 90 days are common), and set it deliberately.
+     *
+     * Sessions written before this existed carry no birth time and are not capped; they age
+     * out under `refreshExpiresInDays` like any other.
+     */
+    absoluteSessionLifetimeDays?: number
+
+    /**
      * JWT signing algorithm. Only `'HS256'` is supported.
      * Default: `'HS256'`
      *
@@ -88,6 +179,30 @@ export interface BymaxAuthModuleOptions {
      * algorithm confusion attacks. This value is pinned in all guards via `algorithms: ['HS256']`.
      */
     algorithm?: 'HS256'
+
+    /**
+     * The `iss` claim stamped on every token this backend mints, and required on every token
+     * it verifies.
+     *
+     * Absent by default, so an existing deployment is unchanged. When set, a token carrying a
+     * different issuer — or none at all — is rejected. That is the whole point: a verifier
+     * that accepts an unstamped token gives an attacker a way to opt out of the check.
+     *
+     * Both backends sharing a deployment must be configured with the same value, or they stop
+     * accepting each other's tokens. Turning it on invalidates the access tokens already in
+     * flight; the window is one access-token lifetime and clients recover by refreshing, since
+     * the refresh token is opaque and carries no claims.
+     */
+    issuer?: string
+
+    /**
+     * The `aud` claim, with the same semantics as {@link issuer}.
+     *
+     * Names who the token is *for*. With HS256 the verifier can also sign, so audience binding
+     * is what stops a token minted for one service being replayed at another that trusts the
+     * same secret.
+     */
+    audience?: string
 
     /**
      * Grace window in seconds during which the old refresh token remains valid
@@ -104,8 +219,15 @@ export interface BymaxAuthModuleOptions {
   password?: {
     /**
      * scrypt CPU/memory cost factor (N). Must be a power of 2.
-     * Default: `32768` (2^15). Minimum enforced by `resolveOptions()`: `16384` (2^14).
-     * Values below `16384` are rejected at startup — do not lower this for production workloads.
+     * Default: `131072` (2^17), the minimum OWASP recommends for scrypt alongside `r=8, p=1`.
+     * Minimum enforced by `resolveOptions()`: `16384` (2^14). Values below that are rejected at
+     * startup — do not lower this for production workloads.
+     *
+     * The default costs roughly 128 MiB and ~100 ms per hash on a modern core. That is the
+     * point: it is what makes an offline attack on a leaked hash expensive. Budget for it —
+     * every login and registration pays it once, and a host that cannot afford the memory
+     * should lower `costFactor` deliberately, having read what it is buying, rather than
+     * inherit a weaker default that never announced itself.
      *
      * @throws {Error} When the value fails validation at module initialisation.
      */
@@ -122,6 +244,22 @@ export interface BymaxAuthModuleOptions {
      * Default: `1`
      */
     parallelization?: number
+
+    /**
+     * Extra words the default password checker should refuse, on top of the ones it ships.
+     *
+     * ASVS v5 §6.2.11 asks for a "documented list of context specific words" — the deployment's
+     * own product, company, and domain names, which are exactly the words its users reach for
+     * and which no general corpus contains. Entries are reduced the same way a candidate is
+     * (lowercased, leet undone, trailing digits dropped), so listing `Acme` also refuses
+     * `Acme2024!` and `@cme123` without anyone having to think of them.
+     *
+     * Ignored when a custom `BYMAX_AUTH_BREACH_CHECKER` is supplied — that provider owns the
+     * decision entirely.
+     *
+     * Default: `[]`
+     */
+    blocklist?: readonly string[]
   }
 
   /**
@@ -235,7 +373,38 @@ export interface BymaxAuthModuleOptions {
      *   Pick this for embedded scenarios (iframes, third-party widgets).
      */
     sameSite?: 'lax' | 'strict' | 'none'
+
+    /**
+     * Origins allowed to make state-changing requests that carry the session cookie.
+     * Default: `[]`.
+     *
+     * Each entry is a full origin — scheme, host and, when non-default, port
+     * (`'https://app.example.com'`, `'http://localhost:3000'`) — compared verbatim against the
+     * request's `Origin` header. No wildcards: an origin allowlist that matches by pattern is
+     * one typo away from allowing an attacker-controlled subdomain.
+     *
+     * This only matters with `sameSite: 'none'`. Under `'lax'` or `'strict'` the browser does
+     * not send the cookie cross-site at all, so there is nothing to authorize; the resolver
+     * warns when the two settings disagree, because a `'none'` deployment with an empty list
+     * rejects every cross-site call and one with a list but `'lax'` never uses it.
+     *
+     * @example
+     * ```ts
+     * { cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] } }
+     * ```
+     */
+    trustedOrigins?: string[]
   }
+
+  /**
+   * Per-IP rate limiting of the auth routes, enforced by the library itself.
+   *
+   * Required, and shaped so the compiler asks the question the module would otherwise only ask
+   * at startup: a deployment that leaves the limiter on must name the client-IP source, and one
+   * that turns it off need not. Nothing that compiles today stops compiling for a reason that
+   * would not already have refused to boot.
+   */
+  rateLimit: BymaxAuthRateLimitOptions
 
   /**
    * Multi-factor authentication (MFA/TOTP) configuration.
@@ -253,6 +422,24 @@ export interface BymaxAuthModuleOptions {
      * @throws {Error} When the value fails validation at module initialisation.
      */
     encryptionKey: string
+
+    /**
+     * Keys retired by a rotation, accepted for **decryption only**. Default: none.
+     *
+     * A TOTP secret is stored encrypted under `encryptionKey` and the ciphertext records no key
+     * identifier, so changing that key without this makes every stored secret undecryptable —
+     * every enrolled user's authenticator stops matching, at once, with no way back. Listing
+     * the previous key keeps those secrets readable, and each one is re-encrypted under the
+     * current key the next time its owner passes a challenge, so the rotation drains on its own.
+     *
+     * Encryption always uses `encryptionKey`; entries here are only ever tried after it, and
+     * only to decrypt. AES-GCM authenticates, so a wrong key fails unambiguously rather than
+     * returning garbage — trying them in order is safe.
+     *
+     * Remove an entry once no stored secret is still under it. Each is validated exactly like
+     * the current key.
+     */
+    previousEncryptionKeys?: string[]
 
     /**
      * Issuer name displayed in authenticator apps (e.g. `'My App'`, `'Acme Corp'`).
@@ -299,18 +486,16 @@ export interface BymaxAuthModuleOptions {
      */
     maxSessionsResolver?: (user: AuthUser) => number | Promise<number>
 
-    /**
-     * Eviction strategy when the session limit is reached.
-     * `'fifo'` removes the oldest session to make room for the new one.
-     * Default: `'fifo'`
+    /*
+     * There is no eviction-strategy option: reaching the limit always evicts the oldest
+     * session. A knob with one possible value configures nothing, and the option that used to
+     * be here only looked like a choice.
      *
-     * @remarks
-     * Under FIFO eviction, an attacker who establishes a new session will silently
-     * evict a legitimate user's session with no visible signal. Implement the
-     * `onSessionEvicted` hook in your `IAuthHooks` class to detect and alert on
-     * unexpected evictions, which may indicate an account takeover attempt.
+     * The caveat it carried is real and still applies: eviction is silent, so an attacker who
+     * opens a session pushes a legitimate one out with no signal to its owner. Implement
+     * `onSessionEvicted` in your `IAuthHooks` to detect and alert on unexpected evictions,
+     * which may indicate an account takeover.
      */
-    evictionStrategy?: 'fifo'
   }
 
   /**
@@ -320,7 +505,8 @@ export interface BymaxAuthModuleOptions {
   bruteForce?: {
     /**
      * Maximum number of failed login attempts before lockout.
-     * Default: `10`
+     * Default: `5` — aligned with the per-IP throttle default; raising it widens the
+     * credential brute-force window. Bounded to `1..=100` at startup.
      */
     maxAttempts?: number
 
@@ -346,7 +532,8 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * TTL for reset tokens in seconds.
-     * Default: `3600` (1 hour)
+     * Default: `600` (10 minutes), matching OWASP guidance for time-sensitive credential
+     * recovery. Values beyond 1800 meaningfully widen the window for stolen-email replay.
      */
     tokenTtlSeconds?: number
 
@@ -374,7 +561,8 @@ export interface BymaxAuthModuleOptions {
   emailVerification?: {
     /**
      * When `true`, users must verify their email before they can log in.
-     * Default: `false`
+     * Default: `true` — secure by default. A deployment that accepts unverified addresses
+     * must opt out explicitly with `emailVerification.required: false`.
      */
     required?: boolean
 
@@ -396,6 +584,24 @@ export interface BymaxAuthModuleOptions {
      * Default: `false`
      */
     enabled?: boolean
+  }
+
+  /**
+   * Address-change configuration.
+   *
+   * The flow itself is switched on by `controllers.emailChange`; this group only tunes it, so
+   * it can be omitted entirely.
+   */
+  emailChange?: {
+    /**
+     * TTL for the address-change verification token in seconds.
+     *
+     * Default: `3600` (1 hour). Shorter than an invitation because the recipient is a user
+     * who just asked for the change and is waiting on the message — and because the token
+     * points at the account's recovery credential, so a link sitting in a mailbox for two
+     * days is a longer window than the flow needs.
+     */
+    tokenTtlSeconds?: number
   }
 
   /**
@@ -657,10 +863,16 @@ export interface BymaxAuthModuleOptions {
     /** Enables `PasswordResetController`. Default: `true` */
     passwordReset?: boolean
 
-    /** Enables `SessionController`. Default: `true` when `sessions.enabled = true`. */
+    /**
+     * Enables `SessionController`. **Opt-in** — `Default: false`. Also requires
+     * `sessions.enabled: true`; setting one without the other is a startup error.
+     */
     sessions?: boolean
 
-    /** Enables `PlatformAuthController`. Default: `true` when `platform.enabled = true`. */
+    /**
+     * Enables `PlatformAuthController`. **Opt-in** — `Default: false`. Also requires
+     * `platform.enabled: true`; setting one without the other is a startup error.
+     */
     platform?: boolean
 
     /**
@@ -673,8 +885,20 @@ export interface BymaxAuthModuleOptions {
      */
     oauth?: boolean
 
-    /** Enables `InvitationController`. Default: `true` when `invitations.enabled = true`. */
+    /**
+     * Enables `InvitationController`. **Opt-in** — `Default: false`. Also requires
+     * `invitations.enabled: true`; setting one without the other is a startup error.
+     */
     invitations?: boolean
+
+    /**
+     * Enables `EmailChangeController` and `EmailChangeService`. **Opt-in** — `Default: false`.
+     *
+     * Requires the configured {@link IEmailProvider} to implement
+     * `sendEmailChangeVerification`: the flow cannot deliver its token without it, and the
+     * module refuses to boot rather than mint tokens nobody receives.
+     */
+    emailChange?: boolean
   }
 
   /**

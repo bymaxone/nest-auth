@@ -36,14 +36,51 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // changes. For the LIVE measured sizes vs. these budgets, run `pnpm build &&
 // pnpm size` and read the Brotli column. Re-derive headroom from that output
 // before changing any budget below.
-//   server  55.90 KiB → 68 KiB  (~22% headroom; large module, active dev)
+//   server  92.9 KiB → 100 KiB  (~7% headroom; large module, active dev)
+//     Raised from 68 KiB when the first security-audit work landed (the single-use
+//     WebSocket ticket and JWT verification across a secret rotation), then from 72 KiB
+//     when the blind-audit fixes did. That second round is: the MFA encryption-key
+//     rotation, the atomic OTP verify/store scripts, the grace-pointer successor probe,
+//     the trusted-origin and no-store layers, plane-namespaced MFA keys, and the tenant
+//     resolver reaching every tenant-scoped flow. Every one of those is a shipped control
+//     with a test behind it, which is the distinction this budget exists to force someone
+//     to make — growth for features, not drift.
+//     Raised again from 76 KiB for the two ASVS Level 1 gaps the capability audit found:
+//     the authenticated password-change flow, and `CommonPasswordChecker` becoming the
+//     default screen. Most of the delta is that checker's word list — about 2.5 KiB — and
+//     it is the one kind of growth worth taking without argument: NIST SP 800-63B §3.1.1.2
+//     says a verifier SHALL screen against a blocklist, the previous default approved
+//     everything, and this bundle runs on a server rather than being shipped to a browser.
+//     Raised again from 82 KiB for the third audit round: the failure-side hooks
+//     (`onLoginFailed`/`onLockout`/`onRefreshTokenReuseDetected`), the invitation-revoke
+//     flow with its invitee index, and the administrative lockout clear. Three capabilities
+//     the audits found missing rather than three refactors — the same test this budget
+//     exists to apply.
+//     Raised again from 86 KiB for the address-change flow: a service, a controller, two DTOs
+//     and their config. It is the last of the four feature-scale gaps the capability audit
+//     found that is worth taking — the address is the account's recovery credential, and until
+//     now the library could mint one and never move it, so a user whose address died was
+//     locked out permanently.
+//     Raised again from 92 KiB for the fifth audit round, which is entirely controls rather
+//     than capabilities: the serialized MFA transition point (every MFA state change is now
+//     one locked read-modify-write, closing the resurrected-recovery-code, rolled-back-
+//     regenerate and reverted-disable races), the atomic grace-recovery write, the invitation
+//     supersede gated on rank and claimed atomically, the account-backed WebSocket-ticket
+//     snapshot, `logSafe` plus a charset constraint against log-record forgery, `tenantScoped`
+//     binding every lookup to the tenant that was asked for, and the relative-`Location`
+//     redirect helper. Each carries a red-checked test; none adds a feature. That is the
+//     distinction this budget exists to force, and it is the answer it was built to accept.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
+//     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
+//     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
+//     replaced a regex CodeQL reports as a polynomial ReDoS. Both are small and both are
+//     load-bearing; the budget was at ~28% headroom and is back to ~16%.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 68 * 1024 },
-  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 100 * 1024 },
+  { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3.5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.5 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }

@@ -16,6 +16,8 @@ import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { SessionController } from './session.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -24,7 +26,8 @@ import { SessionController } from './session.controller'
 const mockSessionService = {
   listSessions: jest.fn(),
   revokeAllExceptCurrent: jest.fn(),
-  revokeSession: jest.fn()
+  revokeSession: jest.fn(),
+  revokeOtherSession: jest.fn()
 }
 
 const mockTokenDelivery = {
@@ -82,6 +85,10 @@ describe('SessionController', () => {
       .useValue({ canActivate: () => true })
       .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
       .compile()
 
     controller = module.get(SessionController)
@@ -91,11 +98,18 @@ describe('SessionController', () => {
   // Guard metadata
   // ---------------------------------------------------------------------------
 
-  // Verifies that both JwtAuthGuard and UserStatusGuard are applied at the controller level so every session endpoint requires authentication.
-  it('should apply JwtAuthGuard and UserStatusGuard at the controller level', () => {
+  // The ORDER is the assertion, not the membership. Two stacked `@UseGuards` append through
+  // `extendArrayMetadata` and TypeScript applies decorators bottom-up, so the split form ran
+  // `[JwtAuthGuard, UserStatusGuard, TrustedOriginGuard, AuthRateLimitGuard]` — the inverse of
+  // the intent, with all four guards present. A membership check passes under both spellings
+  // and so cannot see the defect this pins: `JwtAuthGuard` rejecting first meant a garbage
+  // `Authorization` header 401'd before `AuthRateLimitGuard` ever ran, leaving the route's
+  // limiter permanently at zero while every request still paid `verifyWithRotation` — one HMAC
+  // per configured secret, every `previousSecrets` entry included — and a Redis round trip.
+  it('applies the controller guards in the order they are evaluated', () => {
     const guards: unknown[] = Reflect.getMetadata(GUARDS_METADATA, SessionController) as unknown[]
-    expect(guards).toContain(JwtAuthGuard)
-    expect(guards).toContain(UserStatusGuard)
+
+    expect(guards).toEqual([TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard])
   })
 
   // ---------------------------------------------------------------------------
@@ -254,29 +268,32 @@ describe('SessionController', () => {
     const SESSION_ID = 'b'.repeat(64)
 
     // Verifies that revokeSession calls the service with the authenticated user's sub and the session ID.
-    it('should call sessionService.revokeSession with user.sub and the session id', async () => {
-      mockSessionService.revokeSession.mockResolvedValue(undefined)
+    it('should call sessionService.revokeOtherSession with user.sub and the session id', async () => {
+      mockSessionService.revokeOtherSession.mockResolvedValue(undefined)
 
       await controller.revokeSession(JWT_PAYLOAD, SESSION_ID)
 
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(JWT_PAYLOAD.sub, SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        SESSION_ID
+      )
     })
 
     // Verifies that the controller binds the caller's own sub as the ownership key so users cannot revoke other users' sessions.
     it('should use the authenticated user sub as the ownership key (BOLA prevention)', async () => {
       const differentUserPayload = { ...JWT_PAYLOAD, sub: 'attacker-999' }
-      mockSessionService.revokeSession.mockResolvedValue(undefined)
+      mockSessionService.revokeOtherSession.mockResolvedValue(undefined)
 
       await controller.revokeSession(differentUserPayload, SESSION_ID)
 
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
-      expect(mockSessionService.revokeSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
     })
 
     // Verifies that SESSION_NOT_FOUND thrown by the service propagates to the caller unchanged.
-    it('should propagate SESSION_NOT_FOUND from sessionService.revokeSession', async () => {
+    it('should propagate SESSION_NOT_FOUND from sessionService.revokeOtherSession', async () => {
       const serviceError = new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-      mockSessionService.revokeSession.mockRejectedValue(serviceError)
+      mockSessionService.revokeOtherSession.mockRejectedValue(serviceError)
 
       let caughtError: unknown
       try {

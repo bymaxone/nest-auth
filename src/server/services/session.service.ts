@@ -325,8 +325,11 @@ export class SessionService {
 
         try {
           raw = await this.redis.get(`sd:${hash}`)
-          // Stryker disable next-line BlockStatement: on a get-throw `raw` stays null, so the subsequent `raw === null` branch performs the identical push+return; the catch body is a no-op
         } catch {
+          // A read that throws is an infrastructure fault, not a stale member — the pruning
+          // below treats them alike (both are dropped from the index), and only this line
+          // says which one happened, so a Redis outage does not read as a tidy-up.
+          this.logger.warn(`listSessions: session detail read failed hash=${hash.slice(0, 8)}`)
           staleKeys.push(member)
           return
         }
@@ -344,6 +347,9 @@ export class SessionService {
           if (
             // Stryker disable next-line ConditionalExpression,LogicalOperator: `parsed === null` is subsumed by the adjacent `typeof parsed !== 'object'` clause (typeof null is 'object' but the field reads below reject it identically)
             parsed === null ||
+            // Stryker disable next-line ConditionalExpression: equivalent — a non-object
+            // parsed value reaches the field reads below as `undefined` on every property,
+            // which reject it with the identical outcome
             typeof parsed !== 'object' ||
             typeof p['device'] !== 'string' ||
             typeof p['ip'] !== 'string' ||
@@ -418,11 +424,58 @@ export class SessionService {
   }
 
   /**
+   * Revokes one named session **other than the caller's own**, and cuts the access tokens with
+   * it.
+   *
+   * Distinct from {@link revokeSession}, which is the primitive: deleting the refresh session
+   * stops rotation but says nothing about the stateless access token that session's holder is
+   * already carrying, and that token keeps working until it expires. Someone who opens their
+   * session list and revokes a device does so because they think it is compromised — a decision
+   * about *right now*, not about the next fifteen minutes. The same argument
+   * {@link revokeAllExceptCurrent} makes in its own JSDoc applies to revoking one.
+   *
+   * The epoch is the only lever available: a session hash does not name the `jti` of any access
+   * token, so there is nothing to blacklist individually. Bumping it ends every access token
+   * the account holds, and the user's *other* devices silently re-mint one on their next
+   * rotation — they still hold live refresh sessions. The revoked device cannot, which is the
+   * point.
+   *
+   * `logout` deliberately keeps using the primitive: it blacklists its own `jti` by name, and
+   * ending one session must not sign the account out of every other device's access token.
+   *
+   * @param userId - Internal user ID who owns the session.
+   * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
+   */
+  async revokeOtherSession(userId: string, sessionHash: string): Promise<void> {
+    await this.revokeSession(userId, sessionHash)
+    // After the revoke, not before: a failure above leaves the epoch untouched and the
+    // operation visibly incomplete, rather than the reverse — every device losing its access
+    // token for a session that is in fact still alive.
+    await this.redis.bumpUserTokenEpoch(userId)
+  }
+
+  /**
    * Revokes all sessions for a user except the caller's current session.
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}` and calls
    * {@link revokeSession} for each session whose hash differs from
    * `currentSessionHash`. The current session is always preserved.
+   *
+   * The user's token epoch is advanced as part of this, which is what makes the revocation
+   * take effect *now* rather than whenever each device's access token happens to expire.
+   * Deleting a refresh session stops that device rotating, but its already-issued access token
+   * is stateless and keeps verifying for the rest of its lifetime — up to `jwt.accessExpiresIn`
+   * of continued access on a device the user just told the system to sign out. Someone who
+   * clicks "sign out my other devices" because they think one is compromised is making a
+   * statement about right now.
+   *
+   * The caller's own access token is invalidated too — the epoch is per user, not per session —
+   * but the caller is the one party who can recover instantly: their refresh session is
+   * deliberately preserved, so the next request refreshes and continues. The revoked devices
+   * cannot, having lost the refresh token that would let them. Clients using the library's
+   * silent-refresh flow absorb this without the user noticing; a client that does not will see
+   * one 401 and must refresh.
    *
    * @param userId - Internal user ID whose other sessions are being revoked.
    * @param currentSessionHash - SHA-256 hash of the session to preserve.
@@ -453,6 +506,30 @@ export class SessionService {
         throw err
       }
     }
+
+    // Every rotation grace pointer the account holds goes too.
+    //
+    // `revokeSession` only ever deletes `rt:`/`sd:` keys, and the loop above only visits `rt:`
+    // members, so a `rp:{predecessor}` pointer survived both. For a *revoked* session that is
+    // harmless — the grace branch requires the successor's `rt:` key, which is gone. The gap is
+    // the *preserved* session: its predecessor's pointer names a hash that is deliberately
+    // still alive, so anyone holding that predecessor token could take the grace branch and
+    // mint a brand-new full-lifetime session for the rest of the window. The epoch bump below
+    // does not help — a recovered session signs its access token from the current epoch.
+    //
+    // "Sign out my other devices" is a statement about right now, so no credential minted
+    // before this moment may still produce a session. `logout` clears the same pointer for the
+    // single token it is handed, for the same reason.
+    const gracePointers = members.filter((m) => m.startsWith('rp:'))
+    for (const member of gracePointers) {
+      await this.redis.del(member)
+      await this.redis.srem(`sess:${userId}`, member)
+    }
+
+    // Last, and only once every refresh session is gone: a bump before the loop would be
+    // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
+    // rather than logging the user out of a device the loop never got to revoke.
+    await this.redis.bumpUserTokenEpoch(userId)
   }
 
   /**
@@ -681,7 +758,16 @@ export class SessionService {
    *
    * When `options.sessions.maxSessionsResolver` is configured, it is called with
    * the full user record. Falls back to `options.sessions.defaultMaxSessions` if
-   * the resolver is absent, the user cannot be found, or the resolver throws.
+   * the resolver is absent, the user cannot be found, the resolver throws, or it answers
+   * with something that is not a usable limit.
+   *
+   * That last case is the one that mattered. The resolver is the host's code and its return
+   * value went straight into the eviction arithmetic, where `NaN` — the result of, say,
+   * `Number(user.plan.maxSessions)` against a column that is missing — quietly disabled the cap
+   * altogether: `length <= NaN` is `false`, so eviction was entered, `length - NaN` is `NaN`,
+   * and `slice(0, NaN)` is empty, so nothing was evicted and every call path still reported
+   * success. A negative value evicted every other session on each login instead. Only a
+   * *thrown* resolver was ever caught.
    *
    * @param userId - Internal user ID to resolve the limit for.
    * @returns Maximum allowed concurrent sessions for the given user.
@@ -696,7 +782,16 @@ export class SessionService {
     try {
       const user = await this.userRepo.findById(userId)
       if (!user) return defaultMaxSessions
-      return await maxSessionsResolver(user)
+      const resolved = await maxSessionsResolver(user)
+      if (!Number.isInteger(resolved) || resolved < 1) {
+        this.logger.error(
+          `maxSessionsResolver returned ${String(resolved)}, which is not a positive whole ` +
+            `number of sessions — falling back to defaultMaxSessions. A cap that silently ` +
+            `stops applying is worse than one that is merely wrong.`
+        )
+        return defaultMaxSessions
+      }
+      return resolved
     } catch (err: unknown) {
       this.logger.error('maxSessionsResolver threw — falling back to defaultMaxSessions', err)
       return defaultMaxSessions

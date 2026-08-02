@@ -144,6 +144,7 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
     /* istanbul ignore next -- defensive: URL with placeholder origin parses any
        string the platform would let `fetch` accept; this catch only fires for
        inputs that fetch itself would already have rejected. */
+    // Stryker disable next-line BooleanLiteral: unreachable — `URL` with a placeholder origin parses anything `fetch` would accept, so this catch never runs
     return false
   }
 

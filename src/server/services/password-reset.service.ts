@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import type { Request } from 'express'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -8,8 +9,10 @@ import {
 } from '../bymax-auth.constants'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
+import { SessionService } from './session.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { generateSecureToken, hmacSha256, sha256, timingSafeCompare } from '../crypto/secure-token'
+import type { ChangePasswordDto } from '../dto/change-password.dto'
 import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
 import type { ResendOtpDto } from '../dto/resend-otp.dto'
 import type { ResetPasswordDto } from '../dto/reset-password.dto'
@@ -24,8 +27,11 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { normalizeEmail } from '../utils/normalize-email'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
+import { tenantScoped } from '../utils/tenant-scoped'
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -46,6 +52,17 @@ const VERIFIED_TOKEN_TTL_SECONDS = 300
  */
 const PASSWORD_RESET_PURPOSE = 'password_reset'
 
+/**
+ * Seconds one account must wait between reset sends, shared by `initiateReset` and
+ * `resendOtp`.
+ *
+ * It is not only about mail volume. Every issuance rewrites the OTP record with `attempts: 0`,
+ * so an entry point that can be called freely converts the 5-attempt ceiling into 5 attempts
+ * *per call*, and a six-digit code stops being a secret. Both doors therefore draw on one
+ * budget under one key.
+ */
+const RESEND_COOLDOWN_SECONDS = 60
+
 // ---------------------------------------------------------------------------
 // Private types
 // ---------------------------------------------------------------------------
@@ -55,6 +72,20 @@ interface ResetContext {
   userId: string
   email: string
   tenantId: string
+  /**
+   * A digest of the password hash this token was issued against, binding it to that password.
+   *
+   * Each `forgot-password` writes its own `pw_reset:` key, so several can be alive at once —
+   * the 60-second cooldown against a 600-second TTL allows up to ten. Completing a reset with
+   * one used to leave the others valid, which is the wrong end state precisely when it matters:
+   * a victim who resets because an attacker read a link from their mailbox has not closed the
+   * link the attacker read. Binding each token to the password in force when it was minted
+   * means the first completed reset — or an authenticated change — invalidates every one of
+   * them at once, with no per-user index to keep in step.
+   *
+   * Empty for an account that had no password (OAuth-only) at issue time.
+   */
+  passwordFingerprint: string
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +130,8 @@ export class PasswordResetService {
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
     private readonly otpService: OtpService,
     private readonly passwordService: PasswordService,
-    private readonly redis: AuthRedisService
+    private readonly redis: AuthRedisService,
+    private readonly sessionService: SessionService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -126,11 +158,42 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO containing `email` and `tenantId`.
    */
-  async initiateReset(dto: ForgotPasswordDto): Promise<void> {
+  async initiateReset(dto: ForgotPasswordDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    // The address is canonicalized here for the same reason the tenant is resolved here: every
+    // control on this path is keyed on it. The OTP record, its five-attempt ceiling and the
+    // resend cooldown all hang off `hmac(tenantId:email)`, so left raw, `USER@x.com` and
+    // `user@x.com` key different records — varying the case alone bought a fresh attempt budget
+    // and a fresh send, and the account lookup was left depending on whether the host's
+    // repository happens to compare case-insensitively.
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
+    // The SAME cooldown key `resendOtp` uses, so the two entry points share one budget rather
+    // than one throttling itself while the other hands out fresh sends for free. Two things
+    // depended on that: every issuance re-writes the OTP record with `attempts: 0`, so an
+    // untimed initiate turns the 5-attempt ceiling into 5 attempts *per call* — an unbounded
+    // supply of guesses at a six-digit code — and each call also mails the victim, which is a
+    // mail bomb aimed at an address the caller merely has to know. Silent success on a
+    // cooldown hit, with the same anti-enumeration floor as every other exit, so the throttle
+    // does not itself answer whether the account exists.
+    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(dto.tenantId, dto.email)}`
+    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
+    if (!wasSet) {
+      await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
+      return
+    }
+
     try {
-      const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail(dto.email, dto.tenantId),
+        dto.tenantId
+      )
 
       if (user && !this.isBlocked(user.status)) {
         const { method } = this.options.passwordReset
@@ -165,10 +228,17 @@ export class PasswordResetService {
    * @param dto - Validated DTO with `email`, `newPassword`, `tenantId`, and one proof field.
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` when the proof is absent,
    *   consumed, expired, or method-mismatch detected.
-   * @throws {@link AuthException} `OTP_INVALID` / `OTP_EXPIRED` / `OTP_MAX_ATTEMPTS` for
+   * @throws {@link AuthException} `OTP_INVALID` — one answer for every OTP failure — for
    *   OTP-path failures.
    */
-  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+  async resetPassword(dto: ResetPasswordDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const { method } = this.options.passwordReset
 
     // Mutual exclusivity: exactly one proof field must be present.
@@ -180,6 +250,20 @@ export class PasswordResetService {
     if (proofCount > 1) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
+
+    // The new password is judged BEFORE any proof is spent.
+    //
+    // Every proof on this path is single-use and consumed atomically — `GETDEL` for the two
+    // token shapes, the Lua script for the OTP — so a breach-list rejection that arrived after
+    // the consumption burned the token: the caller was told their password was unacceptable
+    // and, in the same breath, that the only credential they had to fix it was gone. The whole
+    // mail round trip had to be repeated for a mistake the request itself contained.
+    //
+    // Judging first means an unproven caller can drive the breach checker, which for the
+    // bundled HIBP provider is an outbound range query. That is the same exposure `register`
+    // already carries on the same checker, and this route allows three requests per five
+    // minutes — the burned token was the larger of the two costs by a wide margin.
+    await this.passwordService.assertNotCompromised(dto.newPassword)
 
     if (method === 'token') {
       if (!dto.token) {
@@ -221,26 +305,40 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO with `email`, `tenantId`, and `otp`.
    * @returns The raw `verifiedToken` string (64-char hex) to forward to the client.
-   * @throws {@link AuthException} `OTP_EXPIRED` when the OTP is not in Redis.
-   * @throws {@link AuthException} `OTP_MAX_ATTEMPTS` when the attempt limit is reached.
-   * @throws {@link AuthException} `OTP_INVALID` when the OTP does not match.
+   * @throws {@link AuthException} `OTP_INVALID` for every OTP failure — a wrong code, a
+   *   record that is not in Redis, and an exhausted attempt ceiling are indistinguishable.
    * @throws {@link AuthException} `PASSWORD_RESET_TOKEN_INVALID` when the user is not
    *   found after OTP verification (prevents issuing tokens for non-existent accounts).
    */
-  async verifyOtp(dto: VerifyOtpDto): Promise<string> {
+  async verifyOtp(dto: VerifyOtpDto, req: Request): Promise<string> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, dto.otp)
 
     // After successful OTP verification, ensure the account still exists before
     // issuing the verifiedToken. Use PASSWORD_RESET_TOKEN_INVALID to prevent
     // distinguishing "OTP consumed for a deleted account" from other failures.
-    const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+    const user = tenantScoped(
+      await this.userRepo.findByEmail(dto.email, dto.tenantId),
+      dto.tenantId
+    )
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
     const rawVerifiedToken = generateSecureToken()
-    const context: ResetContext = { userId: user.id, email: dto.email, tenantId: dto.tenantId }
+    const context: ResetContext = {
+      userId: user.id,
+      email: dto.email,
+      tenantId: dto.tenantId,
+      passwordFingerprint: await this.passwordFingerprintOf(user.id)
+    }
     await this.redis.set(
       `pw_vtok:${sha256(rawVerifiedToken)}`,
       JSON.stringify(context),
@@ -261,21 +359,32 @@ export class PasswordResetService {
    *
    * @param dto - Validated DTO with `email` and `tenantId`.
    */
-  async resendOtp(dto: ResendOtpDto): Promise<void> {
+  async resendOtp(dto: ResendOtpDto, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this a caller on one tenant could drive reset mail at accounts
+    // in another, and a reset started under the resolved tenant could never be completed —
+    // the stored context and this step would disagree about which tenant it belonged to.
+    const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
+    dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
     const identifier = this.otpIdentifier(dto.tenantId, dto.email)
     const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${identifier}`
 
-    // Atomic NX: only one send allowed per 60 seconds.
-    const wasSet = await this.redis.setnx(cooldownKey, 60)
+    // Atomic NX: one send per cooldown window, shared with `initiateReset` — see the note
+    // there for why both doors have to draw on the same budget.
+    const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
     if (!wasSet) {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
       return // Cooldown active — silently succeed.
     }
 
     try {
-      const user = await this.userRepo.findByEmail(dto.email, dto.tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail(dto.email, dto.tenantId),
+        dto.tenantId
+      )
       if (user && !this.isBlocked(user.status)) {
         // `sendOtp` stores the OTP in Redis synchronously, then fires the email
         // provider call as fire-and-forget (void). Timing normalization in the
@@ -330,6 +439,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
+    await this.assertResetTokenStillBound(context)
     await this.applyPasswordReset(context.userId, newPassword)
   }
 
@@ -345,7 +455,7 @@ export class PasswordResetService {
     const identifier = this.otpIdentifier(tenantId, email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, otp)
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (!user) {
       // OTP was consumed but user disappeared — treat as token invalid.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
@@ -381,6 +491,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
+    await this.assertResetTokenStillBound(context)
     await this.applyPasswordReset(context.userId, newPassword)
   }
 
@@ -404,23 +515,150 @@ export class PasswordResetService {
    * Cross-store atomicity between the DB and Redis is inherently unavailable.
    * The current ordering minimises the security impact of a partial failure.
    */
+  /**
+   * Changes the password of an already-authenticated account, proving identity with the
+   * current password rather than an emailed token.
+   *
+   * This is the flow ASVS v5 §6.2.2 and §6.2.3 require at Level 1 — "users can change their
+   * password", and "password change functionality requires the user's current and new
+   * password" — and it was the one credential operation this library did not own. Without it a
+   * consumer either sends their users through the *unauthenticated* recovery flow to rotate a
+   * password they already know, or rebuilds the operation themselves against a hash format the
+   * README forbids them to touch.
+   *
+   * The current password is what makes it safe. A session alone is not proof of identity: a
+   * token lifted by XSS or from a shared machine would otherwise be enough to rotate the
+   * credential, lock the real owner out of an account they still know the password to, and
+   * keep the attacker in.
+   *
+   * Every other session is ended on success (ASVS v5 §7.4.3), and the token epoch is bumped so
+   * already-issued access tokens die with them. The caller's own refresh session survives when
+   * it can be identified, so the device that just changed the password stays signed in —
+   * silently re-minting its access token on the next rotation. When it cannot be identified,
+   * every session goes, including this one: a change that leaves an unknown session alive is
+   * the failure this control exists to prevent.
+   *
+   * @param userId - The authenticated account, taken from the verified token — never the body.
+   * @param dto - Validated current and new password.
+   * @param currentRefreshToken - The caller's raw refresh token, when the request carried one.
+   * @throws {@link AuthException} `INVALID_CREDENTIALS` when the current password does not
+   *   match, or the account has no local password (an OAuth-only account has nothing to
+   *   change; its credential belongs to the provider).
+   * @throws {@link AuthException} `PASSWORD_COMPROMISED` when the new password is refused by
+   *   the configured breach checker.
+   */
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    currentRefreshToken?: string
+  ): Promise<void> {
+    const user = await this.userRepo.findById(userId)
+    // A verified token whose subject no longer exists, and an account with no local password,
+    // answer identically: the caller cannot prove a credential this account does not have.
+    if (!user?.passwordHash) {
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
+    if (!matches) {
+      this.logger.warn(`changePassword: current password rejected userId=${userId}`)
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    await this.passwordService.assertNotCompromised(dto.newPassword)
+    const passwordHash = await this.passwordService.hash(dto.newPassword)
+    await this.userRepo.updatePassword(userId, passwordHash)
+
+    // End every other session, and the access tokens with them. `revokeAllExceptCurrent`
+    // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
+    // session sweep alone leaves valid until they expire.
+    if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
+      await this.sessionService.revokeAllExceptCurrent(userId, sha256(currentRefreshToken))
+    } else {
+      await this.redis.invalidateUserSessions(userId)
+      await this.redis.bumpUserTokenEpoch(userId)
+    }
+
+    await this.notifyPasswordChanged(user)
+  }
+
+  /**
+   * Sends the "your password changed" notice, fire-and-forget.
+   *
+   * NIST SP 800-63B §4.6 asks for a notification through a channel independent of the
+   * transaction that bound the new credential. The classic takeover starts with a compromised
+   * mailbox — trigger a reset, complete it, delete the mail — so this notice is what turns
+   * "the victim finds out days later, at a failed login" into "the victim finds out now".
+   *
+   * Never awaited and never allowed to throw: a delivery failure must not undo a password that
+   * has already been written, nor answer differently to the caller.
+   */
+  private async notifyPasswordChanged(user: AuthUser): Promise<void> {
+    const send = this.emailProvider?.sendPasswordChangedNotification
+    if (send === undefined) return
+    void Promise.resolve(send.call(this.emailProvider, user.email)).catch((err: unknown) => {
+      this.logger.error('notifyPasswordChanged: delivery failed', err)
+    })
+  }
+
+  /**
+   * A digest of the account's current password hash, used to bind a reset token to it.
+   *
+   * The hash itself never leaves the repository — only this digest goes into Redis, so a leaked
+   * snapshot of the reset keyspace reveals nothing about the credential. An account with no
+   * local password yields the empty string, which is a value like any other: a token minted
+   * then is invalidated as soon as one is set.
+   */
+  private async passwordFingerprintOf(userId: string): Promise<string> {
+    const user = await this.userRepo.findById(userId)
+    return user?.passwordHash ? sha256(user.passwordHash) : ''
+  }
+
+  /**
+   * Refuses a reset token whose binding no longer matches the account's current password.
+   *
+   * Several `pw_reset:` keys can be alive at once, and completing a reset with one used to
+   * leave the others valid — the wrong end state precisely when it matters, since a victim
+   * resetting because an attacker read a link from their mailbox had not closed the link the
+   * attacker read. The binding makes the first completed reset, or an authenticated change,
+   * invalidate all of them.
+   *
+   * An empty stored fingerprint means the token predates the binding (a rolling deploy, or a
+   * sibling implementation that has not taken this change), and is accepted: refusing those
+   * would break every reset in flight for a window this narrow.
+   */
+  private async assertResetTokenStillBound(context: ResetContext): Promise<void> {
+    if (context.passwordFingerprint === '') return
+    if (context.passwordFingerprint === (await this.passwordFingerprintOf(context.userId))) return
+
+    this.logger.warn(
+      `reset: refusing a token issued against a password that has since changed ` +
+        `userId=${context.userId}`
+    )
+    throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+  }
+
   private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
+    // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
-    // Revoke every session AND cut off already-issued access tokens. This is two
-    // Redis operations (a Lua session-invalidation followed by a SET of the cutoff),
-    // not a single atomic transaction — the cutoff simply must be recorded before the
-    // reset returns. Deleting the refresh sessions alone would leave stateless access
-    // tokens valid until their exp (they are not tracked per-jti), so a stolen access
-    // token would survive a reset-after-compromise for the full access-token TTL. The
-    // Lua-backed session deletion is itself atomic, avoiding the race where a
-    // concurrent login adds a new session between the SMEMBERS read and the final DEL.
-    await this.redis.revokeAllUserTokens(userId, this.options.jwt.accessCookieMaxAgeMs)
+    // Revoke every session AND invalidate already-issued access tokens. This is two Redis
+    // operations (a Lua session-invalidation followed by the epoch bump), not a single atomic
+    // transaction — the bump simply must land before the reset returns. Deleting the refresh
+    // sessions alone would leave stateless access tokens valid until their exp (they are not
+    // tracked per-jti), so a stolen access token would survive a reset-after-compromise for
+    // the full access-token TTL. The Lua-backed session deletion is itself atomic, avoiding
+    // the race where a concurrent login adds a session between the SMEMBERS read and the DEL.
+    await this.redis.invalidateUserSessions(userId)
+    await this.redis.bumpUserTokenEpoch(userId)
 
-    // afterPasswordReset — fire-and-forget; errors must not propagate.
-    if (this.hooks?.afterPasswordReset) {
-      const user = await this.userRepo.findById(userId)
-      if (user) {
+    // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
+    // serves the notification, which a reset needs at least as much as a change does: the
+    // classic takeover completes a reset from a compromised mailbox and deletes the mail.
+    const user = await this.userRepo.findById(userId)
+    if (user) {
+      await this.notifyPasswordChanged(user)
+      if (this.hooks?.afterPasswordReset) {
         void Promise.resolve(
           this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
         ).catch((err: unknown) => {
@@ -446,7 +684,12 @@ export class PasswordResetService {
 
     const rawToken = generateSecureToken()
     const tokenKey = `pw_reset:${sha256(rawToken)}`
-    const context: ResetContext = { userId, email, tenantId }
+    const context: ResetContext = {
+      userId,
+      email,
+      tenantId,
+      passwordFingerprint: await this.passwordFingerprintOf(userId)
+    }
     await this.redis.set(
       tokenKey,
       JSON.stringify(context),
@@ -529,8 +772,10 @@ export class PasswordResetService {
     let parsed: unknown
     try {
       parsed = JSON.parse(json)
-      // Stryker disable next-line BlockStatement: on a JSON.parse error `parsed` stays undefined, caught by the next type guard → same thrown code; the catch body is a no-op
     } catch {
+      // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
+      // by design, and distinguishable to an operator only here.
+      this.logger.warn('reset: stored reset context is not parseable JSON')
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
@@ -547,7 +792,18 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    return parsed as ResetContext
+    const record = parsed as Record<string, unknown>
+    const fingerprint = record['passwordFingerprint']
+    return {
+      userId: record['userId'] as string,
+      email: record['email'] as string,
+      tenantId: record['tenantId'] as string,
+      // Absent on a record written by an older build, or by a sibling that has not taken this
+      // change yet. Treated as "no binding" rather than as a mismatch: refusing every such
+      // token would break every reset in flight during a rolling deploy, which is a worse
+      // outcome than the narrow window this closes.
+      passwordFingerprint: typeof fingerprint === 'string' ? fingerprint : ''
+    }
   }
 }
 

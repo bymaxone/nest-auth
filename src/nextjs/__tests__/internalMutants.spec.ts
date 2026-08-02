@@ -243,7 +243,7 @@ describe('tokenState — readTokenState', () => {
   // value (kills the `false`/`||`/`hasSecret = false` mutants).
   it('reports a signed valid token as authenticated and signature-verified', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const request = makeMockRequest({
@@ -254,6 +254,63 @@ describe('tokenState — readTokenState', () => {
     expect(state.hasCookie).toBe(true)
     expect(state.authenticated).toBe(true)
     expect(state.signatureVerified).toBe(true)
+  })
+
+  // A perfectly-signed, unexpired token that is NOT an access token. The server signs several
+  // kinds of token with one key, and `mfa_challenge` is issued to a user who has proven their
+  // password and NOT their second factor — so accepting any valid signature lets that user
+  // walk past every proxy-protected page by moving one cookie value into another, which is
+  // exactly the state the second factor exists to stop.
+  it.each([['mfa_challenge'], ['ws_ticket'], ['refresh']])(
+    'refuses a validly-signed %s token as a session',
+    async (type) => {
+      const token = await signHs256Token(
+        { type, sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        TEST_SECRET
+      )
+      const request = makeMockRequest({
+        url: 'https://app.example.com/dashboard',
+        cookies: { access_token: token }
+      })
+      const state = await readTokenState(request as never, RESOLVED)
+      expect(state.hasCookie).toBe(true)
+      expect(state.authenticated).toBe(false)
+      // The signature genuinely verified — that is the whole point of the case. Asserting it
+      // is what proves the refusal is on the token's TYPE and not on a signature that happened
+      // not to check out, which would make the test pass for the wrong reason.
+      expect(state.signatureVerified).toBe(true)
+    }
+  )
+
+  // The platform access token IS admitted, matching `rust-auth`'s proxy: an operator console
+  // proxied by the same middleware presents one, and separating the two planes is the server's
+  // job — its guards check the discriminant — not the edge's.
+  it('admits a validly-signed platform access token', async () => {
+    const token = await signHs256Token(
+      { type: 'platform', sub: 'a', role: 'SUPER_ADMIN', exp: Math.floor(Date.now() / 1000) + 600 },
+      TEST_SECRET
+    )
+    const request = makeMockRequest({
+      url: 'https://app.example.com/dashboard',
+      cookies: { access_token: token }
+    })
+    const state = await readTokenState(request as never, RESOLVED)
+    expect(state.authenticated).toBe(true)
+  })
+
+  // A token with no `type` claim at all. The claim has been present since the first release,
+  // so its absence means the token was not minted by this library — refuse rather than guess.
+  it('refuses a validly-signed token with no type claim', async () => {
+    const token = await signHs256Token(
+      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      TEST_SECRET
+    )
+    const request = makeMockRequest({
+      url: 'https://app.example.com/dashboard',
+      cookies: { access_token: token }
+    })
+    const state = await readTokenState(request as never, RESOLVED)
+    expect(state.authenticated).toBe(false)
   })
 
   // Verify mode + a present-but-invalid token → cookie present but
@@ -279,7 +336,7 @@ describe('tokenState — readTokenState', () => {
     void _secret
     const config = { ...rest, maxRefreshAttempts: 2 } as ResolvedAuthProxyConfig
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const request = makeMockRequest({
@@ -301,7 +358,7 @@ describe('tokenState — readTokenState', () => {
   it('treats an empty-string jwtSecret as decode-only (authenticated, unverified)', async () => {
     const config = { ...DEFAULT_PROXY_CONFIG, jwtSecret: '', maxRefreshAttempts: 2 }
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const request = makeMockRequest({

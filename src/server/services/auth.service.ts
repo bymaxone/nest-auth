@@ -15,13 +15,12 @@ import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
-import type { AuthErrorCode } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
   AuthResult,
-  MfaChallengeResult,
-  RotatedTokenResult
+  DashboardRefreshResult,
+  MfaChallengeResult
 } from '../interfaces/auth-result.interface'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type {
@@ -30,10 +29,14 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
+import { tenantScoped } from '../utils/tenant-scoped'
 
 /** Minimum response time in ms for anti-enumeration endpoints. */
 const ANTI_ENUM_MIN_MS = 300
@@ -56,6 +59,17 @@ const ANTI_ENUM_MIN_MS = 300
 export class AuthService {
   private readonly logger = new Logger(AuthService.name)
 
+  /**
+   * Whether the tenant-mismatch misconfiguration has already been reported.
+   *
+   * The warning describes a permanent property of the deployment — a repository whose
+   * `findByEmail` ignores its `tenantId` argument — so the second line and every line after it
+   * carry no information the first did not. Emitting one per request would make the log a
+   * function of traffic, and put a side effect on the losing side of a refusal that is meant to
+   * be indistinguishable from the other two. Once is enough to make the defect visible.
+   */
+  private warnedTenantMismatch = false
+
   constructor(
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
@@ -70,6 +84,24 @@ export class AuthService {
     private readonly otpService: OtpService,
     private readonly sessionService: SessionService
   ) {}
+
+  /**
+   * Re-derive a proven password at the current parameters and store it.
+   *
+   * Detached from the login it follows: the user is already authenticated, and a failure here
+   * costs nothing but the upgrade — the old hash keeps working. Errors are logged rather than
+   * propagated for that reason.
+   *
+   * @param userId - The account whose stored hash is being upgraded.
+   * @param plain - The plaintext just verified against the old hash.
+   */
+  private async rehashPassword(userId: string, plain: string): Promise<void> {
+    try {
+      await this.userRepo.updatePassword(userId, await this.passwordService.hash(plain))
+    } catch (err: unknown) {
+      this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Register
@@ -119,12 +151,25 @@ export class AuthService {
       }
     }
 
-    // Check uniqueness before hashing password (cheaper than scrypt on conflict).
+    // Uniqueness before hashing — but the conflict path still pays the KDF.
+    //
+    // Skipping it is the cheaper thing to do and it leaks: a taken address answers in
+    // single-digit milliseconds while a free one spends ~100 ms deriving, which enumerates
+    // accounts by clock even for a caller who ignores the status code. The response itself
+    // cannot be made uniform here — registration issues tokens, and there are none to issue for
+    // an account the caller does not own — so the timing is the part that can be fixed, and it
+    // is. What bounds the disclosure that remains is the route's own limit (10/hour), now keyed
+    // to an address the caller cannot choose.
+    //
+    // The dummy derivation is the same one the login path spends on an unknown address, so this
+    // adds no amplification a login could not already be used for.
     const existing = await this.userRepo.findByEmail(dto.email, tenantId)
     if (existing) {
+      await this.passwordService.compareDummy(dto.password)
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
+    await this.passwordService.assertNotCompromised(dto.password)
     const passwordHash = await this.passwordService.hash(dto.password)
 
     const augmented = dto as Record<string, unknown>
@@ -155,7 +200,7 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${tenantId}`)
+    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${logSafe(tenantId)}`)
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
@@ -201,18 +246,21 @@ export class AuthService {
     // Brute-force identifier: HMAC-SHA256 prevents rainbow-table reversal of the email.
     // The ':' separator ensures 'tenantABC' + 'x@y.com' and 'tenantABCx' + '@y.com'
     // never produce the same input string (prefix-collision resistance).
-    const bfIdentifier = hmacSha256(`${tenantId}:${dto.email}`, this.options.hmacKey)
+    const bfIdentifier = this.lockoutIdentifier(tenantId, dto.email)
+
+    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
     const locked = await this.bruteForce.isLockedOut(bfIdentifier)
     if (locked) {
-      this.logger.warn(`login: account locked email=${maskEmail(dto.email)} tenantId=${tenantId}`)
+      this.logger.warn(
+        `login: account locked email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
+      )
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
         retryAfterSeconds: remainingSeconds
       })
     }
-
-    const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
     if (this.hooks?.beforeLogin) {
       await this.hooks.beforeLogin(dto.email, tenantId, context)
@@ -226,36 +274,100 @@ export class AuthService {
     // that enumerates which accounts exist despite the identical error message. The
     // cost matches one normal failed login — no new amplification — and route-level
     // rate limiting bounds it further.
-    if (!user || !user.passwordHash) {
+    //
+    // The tenant the repository answered with must be the tenant that was asked for. The
+    // lookup passes `tenantId` and the contract says to scope by it, but the repository is the
+    // host's and the trait can only ask — and a single-tenant host writing `findByEmail` that
+    // ignores its second argument is the shape nobody notices. Under one, every distinct
+    // `tenantId` in the request body resolves the same account while deriving a *different*
+    // `lf:` counter, so rotating the value gives an unlimited supply of fresh 5-attempt
+    // budgets and the lockout never engages. Refusing the mismatch is also tenant isolation in
+    // its own right: an account in tenant A must not authenticate through a request naming
+    // tenant B, whatever the repository returns.
+    //
+    // Folded into the same condition as the not-found case so the refusal is byte- and
+    // timing-identical: a caller learns nothing about which of the three it hit.
+    const tenantMismatch = user !== null && user.tenantId !== tenantId
+    // Reported once per process, not once per request. The condition is a property of the
+    // deployment rather than of the caller, so repeating it says nothing new — and a per-request
+    // write is a side effect on one of the three branches that are supposed to be
+    // indistinguishable, however far below the KDF's noise floor a log line sits.
+    if (tenantMismatch && !this.warnedTenantMismatch) {
+      this.warnedTenantMismatch = true
+      this.logger.warn(
+        `login: repository returned an account outside the requested tenant — check that ` +
+          `IUserRepository.findByEmail scopes by its tenantId argument`
+      )
+    }
+    if (!user || !user.passwordHash || tenantMismatch) {
       await this.passwordService.compareDummy(dto.password)
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordLoginFailure(bfIdentifier, { email: dto.email, tenantId }, context)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    // Status check before expensive scrypt — avoid wasting CPU on blocked accounts.
-    this.assertUserNotBlocked(user)
-
-    // Email verification gate.
-    if (this.options.emailVerification.required && !user.emailVerified) {
-      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
-    }
-
+    // The password is proved FIRST, before the status and verification gates below.
+    //
+    // Those gates used to run here, ahead of the KDF, to spare the CPU of hashing against an
+    // account that could never sign in. The saving was real and the cost was worse: a blocked
+    // or unverified account answered with its own status code, in a millisecond, without
+    // touching the failure counter — so anyone could enumerate addresses AND read their
+    // moderation state at whatever rate the per-IP limiter allowed, and never trip a lockout.
+    // The CPU it saved is bounded by that same limiter; the disclosure it bought was bounded
+    // by nothing.
+    //
+    // Proving the password first costs one derivation on a blocked account and buys the
+    // property that matters: every answer an attacker can reach is the same answer.
     const passwordMatch = await this.passwordService.compare(dto.password, user.passwordHash)
     if (!passwordMatch) {
-      await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(
-        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${tenantId}`
+        `login: invalid credentials email=${maskEmail(dto.email)} tenantId=${logSafe(tenantId)}`
+      )
+      await this.recordLoginFailure(
+        bfIdentifier,
+        { email: dto.email, tenantId, userId: user.id },
+        context
       )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
+    }
+
+    // Only now, with the password proved, may the account's own state be described. The
+    // holder of the credential is not the attacker this hides from, and telling them "your
+    // address is unverified" is the whole point of the flow.
+    try {
+      this.assertUserNotBlocked(user)
+    } catch (err: unknown) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'account_blocked' },
+        context
+      )
+      throw err
+    }
+
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      this.emitLoginFailed(
+        { email: dto.email, tenantId, userId: user.id, reason: 'email_not_verified' },
+        context
+      )
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
     // Reset brute-force counter on success.
     await this.bruteForce.resetFailures(bfIdentifier)
 
+    // Transparent upgrade: the password has just been proven, so a hash written under weaker
+    // parameters can be re-derived at the current cost and stored, without the user doing
+    // anything. This is what makes
+    // `password.costFactor` raisable at all: without it the only way to move to stronger
+    // parameters would be to invalidate every stored hash. Fire-and-forget, so a slow or
+    // failing write never delays or breaks a login that has already succeeded.
+    if (this.passwordService.needsRehash(user.passwordHash)) {
+      void this.rehashPassword(user.id, dto.password)
+    }
+
     // MFA challenge path.
     if (user.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(user.id, 'dashboard')
-      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${tenantId}`)
+      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${logSafe(tenantId)}`)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -267,7 +379,7 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`login: success userId=${safeUser.id} tenantId=${tenantId}`)
+    this.logger.log(`login: success userId=${safeUser.id} tenantId=${logSafe(tenantId)}`)
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
@@ -289,27 +401,56 @@ export class AuthService {
   /**
    * Logs out a dashboard user by revoking the access token and deleting the refresh session.
    *
-   * @param accessToken - Raw JWT access token (used to extract `jti` for revocation).
+   * The route is deliberately **not** behind the access-token guard. The overwhelmingly
+   * common case is a user who comes back after the 15-minute access token expired and clicks
+   * "sign out": refusing that request leaves the refresh session — the long-lived credential
+   * logout exists to kill — alive for its full lifetime, on a device the user just told the
+   * system to sign out. The refresh token is the credential that authorizes this operation,
+   * and possession of it is what the caller proves.
+   *
+   * The owner is read from the stored session rather than from the access token's claims, so
+   * an absent, expired or forged access token cannot name a different user's session. The
+   * access token is still *verified* (signature and pinned algorithm) before its `jti` is
+   * blacklisted, only skipping the expiry check — reading it unverified would let a caller
+   * blacklist someone else's access token by naming its id.
+   *
+   * @param accessToken - Raw JWT access token. Optional in practice: absent or expired is the
+   *   normal case, and only a signature-valid token contributes a blacklist entry.
    * @param rawRefreshToken - Raw opaque refresh token (session key is derived from its hash).
-   * @param userId - The authenticated user's ID (for hook context).
+   * @returns The id of the user whose session was revoked, or `''` when no live session
+   *   matched the presented refresh token (already logged out, or expired).
    */
-  async logout(accessToken: string, rawRefreshToken: string, userId: string): Promise<void> {
-    this.logger.log(`logout: userId=${userId}`)
-    // Decode without verifying — the token may be expired at logout time.
+  async logout(accessToken: string, rawRefreshToken: string): Promise<string> {
+    // The stored session names its owner. Presenting the refresh token proves possession;
+    // the record proves whose it is. Claims from an unverified token would not.
+    const sessionHash = sha256(rawRefreshToken)
+    const userId = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    this.logger.log(`logout: userId=${userId || '(no live session)'}`)
+
+    // Verify signature and algorithm but not expiry: an expired token is the normal case here,
+    // a forged one must not be able to blacklist an id it does not own.
     try {
-      const payload = this.tokenManager.decodeToken(accessToken)
+      const payload = this.tokenManager.verifyIgnoringExpiry(accessToken)
       const now = Math.floor(Date.now() / 1000)
       const remainingTtl = payload.exp - now
       if (remainingTtl > 0) {
         await this.redis.set(`rv:${payload.jti}`, '1', remainingTtl)
       }
     } catch {
-      // Malformed token — no revocation entry needed.
+      // Absent, malformed, or signed by a secret nobody holds — no revocation entry to make.
+      // The refresh session below is revoked either way, which is the part that matters.
     }
 
     // Delete the refresh token key — always required for auth security.
-    const sessionHash = sha256(rawRefreshToken)
     await this.redis.del(`rt:${sessionHash}`)
+
+    // …and the rotation grace pointer for the same hash. A token presented at logout may
+    // already have been rotated and still be inside its grace window, in which case the
+    // `rt:` key above is gone but `rp:{hash}` remains — and a grace hit mints a fresh
+    // session. Deleting it is what makes logout final for the token the caller handed us,
+    // rather than final only for a token that had not yet rotated. rust-auth clears the
+    // same pointer on its logout path.
+    await this.redis.del(`rp:${sessionHash}`)
 
     // Delegate session metadata cleanup to SessionService.revokeSession(), which
     // performs an atomic SISMEMBER ownership check before deleting sd:{hash} and
@@ -317,7 +458,7 @@ export class AuthService {
     // internal DEL will be a no-op (Redis DEL is idempotent when key is absent).
     // SESSION_NOT_FOUND: session was evicted, already revoked, or the refresh token
     // does not belong to this user — in all cases authentication is already invalidated.
-    if (this.options.sessions.enabled) {
+    if (this.options.sessions.enabled && userId) {
       await this.sessionService.revokeSession(userId, sessionHash).catch((err: unknown) => {
         const errCode =
           err instanceof AuthException
@@ -329,13 +470,17 @@ export class AuthService {
       })
     }
 
-    if (this.hooks?.afterLogout) {
+    // The hook names the user who was signed out, so it only fires when the session told us
+    // who that was. A logout for an already-gone session has nobody to name.
+    if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
           this.logger.error('afterLogout hook threw', err)
         }
       )
     }
+
+    return userId
   }
 
   // ---------------------------------------------------------------------------
@@ -358,8 +503,105 @@ export class AuthService {
     oldRefreshToken: string,
     ip: string,
     userAgent: string
-  ): Promise<RotatedTokenResult> {
+  ): Promise<DashboardRefreshResult> {
     const result = await this.tokenManager.reissueTokens(oldRefreshToken, ip, userAgent)
+
+    // Re-read the account and re-apply the status gate. Rotation works entirely from the Redis
+    // record, so nothing else on this path ever looks at the user again: without this a
+    // suspended or banned account renews its access token every fifteen minutes for the
+    // refresh token's whole seven days. The ban closes the login door, and a signed-in user
+    // never needs to open it again — which makes the ban advisory in practice. ASVS v5 §7.4.2
+    // requires an account being disabled to terminate its sessions.
+    //
+    // The check runs AFTER rotation because that is the only point where the owner is known on
+    // both the live and the grace path. The compensation is deliberately total: every session
+    // the account holds is revoked, including the one just minted, and the epoch bump kills
+    // the access token issued a line above. Touching the system while blocked ends everything
+    // at once, which is what the ban was supposed to mean.
+    const user = await this.userRepo.findById(result.session.userId)
+    if (!user) {
+      // The account is gone. The session record outlived it, so end it rather than hand back
+      // a token for a user nobody can look up.
+      await this.revokeAllSessions(result.session.userId)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    try {
+      this.assertUserNotBlocked(user)
+    } catch (err: unknown) {
+      // Compensate, then rethrow the status error the gate produced. The check goes through
+      // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
+      // definition of "blocked" — the inline version would have to re-implement the
+      // case-insensitive comparison, and a second implementation is a second thing to drift.
+      await this.revokeAllSessions(result.session.userId)
+      throw err
+    }
+
+    // The same email-verification gate `login` applies, for the same reason. `register` issues
+    // a full session deliberately — a consumer needs one to render the "check your inbox"
+    // screen — and this library's own specification bounds the resulting window at one
+    // access-token lifetime. Rotation is what un-bounded it: the gate lived only on `login`, a
+    // door the caller never has to open again once register handed them a refresh token, so an
+    // address nobody ever proved held an authenticated session indefinitely.
+    //
+    // Refused, but NOT compensated. An unproven address is an unfinished onboarding, not a
+    // denied account: the refusal alone bounds the window to the fifteen minutes the spec
+    // promises, while revoking everything would also kill the access token the consumer is
+    // using to render that very screen. The rotation above did already spend the presented
+    // refresh token, so a user who verifies after the grace window signs in again — which is
+    // the right end state for an account that had not proven its address.
+    if (this.options.emailVerification.required && !user.emailVerified) {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
+
+    // Re-stamp the access token from the account that was just re-read.
+    //
+    // Rotation builds its claims from the session record written at LOGIN, and that record
+    // carries the role and tenant the account had then — inherited unchanged through every
+    // rotation. So demoting an ADMIN to MEMBER, or moving a user between tenants, had no
+    // effect on a live session: they kept minting tokens with the old authority for the
+    // refresh token's whole lifetime, and every role guard in the system reads the claim.
+    // The status gate above already re-read the account; the authority was sitting right
+    // there, unused.
+    //
+    // The comparison covers every claim the token carries authority in, not just the two that
+    // motivated the original fix. Naming a subset is what left `mfaEnabled` stale:
+    // `MfaRequiredGuard` decides on `mfaEnabled && !mfaVerified`, so a session created while
+    // the account had no second factor kept minting `mfaEnabled: false` tokens for the refresh
+    // token's whole lifetime and every MFA-gated route waved it through — reachable whenever
+    // the host flips MFA through its own admin surface rather than this library's, since only
+    // `verifyAndEnable` revokes the sessions and bumps the epoch.
+    //
+    // `status` is deliberately NOT compared: `buildRotatedResult` stamps it empty by
+    // construction, because the session record carries no live status, so comparing it would
+    // differ on every refresh and prove nothing. It is re-validated per request against the
+    // `us:` cache instead — and when this branch does fire for another reason, the re-stamp
+    // below fills it from the account that was just read.
+    //
+    // The comparison reads the token rotation just issued rather than the session record,
+    // since the token is the thing whose claims are about to be trusted. Decoding it costs one
+    // HMAC and no round trip. Only re-signed when a claim actually differs, so the ordinary
+    // rotation still costs nothing extra.
+    const rotated = this.tokenManager.verifyIgnoringExpiry(result.accessToken)
+    let authoritative = result.accessToken
+    if (
+      rotated.role !== user.role ||
+      rotated.tenantId !== user.tenantId ||
+      rotated.mfaEnabled !== user.mfaEnabled
+    ) {
+      authoritative = this.tokenManager.issueAccess({
+        sub: user.id,
+        tenantId: user.tenantId,
+        role: user.role,
+        type: 'dashboard',
+        status: user.status,
+        mfaEnabled: user.mfaEnabled,
+        // Carried across from the token the rotation just produced: a second factor already
+        // cleared on this session stays cleared, and re-stamping the authority must not
+        // silently demand it again.
+        mfaVerified: rotated.mfaVerified,
+        epoch: await this.redis.getUserTokenEpoch(user.id)
+      })
+    }
 
     // Rotate the session detail record to the new token hash.
     // Fire-and-forget: sd: keys are display metadata only — a rotation failure
@@ -372,7 +614,35 @@ export class AuthService {
         })
     }
 
-    return result
+    return { ...result, accessToken: authoritative, user: toSafeUser(user) }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session revocation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Ends every dashboard session for one account, and kills the access tokens already issued.
+   *
+   * The dashboard twin of {@link PlatformAuthService.revokeAllPlatformSessions}. It exists
+   * because a library cannot see the moment a host suspends, bans, or deletes an account —
+   * the user record is the host's — and until the host says so, the account's live sessions
+   * keep working. ASVS v5 §7.4.2 requires that moment to terminate them, so the host needs a
+   * supported way to say it. `SessionService.revokeAllExceptCurrent` cannot serve: it wants
+   * the hash of a session to keep, and an administrator banning somebody else has none.
+   *
+   * Call it from wherever the account's status changes. Refresh applies the same gate on its
+   * own, so a ban takes effect within one access-token lifetime even if this is never called
+   * — but that is a backstop, not the mechanism.
+   *
+   * The epoch is bumped after the sweep, not before: a failure in the sweep then leaves the
+   * operation visibly incomplete rather than reading as done while the sessions live on.
+   *
+   * @param userId - The account whose sessions are being ended.
+   */
+  async revokeAllSessions(userId: string): Promise<void> {
+    await this.redis.invalidateUserSessions(userId)
+    await this.redis.bumpUserTokenEpoch(userId)
   }
 
   // ---------------------------------------------------------------------------
@@ -472,7 +742,7 @@ export class AuthService {
     }
 
     this.logger.log(
-      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${safeUser.tenantId}`
+      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${logSafe(safeUser.tenantId)}`
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
@@ -514,11 +784,21 @@ export class AuthService {
    *   or the user does not exist (response shape is identical to prevent
    *   account enumeration via this endpoint).
    */
-  async verifyEmail(tenantId: string, email: string, otp: string): Promise<void> {
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
-    await this.otpService.verify('email_verification', identifier, otp)
+  async verifyEmail(tenantId: string, email: string, otp: string, req: Request): Promise<void> {
+    // The configured resolver is authoritative, exactly as it is for login and register: a
+    // deployment that derives the tenant from the request has stated that the body's value is
+    // not to be trusted. Without this, a caller could name any tenant and probe for accounts
+    // in it — and a verification issued under the resolved tenant could never be completed,
+    // because the OTP identifier here would be derived from a different one.
+    tenantId = await this.resolveTenantId(tenantId, req)
+    // Canonicalized here, not merely at the door that issued the OTP: the record, its
+    // five-attempt ceiling and the resend cooldown all hang off `hmac(tenantId:email)`, so a
+    // caller who varied the case of the address keyed a different record and drew a fresh
+    // budget of guesses at the same six-digit code.
+    email = normalizeEmail(email)
+    await this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (!user) {
       // Treat as OTP_INVALID rather than USER_NOT_FOUND to avoid a timing oracle
       // for callers probing email existence after a brute-forced OTP.
@@ -526,7 +806,7 @@ export class AuthService {
     }
 
     await this.userRepo.updateEmailVerified(user.id, true)
-    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${tenantId}`)
+    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${logSafe(tenantId)}`)
 
     if (this.hooks?.afterEmailVerified) {
       void Promise.resolve(
@@ -547,9 +827,14 @@ export class AuthService {
    * @param tenantId - Tenant scope.
    * @param email - The email address to re-send to (not validated — always succeeds).
    */
-  async resendVerificationEmail(tenantId: string, email: string): Promise<void> {
+  async resendVerificationEmail(tenantId: string, email: string, req: Request): Promise<void> {
+    // See `verifyEmail`: the resolver decides the tenant whenever one is configured.
+    tenantId = await this.resolveTenantId(tenantId, req)
+    // See `verifyEmail`: raw, a change of case is a change of cooldown key, and the one-send-
+    // per-minute limit that key exists to enforce becomes one send per spelling.
+    email = normalizeEmail(email)
     const start = Date.now()
-    const cooldownKey = `resend:email_verification:${hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)}`
+    const cooldownKey = `resend:email_verification:${this.otpIdentifier(tenantId, email)}`
 
     // Atomic NX: only one send allowed per 60 seconds. SET NX EX is atomic — no TOCTOU race.
     const wasSet = await this.redis.setnx(cooldownKey, 60)
@@ -558,7 +843,7 @@ export class AuthService {
       return // Already sent recently — silently succeed.
     }
 
-    const user = await this.userRepo.findByEmail(email, tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
     if (user && !user.emailVerified) {
       await this.sendVerificationOtp(tenantId, email, user.id)
     }
@@ -567,14 +852,88 @@ export class AuthService {
   }
 
   // ---------------------------------------------------------------------------
+  // unlockAccount()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Clears an account's brute-force lockout so the next attempt is judged on its merits.
+   *
+   * A lockout is a denial of service the library imposes on its own users, and until now it
+   * could only be waited out: the counter is keyed by an HMAC of `{tenantId}:{email}` under
+   * the library's own `hmacKey`, which no consumer can derive, so a support desk facing "I
+   * am locked out and I need in now" had nothing to offer. ASVS v5 §6.1.1 asks for an
+   * administrative path to clear it — and the lockout is also the lever an attacker pulls to
+   * deny service to a specific account, which makes the ability to undo it part of the
+   * defence rather than a convenience.
+   *
+   * **This grants no access.** It restores the ability to *try*: the password, the status
+   * gate, the verification gate and MFA all still apply. Authorising the caller is the
+   * consumer's job — the library deliberately ships no route for this, because who may
+   * unlock whom is a decision only the host application can make.
+   *
+   * Idempotent: unlocking an account that is not locked is a no-op.
+   *
+   * @param email - The account's address. Normalized here the same way login normalizes it,
+   *   or the derived key would miss the counter the lockout actually wrote.
+   * @param tenantId - The tenant the account belongs to.
+   */
+  async unlockAccount(email: string, tenantId: string): Promise<void> {
+    const identifier = this.lockoutIdentifier(tenantId, normalizeEmail(email))
+    await this.bruteForce.resetFailures(identifier)
+    this.logger.log(
+      `unlockAccount: lockout cleared email=${maskEmail(normalizeEmail(email))} tenantId=${logSafe(tenantId)}`
+    )
+  }
+
+  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * The brute-force counter key for a dashboard account.
+   *
+   * The identity PLANE is part of the preimage, not just the tenant. Without it a tenant whose
+   * id is literally `platform` produced a byte-identical identifier to the platform plane's
+   * own `platform:{email}` — so five unauthenticated dashboard logins against an operator's
+   * address locked that operator out of the console, repeatably, without the platform surface
+   * ever being touched. The reverse held too: a successful dashboard login in that tenant
+   * cleared the operator's lockout mid-attack. The MFA counters already carry their plane for
+   * exactly this reason.
+   *
+   * One method rather than two call sites: `login` writes this counter and `unlockAccount`
+   * clears it, and a preimage that drifted between them would make the unlock silently do
+   * nothing — the failure mode is invisible, because clearing a key that does not exist
+   * succeeds.
+   *
+   * @param tenantId - The resolved tenant.
+   * @param email - The address, already normalized by the caller.
+   * @returns The HMAC identifier, opaque and non-reversible.
+   */
+  /**
+   * Derives the OTP-record identifier for a `tenantId + email` pair.
+   *
+   * HMAC rather than a bare digest because an address is low-entropy: a bare SHA-256 of one is
+   * reversible by dictionary, and these identifiers are the Redis key an operator can read.
+   * The preimage is pinned by `conformance/wire-contract.json` and shared byte-for-byte with
+   * rust-auth, which keys the same records in the same Redis.
+   *
+   * Deliberately distinct from {@link lockoutIdentifier}: that one namespaces the login
+   * keyspace with a `dashboard:` prefix, and the two must never collide.
+   *
+   * @param tenantId - Tenant scope.
+   * @param email - The canonicalized address.
+   * @returns Hex HMAC-SHA-256 identifier.
+   */
+  private otpIdentifier(tenantId: string, email: string): string {
+    return hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
+  }
+
+  private lockoutIdentifier(tenantId: string, email: string): string {
+    return hmacSha256(`dashboard:${tenantId}:${email}`, this.options.hmacKey)
+  }
+
   private async resolveTenantId(dtoTenantId: string, req: Request): Promise<string> {
-    if (this.options.tenantIdResolver) {
-      return this.options.tenantIdResolver(req)
-    }
-    return dtoTenantId
+    return await resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver)
   }
 
   private buildHookContext(opts: {
@@ -603,21 +962,58 @@ export class AuthService {
     return ctx
   }
 
-  private assertUserNotBlocked(user: AuthUser): void {
-    const blocked = this.options.blockedStatuses.map((s) => s.toLowerCase())
-    if (blocked.includes(user.status.toLowerCase())) {
-      const codeMap: Record<string, AuthErrorCode> = {
-        banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
-        inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
-        suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
-        pending: AUTH_ERROR_CODES.PENDING_APPROVAL,
-        pending_approval: AUTH_ERROR_CODES.PENDING_APPROVAL
-      }
+  /**
+   * Records a failed credential attempt against the brute-force counter, and emits the failure
+   * hooks the moment they are due — including {@link IAuthHooks.onLockout} on the attempt that
+   * crosses the threshold.
+   *
+   * The lockout signal has to be emitted here rather than on the *next* attempt: an attacker
+   * who trips the lock and walks away would otherwise never produce the event, and the account
+   * would sit locked with nothing having announced it.
+   */
+  private async recordLoginFailure(
+    bfIdentifier: string,
+    who: { email: string; tenantId: string; userId?: string },
+    context: HookContext
+  ): Promise<void> {
+    await this.bruteForce.recordFailure(bfIdentifier)
+    this.emitLoginFailed({ ...who, reason: 'invalid_credentials' }, context)
 
-      const code: AuthErrorCode =
-        codeMap[user.status.toLowerCase()] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
-      throw new AuthException(code, 403)
+    if (this.hooks?.onLockout && (await this.bruteForce.isLockedOut(bfIdentifier))) {
+      const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
+      this.fireAndForget(
+        () => this.hooks?.onLockout?.({ ...who, retryAfterSeconds }, context),
+        'onLockout'
+      )
     }
+  }
+
+  /** Emits {@link IAuthHooks.onLoginFailed}, fire-and-forget. */
+  private emitLoginFailed(
+    details: Parameters<NonNullable<IAuthHooks['onLoginFailed']>>[0],
+    context: HookContext
+  ): void {
+    this.fireAndForget(() => this.hooks?.onLoginFailed?.(details, context), 'onLoginFailed')
+  }
+
+  /**
+   * Runs a hook without awaiting it and without letting it change the caller's outcome.
+   *
+   * Every hook on this interface is advisory: a consumer's SIEM being down must not turn a
+   * refused login into a different refusal, nor a successful one into a failure.
+   */
+  private fireAndForget(run: () => Promise<void> | void, name: string): void {
+    try {
+      void Promise.resolve(run()).catch((err: unknown) => {
+        this.logger.error(`${name} hook threw`, err)
+      })
+    } catch (err: unknown) {
+      this.logger.error(`${name} hook threw synchronously`, err)
+    }
+  }
+
+  private assertUserNotBlocked(user: AuthUser): void {
+    assertNotBlocked(user.status, this.options.blockedStatuses)
   }
 
   private async sendVerificationOtp(
@@ -630,7 +1026,7 @@ export class AuthService {
       return
     }
 
-    const identifier = hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
+    const identifier = this.otpIdentifier(tenantId, email)
     const length = 6 // emailVerification does not expose otpLength; use fixed 6-digit OTPs
     const ttl = this.options.emailVerification.otpTtlSeconds
     const otp = this.otpService.generate(length)

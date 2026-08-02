@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 
 import type { Request } from 'express'
 
+import { hmacSha256 } from '../crypto/secure-token'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import { resolveOptions } from './resolved-options'
 
@@ -33,7 +34,11 @@ const VALID_SECRET = makeTestableHighEntropyString(48)
 
 const MINIMAL_OPTIONS: BymaxAuthModuleOptions = {
   jwt: { secret: VALID_SECRET },
-  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+  // Required whenever rate limiting is on, which it is by default: neither value is safe in
+  // the wrong deployment shape and neither failure is visible at runtime, so there is no
+  // default to fall back on. See `validateClientIpSource`.
+  rateLimit: { clientIpSource: 'peer' }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +75,10 @@ describe('resolveOptions — success', () => {
   // Verifies that default scrypt cost parameters are applied when password config is omitted.
   it('should apply default password scrypt parameters', () => {
     const resolved = resolveOptions(MINIMAL_OPTIONS)
-    expect(resolved.password.costFactor).toBe(32_768)
+    // OWASP's recommended minimum for scrypt at r=8, p=1. Pinned to the literal rather than
+    // read from DEFAULT_OPTIONS: a default that changed by accident would round-trip through
+    // its own constant and this assertion would never notice.
+    expect(resolved.password.costFactor).toBe(131_072)
     expect(resolved.password.blockSize).toBe(8)
     expect(resolved.password.parallelization).toBe(1)
   })
@@ -87,7 +95,6 @@ describe('resolveOptions — success', () => {
     const resolved = resolveOptions(MINIMAL_OPTIONS)
     expect(resolved.sessions.enabled).toBe(false)
     expect(resolved.sessions.defaultMaxSessions).toBe(5)
-    expect(resolved.sessions.evictionStrategy).toBe('fifo')
   })
 
   // Verifies that email verification is required by default to protect new registrations.
@@ -142,6 +149,26 @@ describe('resolveOptions — success', () => {
     expect(resolved.hmacKey).toBe(expected)
     expect(resolved.hmacKey).not.toBe(VALID_SECRET)
     expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  // CROSS-IMPLEMENTATION KNOWN-ANSWER TEST. The sibling Rust port (bymax-auth) derives the
+  // same key and both backends key the same Redis identifiers with it, so this derivation is
+  // a wire contract rather than an internal detail: the separator, the hash, and the fact
+  // that the HMAC is keyed with the hex TEXT (not the raw digest) all have to match.
+  // rust-auth carries the identical vectors in
+  // `crates/bymax-auth-core/src/config/validate.rs`. If either side drifts, exactly one of
+  // the two suites goes red — instead of the split surfacing in production as lockouts and
+  // OTPs that silently miss each other across backends.
+  it('should match the rust-auth known-answer vectors for key and identifier', () => {
+    const secret = '0123456789abcdef0123456789abcdef'
+    const expectedKey = '0dd66555bd2d89e0eb4ce050f1fef427bea6799bec27fb8e313f69ab965048c1'
+    const identifierMessage = 'tenant-a:user@example.com'
+    const expectedIdentifier = '609a759522bd8b397748fad2dbde07957cea580fe4f4f1f0ce0f526485de2b6d'
+
+    const resolved = resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret } })
+
+    expect(resolved.hmacKey).toBe(expectedKey)
+    expect(hmacSha256(identifierMessage, resolved.hmacKey)).toBe(expectedIdentifier)
   })
 
   // Verifies that changing the JWT secret produces a different hmacKey (deterministic
@@ -334,9 +361,127 @@ describe('resolveOptions — cookies.sameSite', () => {
       resolveOptions({
         ...MINIMAL_OPTIONS,
         secureCookies: true,
-        cookies: { sameSite: 'none' }
+        cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] }
       })
     ).not.toThrow()
+  })
+
+  /**
+   * Verifies that `SameSite=None` without an allowlist is refused. It is the one posture where
+   * the browser sends the session cookie cross-site, so with no origin named every cross-site
+   * state-changing call is rejected — a deployment that boots and then quietly fails.
+   */
+  it('should reject cookies.sameSite: "none" with an empty trustedOrigins', () => {
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: { sameSite: 'none' }
+      })
+
+    expect(resolve).toThrow(/cookies\.trustedOrigins is empty/)
+    // The message has to carry the remedy, not just the diagnosis: it is the whole reason
+    // this is refused at startup instead of at the first rejected request.
+    expect(resolve).toThrow('sends the session cookie on every cross-site request')
+    expect(resolve).toThrow('every cross-site call that changes state is rejected')
+    expect(resolve).toThrow("Set cookies.trustedOrigins: ['https://app.example.com']")
+  })
+
+  /**
+   * The inverse: an allowlist that can never be consulted, because with a single host under
+   * `lax` or `strict` the browser does not send the cookie cross-origin at all. Refusing it
+   * stops a deployment from believing it authorized an origin that will never be asked about.
+   */
+  it('should reject trustedOrigins under a SameSite posture that never uses it', () => {
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        cookies: { trustedOrigins: ['https://app.example.com'] }
+      })
+
+    expect(resolve).toThrow(/cookies\.trustedOrigins is set but cookies\.sameSite is 'lax'/)
+    expect(resolve).toThrow('no cookies.resolveDomains is configured')
+    expect(resolve).toThrow('the allowlist is never consulted')
+    expect(resolve).toThrow("Use cookies.sameSite: 'none' (with secureCookies: true)")
+  })
+
+  /**
+   * …and the case that rule used to make unreachable. `lax` withholds the cookie CROSS-SITE,
+   * not cross-ORIGIN: a deployment serving `app.example.com` and `api.example.com` from one
+   * `.example.com` cookie is same-site, so the browser sends it on a POST between them — and
+   * `Sec-Fetch-Site: same-site` is not one of the values `TrustedOriginGuard` treats as proof
+   * the request came from the app itself, so it falls through to the origin check. Refusing
+   * the list left that deployment with no configuration at all: the cookie arrives, the
+   * request is refused 403, and the only setting that would have allowed it threw at startup.
+   */
+  it('should accept trustedOrigins under lax when a cookie domain is shared', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        cookies: {
+          trustedOrigins: ['https://app.example.com'],
+          resolveDomains: () => ['.example.com']
+        }
+      })
+    ).not.toThrow()
+  })
+
+  /**
+   * Every entry is compared verbatim against the `Origin` header, which is always a bare
+   * origin. A path, a trailing slash or a naked hostname parses fine but can never match, so
+   * it is refused at startup rather than silently blocking the origin it was meant to allow.
+   */
+  it.each([
+    'https://app.example.com/',
+    'https://app.example.com/callback',
+    'app.example.com',
+    'not a url'
+  ])('should reject the malformed trusted origin %s', (origin) => {
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: { sameSite: 'none', trustedOrigins: [origin] }
+      })
+
+    expect(resolve).toThrow(/not absolute origins/)
+    // The offending entry is named, along with the shape that would have worked — with four
+    // origins listed, "one of these is wrong" is not an actionable message.
+    expect(resolve).toThrow(origin)
+    expect(resolve).toThrow('compared verbatim against the')
+    expect(resolve).toThrow("always 'scheme://host[:port]' with no path or trailing slash")
+  })
+
+  /**
+   * With more than one bad entry the message has to keep them apart — a run-together list is
+   * not a list, and the operator has to be able to read which origins to fix.
+   */
+  it('should name every malformed trusted origin, separated', () => {
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        secureCookies: true,
+        cookies: {
+          sameSite: 'none',
+          trustedOrigins: ['app.example.com', 'https://app.example.com/']
+        }
+      })
+
+    expect(resolve).toThrow('app.example.com, https://app.example.com/')
+  })
+
+  /**
+   * A port is part of the origin and must survive the round trip, so a local development
+   * front end can be listed.
+   */
+  it('should accept an origin carrying an explicit port', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      secureCookies: true,
+      cookies: { sameSite: 'none', trustedOrigins: ['http://localhost:3000'] }
+    })
+
+    expect(resolved.cookies.trustedOrigins).toEqual(['http://localhost:3000'])
   })
 
   /**
@@ -350,12 +495,17 @@ describe('resolveOptions — cookies.sameSite', () => {
     const original = process.env['NODE_ENV']
     process.env['NODE_ENV'] = 'development'
     try {
-      expect(() =>
+      const resolve = () =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
           cookies: { sameSite: 'none' }
         })
-      ).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+
+      expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+      expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
+      expect(resolve).toThrow('the auth cookies would never be stored')
+      expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
+      expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
     } finally {
       if (original === undefined) {
         delete process.env['NODE_ENV']
@@ -379,7 +529,7 @@ describe('resolveOptions — cookies.sameSite', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
-          cookies: { sameSite: 'none' }
+          cookies: { sameSite: 'none', trustedOrigins: ['https://app.example.com'] }
         })
       ).not.toThrow()
     } finally {
@@ -751,6 +901,237 @@ describe('resolveOptions — mfa.encryptionKey validation', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation failures — the bounds on the parameters that carry a control's strength
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — security-parameter bounds', () => {
+  const KEY = Buffer.alloc(32, 1).toString('base64')
+
+  /** Options with the given mfa overrides on top of a valid group. */
+  function withMfa(overrides: Record<string, unknown>): BymaxAuthModuleOptions {
+    return {
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: KEY, issuer: 'App', ...overrides } as NonNullable<
+        BymaxAuthModuleOptions['mfa']
+      >
+    }
+  }
+
+  // Scenario: a TOTP window far past any clock skew. Expected: refused at startup. Why: the
+  // window is counted in 30-second steps on both sides, so `2n + 1` codes are valid at once —
+  // at 60 that is 121, and the six-digit code an attacker has to guess is a hundred times
+  // weaker than its length suggests. Every sibling security parameter has a bound; this one
+  // decides how much the second factor is worth and had none.
+  it('should refuse a TOTP window past the ceiling', () => {
+    expect(() => resolveOptions(withMfa({ totpWindow: 60 }))).toThrow(
+      /totpWindow must be between 0 and 2/
+    )
+    expect(() => resolveOptions(withMfa({ totpWindow: 3 }))).toThrow(/totpWindow/)
+    expect(() => resolveOptions(withMfa({ totpWindow: -1 }))).toThrow(/totpWindow/)
+  })
+
+  // Scenario: the boundary values and the default. Expected: accepted. Why: a bound that
+  // rejects a legitimate tolerance is an outage, and 0 (no tolerance at all) is a valid
+  // hardening choice, not an error.
+  // The bound is the drift window the verifier actually applies, so a configured value always
+  // means what it says. It used to be looser (10) than the verifier's clamp (2), which meant
+  // `totpWindow: 10` read as "±5 minutes" in the config and behaved as ±1 minute — and behaved
+  // differently again in `rust-auth`, which has always clamped.
+  it('should accept every window inside the range', () => {
+    for (const totpWindow of [0, 1, 2]) {
+      expect(() => resolveOptions(withMfa({ totpWindow }))).not.toThrow()
+    }
+  })
+
+  // Scenario: enrolment configured to mint zero recovery codes. Expected: refused. Why: the
+  // account then has no way back if the authenticator is lost, and nothing in the flow reports
+  // anything wrong — the user finds out at the worst moment.
+  it('should refuse a recovery-code count outside the range', () => {
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 0 }))).toThrow(
+      /recoveryCodeCount must be between 1 and 50/
+    )
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 51 }))).toThrow(/recoveryCodeCount/)
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 1 }))).not.toThrow()
+    expect(() => resolveOptions(withMfa({ recoveryCodeCount: 50 }))).not.toThrow()
+  })
+
+  // Scenario: a scrypt block size below 8. Expected: refused. Why: the memory cost is
+  // 128 * N * r, so `costFactor`'s floor only guarantees what it claims while r holds. At
+  // r = 1 the same N buys an eighth of the memory and the floor quietly stops meaning
+  // anything — the weakening is invisible because the parameter that was bounded is intact.
+  it('should refuse a block size that divides the memory hardness', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { blockSize: 1 } })).toThrow(
+      /blockSize must be at least 8/
+    )
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { blockSize: 8 } })).not.toThrow()
+  })
+
+  // Scenario: a non-positive parallelization. Expected: refused at startup rather than at the
+  // first hash. Why: `crypto.scrypt` rejects it either way; the only question is whether the
+  // deployment learns at boot or a user learns at login.
+  it('should refuse a parallelization below one', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { parallelization: 0 } })).toThrow(
+      /parallelization must be at least 1/
+    )
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { parallelization: 1 } })
+    ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Validation failures — the grace window and the lockout knobs
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — grace window and brute-force bounds', () => {
+  // Scenario: a 6-day grace window under a 7-day refresh lifetime. Expected: refused. Why: the
+  // existing bound is relative ("< refresh lifetime"), which this passes — but the window is
+  // the span in which an ALREADY-CONSUMED refresh token still recovers a session, so it is
+  // precisely the replay window for a stolen one. It exists to cover a client that rotated and
+  // never received the response: a network retry, measured in seconds.
+  it('should refuse a grace window past the absolute ceiling', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: {
+          ...MINIMAL_OPTIONS.jwt,
+          refreshGraceWindowSeconds: 6 * 86_400,
+          refreshExpiresInDays: 7
+        }
+      })
+    ).toThrow(/refreshGraceWindowSeconds must be between 0 and 300/)
+  })
+
+  // Scenario: the boundary values. Expected: accepted. Why: 0 disables grace recovery outright
+  // (a legitimate hardening choice) and 300 is the ceiling itself; a bound that rejects either
+  // would be an outage rather than a guard.
+  it('should accept every grace window inside the range', () => {
+    for (const refreshGraceWindowSeconds of [0, 30, 300]) {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          jwt: { ...MINIMAL_OPTIONS.jwt, refreshGraceWindowSeconds }
+        })
+      ).not.toThrow()
+    }
+  })
+
+  // Scenario: `bruteForce.windowSeconds: 0`. Expected: refused. Why: the value is handed
+  // straight to Redis as the counter's EXPIRE, and Redis DELETES a key on `EXPIRE key 0` — so
+  // every failure counter is destroyed at the moment it is created, the count never exceeds
+  // one, `isLockedOut` is permanently false, and credential stuffing is bounded only by the
+  // per-IP limiter a distributed caller sidesteps. Nothing about that is visible: the config
+  // still reads as an enabled lockout.
+  it('should refuse a zero or negative brute-force window', () => {
+    for (const windowSeconds of [0, -1, 1.5]) {
+      expect(() => resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { windowSeconds } })).toThrow(
+        /windowSeconds must be a whole number of at least 1/
+      )
+    }
+  })
+
+  // Scenario: `maxAttempts` at both extremes. Expected: refused. Why: 0 locks out every account
+  // permanently (a fresh counter already satisfies "attempts >= 0"), and a huge threshold
+  // disables the lockout as effectively as switching it off.
+  it('should refuse a brute-force threshold outside the range', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 0 } })).toThrow(
+      /maxAttempts must be a whole number of at least 1/
+    )
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 1_000_000 } })
+    ).toThrow(/maxAttempts must not exceed 100/)
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, bruteForce: { maxAttempts: 5, windowSeconds: 900 } })
+    ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Validation failures — mfa.previousEncryptionKeys
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — mfa.previousEncryptionKeys validation', () => {
+  const CURRENT = Buffer.alloc(32, 1).toString('base64')
+  const RETIRED = Buffer.alloc(32, 2).toString('base64')
+
+  /** The options with the given retired keys, on top of a valid mfa group. */
+  function withPrevious(previousEncryptionKeys: unknown): BymaxAuthModuleOptions {
+    return {
+      ...MINIMAL_OPTIONS,
+      mfa: {
+        encryptionKey: CURRENT,
+        issuer: 'App',
+        previousEncryptionKeys
+      } as NonNullable<BymaxAuthModuleOptions['mfa']>
+    }
+  }
+
+  // Scenario: a well-formed rotation. Expected: accepted, and the decoded keys are carried on
+  // the resolved options. Why: this is the whole point — a stored secret written under the old
+  // key has to keep opening while the rotation drains.
+  it('should accept a well-formed rotation and decode every entry', () => {
+    const resolved = resolveOptions(withPrevious([RETIRED]))
+
+    expect(resolved.mfa?.previousEncryptionKeys).toEqual([RETIRED])
+  })
+
+  // Scenario: the option absent. Expected: accepted, with no retired keys. Why: the ordinary
+  // deployment configures no rotation and must not pay for the feature.
+  it('should accept the mfa group with no rotation configured', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      mfa: { encryptionKey: CURRENT, issuer: 'App' }
+    })
+
+    expect(resolved.mfa?.previousEncryptionKeys).toBeUndefined()
+  })
+
+  // Scenario: a value that is not an array. Expected: refused at startup. Why: a single string
+  // would iterate character by character and every character would fail the key check with a
+  // message pointing at the wrong thing.
+  it('should refuse a value that is not an array', () => {
+    expect(() => resolveOptions(withPrevious(RETIRED))).toThrow(
+      /previousEncryptionKeys must be an array/
+    )
+  })
+
+  // Scenario: an entry that is not a string at all. Expected: refused with the same message the
+  // current key gets. Why: `null` reaching the decoder is a crash at the first challenge.
+  it('should refuse a non-string entry', () => {
+    expect(() => resolveOptions(withPrevious([null]))).toThrow(
+      /previousEncryptionKeys\[0\] must be a non-empty base64 string/
+    )
+  })
+
+  // Scenario: an entry that decodes to 16 bytes. Expected: refused at startup, naming its
+  // index. Why: a malformed retired key would otherwise throw at a user's first challenge —
+  // during an incident, on the path they most need.
+  it('should hold every entry to the 32-byte bar, naming the index', () => {
+    const short = Buffer.alloc(16).toString('base64')
+
+    expect(() => resolveOptions(withPrevious([RETIRED, short]))).toThrow(
+      /previousEncryptionKeys\[1\].*exactly 32 bytes/s
+    )
+  })
+
+  // Scenario: the current key listed as retired. Expected: refused. Why: a configuration that
+  // reads as rotated while nothing changed is worse than one that never claimed to.
+  it('should refuse an entry equal to the current key', () => {
+    expect(() => resolveOptions(withPrevious([CURRENT]))).toThrow(
+      /repeats mfa.encryptionKey or an earlier entry/
+    )
+  })
+
+  // Scenario: the same retired key twice. Expected: refused. Why: same reason — a duplicate
+  // describes a rotation that did not happen, and hides how many keys still open a secret.
+  it('should refuse a duplicated entry', () => {
+    expect(() => resolveOptions(withPrevious([RETIRED, RETIRED]))).toThrow(
+      /previousEncryptionKeys\[1\].*repeats/s
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Validation failures — roles.hierarchy
 // ---------------------------------------------------------------------------
 
@@ -933,6 +1314,25 @@ describe('resolveOptions — password.costFactor validation', () => {
     expect(() => resolveOptions(options)).toThrow(
       /The recommended minimum for production is 32768 \(2\^15\)\./
     )
+  })
+
+  // `crypto.scrypt` requires integral N, r and p, and throws when handed anything else — on
+  // the first derivation, which is the first login after a deploy rather than at startup.
+  // Nothing else here catches a fraction: the power-of-two test is a bitwise expression, and
+  // bitwise operators coerce to int32, so `16384.5 & 16383.5` is evaluated as `16384 & 16383`
+  // and reports a clean power of two. The lower bounds on the other two only compare.
+  it.each([
+    ['costFactor', { costFactor: 16_384.5 }],
+    ['blockSize', { blockSize: 8.5 }],
+    ['parallelization', { parallelization: 1.5 }],
+    // `Number.isInteger` answers false for these too, and they arrive the same way a fraction
+    // does — from JSON, from an environment variable, from untyped JavaScript.
+    ['a NaN costFactor', { costFactor: Number.NaN }],
+    ['an infinite blockSize', { blockSize: Number.POSITIVE_INFINITY }]
+  ])('should throw when %s is not an integer', (_case, password) => {
+    const options: BymaxAuthModuleOptions = { ...MINIMAL_OPTIONS, password }
+
+    expect(() => resolveOptions(options)).toThrow(/must be an integer/)
   })
 
   // Verifies that a costFactor that is not a power of 2 is rejected (scrypt requirement).
@@ -1190,6 +1590,32 @@ describe('resolveOptions — oauth provider validation', () => {
   })
 
   /**
+   * The same guard from its other side. `typeof url !== 'string'` is not
+   * redundant with the emptiness check: the type says string, but the value
+   * comes from a host's configuration — often straight out of env parsing or a
+   * JSON file — and a number has no `.length` at all, so the emptiness half
+   * alone would let it through to be redirected to.
+   */
+  it.each(['successRedirectUrl', 'mfaRedirectUrl', 'errorRedirectUrl'])(
+    'should throw when oauth.%s is not a string at all',
+    (key) => {
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            [key]: 8080 as unknown as string,
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.com/cb'
+            }
+          }
+        })
+      ).toThrow(new RegExp(`${key} must be a non-empty string`))
+    }
+  )
+
+  /**
    * Verifies that an absolute HTTPS URL passes in production. Same security
    * posture as `callbackUrl` — TLS must protect both legs of the OAuth round-trip.
    */
@@ -1253,6 +1679,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/successRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            successRedirectUrl: 'http://app.example.com/dashboard',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/dashboard')")
     })
   })
 
@@ -1300,6 +1741,36 @@ describe('resolveOptions — oauth provider validation', () => {
         }
       })
     ).toThrow(/tokenDelivery is 'bearer'/)
+    // The remedy is the operator-facing half of this error, and the reason the pair is
+    // refused at boot instead of at the first sign-in that silently drops its token.
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          successRedirectUrl: 'https://app.example.com/dashboard',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.example.com/cb'
+          }
+        }
+      })
+    ).toThrow('A redirect discards the JSON response body')
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        tokenDelivery: 'bearer',
+        oauth: {
+          successRedirectUrl: 'https://app.example.com/dashboard',
+          google: {
+            clientId: 'id',
+            clientSecret: 'secret',
+            callbackUrl: 'https://app.example.com/cb'
+          }
+        }
+      })
+    ).toThrow("Use tokenDelivery: 'cookie' or 'both'")
   })
 
   /**
@@ -1412,6 +1883,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/mfaRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            mfaRedirectUrl: 'http://app.example.com/mfa',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/mfa')")
     })
   })
 
@@ -1561,6 +2047,21 @@ describe('resolveOptions — oauth provider validation', () => {
           }
         })
       ).toThrow(/errorRedirectUrl must use HTTPS or be a same-origin path/)
+      // The rejected value is echoed back — with several redirect URLs configured,
+      // naming the rule without naming the offender is not actionable.
+      expect(() =>
+        resolveOptions({
+          ...MINIMAL_OPTIONS,
+          oauth: {
+            errorRedirectUrl: 'http://app.example.com/error',
+            google: {
+              clientId: 'id',
+              clientSecret: 'secret',
+              callbackUrl: 'https://app.example.com/cb'
+            }
+          }
+        })
+      ).toThrow("(starts with '/') in production (got: 'http://app.example.com/error')")
     })
   })
 
@@ -1679,6 +2180,196 @@ describe('resolveOptions — jwt.refreshGraceWindowSeconds validation', () => {
       jwt: { secret: VALID_SECRET, refreshExpiresInDays: 7, refreshGraceWindowSeconds: 30 }
     }
     expect(() => resolveOptions(options)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Validation failures — jwt.accessExpiresIn vs the token-epoch retention window
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — jwt.accessExpiresIn validation', () => {
+  // 30 days, the window the store guarantees a bumped token epoch stays readable for.
+  const RETENTION_SECONDS = 30 * 24 * 60 * 60
+
+  // Scenario: an access token configured to live exactly as long as the epoch record. Expected:
+  // accepted. Why: the bound is the last value at which a pre-bump token is still covered, so an
+  // off-by-one that rejected it (or that shifted the comparison) would be caught here.
+  it('should accept an access lifetime exactly at the retention window', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: `${RETENTION_SECONDS}s` }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Scenario: one second past the window. Expected: startup fails. Why: this is the fail-open the
+  // rule exists to prevent — the epoch record can expire while the token it revokes is still
+  // presentable, and the staleness check silently stops firing.
+  it('should throw when the access lifetime outlives the retention window', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: `${RETENTION_SECONDS + 1}s` }
+    }
+    expect(() => resolveOptions(options)).toThrow(
+      new RegExp(`accessExpiresIn \\('${RETENTION_SECONDS + 1}s' = ${RETENTION_SECONDS + 1} s\\)`)
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /must not exceed the token-epoch retention window \(2592000 s\)\./
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /An access token that outlives the stored epoch would survive the password reset that revoked it/
+    )
+    expect(() => resolveOptions(options)).toThrow(
+      /the epoch lookup falls back to 0 once the record expires, and the staleness check stops firing\./
+    )
+  })
+
+  // Scenario: each unit `ms` accepts, long and short form, at a value inside the window. Expected:
+  // all parse. Why: the unit table is what converts the configured string into the number the bound
+  // is checked against — a unit read as the wrong magnitude would either reject a valid config or,
+  // worse, let an over-long lifetime through.
+  it.each([
+    ['900ms', false],
+    ['900 milliseconds', false],
+    ['15m', false],
+    ['15 minutes', false],
+    ['1h', false],
+    ['1 hour', false],
+    ['1d', false],
+    ['1 day', false],
+    ['1w', false],
+    ['1 week', false],
+    ['31 days', true],
+    ['1y', true],
+    ['1 year', true]
+  ])('should read %s and %s the retention bound', (accessExpiresIn, exceeds) => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn }
+    }
+    if (exceeds) {
+      expect(() => resolveOptions(options)).toThrow(/token-epoch retention window/)
+    } else {
+      expect(() => resolveOptions(options)).not.toThrow()
+    }
+  })
+
+  // Scenario: strings that are not a positive time span. Expected: startup fails with the parse
+  // message. Why: a bare number is ambiguous (`ms` reads it as milliseconds, a reader means
+  // seconds), an unknown unit leaves the bound unverifiable, and a zero or negative lifetime
+  // mints a token that is expired on arrival — all configuration errors that would otherwise
+  // surface at the first token issued.
+  it.each(['900', '', 'soon', '15 fortnights', '15 m s', 'm15', '0m', '-5m'])(
+    'should throw on the unreadable time span %p',
+    (accessExpiresIn) => {
+      const options: BymaxAuthModuleOptions = {
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, accessExpiresIn }
+      }
+      expect(() => resolveOptions(options)).toThrow(
+        /accessExpiresIn must be a time span such as '15m', '1h' or '900s'/
+      )
+      expect(() => resolveOptions(options)).toThrow(
+        /A value the signer cannot read would fail at the first token issued, and leaves the token-epoch retention bound unverifiable at startup\./
+      )
+    }
+  )
+
+  // Scenario: surrounding whitespace and mixed case, which a hand-written config picks up easily.
+  // Expected: both are normalised rather than rejected.
+  it('should tolerate surrounding whitespace and unit casing', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, accessExpiresIn: '  15 Minutes  ' }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+
+  // Scenario: the option left unset. Expected: the default is validated, not skipped. Why: an
+  // omitted value must be checked against the same bound, or the rule could be bypassed by
+  // relying on a default that later changes.
+  it('should validate the default access lifetime when the option is omitted', () => {
+    const options: BymaxAuthModuleOptions = {
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET }
+    }
+    expect(() => resolveOptions(options)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Validation failures — jwt.previousSecrets
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — jwt.previousSecrets validation', () => {
+  // A retired secret has to clear the same entropy bar as the current one, so it is a real
+  // random-looking value rather than a padded placeholder.
+  const OTHER_SECRET = 'kR7pQw9zTr4XmVn2PsB6yLdG3hJ8fCxZ5aNeU1oIqW0M'
+
+  // Scenario: no rotation in progress. Expected: accepted, and no derived keys. Why: the field
+  // is absent in every deployment that has never rotated, which is most of them.
+  it('should accept an absent list and derive no previous keys', () => {
+    const resolved = resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret: VALID_SECRET } })
+    expect(resolved.previousHmacKeys).toEqual([])
+  })
+
+  // Scenario: a rotation in progress. Expected: one derived HMAC key per retired secret, in
+  // order, and none equal to the current one. Why: those keys are what keep recovery-code
+  // digests written before the rotation readable — the digests are keyed by an HMAC derived
+  // from the secret, so without them a rotation silently invalidates every code a user filed.
+  it('should derive one HMAC key per retired secret', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, previousSecrets: [OTHER_SECRET] }
+    })
+
+    expect(resolved.previousHmacKeys).toHaveLength(1)
+    expect(resolved.previousHmacKeys[0]).toMatch(/^[0-9a-f]{64}$/)
+    expect(resolved.previousHmacKeys[0]).not.toBe(resolved.hmacKey)
+  })
+
+  // Scenario: a retired secret that would not have been accepted as the current one. Expected:
+  // rejected. Why: it still verifies tokens, so a weak entry is as forgeable as a weak current
+  // secret — the rotation list is not a place where the bar drops.
+  it.each([
+    ['too short', 'short'],
+    ['low entropy', 'a'.repeat(40)]
+  ])('should reject a %s retired secret', (_label, secret) => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: [secret] }
+      })
+    ).toThrow(/jwt\.secret/)
+  })
+
+  // Scenario: a non-string entry, and a non-array value. Expected: rejected by shape.
+  it('should reject a malformed list', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: [42 as unknown as string] }
+      })
+    ).toThrow(/previousSecrets\[0\] must be a string/)
+
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        jwt: { secret: VALID_SECRET, previousSecrets: 'not-an-array' as unknown as string[] }
+      })
+    ).toThrow(/must be an array of strings/)
+  })
+
+  // Scenario: the current secret repeated in the retired list, and a duplicate entry. Expected:
+  // rejected. Why: a configuration that reads as rotated while nothing changed is worse than
+  // one that never claimed to — an operator would believe the old key was retired.
+  it.each([
+    ['the current secret', [VALID_SECRET]],
+    ['a duplicate entry', [OTHER_SECRET, OTHER_SECRET]]
+  ])('should reject %s in the list', (_label, previousSecrets) => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, jwt: { secret: VALID_SECRET, previousSecrets } })
+    ).toThrow(/repeats jwt\.secret or an earlier entry/)
   })
 })
 
@@ -1817,5 +2508,206 @@ describe('resolveOptions — jwt.refreshExpiresInDays validation', () => {
     expect(() => resolveOptions(options)).toThrow(
       /any of these would produce an invalid Redis TTL and cause all token rotations to fail at runtime\./
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// jwt.issuer / jwt.audience normalization
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — token binding', () => {
+  // The binding is off unless the deployment asked for it, so an existing consumer mints and
+  // accepts exactly the tokens it did before.
+  it('leaves both absent when neither is configured', () => {
+    const resolved = resolveOptions(MINIMAL_OPTIONS)
+
+    expect(resolved.jwt.issuer).toBeUndefined()
+    expect(resolved.jwt.audience).toBeUndefined()
+  })
+
+  // A real value survives, or configuring the binding would do nothing at all.
+  it('keeps a configured pair', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, issuer: 'bymax', audience: 'dashboard' }
+    })
+
+    expect(resolved.jwt.issuer).toBe('bymax')
+    expect(resolved.jwt.audience).toBe('dashboard')
+  })
+
+  // The case this normalization exists for. A consumer threading an unset environment variable
+  // through reaches here with `''`, and treating that as a configured binding would turn the
+  // check on by accident — the deployment would then require the empty issuer on every token
+  // and reject the ones it had just minted, since nothing stamps an empty value either.
+  //
+  // Decided HERE and nowhere else: the signer and the verifier both read the resolved value,
+  // and they only agree on what "configured" means because exactly one place decides it.
+  it.each([
+    ['both empty', { issuer: '', audience: '' }],
+    ['issuer empty', { issuer: '', audience: 'dashboard' }],
+    ['audience empty', { issuer: 'bymax', audience: '' }]
+  ])('drops an empty value (%s)', (_label, binding) => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { secret: VALID_SECRET, ...binding }
+    })
+
+    expect(resolved.jwt.issuer).toBe(binding.issuer === '' ? undefined : binding.issuer)
+    expect(resolved.jwt.audience).toBe(binding.audience === '' ? undefined : binding.audience)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// rateLimit.clientIpSource
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — rateLimit.clientIpSource', () => {
+  // Deliberately untyped: the option group is required and discriminated, so a TypeScript
+  // consumer cannot construct this — which is the point of the type. The runtime check still
+  // has to hold, because the type binds TypeScript and nobody else, and this is a published
+  // package configured from JavaScript, from JSON, and from environment plumbing.
+  const withoutSource = {
+    jwt: { secret: VALID_SECRET },
+    roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  } as unknown as BymaxAuthModuleOptions
+
+  // There is no safe default, because the two failure modes are opposite and both silent.
+  // `'peer'` reads the socket address, which behind ANY proxy is the proxy's address for every
+  // client — so all of them share one bucket and a single caller sending five logins in a
+  // minute locks out the whole user base, with no credential. `'trusted-proxy'` reads `req.ip`,
+  // which directly exposed is whatever the caller put in `X-Forwarded-For` — a limiter whose
+  // key the attacker picks enforces nothing. Both look like a working limiter at runtime, so
+  // the deployment states which one it is or the module refuses to start.
+  it('refuses to resolve when rate limiting is on and the source was not declared', () => {
+    expect(() => resolveOptions(withoutSource)).toThrow(/clientIpSource must be/)
+  })
+
+  // The union type constrains a TypeScript consumer and nobody else. This is a published npm
+  // package: the value arrives from JavaScript, from JSON, from environment plumbing. A
+  // presence check would pass a misspelling straight through to the guard, whose
+  // `=== 'trusted-proxy'` then falls to the peer branch — the deployment asked to key on the
+  // forwarded address and got the proxy's own, so every client shares one bucket and a single
+  // caller can lock out the whole user base. That is the failure the required-ness exists to
+  // prevent, reachable by a typo.
+  it.each([
+    ['a misspelling', 'trusted_proxy'],
+    ['a near miss in case', 'Peer'],
+    ['an empty string', ''],
+    ['null from an untyped consumer', null]
+  ])('refuses %s rather than falling back to a default', (_case, clientIpSource) => {
+    const options = {
+      ...withoutSource,
+      rateLimit: { clientIpSource }
+    } as unknown as BymaxAuthModuleOptions
+
+    expect(() => resolveOptions(options)).toThrow(/clientIpSource must be/)
+  })
+
+  // The rejected value belongs in the message: an operator who mistyped it is looking for
+  // which of their several config layers supplied the wrong string.
+  it('quotes the offending value back', () => {
+    const options = {
+      ...withoutSource,
+      rateLimit: { clientIpSource: 'trusted_proxy' }
+    } as unknown as BymaxAuthModuleOptions
+
+    expect(() => resolveOptions(options)).toThrow(/"trusted_proxy"/)
+  })
+
+  // The message has to be actionable: an operator reading it must be able to pick the right
+  // value without reading the source.
+  it('names both values and the consequence of each', () => {
+    let message = ''
+    try {
+      resolveOptions(withoutSource)
+    } catch (err: unknown) {
+      message = err instanceof Error ? err.message : ''
+    }
+
+    expect(message).toContain("'peer'")
+    expect(message).toContain("'trusted-proxy'")
+    expect(message).toContain('ONE bucket')
+    expect(message).toContain('rateLimit.enabled: false')
+  })
+
+  it.each([['peer' as const], ['trusted-proxy' as const]])(
+    'resolves when the deployment declares %s',
+    (clientIpSource) => {
+      const resolved = resolveOptions({ ...withoutSource, rateLimit: { clientIpSource } })
+
+      expect(resolved.rateLimit.clientIpSource).toBe(clientIpSource)
+    }
+  )
+
+  // The type carries the same rule the validator does, so a TypeScript consumer hears it at
+  // compile time rather than at boot. These are assertions, not illustrations: if the union
+  // stopped rejecting a shape, `@ts-expect-error` would itself become an error and `typecheck`
+  // — a hard CI gate — would fail. Nothing that compiled before stops compiling for a reason
+  // that would not already have refused to start.
+  it('rejects the unsafe shapes at compile time', () => {
+    // @ts-expect-error — the limiter is on by default, so the source cannot be omitted.
+    const missingSource: BymaxAuthModuleOptions['rateLimit'] = {}
+    // @ts-expect-error — nor when `enabled: true` is stated outright.
+    const missingWithEnabled: BymaxAuthModuleOptions['rateLimit'] = { enabled: true }
+    // @ts-expect-error — and a value outside the union is not a source.
+    const wrongValue: BymaxAuthModuleOptions['rateLimit'] = { clientIpSource: 'trusted_proxy' }
+    // Turning the limiter off is the one shape that needs no source: it is never read.
+    const disabled: BymaxAuthModuleOptions['rateLimit'] = { enabled: false }
+
+    expect([missingSource, missingWithEnabled, wrongValue, disabled]).toHaveLength(4)
+  })
+
+  // A deployment that limits at the edge has nothing to declare — the value is never read.
+  it('does not demand a source when rate limiting is off', () => {
+    const resolved = resolveOptions({ ...withoutSource, rateLimit: { enabled: false } })
+
+    expect(resolved.rateLimit.enabled).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// password KDF memory ceiling
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — password KDF memory ceiling', () => {
+  // scrypt's memory cost is `128 * N * r` bytes PER DERIVATION, and each derivation occupies a
+  // libuv threadpool thread (`UV_THREADPOOL_SIZE`, four by default). An unauthenticated login
+  // pays the full cost even for an address that does not exist — the dummy derivation exists
+  // to close the timing oracle — so the resident set a login flood can pin is
+  // `threadpool * 128 * N * r`. There was a floor on `costFactor` and no ceiling, so a
+  // deployment raising it "for safety" could make one unauthenticated request cost gigabytes.
+  it('refuses a costFactor whose per-derivation memory exceeds the ceiling', () => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 21 } })).toThrow(
+      /per derivation/
+    )
+  })
+
+  // The message has to carry the arithmetic, or an operator who genuinely needs more cannot
+  // tell a mistake from a deliberate choice.
+  it('names the memory, the formula and the threadpool in the refusal', () => {
+    let message = ''
+    try {
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 21 } })
+    } catch (err: unknown) {
+      message = err instanceof Error ? err.message : ''
+    }
+
+    expect(message).toContain('128 * N * r')
+    expect(message).toContain('UV_THREADPOOL_SIZE')
+    expect(message).toContain('MiB per derivation')
+  })
+
+  // The shipped defaults are the OWASP recommendation and sit well inside the ceiling.
+  it('accepts the shipped defaults', () => {
+    expect(() => resolveOptions(MINIMAL_OPTIONS)).not.toThrow()
+  })
+
+  // The ceiling counts `blockSize` too: memory is the product, so a large `r` reaches it just
+  // as a large `N` does.
+  it('counts blockSize toward the ceiling', () => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 17, blockSize: 64 } })
+    ).toThrow(/per derivation/)
   })
 })

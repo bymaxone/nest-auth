@@ -12,6 +12,8 @@ import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { readStampedEpoch } from '../utils'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
@@ -65,9 +67,7 @@ export class JwtAuthGuard implements CanActivate {
     // Verify signature and expiry. Algorithm is pinned from options — rejects alg:none and RS256.
     let payload: DashboardJwtPayload
     try {
-      payload = this.jwtService.verify<DashboardJwtPayload>(token, {
-        algorithms: [this.options.jwt.algorithm]
-      })
+      payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -94,17 +94,14 @@ export class JwtAuthGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    // Bulk revocation check: a password reset or a detected refresh-token reuse
-    // records a per-user cutoff (`utc:{sub}`). Any access token issued before it
-    // is rejected, so those events invalidate every outstanding access token at
-    // once — not only the refresh tokens. Surfaced as TOKEN_INVALID for the same
-    // no-oracle reason as the jti revocation above.
-    // When a cutoff is present the token must carry a finite `iat` to be comparable —
-    // a token signed without `iat` (e.g. `noTimestamp`) or with a non-numeric one would
-    // make `iat < cutoff` silently false and slip past bulk revocation, so treat a
-    // missing/non-finite `iat` as invalid rather than trusting it.
-    const cutoff = await this.redis.getUserTokenCutoff(payload.sub)
-    if (cutoff !== null && (!Number.isFinite(payload.iat) || payload.iat < cutoff)) {
+    // Bulk revocation check: a password reset advances the user's token epoch (`ep:{sub}`).
+    // Any access token stamped below it predates that event and is rejected, so one write
+    // invalidates every outstanding access token — not only the refresh tokens. Surfaced as
+    // TOKEN_INVALID for the same no-oracle reason as the jti revocation above.
+    // A token carrying no epoch reads as 0, which only matters once the user has been bumped
+    // at least once — exactly the tokens that must stop working.
+    const epoch = await this.redis.getUserTokenEpoch(payload.sub)
+    if (readStampedEpoch(payload) < epoch) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

@@ -20,17 +20,17 @@
  *     manages its own navigation.
  *
  * @remarks
- * HOST-HEADER TRUST — in `'redirect'` mode the destination URL is
- * built with `new URL(loginPath, request.nextUrl.origin)`. Self-
- * hosted Next.js deployments behind a reverse proxy MUST ensure the
- * proxy forwards only vetted `Host` values; otherwise an attacker
- * who controls the `Host` header can redirect the browser to an
- * off-site origin after logout.
+ * HOST-HEADER TRUST — in `'redirect'` mode the destination is emitted
+ * as a RELATIVE `Location` and the response never reads
+ * `request.nextUrl.origin`, so the browser resolves it against the
+ * URL it actually requested. A forged `Host` has nothing to influence
+ * here, and this handler needs no vetting of that header to be safe.
+ * That is a property of this response only — it says nothing about
+ * the rest of an application, where `Host` may still reach a URL.
  *
  * Edge-Runtime-safe.
  */
 
-import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 import { AUTH_DASHBOARD_ROUTES, AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
@@ -43,6 +43,7 @@ import {
   serializeClearCookie,
   trimTrailingSlash
 } from './helpers/routeHandlerUtils'
+import { redirectToPath } from './internal/redirectToPath'
 
 /** Default upstream logout endpoint, matching the NestJS module defaults. */
 const DEFAULT_LOGOUT_PATH = `/auth/${AUTH_DASHBOARD_ROUTES.logout}`
@@ -61,7 +62,18 @@ interface LogoutCookieConfig {
     readonly refresh: string
     readonly hasSession: string
   }
-  /** Path attribute for the refresh-cookie clear. Defaults to `/api/auth`. */
+  /**
+   * Path attribute for the refresh-cookie clear. Defaults to `/api/auth`.
+   *
+   * **This is not the server's default**, which is `/auth`. It is the value the *proxy*
+   * topology needs: the browser addresses the Next.js route, so the cookie must be scoped to
+   * the Next.js path, which means the upstream module has to be configured with
+   * `cookies.refreshCookiePath: '/api/auth'` to plant it there in the first place — the proxy
+   * forwards `Set-Cookie` verbatim and never rewrites `Path`. A deployment that leaves the
+   * server on `/auth` must set this to `/auth` too: a browser matches a deletion on name,
+   * domain and path, so a mismatch means the clear silently does nothing and the refresh
+   * cookie outlives the logout (the session itself is revoked server-side either way).
+   */
   readonly refreshCookiePath?: string
 }
 
@@ -187,8 +199,8 @@ function buildLogoutResponse(
   refreshCookiePath: string
 ): Response {
   if (config.mode === 'redirect') {
-    const loginUrl = new URL(config.loginPath, request.nextUrl.origin)
-    const response = NextResponse.redirect(loginUrl)
+    // Relative `Location`, so a forged `Host` has nothing to change — see `redirectToPath`.
+    const response = redirectToPath(config.loginPath)
     attachClearCookies(response, config, refreshCookiePath)
     response.headers.set('Cache-Control', 'no-store, no-cache')
     return response

@@ -32,6 +32,20 @@ export interface OAuthProfile {
   /** Primary email address returned by the provider. */
   email: string
   /**
+   * Whether the provider asserts it has verified this email address.
+   *
+   * @remarks
+   * A plugin MUST report what the provider actually said, not what would be convenient. The
+   * account created from an unverified address belongs to whoever controls the OAuth account,
+   * not to whoever controls the mailbox — and if the library marks it verified anyway, the
+   * consumer's "this email is proven" invariant is false from the first login.
+   *
+   * The shipped Google plugin refuses an unverified profile outright, so it always reports
+   * `true`. Providers that hand back unverified addresses (GitHub, among others) must report
+   * `false` and let the consumer's own verification flow do its job.
+   */
+  emailVerified: boolean
+  /**
    * Display name returned by the provider, if available.
    *
    * @remarks

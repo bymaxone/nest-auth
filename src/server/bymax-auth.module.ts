@@ -10,6 +10,7 @@ import { DynamicModule, Module, type Provider } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 
 import {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -19,28 +20,34 @@ import {
 } from './bymax-auth.constants'
 import { resolveOptions, type ResolvedOptions } from './config/resolved-options'
 import { AuthController } from './controllers/auth.controller'
+import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
 import { PlatformRolesGuard } from './guards/platform-roles.guard'
 import { RolesGuard } from './guards/roles.guard'
+import { TrustedOriginGuard } from './guards/trusted-origin.guard'
 import { UserStatusGuard } from './guards/user-status.guard'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
+import { NoStoreInterceptor } from './interceptors/no-store.interceptor'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
 import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { buildOAuthPlugins } from './oauth/oauth.module'
 import { OAuthService } from './oauth/oauth.service'
+import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
+import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { OtpService } from './services/otp.service'
@@ -50,6 +57,7 @@ import { PlatformAuthService } from './services/platform-auth.service'
 import { SessionService } from './services/session.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 import { TokenManagerService } from './services/token-manager.service'
+import { WsTicketService } from './services/ws-ticket.service'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -114,7 +122,7 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
  *   this is intentional for testing environments. Supply a real `BYMAX_AUTH_EMAIL_PROVIDER`
  *   in production to ensure reset emails are delivered.
  * - **MFA is opt-in.** Set `controllers: { mfa: true }` **on the `registerAsync()`
- *   call** (not inside `useFactory`) **and** supply `mfa.encryptionKey` + `mfa.issuer`
+ *   call** (not inside `useFactory`, which throws at startup if you do) **and** supply `mfa.encryptionKey` + `mfa.issuer`
  *   in the factory return value. Omitting either leaves `MfaService` and
  *   `MfaRequiredGuard` completely unregistered. Setting `controllers.mfa: true`
  *   without the `mfa` configuration group causes a startup error.
@@ -197,11 +205,30 @@ export class BymaxAuthModule {
     // InvitationController — opt-in. Requires invitations.enabled: true in the resolved options.
     const includeInvitations = options.controllers?.invitations === true
 
+    // EmailChangeController — opt-in. The service refuses to boot when the configured email
+    // provider cannot deliver the verification token, so a deployment that enables the flow
+    // without wiring the message fails at startup rather than at a user's first attempt.
+    const includeEmailChange = options.controllers?.emailChange === true
+
     // Resolved options provider — wraps the consumer's factory with resolveOptions().
     const resolvedOptionsProvider: Provider = {
       provide: BYMAX_AUTH_OPTIONS,
       useFactory: async (...args: unknown[]): Promise<ResolvedOptions> => {
         const userOptions = await options.useFactory(...args)
+
+        // `controllers` belongs on the `registerAsync()` call, never in the factory's return
+        // value. Nest decides a module's shape before any factory runs, so a `controllers` key
+        // here is read by nothing: the flags are silently dropped and the endpoints they were
+        // meant to enable are simply absent — a 404 whose cause is in a different object from
+        // the one the developer edited. It was documented; documentation is not a control.
+        if ('controllers' in (userOptions as unknown as Record<string, unknown>)) {
+          throw new Error(
+            '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not ' +
+              'returned from useFactory — the module is assembled before the factory runs, so ' +
+              'flags returned here are ignored and the endpoints are never registered.'
+          )
+        }
+
         const resolved = resolveOptions(userOptions)
 
         // Cross-validate: controllers.mfa: true without the mfa config group would
@@ -283,6 +310,15 @@ export class BymaxAuthModule {
       ? []
       : [{ provide: BYMAX_AUTH_EMAIL_PROVIDER, useClass: NoOpEmailProvider }]
 
+    // Fallback breach checker — approves every password, so the credential path never reaches
+    // the network unless the consumer wires a real checker (e.g. HibpBreachChecker).
+    const breachCheckerProviders: Provider[] = hasProviderToken(
+      extraProviders,
+      BYMAX_AUTH_BREACH_CHECKER
+    )
+      ? []
+      : [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: CommonPasswordChecker }]
+
     // Fallback hooks provider — only registered when the consumer has not supplied one.
     const hooksProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_HOOKS)
       ? []
@@ -299,7 +335,8 @@ export class BymaxAuthModule {
       ...(includeSessions ? [SessionController] : []),
       ...(includePlatform ? [PlatformAuthController, PlatformMfaController] : []),
       ...(includeOAuth ? [OAuthController] : []),
-      ...(includeInvitations ? [InvitationController] : [])
+      ...(includeInvitations ? [InvitationController] : []),
+      ...(includeEmailChange ? [EmailChangeController] : [])
     ]
 
     // MfaService and MfaRequiredGuard are only registered when MFA is enabled so
@@ -340,6 +377,9 @@ export class BymaxAuthModule {
     // InvitationService — only when controllers.invitations: true.
     const invitationProviders: Provider[] = includeInvitations ? [InvitationService] : []
 
+    // EmailChangeService — only when controllers.emailChange: true.
+    const emailChangeProviders: Provider[] = includeEmailChange ? [EmailChangeService] : []
+
     return {
       module: BymaxAuthModule,
       imports: [
@@ -367,6 +407,7 @@ export class BymaxAuthModule {
         resolvedOptionsProvider,
         // Fallback NoOp providers (skipped if consumer already supplied them).
         ...emailProviders,
+        ...breachCheckerProviders,
         ...hooksProviders,
         // Core services.
         // AuthRedisService is registered directly (not via AuthRedisModule) so that
@@ -376,6 +417,7 @@ export class BymaxAuthModule {
         PasswordService,
         TokenManagerService,
         TokenDeliveryService,
+        WsTicketService,
         BruteForceService,
         OtpService,
         // SessionService is always registered (not gated on includeSessions) because
@@ -386,6 +428,11 @@ export class BymaxAuthModule {
         AuthService,
         // Guards — registered as providers so they can be applied via @UseGuards().
         JwtAuthGuard,
+        TrustedOriginGuard,
+        AuthRateLimitGuard,
+        // Response-header interceptor — every library controller applies it, so it must be
+        // resolvable in this module's injector.
+        NoStoreInterceptor,
         RolesGuard,
         UserStatusGuard,
         // MFA services and guard — only registered when controllers.mfa: true.
@@ -399,7 +446,9 @@ export class BymaxAuthModule {
         // OAuth providers — only when controllers.oauth: true.
         ...oauthProviders,
         // Invitation service — only when controllers.invitations: true.
-        ...invitationProviders
+        ...invitationProviders,
+        // Address-change service — only when controllers.emailChange: true.
+        ...emailChangeProviders
       ],
       controllers,
       exports: [
@@ -409,6 +458,8 @@ export class BymaxAuthModule {
         AuthService,
         // Export guards so host-app modules can apply them without reimporting.
         JwtAuthGuard,
+        TrustedOriginGuard,
+        AuthRateLimitGuard,
         RolesGuard,
         UserStatusGuard,
         // Export TokenDeliveryService for host-app refresh endpoints.
@@ -437,8 +488,12 @@ export class BymaxAuthModule {
         // Export email provider — allows host-app modules (e.g. custom invitation flows)
         // to inject the configured IEmailProvider without re-registering it.
         BYMAX_AUTH_EMAIL_PROVIDER,
+        BYMAX_AUTH_BREACH_CHECKER,
         // Export InvitationService — allows host-app modules to send or manage invitations.
         ...invitationProviders,
+        // Export EmailChangeService — a host app may want to drive the flow from its own
+        // profile screen rather than through the shipped controller.
+        ...emailChangeProviders,
         // Export AuthRedisService so host-app modules that apply JwtPlatformGuard,
         // WsJwtGuard, or other guards via @UseGuards() have AuthRedisService in scope.
         // NestJS auto-registers @UseGuards() guards as local providers in the controller's

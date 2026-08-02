@@ -290,10 +290,12 @@ describe('TokenDeliveryService', () => {
       expect(res.cookie).toHaveBeenCalledTimes(3)
     })
 
-    // Scenario: valid hostname → cookies must carry domain='example.com'.
-    // Expected: every cookie call includes domain attribute. Why: kills the array-emptying mutant
-    // `domain ? [] : []` and the spread-emptying `domain ? {} : {}` which both drop the domain.
-    it('includes the resolved domain attribute on every cookie when hostname is valid', async () => {
+    // Scenario: a valid hostname and no `resolveDomains` → cookies must carry NO domain.
+    // Expected: every cookie call omits the attribute. Why: a cookie with `Domain=example.com`
+    // is sent to every subdomain (RFC 6265 §5.2.3), so deriving it from the request host would
+    // hand the session to a marketing site, a user-content host, or a stale DNS record someone
+    // else now answers for. Host-only is the default; sharing is opted into via resolveDomains.
+    it('omits the domain attribute when resolveDomains is not configured', async () => {
       const service = await buildService('cookie')
       const res = makeRes()
       const req = makeReq({ hostname: 'example.com' })
@@ -307,7 +309,7 @@ describe('TokenDeliveryService', () => {
       ][]
       expect(calls).toHaveLength(3)
       for (const call of calls) {
-        expect(call[2]['domain']).toBe('example.com')
+        expect(call[2]['domain']).toBeUndefined()
       }
     })
 
@@ -689,20 +691,23 @@ describe('TokenDeliveryService', () => {
       expect(res.clearCookie).toHaveBeenCalled()
     })
 
-    // Scenario: valid hostname → clearOn should use the resolved domains, not [undefined].
-    // Expected: each clearCookie call carries domain='example.com'. Why: kills the ternary mutant
-    // `false ? domains : [undefined]` on line 252:45 which would clear cookies with no domain.
-    it('clears each cookie with the resolved domain when hostname is valid', async () => {
+    // Scenario: a valid hostname and no `resolveDomains` → the clear must carry no domain.
+    // Expected: no clearCookie call has a domain attribute. Why: the clear has to mirror the
+    // plant, and the plant is host-only by default (see `resolveCookieDomains`).
+    it('clears each cookie without a domain when resolveDomains is not configured', async () => {
       const service = await buildService('cookie')
       const res = makeRes()
       const req = makeReq({ hostname: 'example.com' })
 
       service.clearAuthSession(res as Response, req as Request)
 
+      // The clear has to mirror how the cookie was planted — a browser matches a deletion on
+      // name, domain and path, so clearing a host-only cookie with `Domain=` set would leave
+      // the real one in place and the user signed in after signing out.
       const calls = (res.clearCookie as jest.Mock).mock.calls as [string, Record<string, unknown>][]
       expect(calls).toHaveLength(3)
       for (const call of calls) {
-        expect(call[1]['domain']).toBe('example.com')
+        expect(call[1]['domain']).toBeUndefined()
       }
     })
 
@@ -812,6 +817,30 @@ describe('TokenDeliveryService', () => {
       expect(resolveDomains).toHaveBeenCalledWith('app.example.com')
       // At minimum 6 cookie calls (3 cookies × 2 domains).
       expect((res.cookie as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(6)
+    })
+
+    // Verifies the clear path honours the same configured domains. A cookie planted with
+    // `Domain=.example.com` is only deleted by a clear carrying that same domain — clearing it
+    // host-only leaves the real cookie in place, so a user who signed out stays signed in on
+    // every subdomain the deployment shares the session with.
+    it('should clear cookies on every domain resolveDomains returns', async () => {
+      const resolveDomains = jest.fn().mockReturnValue(['.example.com', '.api.example.com'])
+      const options = {
+        ...makeOptions('cookie'),
+        cookies: { ...makeOptions('cookie').cookies, resolveDomains }
+      }
+
+      const service = await buildServiceWithOptions(options as never)
+      const res = makeRes()
+      const req = makeReq({ hostname: 'app.example.com' })
+
+      service.clearAuthSession(res as Response, req as Request)
+
+      const domains = (res.clearCookie as jest.Mock).mock.calls.map(
+        (call: [string, Record<string, unknown>]) => call[1]['domain']
+      )
+      expect(domains).toHaveLength(6)
+      expect(new Set(domains)).toEqual(new Set(['.example.com', '.api.example.com']))
     })
 
     // Verifies that resolveDomains receives an empty string when extractDomain returns undefined (invalid hostname).

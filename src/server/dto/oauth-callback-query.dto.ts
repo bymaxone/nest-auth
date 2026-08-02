@@ -1,11 +1,11 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator'
+import { IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator'
 
 /**
  * Query parameters for the OAuth callback endpoint (`GET /oauth/:provider/callback`).
  *
- * `code` and `state` are the two required values used by the service layer.
- * Length limits prevent oversized payloads from reaching the token exchange
- * HTTP call and the SHA-256 Redis key lookup.
+ * `state` is always required; `code` is required except on the error callback RFC 6749
+ * §4.1.2.1 defines, which carries `error` instead. Length limits prevent oversized payloads
+ * from reaching the token exchange HTTP call and the SHA-256 Redis key lookup.
  *
  * The remaining fields (`iss`, `scope`, `authuser`, `prompt`, `hd`) are
  * standard OIDC / Google Account-chooser parameters that providers append to
@@ -26,11 +26,50 @@ export class OAuthCallbackQueryDto {
    * Forwarded to `plugin.exchangeCode()` which POSTs it to the provider's token
    * endpoint. OAuth authorization codes are typically 32–512 characters; 2048
    * is a safe upper bound that rejects clearly malformed payloads.
+   *
+   * Absent on the error callback RFC 6749 §4.1.2.1 defines — the response a provider sends
+   * when the user declines consent. Required whenever `error` is absent, so a callback
+   * carrying neither is still the malformed request it always was.
    */
+  @ValidateIf((query: OAuthCallbackQueryDto) => query.error === undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(2048)
-  code!: string
+  code?: string
+
+  /**
+   * The provider's error code (RFC 6749 §4.1.2.1) — `access_denied` when the user clicks
+   * "Cancel" at the consent screen, plus `server_error`, `temporarily_unavailable` and the
+   * rest.
+   *
+   * Declared so that response reaches the library's OAuth error handling instead of the
+   * `ValidationPipe`, which used to 400 it for the missing `code`: a user who simply changed
+   * their mind saw a raw validation envelope rather than the configured error redirect. The
+   * value is logged and never echoed to the caller — the response stays `auth.oauth_failed`,
+   * so the provider cannot choose what appears in a redirect URL the browser follows.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  error?: string
+
+  /**
+   * Human-readable detail accompanying `error` (RFC 6749 §4.1.2.1). Accepted so the
+   * `ValidationPipe` does not reject the callback; logged with `error`, never echoed.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  error_description?: string
+
+  /**
+   * URI of a provider page describing `error` (RFC 6749 §4.1.2.1). Accepted so the
+   * `ValidationPipe` does not reject the callback; never followed and never echoed.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  error_uri?: string
 
   /**
    * CSRF state nonce returned by the OAuth provider.

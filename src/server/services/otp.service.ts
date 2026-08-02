@@ -17,12 +17,77 @@ const MIN_VERIFY_MS = 100
 /**
  * OTP record stored in Redis as JSON.
  *
- * Storing `attempts` alongside the `code` avoids a separate Redis key for
- * the attempt counter, reducing the number of round-trips.
+ * Storing `attempts` alongside the `code` in one HASH avoids a separate Redis key for the
+ * attempt counter, and lets the verify script bump it in place.
  */
-interface OtpRecord {
-  code: string
-  attempts: number
+
+/**
+ * Write an OTP record and its expiry as one step.
+ *
+ * `HSET` + a separate `EXPIRE` would leave a window in which a crash strands a record with no
+ * TTL — and an OTP that never expires is an OTP an attacker can grind against forever.
+ */
+const OTP_STORE_LUA = `
+redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+`
+
+/**
+ * Attempt-bounded verify + consume, as one atomic step.
+ *
+ * Held **byte-identical** to rust-auth's `crates/bymax-auth-redis/src/lua/otp_verify.lua`:
+ * the two libraries read the same `otp:` records out of the same Redis (the prefix is pinned
+ * in the shared wire contract), so the ceiling has to mean the same thing on both sides.
+ *
+ * `KEYS[1]` is the record; `ARGV[1]` the submitted code; `ARGV[2]` the attempt ceiling.
+ * Returns `{ tag, code }`:
+ *
+ * - `{ 'EXPIRED', '' }` — no record (TTL elapsed), or one with no `code` field.
+ * - `{ 'MAX', '' }` — the ceiling was already reached; the record is consumed.
+ * - `{ 'PRESENT', storedCode }` — under the ceiling. The record is consumed on a plain match
+ *   and its counter bumped in place on a mismatch. The plain comparison inside the script
+ *   only decides which of those happened; the caller re-compares in constant time.
+ *
+ * `HINCRBY` is what makes the whole decision atomic without decoding anything, and it leaves
+ * the key's TTL untouched so a wrong guess cannot buy extra OTP lifetime. The counter used to
+ * be computed here in JS from a value read a round-trip earlier and written back with SET, so
+ * N concurrent wrong guesses all read `attempts: 0` and all wrote `attempts: 1` — the ceiling
+ * could be exceeded arbitrarily by submitting in parallel.
+ */
+const OTP_VERIFY_LUA = `
+local code = redis.call('HGET', KEYS[1], 'code')
+if not code then
+    return { 'EXPIRED', '' }
+end
+local attempts = tonumber(redis.call('HGET', KEYS[1], 'attempts')) or 0
+if attempts >= tonumber(ARGV[2]) then
+    redis.call('DEL', KEYS[1])
+    return { 'MAX', '' }
+end
+if code == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+else
+    redis.call('HINCRBY', KEYS[1], 'attempts', 1)
+end
+return { 'PRESENT', code }
+`
+
+/**
+ * Narrow the script's two-element reply.
+ *
+ * A reply that is not the documented shape is treated as `EXPIRED` — the same answer a
+ * missing record gets, so a malformed record is indistinguishable from natural expiry and no
+ * oracle is opened. Failing any other way would tell a caller that *something* is stored
+ * under their identifier.
+ *
+ * @param raw - Whatever `eval` returned.
+ * @returns The tag and, for `PRESENT`, the stored code.
+ */
+function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', string] {
+  if (!Array.isArray(raw) || raw.length < 2) return ['EXPIRED', '']
+  const [tag, storedCode] = raw as [unknown, unknown]
+  if (tag !== 'MAX' && tag !== 'PRESENT') return ['EXPIRED', '']
+  return [tag, typeof storedCode === 'string' ? storedCode : '']
 }
 
 /**
@@ -85,8 +150,15 @@ export class OtpService {
     code: string,
     ttlSeconds: number
   ): Promise<void> {
-    const record: OtpRecord = { code, attempts: 0 }
-    await this.redis.set(`otp:${purpose}:${identifier}`, JSON.stringify(record), ttlSeconds)
+    // A HASH of `code` + `attempts`, matching what the verify script bumps in place. Written
+    // through one script so the record never exists without its expiry — a `HSET` followed by
+    // a separate `EXPIRE` leaves a window where a crash strands an OTP with no TTL, and every
+    // key in this keyspace is required to carry one.
+    await this.redis.eval(
+      OTP_STORE_LUA,
+      [`otp:${purpose}:${identifier}`],
+      [code, String(ttlSeconds)]
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -106,83 +178,59 @@ export class OtpService {
    * @param purpose - Logical purpose matching the one used in {@link store}.
    * @param identifier - User-scoped identifier matching the one used in {@link store}.
    * @param code - The OTP code supplied by the user.
-   * @throws {@link AuthException} with `OTP_EXPIRED` if the key is not in Redis.
-   * @throws {@link AuthException} with `OTP_MAX_ATTEMPTS` if the attempt limit is reached.
-   * @throws {@link AuthException} with `OTP_INVALID` if the code does not match.
+   * @throws {@link AuthException} with `OTP_INVALID` — for a missing record, an exhausted
+   *   attempt ceiling, and a wrong code alike. The three are deliberately indistinguishable:
+   *   see the note in the body.
    */
   async verify(purpose: string, identifier: string, code: string): Promise<void> {
     const start = Date.now()
     const key = `otp:${purpose}:${identifier}`
 
-    const raw = await this.redis.get(key)
-    if (raw === null) {
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-      throw new AuthException(AUTH_ERROR_CODES.OTP_EXPIRED)
-    }
+    // One atomic step: read, check the ceiling, bump-or-consume. The bump used to be computed
+    // here in JS from a value read a round-trip earlier and written back with SET, so N
+    // concurrent wrong guesses all read `attempts: 0` and all wrote `attempts: 1` — the
+    // ceiling could be exceeded arbitrarily by submitting in parallel, for the OTP's whole
+    // lifetime. This is the one counter in the codebase that was not built on an atomic
+    // primitive. The script is byte-identical to rust-auth's `otp_verify.lua`.
+    const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [code, String(MAX_ATTEMPTS)])
+    const [tag, storedCode] = parseOtpVerifyReply(raw)
 
-    let record: OtpRecord
-    try {
-      record = JSON.parse(raw) as OtpRecord
-    } catch {
-      // Corrupted Redis value — delete the unusable key and surface as OTP_EXPIRED
-      // so callers cannot distinguish corruption from natural expiry (timing oracle
-      // safe, anti-enumeration safe).
-      await this.redis.del(key)
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-      throw new AuthException(AUTH_ERROR_CODES.OTP_EXPIRED)
-    }
-
-    if (record.attempts >= MAX_ATTEMPTS) {
-      // Delete the exhausted key so it no longer occupies Redis until TTL expires.
-      await this.redis.del(key)
-      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-      throw new AuthException(AUTH_ERROR_CODES.OTP_MAX_ATTEMPTS)
-    }
-
-    // Constant-time comparison — short-circuit on length mismatch to avoid
-    // RangeError from crypto.timingSafeEqual when buffer sizes differ.
-    // Length mismatch does NOT leak the correct code length beyond the OTP digit
-    // count that is already known from the flow (e.g. 6 digits).
-    // Stryker disable next-line ConditionalExpression: the length-mismatch disjunct is redundant: timingSafeCompare already returns false on a length mismatch, so the OR result is unchanged
-    if (code.length !== record.code.length || !timingSafeCompare(code, record.code)) {
-      await this.incrementAttempts(purpose, identifier, record)
+    // Every failure below answers `OTP_INVALID`, in the same time, whatever went wrong.
+    //
+    // Distinguishing them defeated the anti-enumeration the flows in front of this were built
+    // for. `forgot-password` deliberately answers the same whether or not the address exists —
+    // but it only writes an OTP record when it does, so a caller could ask for a reset and then
+    // submit one wrong code: `OTP_EXPIRED` meant "no record was ever written, that address has
+    // no account", `OTP_INVALID` meant "there is one". One extra request turned a uniform
+    // answer into a definitive one. `OTP_MAX_ATTEMPTS` said the same thing more slowly: only a
+    // record that exists can reach a ceiling.
+    //
+    // `OTP_EXPIRED` and `OTP_MAX_ATTEMPTS` stay in the catalog as internal, diagnostic codes —
+    // the same treatment `TOKEN_REVOKED` and `TOKEN_EXPIRED` already get, for the same reason —
+    // and the distinction is recorded in the logs rather than in the response.
+    if (tag === 'EXPIRED') {
+      // Also the corrupted-record answer: the script's `cjson.decode` throws, the eval fails,
+      // and the caller cannot distinguish corruption from natural expiry — which is the point.
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
-    // Success — consume the OTP.
-    await this.redis.del(key)
+    if (tag === 'MAX') {
+      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
+    }
+
+    // The script's own comparison only decided the bump-or-consume; this is the authoritative
+    // one. Constant-time, with the length check first to avoid a RangeError from
+    // `crypto.timingSafeEqual` on differing buffer sizes — the length is already implied by
+    // the configured OTP digit count, so it leaks nothing new.
+    // Stryker disable next-line ConditionalExpression: the length-mismatch disjunct is redundant: timingSafeCompare already returns false on a length mismatch, so the OR result is unchanged
+    if (code.length !== storedCode.length || !timingSafeCompare(code, storedCode)) {
+      await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
+      throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
+    }
+
+    // Success — the script already consumed the record.
     await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
-  }
-
-  // ---------------------------------------------------------------------------
-  // Internal helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Increments the attempt counter for an existing OTP record atomically.
-   *
-   * Uses a Lua script to read the TTL and update the record in a single round-trip,
-   * preserving the expiry and avoiding a GET + TTL + SET sequence.
-   * If the key has no TTL or is gone the update is silently skipped.
-   *
-   * @param purpose - Purpose segment of the key.
-   * @param identifier - Identifier segment of the key.
-   * @param currentRecord - The already-parsed OTP record (avoids a redundant GET).
-   */
-  private async incrementAttempts(
-    purpose: string,
-    identifier: string,
-    currentRecord: OtpRecord
-  ): Promise<void> {
-    const key = `otp:${purpose}:${identifier}`
-    const updated: OtpRecord = { ...currentRecord, attempts: currentRecord.attempts + 1 }
-    // Lua: read TTL atomically, then SET with the same TTL if the key still exists.
-    await this.redis.eval(
-      `local ttl = redis.call('TTL', KEYS[1])
-       if ttl > 0 then redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl) end`,
-      [key],
-      [JSON.stringify(updated)]
-    )
   }
 }

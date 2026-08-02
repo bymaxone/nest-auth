@@ -11,6 +11,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+import { redirectToPathOnOrigin, withQueryParam } from './redirectToPath'
 import type { ProtectedRoutePattern, ResolvedAuthProxyConfig } from '../createAuthProxy'
 import { REASON_EXPIRED, REASON_PARAM, REFRESH_ATTEMPT_PARAM } from './constants'
 import {
@@ -23,7 +24,7 @@ import {
 } from './proxyUtils'
 import { matchesPublicRoute } from './routeClassifier'
 import type { TokenState } from './tokenState'
-import { buildSilentRefreshUrl } from '../helpers/buildSilentRefreshUrl'
+import { buildSilentRefreshPath } from '../helpers/buildSilentRefreshUrl'
 import type { DecodedToken } from '../helpers/jwt'
 
 /**
@@ -78,8 +79,13 @@ export function handlePublicRoute(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    const silentRefreshUrl = new URL(buildSilentRefreshUrl(request, destination))
-    return NextResponse.redirect(silentRefreshUrl)
+    // Absolute `Location`: Next re-parses the header a middleware sets and a relative one
+    // throws there. Naming this request's own origin is safe — Next strips it back off
+    // before the browser sees it. See `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(
+      buildSilentRefreshPath(request, destination),
+      request.nextUrl.origin
+    )
   }
 
   // No session cookie — nothing to refresh. Render the public page.
@@ -109,6 +115,7 @@ function handleAuthenticatedOnPublic(
   sanitizedHeaders: Headers
 ): NextResponse {
   /* istanbul ignore next -- `authenticated` implies token is defined; optional chain is defensive */
+  // Stryker disable next-line StringLiteral: unreachable — this handler only runs for an authenticated state, which implies a decoded token, so the fallback's value can never be read
   const role = tokenState.token?.role ?? ''
   const reasonPresent = request.nextUrl.searchParams.has(REASON_PARAM)
   const isRedirectIfAuth = config.publicRoutesRedirectIfAuthenticated.some((route) =>
@@ -116,9 +123,11 @@ function handleAuthenticatedOnPublic(
   )
 
   if (isRedirectIfAuth && !reasonPresent) {
-    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
+    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
     const destination = safeRelativePath(config.getDefaultDashboard(role), '/')
-    return NextResponse.redirect(new URL(destination, request.nextUrl.origin))
+    // Absolute `Location`, which Next requires of a middleware, and which it strips back to a
+    // path before the browser sees it — see `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(destination, request.nextUrl.origin)
   }
 
   return NextResponse.next({ request: { headers: sanitizedHeaders } })
@@ -171,13 +180,14 @@ export function handleProtectedRoute(
 
   // RBAC check.
   if (!matched.allowedRoles.includes(role)) {
-    // Stryker disable next-line StringLiteral: the fallback feeds `new URL(x, origin)`; '' and '/' both resolve to pathname '/' because origin carries no path
+    // Stryker disable next-line StringLiteral: the fallback reaches `toSameOriginPath`, which maps a value not starting with '/' to '/' — so '' and '/' both emit `Location: /`
     const fallback = safeRelativePath(config.getDefaultDashboard(role), '/')
     const destination = matched.redirectPath ?? fallback
     const safeDestination = safeRelativePath(destination, fallback)
-    const url = new URL(safeDestination, request.nextUrl.origin)
-    url.searchParams.set('error', 'forbidden')
-    return NextResponse.redirect(url)
+    return redirectToPathOnOrigin(
+      withQueryParam(safeDestination, 'error', 'forbidden'),
+      request.nextUrl.origin
+    )
   }
 
   // Authorised — inject identity headers, strip `_r` from URL.
@@ -227,8 +237,13 @@ function handleUnauthenticatedOnProtected(
       request.nextUrl.searchParams,
       refreshAttempts + 1
     )
-    const silentRefreshUrl = new URL(buildSilentRefreshUrl(request, destination))
-    return NextResponse.redirect(silentRefreshUrl)
+    // Absolute `Location`: Next re-parses the header a middleware sets and a relative one
+    // throws there. Naming this request's own origin is safe — Next strips it back off
+    // before the browser sees it. See `redirectToPathOnOrigin`.
+    return redirectToPathOnOrigin(
+      buildSilentRefreshPath(request, destination),
+      request.nextUrl.origin
+    )
   }
 
   // Cookie was present but invalid AND `has_session` missing —
@@ -296,10 +311,12 @@ export function redirectToLogin(
 ): NextResponse {
   // Stryker disable next-line StringLiteral: loginPath is always factory-validated to a non-empty path, so the '/' fallback is unreachable
   const loginPath = safeRelativePath(config.loginPath, '/')
-  const url = new URL(loginPath, request.nextUrl.origin)
   // Stryker disable next-line EqualityOperator,ConditionalExpression: when defined, `reason` is always a non-empty constant ('expired' or an allowlist entry), so `length > 0` vs `>= 0` vs `true` are indistinguishable
-  if (reason !== undefined && reason.length > 0) {
-    url.searchParams.set(REASON_PARAM, reason)
-  }
-  return NextResponse.redirect(url)
+  const destination =
+    reason !== undefined && reason.length > 0
+      ? withQueryParam(loginPath, REASON_PARAM, reason)
+      : loginPath
+  // Absolute `Location`, which Next requires of a middleware, and which it strips back to a
+  // path before the browser sees it — see `redirectToPathOnOrigin`.
+  return redirectToPathOnOrigin(destination, request.nextUrl.origin)
 }

@@ -30,6 +30,11 @@
 import { signHs256Token, makeMockRequest, DEFAULT_PROXY_CONFIG } from './_testHelpers'
 import { createAuthProxy } from '../createAuthProxy'
 
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 describe('createAuthProxy — background requests, RBAC, status blocking', () => {
@@ -80,7 +85,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // should let RSC fetches continue normally.
     it('lets an authenticated RSC request pass through to the normal handler', async () => {
       const token = await signHs256Token(
-        { sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -102,7 +107,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // not authentication.
     it('redirects a user with the wrong role to their dashboard with error=forbidden', async () => {
       const token = await signHs256Token(
-        { sub: 'u1', role: 'member', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'member', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -114,7 +119,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       const response = await proxy(request as never)
       const location = response.headers.get('location')
       expect(location).not.toBeNull()
-      const url = new URL(location ?? '')
+      const url = new URL(location ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/dashboard')
       expect(url.searchParams.get('error')).toBe('forbidden')
     })
@@ -123,7 +128,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // absent because no redirect happens on success.
     it('lets a user with an allowed role through without a redirect', async () => {
       const token = await signHs256Token(
-        { sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -150,7 +155,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
         ]
       }
       const token = await signHs256Token(
-        { sub: 'u1', role: 'member', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'member', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(config)
@@ -160,7 +165,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/custom/forbidden')
       expect(url.searchParams.get('error')).toBe('forbidden')
     })
@@ -172,6 +177,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     it('redirects a BANNED user to loginPath?reason=banned', async () => {
       const token = await signHs256Token(
         {
+          type: 'dashboard',
           sub: 'u1',
           role: 'admin',
           status: 'BANNED',
@@ -186,7 +192,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('banned')
     })
@@ -196,6 +202,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     it('redirects an INACTIVE user to loginPath?reason=inactive', async () => {
       const token = await signHs256Token(
         {
+          type: 'dashboard',
           sub: 'u1',
           role: 'admin',
           status: 'INACTIVE',
@@ -210,7 +217,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.searchParams.get('reason')).toBe('inactive')
     })
 
@@ -220,6 +227,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     it('treats status comparison case-insensitively (lowercase claim)', async () => {
       const token = await signHs256Token(
         {
+          type: 'dashboard',
           sub: 'u1',
           role: 'admin',
           status: 'banned',
@@ -234,7 +242,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.searchParams.get('reason')).toBe('banned')
     })
 
@@ -243,6 +251,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     it('does not block a user whose status is not in blockedUserStatuses', async () => {
       const token = await signHs256Token(
         {
+          type: 'dashboard',
           sub: 'u1',
           role: 'admin',
           status: 'ACTIVE',
@@ -269,6 +278,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     it('propagates x-user-id, x-user-role, x-tenant-id, x-tenant-domain on a successful pass-through', async () => {
       const token = await signHs256Token(
         {
+          type: 'dashboard',
           sub: 'user-42',
           role: 'admin',
           tenantId: 'tenant-abc',
@@ -313,10 +323,40 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      // After sanitisation, the spoofed headers must no longer be
-      // on the forwarded request. We check the override hint to see
-      // that the proxy explicitly deletes them (the middleware
-      // override protocol records deletions with an empty value).
+      // The override hint proves the proxy forwarded a REBUILT header set rather than passing
+      // the caller's through untouched. Asserting only "the value is not the spoofed one"
+      // would also pass for a bare `NextResponse.next()`, which sets no hint at all and
+      // forwards the caller's headers verbatim — the exact bug this guards against.
+      const injected = response.headers.get('x-middleware-override-headers')
+      expect(injected).not.toBeNull()
+      expect(injected).not.toContain('x-user-id')
+      expect(response.headers.get('x-middleware-request-x-user-id')).not.toBe('spoofed-admin')
+    })
+
+    // The `/api/auth/*` arm returned before sanitisation ran, so a client-forged
+    // `x-user-id: admin` reached whatever the consumer mounts there — in direct contradiction
+    // of this module's own promise that a forged header cannot reach a server component via
+    // ANY response path. The three handlers this library ships do not read them, so the gap
+    // was one a consumer inherited by trusting the documented invariant.
+    it('strips client-spoofed identity headers on /api/auth routes too', async () => {
+      const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+      const request = makeMockRequest({
+        url: 'https://app.example.com/api/auth/silent-refresh',
+        headers: {
+          'x-user-id': 'spoofed-admin',
+          'x-user-role': 'admin'
+        }
+      })
+
+      const response = await proxy(request as never)
+
+      // The override hint proves the proxy forwarded a REBUILT header set rather than passing
+      // the caller's through untouched — a bare `NextResponse.next()` sets no hint at all, so
+      // asserting only "the value is not the spoofed one" would pass either way.
+      const injected = response.headers.get('x-middleware-override-headers')
+      expect(injected).not.toBeNull()
+      expect(injected).not.toContain('x-user-id')
+      expect(injected).not.toContain('x-user-role')
       expect(response.headers.get('x-middleware-request-x-user-id')).not.toBe('spoofed-admin')
     })
   })
@@ -326,7 +366,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // their dashboard — the spec's "redirect if authenticated" rule.
     it('redirects an authenticated user visiting /auth/login to their dashboard', async () => {
       const token = await signHs256Token(
-        { sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -336,7 +376,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
       })
 
       const response = await proxy(request as never)
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/dashboard/admin')
     })
 
@@ -346,7 +386,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // ping-ponging back to the dashboard.
     it('does NOT redirect when reason= is set (prevents blocked-user loop)', async () => {
       const token = await signHs256Token(
-        { sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u1', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)

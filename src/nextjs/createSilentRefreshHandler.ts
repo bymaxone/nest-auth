@@ -41,9 +41,14 @@
  *   - **Rate limiting.** The handler makes one upstream `POST` per
  *     inbound `GET`. Apply route-level rate limiting in the consumer
  *     app to prevent DoS amplification.
- *   - **Host-header trust.** `origin` is derived from the request's
- *     `Host`. Self-hosted Next.js deployments must configure the
- *     reverse proxy to forward only trusted `Host` values.
+ *   - **Host-header trust.** No longer an obligation for this
+ *     handler's redirects: the `Location` it emits is relative, so
+ *     the browser resolves it against the URL it actually requested
+ *     and a forged `Host` has no destination to choose. The request
+ *     origin is still derived from `Host`, but only to REJECT a
+ *     cross-origin `?redirect=` — a comparison, not a destination,
+ *     where the worst a forged value buys is admitting a path that
+ *     lands on the real app anyway.
  *   - **`apiBase`.** Always points to your OWN NestJS backend — all
  *     incoming cookies are forwarded there.
  *
@@ -51,7 +56,7 @@
  * Headers API.
  */
 
-import { NextResponse } from 'next/server'
+import type { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 import { AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
@@ -68,6 +73,7 @@ import {
   isSafeSameOriginPath,
   serializeClearCookie
 } from './helpers/routeHandlerUtils'
+import { redirectToPath, withQueryParam } from './internal/redirectToPath'
 
 /** Default cookie path used when clearing the refresh-token cookie on failure. */
 const DEFAULT_REFRESH_COOKIE_PATH = '/api/auth'
@@ -105,7 +111,8 @@ export interface SilentRefreshHandlerConfig {
    * match the upstream NestJS auth module's configuration. On
    * failure the handler clears:
    *   - `access` at path `/`
-   *   - `refresh` at `refreshCookiePath` (default `/api/auth`)
+   *   - `refresh` at `refreshCookiePath` (default `/api/auth`; see the field's note — it
+   *     must match the scope the upstream module planted the cookie with)
    *   - `hasSession` at path `/`
    */
   readonly cookieNames: {
@@ -115,9 +122,16 @@ export interface SilentRefreshHandlerConfig {
   }
 
   /**
-   * Path attribute for the refresh cookie clear. Defaults to
-   * `/api/auth` — matches the default scope of the NestJS auth
-   * module's refresh cookie.
+   * Path attribute for the refresh-cookie clear. Defaults to `/api/auth`.
+   *
+   * **This is not the server's default**, which is `/auth`. It is the value the *proxy*
+   * topology needs: the browser addresses the Next.js route, so the cookie must be scoped to
+   * the Next.js path, which means the upstream module has to be configured with
+   * `cookies.refreshCookiePath: '/api/auth'` to plant it there in the first place — the proxy
+   * forwards `Set-Cookie` verbatim and never rewrites `Path`. A deployment that leaves the
+   * server on `/auth` must set this to `/auth` too: a browser matches a deletion on name,
+   * domain and path, so a mismatch means the clear silently does nothing and the refresh
+   * cookie outlives the logout (the session itself is revoked server-side either way).
    */
   readonly refreshCookiePath?: string
 }
@@ -148,11 +162,13 @@ export type SilentRefreshHandler = (request: NextRequest) => Promise<NextRespons
  * DoS amplification against the upstream service.
  *
  * @remarks
- * HOST-HEADER TRUST — `request.nextUrl.origin` is derived from the
- * `Host` header. On Vercel this is safe; self-hosted deployments
- * behind a reverse proxy MUST configure `trustHost` / forward only
- * vetted `Host` values, or the open-redirect defence can be bypassed
- * by an attacker who controls the `Host` header.
+ * HOST-HEADER TRUST — the handler emits a RELATIVE `Location`, so a
+ * forged `Host` cannot choose where the browser goes: the browser
+ * resolves the header against the URL it actually requested. The
+ * request origin is still read, but only to REJECT a cross-origin
+ * `?redirect=`, which is a comparison rather than a destination —
+ * the worst a forged `Host` buys there is admitting a path that then
+ * lands on the real app anyway. See `redirectToPath`.
  *
  * @throws {Error} When `loginPath` is not a same-origin pathname.
  */
@@ -207,7 +223,7 @@ export function createSilentRefreshHandler(
         redirect: 'manual'
       })
     } catch {
-      return buildLogoutRedirect(origin, config)
+      return buildLogoutRedirect(config)
     }
 
     // Defensive: `fetch(..., { redirect: 'manual' })` yields an
@@ -219,11 +235,11 @@ export function createSilentRefreshHandler(
     // alone would suddenly accept an upstream auth-redirect as
     // success.
     if (upstream.type === 'opaqueredirect') {
-      return buildLogoutRedirect(origin, config)
+      return buildLogoutRedirect(config)
     }
 
     if (!upstream.ok) {
-      return buildLogoutRedirect(origin, config)
+      return buildLogoutRedirect(config)
     }
 
     const rawSetCookies = getSetCookieHeaders(upstream.headers)
@@ -231,10 +247,10 @@ export function createSilentRefreshHandler(
       // A 2xx with no cookies cannot succeed — the browser would
       // retain the stale access cookie and the proxy would redirect
       // the user right back here. Treat as a failure.
-      return buildLogoutRedirect(origin, config)
+      return buildLogoutRedirect(config)
     }
 
-    return buildSuccessRedirect(origin, destination, rawSetCookies)
+    return buildSuccessRedirect(destination, rawSetCookies)
   }
 }
 
@@ -286,10 +302,10 @@ export function resolveSafeDestination(
   }
 
   if (resolved.origin !== origin) return loginPath
-  // Return the relative form — `pathname + search + hash` — so the
-  // subsequent `NextResponse.redirect(new URL(path, origin))` call
-  // cannot accidentally alter the origin even if the caller rebuilds
-  // the destination against a different base.
+  // Return the relative form — `pathname + search + hash`. The handler now emits it through
+  // `redirectToPath` and never rebuilds an absolute URL, so this is the shape the `Location`
+  // carries verbatim; keeping the origin out of the returned value also means a caller that
+  // did rebuild it against some other base could not move it off-origin.
   return `${resolved.pathname}${resolved.search}${resolved.hash}`
 }
 
@@ -298,13 +314,10 @@ export function resolveSafeDestination(
  * `Set-Cookie` headers. Cookies are deduplicated by
  * `(name, domain)`; the last writer wins.
  */
-function buildSuccessRedirect(
-  origin: string,
-  destination: string,
-  rawSetCookies: readonly string[]
-): NextResponse {
-  const destinationUrl = new URL(destination, origin)
-  const response = NextResponse.redirect(destinationUrl)
+function buildSuccessRedirect(destination: string, rawSetCookies: readonly string[]): NextResponse {
+  // Relative `Location`, so a forged `Host` has nothing to change. `destination` is already
+  // the relative form `resolveSafeDestination` returns. See `redirectToPath`.
+  const response = redirectToPath(destination)
   response.headers.set('Cache-Control', 'no-store, no-cache')
 
   const deduped = dedupeSetCookieHeaders(rawSetCookies)
@@ -326,10 +339,8 @@ function buildSuccessRedirect(
  * (see NEST-174). Without it a user who lost their session could
  * ping-pong between the proxy and this handler forever.
  */
-function buildLogoutRedirect(origin: string, config: SilentRefreshHandlerConfig): NextResponse {
-  const loginUrl = new URL(config.loginPath, origin)
-  loginUrl.searchParams.set('reason', 'expired')
-  const response = NextResponse.redirect(loginUrl)
+function buildLogoutRedirect(config: SilentRefreshHandlerConfig): NextResponse {
+  const response = redirectToPath(withQueryParam(config.loginPath, 'reason', 'expired'))
   response.headers.set('Cache-Control', 'no-store, no-cache')
 
   const clearCookies = [

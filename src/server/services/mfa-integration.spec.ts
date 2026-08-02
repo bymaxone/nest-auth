@@ -68,6 +68,8 @@ const HMAC_KEY = createHash('sha256')
 const mockOptions = {
   jwt: { secret: JWT_SECRET },
   hmacKey: HMAC_KEY,
+  previousHmacKeys: [],
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],
   mfa: {
     encryptionKey: VALID_ENCRYPTION_KEY,
     issuer: 'TestApp',
@@ -131,7 +133,9 @@ const mockRedis = {
   srem: jest.fn(),
   expire: jest.fn(),
   setIfAbsent: jest.fn(),
-  invalidateUserSessions: jest.fn()
+  eval: jest.fn(),
+  invalidateUserSessions: jest.fn(),
+  bumpUserTokenEpoch: jest.fn()
 }
 
 const mockTokenManager = {
@@ -158,6 +162,9 @@ const mockHooks = {}
 // Suite bootstrap
 // ---------------------------------------------------------------------------
 
+/** The account password every enrolment test re-proves. */
+const PASSWORD = 'correct horse battery staple'
+
 describe('MFA — integration smoke tests', () => {
   let service: MfaService
 
@@ -169,12 +176,17 @@ describe('MFA — integration smoke tests', () => {
     // Default safe returns
     mockRedis.get.mockResolvedValue(null)
     mockRedis.set.mockResolvedValue(undefined)
-    mockRedis.del.mockResolvedValue(undefined)
+    mockRedis.del.mockResolvedValue(true)
+    // The temp-token consume reports whether THIS call removed the marker — the
+    // exactly-once signal the challenge gates on. `true` is the ordinary case: nobody
+    // raced us.
+    mockTokenManager.consumeMfaTempToken.mockResolvedValue(true)
     mockRedis.sadd.mockResolvedValue(1)
     mockRedis.srem.mockResolvedValue(1)
     mockRedis.expire.mockResolvedValue(undefined)
     mockRedis.setIfAbsent.mockResolvedValue(true)
     mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
+    mockRedis.bumpUserTokenEpoch.mockResolvedValue(1)
     mockUserRepo.findById.mockResolvedValue(DASHBOARD_USER)
     mockUserRepo.updateMfa.mockResolvedValue(undefined)
     mockPlatformUserRepo.findById.mockResolvedValue(PLATFORM_ADMIN)
@@ -195,10 +207,12 @@ describe('MFA — integration smoke tests', () => {
         { provide: TokenManagerService, useValue: mockTokenManager },
         { provide: BruteForceService, useValue: mockBruteForce },
         {
+          // `compare` answers true: enrolment re-proves the account password, and these
+          // smoke tests drive the flow with the correct one.
           provide: PasswordService,
           useValue: {
             hash: jest.fn().mockResolvedValue('$scrypt$hashed'),
-            compare: jest.fn().mockResolvedValue(false)
+            compare: jest.fn().mockResolvedValue(true)
           }
         },
         { provide: SessionService, useValue: mockSessionService },
@@ -234,7 +248,7 @@ describe('MFA — integration smoke tests', () => {
     // setup() then reads back the data it just stored
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
-    const setupResult = await service.setup('user-1')
+    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD)
     expect(setupResult.secret).toBeDefined()
     expect(setupResult.qrCodeUri).toContain('TestApp')
     expect(setupResult.recoveryCodes).toHaveLength(2)
@@ -297,7 +311,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setIfAbsent.mockResolvedValue(false)
     mockRedis.get.mockResolvedValue(JSON.stringify(storedSetupData))
 
-    const result = await service.setup('user-1')
+    const result = await service.setup('user-1', 'dashboard', PASSWORD)
 
     // Result must reflect the STORED secret — not a freshly generated one.
     expect(result.secret).toBe(storedBase32)
@@ -328,7 +342,9 @@ describe('MFA — integration smoke tests', () => {
       ...DASHBOARD_USER,
       mfaEnabled: true,
       mfaSecret: encryptedSecret,
-      mfaRecoveryCodes: ['$scrypt$hashedcode']
+      // The stored digest of the code this test presents: a keyed MAC under the identifier
+      // key, which is the only recovery-digest format there is.
+      mfaRecoveryCodes: [hmacSha256(plainCode, HMAC_KEY)]
     })
     mockRedis.setnx.mockResolvedValue(true) // TOTP anti-replay
     // passwordService.compare returns true when the plain recovery code matches the hash
@@ -509,15 +525,20 @@ describe('MFA — integration smoke tests', () => {
       AuthException
     )
 
-    const expectedBfId = hmacSha256(`challenge:user-1`, HMAC_KEY)
+    const expectedBfId = hmacSha256('challenge:dashboard:user-1', HMAC_KEY)
     const plainBfId = hmacSha256('user-1', HMAC_KEY) // login-style identifier
-    const disableBfId = hmacSha256('disable:user-1', HMAC_KEY) // disable-style identifier
+    const disableBfId = hmacSha256('disable:dashboard:user-1', HMAC_KEY) // disable-style identifier
+    // The SAME id on the other identity plane. The two id spaces come from different consumer
+    // repositories and may collide, so a counter keyed on the id alone lets a platform admin
+    // exhaust — or clear — this user's lockout budget, and vice versa.
+    const otherPlaneBfId = hmacSha256('challenge:platform:user-1', HMAC_KEY)
 
     expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(expectedBfId)
     expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(expectedBfId)
-    // Must NOT use the plain (login) or disable-namespaced identifiers
+    // Must NOT use the plain (login), disable-namespaced, or other-plane identifiers
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(plainBfId)
     expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(disableBfId)
+    expect(mockBruteForce.isLockedOut).not.toHaveBeenCalledWith(otherPlaneBfId)
   })
 
   // ---------------------------------------------------------------------------
@@ -579,7 +600,7 @@ describe('MFA — integration smoke tests', () => {
     const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
     await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
 
-    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1')
+    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
   })
 

@@ -13,6 +13,14 @@ import type { ResolvedAuthProxyConfig } from '../createAuthProxy'
 import { decodeJwtToken, verifyJwtToken, type DecodedToken } from '../helpers/jwt'
 
 /**
+ * The access-token `type` discriminants the proxy admits — the dashboard and platform access
+ * tokens. Any other type, notably the short-lived MFA-temp `mfa_challenge`, must never gate a
+ * protected route, so it is treated as unauthenticated. Mirrors `ACCESS_TOKEN_TYPES` in
+ * `rust-auth`'s proxy.
+ */
+const ACCESS_TOKEN_TYPES: readonly string[] = ['dashboard', 'platform']
+
+/**
  * Summary of the access-token state for a single request.
  *
  * - `token`: the decoded representation, or `undefined` ONLY when no
@@ -30,7 +38,13 @@ import { decodeJwtToken, verifyJwtToken, type DecodedToken } from '../helpers/jw
  *   signature verification.
  * - `signatureVerified`: `true` only when the token was validated
  *   against the configured `jwtSecret` via HMAC. `false` in
- *   decode-only mode even when `authenticated` is `true`.
+ *   decode-only mode even when `authenticated` is `true`. It carries
+ *   the signature fact and NOTHING else — it stays `true` for a
+ *   genuinely signed token that has expired, or that is the wrong
+ *   `type`, because the signature was checked before either was
+ *   read. Anything gating on identity reads `authenticated`, which
+ *   is the conjunction; this field alone answers only "was a
+ *   signature checked", which is never the whole question.
  */
 export interface TokenState {
   readonly token: DecodedToken | undefined
@@ -60,11 +74,38 @@ export async function readTokenState(
 
   const hasSecret = config.jwtSecret !== undefined && config.jwtSecret.length > 0
   const decoded = hasSecret ? await verifyJwtToken(raw, config.jwtSecret) : decodeJwtToken(raw)
+  const isSession = decoded.isValid && isAccessToken(decoded)
 
   return {
     token: decoded,
     hasCookie: true,
-    authenticated: decoded.isValid,
-    signatureVerified: hasSecret && decoded.isValid
+    authenticated: isSession,
+    // Passed through, not conjoined with `isSession`. The name says "a signature was checked",
+    // and folding expiry and token-type into it made the same identifier mean one thing on
+    // `DecodedToken` and a stricter thing here — the kind of collision that is only ever
+    // discovered by someone trusting the looser reading. `authenticated` above is where the
+    // conjunction belongs, and it is the field every decision in this proxy actually reads.
+    signatureVerified: decoded.signatureVerified
   }
+}
+
+/**
+ * Whether a verified token is an **access token**, as opposed to some other credential the
+ * same secret signs.
+ *
+ * A valid signature is not the question the proxy is actually asking. The server signs
+ * several kinds of token with one key, and `mfa_challenge` is issued to a user who has proven
+ * their password and **not** their second factor. Without this check, moving that temp token
+ * into the access cookie walks past every proxy-protected page — precisely the state the
+ * second factor exists to stop. The upstream API rejects it, because its guards check `type`;
+ * the gap is the edge, where the page renders.
+ *
+ * Both access discriminants are admitted, matching `rust-auth`'s proxy: an operator console
+ * proxied by the same middleware presents a platform token, and separating the two planes is
+ * the server's job, not the edge's. A token with no `type` claim at all is refused — the claim
+ * has been present since the first release, so its absence means the token was not minted by
+ * this library.
+ */
+function isAccessToken(decoded: DecodedToken): boolean {
+  return ACCESS_TOKEN_TYPES.includes(decoded.payload['type'] as string)
 }

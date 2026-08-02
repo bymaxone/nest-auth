@@ -167,6 +167,14 @@ export function createMockUserRepository(): MockUserRepository {
       if (user) users.set(id, { ...user, emailVerified: verified })
     },
 
+    async updateEmail(id: string, email: string): Promise<void> {
+      const user = users.get(id)
+      // The address is proven before this runs, so the account stays verified across the
+      // change — a store that cleared the flag here would sign the user out of a state they
+      // had just proved.
+      if (user) users.set(id, { ...user, email })
+    },
+
     async findByOAuthId(
       provider: string,
       providerId: string,
@@ -475,7 +483,11 @@ export async function bootstrapTestApp(
     emailVerification: { required: false },
     sessions: { enabled: true },
     mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' },
-    secureCookies: false
+    secureCookies: false,
+    // The per-IP limiter is off for the shared bootstrap: every scenario here drives many
+    // requests from one address on purpose, and a 429 would mask what the scenario is
+    // actually asserting. `rate-limit.e2e-spec.ts` turns it on and tests it directly.
+    rateLimit: { enabled: false }
   }
 
   const options: BymaxAuthModuleOptions = { ...baseOptions, ...overrides }

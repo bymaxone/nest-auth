@@ -18,6 +18,7 @@ const CONTEXT: HookContext = {
 const PROFILE: OAuthProfile = {
   provider: 'google',
   providerId: 'google-uid-123',
+  emailVerified: true,
   email: 'user@example.com',
   name: 'Test User'
 }

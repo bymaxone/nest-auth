@@ -194,6 +194,20 @@ describe('sessions flow (E2E)', () => {
 
       // Assert — controller declares HttpStatus.NO_CONTENT (204).
       expect(res.status).toBe(204)
+
+      // Revoking a named session bumps the token epoch: deleting the refresh session stops
+      // rotation but says nothing about the stateless access token its holder already carries,
+      // and someone revoking a device they believe is compromised is making a decision about
+      // *right now*. The collateral is that every device — including this one — loses its
+      // access token and re-mints one on the next rotation, which the shipped client does
+      // silently. This test holds a bare bearer token, so it does that rotation by hand.
+      const rotated = await request(app.getHttpServer())
+        .post('/refresh')
+        .send({ refreshToken: currentRefreshToken })
+      expect(rotated.status).toBe(200)
+      const rotatedBody = rotated.body as { accessToken: string; refreshToken: string }
+      currentAccessToken = rotatedBody.accessToken
+      currentRefreshToken = rotatedBody.refreshToken
     })
 
     // Verifies that GET /sessions returns only two sessions after one was explicitly revoked.
@@ -231,6 +245,38 @@ describe('sessions flow (E2E)', () => {
 
       // Assert — controller declares HttpStatus.NO_CONTENT (204).
       expect(res.status).toBe(204)
+    })
+
+    // Verifies that the bulk revocation reaches the ACCESS tokens too, not just the refresh
+    // sessions. Deleting a refresh session stops that device rotating, but its already-issued
+    // access token is stateless and would keep verifying for the rest of its lifetime — up to
+    // 15 minutes of continued access on a device the user just signed out. The token epoch
+    // advances instead, so every outstanding access token for the account goes stale at once,
+    // the caller's included.
+    it('should invalidate every outstanding access token, the caller own included', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/sessions')
+        .set('Authorization', `Bearer ${currentAccessToken}`)
+        .send({ refreshToken: currentRefreshToken })
+
+      expect(res.status).toBe(401)
+    })
+
+    // …and the caller — only the caller — recovers immediately, because the one refresh session
+    // the revocation deliberately preserved is theirs. The revoked devices cannot: they lost the
+    // refresh token that would let them.
+    it('should let the caller refresh straight back in', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/refresh')
+        // The same device header the session was opened with: a rotation re-reads it, and a
+        // client that sent nothing would rename its own session mid-flight.
+        .set('User-Agent', UA_IPHONE)
+        .send({ refreshToken: currentRefreshToken })
+
+      expect(res.status).toBe(200)
+      const body = res.body as { accessToken: string; refreshToken: string }
+      currentAccessToken = body.accessToken
+      currentRefreshToken = body.refreshToken
     })
 
     // Verifies that GET /sessions returns exactly one session marked as current after the bulk revocation.

@@ -48,12 +48,27 @@ export interface DashboardJwtPayload {
    *
    * Stamped at token issuance. When `true`, the `MfaRequiredGuard` enforces that
    * `mfaVerified` is also `true` before granting access to protected resources.
-   * Resets to `false` on token rotation (the Redis session does not persist this
-   * state) — this is intentional: MFA enable/disable always invalidates all sessions.
+   *
+   * The Redis session persists this flag, so rotation carries it across — and rotation
+   * additionally re-stamps it from the account it re-reads whenever the two diverge. Both
+   * matter: without the first, every rotation would silently drop a session out of MFA
+   * enforcement; without the second, a session created while MFA was off would stay exempt
+   * for the refresh token's whole lifetime whenever the host enables MFA through its own
+   * admin surface rather than this library's `verifyAndEnable`.
    */
   mfaEnabled: boolean
   /** Whether the user completed MFA verification before this token was issued. */
   mfaVerified: boolean
+  /**
+   * The user's token **epoch** at issuance — a per-user generation counter the server bumps to
+   * invalidate every outstanding access token at once (a password reset). The guards reject a
+   * token whose epoch is below the user's stored epoch.
+   *
+   * Optional: a token issued before the field existed carries none, which reads as `0` and is
+   * never rejected while the stored epoch is also `0` — the mechanism stays inert until the
+   * first bump.
+   */
+  epoch?: number
   /** Issued-at timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
   iat: number
   /** Expiration timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
@@ -83,6 +98,16 @@ export interface PlatformJwtPayload {
   mfaEnabled: boolean
   /** Whether the admin completed MFA verification before this token was issued. */
   mfaVerified: boolean
+  /**
+   * The admin's token **epoch** at issuance — a per-user generation counter the server bumps to
+   * invalidate every outstanding access token at once (a password reset). The guards reject a
+   * token whose epoch is below the admin's stored epoch.
+   *
+   * Optional: a token issued before the field existed carries none, which reads as `0` and is
+   * never rejected while the stored epoch is also `0` — the mechanism stays inert until the
+   * first bump.
+   */
+  epoch?: number
   /** Issued-at timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
   iat: number
   /** Expiration timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
@@ -114,6 +139,21 @@ export interface MfaTempPayload {
   type: 'mfa_challenge'
   /** Indicates which authentication context triggered the MFA challenge. */
   context: 'dashboard' | 'platform'
+  /**
+   * The subject's token **epoch** at issuance, in the plane named by `context`.
+   *
+   * The challenge token is a credential like any other — half of one, held by a caller who has
+   * already proved the password — and it must die with the rest when the account's credentials
+   * are rotated. Without this claim it did not: a password reset bumps the epoch and kills
+   * every access token, but nothing touched an outstanding `mfa:` record, so a challenge token
+   * minted before the reset stayed redeemable for its whole TTL and completing it issued a
+   * full session under the *new* epoch. The reset is meant to end everything.
+   *
+   * Optional for the same reason the access-token epochs are: a token issued before the field
+   * existed carries none, which reads as `0` and is never rejected while the stored epoch is
+   * also `0`, so the mechanism stays inert until the first bump.
+   */
+  epoch?: number
   /** Issued-at timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */
   iat: number
   /** Expiration timestamp (Unix seconds). Populated automatically by `@nestjs/jwt`. */

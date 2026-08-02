@@ -43,10 +43,10 @@
 - Single quotes, no semicolons, 2-space indent. camelCase files, PascalCase classes.
 - Import order: `node:` → external → internal → relative → types. One concern per file.
 
-**7. Testing — TDD, 100% Coverage (hard gate)**
+**7. Testing — TDD, 100% Coverage + 100% Mutation (hard gates)**
 
 - Co-located tests (`*.spec.ts`). AAA pattern. Mock external deps — never real Redis/email in unit tests.
-- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`), per-subpath and global. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 95`) is the deeper gate against weak tests.
+- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`), per-subpath and global. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 95`) is the deeper gate against weak tests, and the suite currently holds **100%**: no survivors, nothing uncovered. Keep it there — a new survivor is either a missing test or an equivalent that must carry its reason.
 
 **8. Build** — tsup builds 5 subpaths → ESM (.mjs) + CJS (.cjs) + .d.ts. `sideEffects: false`. Peer deps always external.
 
@@ -99,10 +99,18 @@ to confirm the sandbox still boots before the full run.
 
 Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`
 — acceptable **only** for genuinely equivalent mutants (no test can kill them), each carrying a
-reason. Minimize them, and **never** disable a mutant a test could kill. (They ship in the
+reason. Minimize them, and **never** disable a mutant a test could kill.
+
+**The per-line directive binds to the line immediately after it, which is not always the line you
+mean.** Two shapes break it silently: a mutant sharing its line with a callback's closing brace
+(`}, [])` on a `useCallback`/`useEffect`), and a directive whose comment wrapped onto a second
+line — `next-line` then points at the comment's own continuation. In both cases the mutant is
+reported as surviving and the disable looks broken rather than misplaced. Use the block form
+(`// Stryker disable <Mutator>` … `// Stryker restore <Mutator>`) there, keep the region short,
+and say in the reason why the per-line form did not serve. (They ship in the
 unminified `.mjs` as cosmetic noise — negligible in size. Documenting equivalents in
 `docs/mutation_testing_results.md` instead is the alternative, but only fits when there are few;
-nest-auth's 184 legitimate equivalents make inline the pragmatic choice — moving them to docs would
+nest-auth's legitimate equivalents make inline the pragmatic choice — moving them to docs would
 drop the score below the 95 gate.) Full setup, config rationale, and the iteration workflow live in
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Do **not** add
 mutation testing to `prepublishOnly` or the per-PR CI — it runs automatically post-merge on `main` via the shared reusable (`bymaxone/.github` → node-lib-ci) and can also be run on demand (`pnpm mutation`).

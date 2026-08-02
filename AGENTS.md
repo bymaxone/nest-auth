@@ -62,16 +62,17 @@ Request → JwtAuthGuard → UserStatusGuard → RolesGuard → MfaRequiredGuard
 
 ## 3. Backend Patterns
 
-### Injection Tokens (6 Symbols)
+### Injection Tokens (7 Symbols)
 
-| Token                                 | Type                      | Required                   |
-| ------------------------------------- | ------------------------- | -------------------------- |
-| `BYMAX_AUTH_OPTIONS`                  | `ResolvedOptions`         | Always                     |
-| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Always                     |
-| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | If `platformAdmin.enabled` |
-| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Always (NoOp default)      |
-| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Always (NoOp default)      |
-| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                     |
+| Token                                 | Type                      | Required                                                                                  |
+| ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
+| `BYMAX_AUTH_OPTIONS`                  | `ResolvedOptions`         | Always                                                                                    |
+| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Always                                                                                    |
+| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | If `platformAdmin.enabled`                                                                |
+| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Always (NoOp default)                                                                     |
+| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Always (NoOp default)                                                                     |
+| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                                    |
+| `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`AllowAllBreachChecker` default — the check reaches the network, so it is opt-in) |
 
 ### Service Method Structure
 
@@ -113,14 +114,24 @@ All codes from `AUTH_ERROR_CODES` (33 codes). Throw `AuthException(code, statusC
 
 Format: `{namespace}:{prefix}:{identifier}`
 
-| Prefix | Purpose                 | TTL                        |
-| ------ | ----------------------- | -------------------------- |
-| `rt`   | Refresh token hash      | `refreshExpiresInDays`     |
-| `rv`   | Revoked JWT (blacklist) | Remaining token lifetime   |
-| `lf`   | Login failures          | `bruteForce.windowSeconds` |
-| `otp`  | OTP codes               | `otpTtlSeconds`            |
-| `sess` | Session set per user    | Session lifetime           |
-| `sd`   | Session detail          | Session lifetime           |
+| Prefix | Purpose                                                   | TTL                        |
+| ------ | --------------------------------------------------------- | -------------------------- |
+| `rt`   | Refresh token hash                                        | `refreshExpiresInDays`     |
+| `rp`   | Rotation grace pointer (old hash → new session)           | `refreshGraceWindow`       |
+| `cf`   | Consumed-token family marker (proves a replay is a reuse) | Refresh TTL                |
+| `fam`  | Family index — the live hashes of one login's lineage     | Refresh TTL                |
+| `ep`   | Per-user token epoch (bulk access-token revocation)       | 30 days                    |
+| `rv`   | Revoked JWT (blacklist)                                   | Remaining token lifetime   |
+| `lf`   | Login failures                                            | `bruteForce.windowSeconds` |
+| `rl`   | Per-IP rate-limit counter, keyed by `HMAC(ip)`            | The route's window         |
+| `otp`  | OTP codes                                                 | `otpTtlSeconds`            |
+| `sess` | Session set per user                                      | Session lifetime           |
+| `sd`   | Session detail                                            | Session lifetime           |
+
+The platform plane mirrors these under its own prefixes (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
+so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
+which of these are a contract with `rust-auth`, is in
+[`conformance/wire-contract.json`](./conformance/wire-contract.json).
 
 ---
 
@@ -213,7 +224,7 @@ tests.
 
 ### Mutation Testing (Stryker)
 
-Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. Run `pnpm mutation` (Node 24) before tagging a release. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>`). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation runs automatically post-merge on `main` via the shared reusable CI (`bymaxone/.github` → node-lib-ci); it is not per-PR and not in `prepublishOnly`, and can also be run on demand with `pnpm mutation`.
+Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. The suite holds **100%**: no survivors, nothing uncovered (see [docs/mutation_testing_results.md](./docs/mutation_testing_results.md)). Run `pnpm mutation` (Node 24) before tagging a release. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>` — and note that the per-line directive does not bind when the mutant shares its line with a callback's closing brace or sits below a wrapped comment; use the block form there). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation runs automatically post-merge on `main` via the shared reusable CI (`bymaxone/.github` → node-lib-ci); it is not per-PR and not in `prepublishOnly`, and can also be run on demand with `pnpm mutation`.
 
 ---
 

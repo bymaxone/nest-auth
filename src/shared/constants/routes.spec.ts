@@ -100,4 +100,22 @@ describe('buildAuthRefreshSkipSuffixes', () => {
     expect(custom).toContain(AUTH_PROXY_ROUTES.clientRefresh)
     expect(custom).toContain(AUTH_PROXY_ROUTES.silentRefresh)
   })
+
+  // The prefix used to be trimmed with `replace(/^\/+|\/+$/g, '')`, which is quadratic on a
+  // run of slashes: the `$`-anchored alternative backtracks over every prefix of the run. The
+  // input is deployment configuration rather than anything a caller sends, so it was never
+  // reachable in practice — but the replacement has to trim exactly the same thing, and a long
+  // run has to stay fast enough that the quadratic form could not pass this unnoticed.
+  it('trims runs of slashes linearly and to the same result', () => {
+    expect(buildAuthRefreshSkipSuffixes('///authentication///')).toEqual(
+      buildAuthRefreshSkipSuffixes('authentication')
+    )
+    expect(buildAuthRefreshSkipSuffixes('/'.repeat(50_000))).toEqual(
+      buildAuthRefreshSkipSuffixes('')
+    )
+
+    const started = Date.now()
+    buildAuthRefreshSkipSuffixes('/'.repeat(100_000))
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
 })

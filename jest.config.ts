@@ -15,7 +15,8 @@ const config: Config = {
     '^@bymax-one/nest-auth/shared$': '<rootDir>/shared/index.ts',
     '^@bymax-one/nest-auth/client$': '<rootDir>/client/index.ts',
     '^@bymax-one/nest-auth/react$': '<rootDir>/react/index.ts',
-    '^@bymax-one/nest-auth/nextjs$': '<rootDir>/nextjs/index.ts'
+    '^@bymax-one/nest-auth/nextjs$': '<rootDir>/nextjs/index.ts',
+    '^server-only$': '<rootDir>/../test/stubs/server-only.ts'
   },
   transform: {
     '^.+\\.tsx?$': [

@@ -35,6 +35,32 @@ import { bootstrapTestApp } from './setup'
 // ---------------------------------------------------------------------------
 
 const TOTP_STEP_SECONDS = 30
+
+/**
+ * A TOTP step that is inside the verifier's ±1 acceptance window **now** and has not already
+ * been consumed by the anti-replay marker.
+ *
+ * The enrolment flow spends two steps — `base` (verify-enable) and `base + 1` (challenge) —
+ * and the marker refuses a replay of either. The management calls that follow used a step
+ * fixed relative to a freshly read clock, on the assumption that no step boundary had passed
+ * since `base`. Under a loaded parallel run that assumption fails: the flow drifts a step, the
+ * chosen code lands on one of the two already spent, and the request comes back 401 in a way
+ * that looks like a library defect and is not.
+ *
+ * With a ±1 window and two consumed steps there is exactly one usable step, and which one it
+ * is depends on whether the clock has moved:
+ *
+ * - still inside `base`'s step → only `base - 1` is both unspent and in window;
+ * - one or more steps later → `now + 1`, which is ahead of everything spent.
+ *
+ * @param base - The reference the enrolment codes were derived from.
+ * @returns A timestamp to derive the next management code from.
+ */
+function unspentStepTime(base: number): number {
+  const step = TOTP_STEP_SECONDS * 1000
+  const sameStep = Math.floor(Date.now() / step) === Math.floor(base / step)
+  return sameStep ? base - step : Date.now() + step
+}
 const TOTP_DIGITS = 6
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
@@ -86,6 +112,9 @@ interface DashboardMfaFixture {
   secret: string
   originalRecoveryCodes: string[]
   accessToken: string
+  /** The reference the enrolment codes were derived from, so later calls can pick an
+   *  unspent step relative to it. See {@link unspentStepTime}. */
+  base: number
 }
 
 /**
@@ -106,6 +135,7 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   const setup = await request(boot.app.getHttpServer())
     .post('/mfa/setup')
     .set('Authorization', `Bearer ${registerAccess}`)
+    .send({ password: password })
   // NestJS default `@Post` status is 201; the route does not override it
   // via `@HttpCode`, so the assertion is exact rather than the looser
   // `[200, 201].toContain(...)` we previously had.
@@ -114,10 +144,16 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   const secret = setupBody.secret
   const originalRecoveryCodes = setupBody.recoveryCodes
 
+  // ONE captured base for every code in this flow. Reading the clock per call lets a
+  // 30-second step boundary pass mid-flow, so two codes computed for "distinct" steps land on
+  // the same one, the anti-replay marker rejects the second, and the failure surfaces far
+  // downstream as a 401 from `Bearer undefined`.
+  const base = Date.now()
+
   const enable = await request(boot.app.getHttpServer())
     .post('/mfa/verify-enable')
     .set('Authorization', `Bearer ${registerAccess}`)
-    .send({ code: generateTotp(secret) })
+    .send({ code: generateTotp(secret, base) })
   expect(enable.status).toBe(204)
 
   // Re-login → challenge to obtain a token with `mfaVerified: true`.
@@ -129,7 +165,7 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   expect(mfaTempToken).toBeTruthy()
 
   // Step ahead to bypass the anti-replay marker from verify-enable.
-  const nextStepTime = Date.now() + TOTP_STEP_SECONDS * 1000
+  const nextStepTime = base + TOTP_STEP_SECONDS * 1000
   const challenge = await request(boot.app.getHttpServer())
     .post('/mfa/challenge')
     .send({ mfaTempToken, code: generateTotp(secret, nextStepTime) })
@@ -137,7 +173,7 @@ async function enrolDashboardMfa(): Promise<DashboardMfaFixture> {
   const accessToken = (challenge.body as { accessToken: string }).accessToken
   expect(accessToken).toBeTruthy()
 
-  return { app: boot.app, email, password, secret, originalRecoveryCodes, accessToken }
+  return { app: boot.app, email, password, secret, originalRecoveryCodes, accessToken, base }
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +245,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
       fixture = await enrolDashboardMfa()
       // Anti-replay holds counters T (enable) and T+1 (challenge). T-1 is still
       // available within the ±1 window and works for the regenerate request.
-      const regenStepTime = Date.now() - TOTP_STEP_SECONDS * 1000
+      const regenStepTime = unspentStepTime(fixture.base)
       const res = await request(fixture.app.getHttpServer())
         .post('/mfa/recovery-codes')
         .set('Authorization', `Bearer ${fixture.accessToken}`)
@@ -266,7 +302,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
         const oldCode = fixture.originalRecoveryCodes[0] as string
 
         // Rotate using a TOTP from the still-available T-1 step.
-        const regenStepTime = Date.now() - TOTP_STEP_SECONDS * 1000
+        const regenStepTime = unspentStepTime(fixture.base)
         const regen = await request(fixture.app.getHttpServer())
           .post('/mfa/recovery-codes')
           .set('Authorization', `Bearer ${fixture.accessToken}`)
@@ -382,6 +418,7 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         // NestJS default `@Post` status is 201; the route does not override it
         // via `@HttpCode`, so the assertion is exact rather than the looser
         // `[200, 201].toContain(...)` we previously had.
@@ -447,11 +484,15 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         const secret = (setup.body as { secret: string }).secret
+        // ONE captured base for every code below — see the shared helper for why a per-call
+        // clock read makes this flow flaky across a 30-second step boundary.
+        const base = Date.now()
         await request(boot.app.getHttpServer())
           .post('/platform/mfa/verify-enable')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
-          .send({ code: generateTotp(secret) })
+          .send({ code: generateTotp(secret, base) })
 
         // Challenge with T+1 to obtain an mfaVerified access token.
         const loginAfter = await request(boot.app.getHttpServer())
@@ -462,7 +503,7 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/challenge')
           .send({
             mfaTempToken,
-            code: generateTotp(secret, Date.now() + TOTP_STEP_SECONDS * 1000)
+            code: generateTotp(secret, base + TOTP_STEP_SECONDS * 1000)
           })
         const mfaVerifiedAccess = (challenge.body as { accessToken: string }).accessToken
 
@@ -471,7 +512,7 @@ describe('platform MFA flow (E2E)', () => {
         const regen = await request(boot.app.getHttpServer())
           .post('/platform/mfa/recovery-codes')
           .set('Authorization', `Bearer ${mfaVerifiedAccess}`)
-          .send({ code: generateTotp(secret, Date.now() - TOTP_STEP_SECONDS * 1000) })
+          .send({ code: generateTotp(secret, unspentStepTime(base)) })
         expect(regen.status).toBe(200)
         const regenBody = regen.body as { recoveryCodes: string[] }
         expect(regenBody.recoveryCodes).toHaveLength(8)
@@ -501,11 +542,15 @@ describe('platform MFA flow (E2E)', () => {
         const setup = await request(boot.app.getHttpServer())
           .post('/platform/mfa/setup')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
+          .send({ password: PLATFORM_PASSWORD })
         const secret = (setup.body as { secret: string }).secret
+        // ONE captured base for every code below — see the shared helper for why a per-call
+        // clock read makes this flow flaky across a 30-second step boundary.
+        const base = Date.now()
         await request(boot.app.getHttpServer())
           .post('/platform/mfa/verify-enable')
           .set('Authorization', `Bearer ${initialLogin.accessToken}`)
-          .send({ code: generateTotp(secret) })
+          .send({ code: generateTotp(secret, base) })
 
         // Challenge with T+1.
         const loginAfter = await request(boot.app.getHttpServer())
@@ -516,7 +561,7 @@ describe('platform MFA flow (E2E)', () => {
           .post('/platform/mfa/challenge')
           .send({
             mfaTempToken,
-            code: generateTotp(secret, Date.now() + TOTP_STEP_SECONDS * 1000)
+            code: generateTotp(secret, base + TOTP_STEP_SECONDS * 1000)
           })
         const mfaVerifiedAccess = (challenge.body as { accessToken: string }).accessToken
 
@@ -524,7 +569,7 @@ describe('platform MFA flow (E2E)', () => {
         const disable = await request(boot.app.getHttpServer())
           .post('/platform/mfa/disable')
           .set('Authorization', `Bearer ${mfaVerifiedAccess}`)
-          .send({ code: generateTotp(secret, Date.now() - TOTP_STEP_SECONDS * 1000) })
+          .send({ code: generateTotp(secret, unspentStepTime(base)) })
         expect(disable.status).toBe(204)
         const adminRow = boot.platformRepo.users.get(boot.adminId)
         expect(adminRow?.mfaEnabled).toBe(false)

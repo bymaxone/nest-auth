@@ -13,6 +13,8 @@ import { AuthException } from '../errors/auth-exception'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
 import { MfaService } from '../services/mfa.service'
 import { PlatformMfaController } from './platform-mfa.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -70,6 +72,10 @@ describe('PlatformMfaController', () => {
     })
       .overrideGuard(JwtPlatformGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
       .compile()
 
     controller = module.get(PlatformMfaController)
@@ -86,9 +92,9 @@ describe('PlatformMfaController', () => {
     it('should call mfaService.setup with the admin sub and platform context', async () => {
       mockMfaService.setup.mockResolvedValue(MFA_SETUP_RESULT)
 
-      const result = await controller.setup(PLATFORM_JWT_PAYLOAD as never)
+      const result = await controller.setup(PLATFORM_JWT_PAYLOAD as never, { password: 'pw' })
 
-      expect(mockMfaService.setup).toHaveBeenCalledWith(PLATFORM_JWT_PAYLOAD.sub, 'platform')
+      expect(mockMfaService.setup).toHaveBeenCalledWith(PLATFORM_JWT_PAYLOAD.sub, 'platform', 'pw')
       expect(result).toBe(MFA_SETUP_RESULT)
     })
 
@@ -98,7 +104,9 @@ describe('PlatformMfaController', () => {
         new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
       )
 
-      await expect(controller.setup(PLATFORM_JWT_PAYLOAD as never)).rejects.toThrow(AuthException)
+      await expect(
+        controller.setup(PLATFORM_JWT_PAYLOAD as never, { password: 'pw' })
+      ).rejects.toThrow(AuthException)
     })
   })
 

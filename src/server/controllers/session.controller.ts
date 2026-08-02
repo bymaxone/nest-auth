@@ -8,19 +8,24 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
 import { sha256 } from '../crypto/secure-token'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 import { UserStatusGuard } from '../guards/user-status.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { SessionInfo } from '../services/session.service'
 import { SessionService } from '../services/session.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
@@ -53,9 +58,17 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('sessions')
-@UseGuards(JwtAuthGuard, UserStatusGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+// One decorator, in the order every other controller uses. Two stacked `@UseGuards` append
+// via `extendArrayMetadata` and TypeScript applies decorators bottom-up, so the split form
+// ran `[JwtAuthGuard, UserStatusGuard, TrustedOriginGuard, AuthRateLimitGuard]` — the inverse
+// of the intent. `JwtAuthGuard` rejecting first meant a garbage `Authorization` header 401'd
+// before `AuthRateLimitGuard` ever ran, so bad tokens were never metered: the route's limiter
+// sat permanently at zero while every request still paid `verifyWithRotation` (one HMAC per
+// configured secret, including every `previousSecrets` entry) and a Redis round trip.
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard, JwtAuthGuard, UserStatusGuard)
+@UsePipes(createAuthValidationPipe())
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService,
@@ -79,6 +92,7 @@ export class SessionController {
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.listSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.listSessions)
   @Get()
   async listSessions(
     @CurrentUser() user: DashboardJwtPayload,
@@ -109,6 +123,7 @@ export class SessionController {
    *   the request (current session cannot be determined without it).
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('all')
   async revokeAllSessions(
@@ -148,12 +163,13 @@ export class SessionController {
    * @returns 204 No Content on success.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeSession)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeSession)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete(':id')
   async revokeSession(
     @CurrentUser() user: DashboardJwtPayload,
     @Param('id') id: string
   ): Promise<void> {
-    await this.sessionService.revokeSession(user.sub, id)
+    await this.sessionService.revokeOtherSession(user.sub, id)
   }
 }

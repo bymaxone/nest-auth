@@ -7,18 +7,24 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { MfaDisableDto } from '../dto/mfa-disable.dto'
 import { MfaRegenerateRecoveryCodesDto } from '../dto/mfa-regenerate-recovery-codes.dto'
+import { MfaSetupDto } from '../dto/mfa-setup.dto'
 import { MfaVerifyDto } from '../dto/mfa-verify.dto'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import type { MfaSetupResult } from '../services/mfa.service'
 import { MfaService } from '../services/mfa.service'
 
@@ -53,10 +59,10 @@ import { MfaService } from '../services/mfa.service'
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('platform/mfa')
-@UsePipes(
-  new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true })
-)
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class PlatformMfaController {
   constructor(private readonly mfaService: MfaService) {}
 
@@ -72,9 +78,13 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
-  async setup(@CurrentUser() user: PlatformJwtPayload): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'platform')
+  async setup(
+    @CurrentUser() user: PlatformJwtPayload,
+    @Body() dto: MfaSetupDto
+  ): Promise<MfaSetupResult> {
+    return this.mfaService.setup(user.sub, 'platform', dto.password)
   }
 
   /**
@@ -92,6 +102,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('verify-enable')
   async verifyEnable(
@@ -119,6 +130,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('disable')
   async disable(
@@ -135,8 +147,8 @@ export class PlatformMfaController {
    * Regenerates the platform admin's MFA recovery codes.
    *
    * Requires a valid TOTP code (recovery codes are not accepted by design).
-   * Returns the fresh plain-text codes once — only their scrypt hashes are
-   * persisted.
+   * Returns the fresh plain-text codes once — only a keyed HMAC-SHA-256 of each
+   * is persisted.
    *
    * @param user - JWT payload of the authenticated platform admin.
    * @param dto - Contains the 6-digit TOTP code confirming the action.
@@ -148,6 +160,7 @@ export class PlatformMfaController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)
   @Post('recovery-codes')
   async regenerateRecoveryCodes(

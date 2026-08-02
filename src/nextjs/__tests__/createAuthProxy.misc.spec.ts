@@ -19,6 +19,11 @@
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, makeMockRequest, signHs256Token } from './_testHelpers'
 
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 const TEST_SECRET = DEFAULT_PROXY_CONFIG.jwtSecret ?? 'test-secret-must-be-long-enough'
 
 describe('createAuthProxy — validateConfig throw paths', () => {
@@ -239,7 +244,7 @@ describe('createAuthProxy — classifier branches', () => {
   // `:segment` single-segment placeholder matches any ONE segment.
   it('matches a :segment placeholder for exactly one segment', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -269,7 +274,7 @@ describe('createAuthProxy — classifier branches', () => {
   // NOT match — exercises the "path too short" branch.
   it('does not match when the path is shorter than the pattern', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -303,7 +308,7 @@ describe('createAuthProxy — protected-route authorised response', () => {
   // NextResponse.rewrite so server components see a clean URL.
   it('strips the _r param via NextResponse.rewrite on a successful authorised request', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -334,7 +339,7 @@ describe('createAuthProxy — protected fallback', () => {
     })
 
     const response = await proxy(request as never)
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.pathname).toBe('/auth/login')
     expect(url.searchParams.get('reason')).toBeNull()
   })
@@ -372,7 +377,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // fast-path in matchesRoutePattern).
   it('matches a protected route by exact string equality', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -410,7 +415,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     // Negative clamped to 0; guards not fired; redirect happens with _r=1.
     const location = response.headers.get('location')
     expect(location).not.toBeNull()
-    const destination = new URL(location ?? '').searchParams.get('redirect') ?? ''
+    const destination = new URL(location ?? '', RELATIVE_BASE).searchParams.get('redirect') ?? ''
     expect(destination).toMatch(/_r=1/)
   })
 
@@ -424,7 +429,8 @@ describe('createAuthProxy — branch coverage edge cases', () => {
 
     const response = await proxy(request as never)
     const destination =
-      new URL(response.headers.get('location') ?? '').searchParams.get('redirect') ?? ''
+      new URL(response.headers.get('location') ?? '', RELATIVE_BASE).searchParams.get('redirect') ??
+      ''
     expect(destination).toMatch(/_r=1/)
   })
 
@@ -432,7 +438,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // falls back to `/`.
   it('falls back to / when getDefaultDashboard returns a protocol-relative URL', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -446,16 +452,18 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    // Redirect target should be `/` (the fallback), not evil.com.
-    const location = new URL(response.headers.get('location') ?? '')
-    expect(location.origin).toBe('https://app.example.com')
-    expect(location.pathname).toBe('/')
+    // Redirect target should be `/` (the fallback), not evil.com. The origin it names is the
+    // one that asked, which is the only one a middleware `Location` may carry — and evil.com
+    // reaching it is exactly what Next would NOT normalise away.
+    const raw = response.headers.get('location') ?? ''
+    expect(new URL(raw).origin).toBe('https://app.example.com')
+    expect(new URL(raw).pathname).toBe('/')
   })
 
   // getDefaultDashboard returning an empty string → falls back to `/`.
   it('falls back to / when getDefaultDashboard returns an empty string', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -469,7 +477,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/')
   })
 
@@ -477,7 +485,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // back to `/`.
   it('falls back to / when getDefaultDashboard returns a path without a leading slash', async () => {
     const token = await signHs256Token(
-      { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy({
@@ -491,7 +499,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     })
 
     const response = await proxy(request as never)
-    const location = new URL(response.headers.get('location') ?? '')
+    const location = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(location.pathname).toBe('/')
   })
 
@@ -499,7 +507,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   // the RBAC check (empty string never in allowedRoles).
   it('rejects a valid token that has no role claim', async () => {
     const token = await signHs256Token(
-      { sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
+      { type: 'dashboard', sub: 'u', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
     )
     const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
@@ -511,7 +519,7 @@ describe('createAuthProxy — branch coverage edge cases', () => {
     const response = await proxy(request as never)
     // No role → RBAC denies → redirect to default dashboard for
     // empty role = '/dashboard' (the else branch of getDefaultDashboard).
-    const url = new URL(response.headers.get('location') ?? '')
+    const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
     expect(url.searchParams.get('error')).toBe('forbidden')
   })
 })
@@ -529,7 +537,7 @@ describe('createAuthProxy — decode-only mode', () => {
     try {
       // Use a real token (shape is what matters in decode-only mode).
       const token = await signHs256Token(
-        { sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+        { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
         TEST_SECRET
       )
       // Omit jwtSecret entirely — `exactOptionalPropertyTypes` forbids

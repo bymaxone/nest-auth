@@ -27,6 +27,11 @@ import { NextResponse } from 'next/server'
 import { createAuthProxy } from '../createAuthProxy'
 import { DEFAULT_PROXY_CONFIG, extractRedirectParam, makeMockRequest } from './_testHelpers'
 
+// The proxy's `Location` is absolute — Next re-parses the header a middleware sets and a
+// relative one throws there; see `redirectToPathOnOrigin`. A base is passed anyway, and
+// ignored, so these assertions read the same whichever form the value takes.
+const RELATIVE_BASE = 'https://placeholder.invalid'
+
 describe('createAuthProxy — redirect loop prevention', () => {
   describe('public route (e.g. /auth/login) with has_session cookie', () => {
     // The proxy must redirect to silent-refresh when _r is absent AND
@@ -179,7 +184,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const location = response.headers.get('location')
       expect(location).not.toBeNull()
-      const url = new URL(location ?? '')
+      const url = new URL(location ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('expired')
     })
@@ -195,7 +200,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const response = await proxy(request as never)
 
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       expect(url.searchParams.get('reason')).toBe('expired')
     })
@@ -213,11 +218,34 @@ describe('createAuthProxy — redirect loop prevention', () => {
       const response = await proxy(request as never)
 
       const location = response.headers.get('location')
-      const silentRefreshUrl = new URL(location ?? '')
+      const silentRefreshUrl = new URL(location ?? '', RELATIVE_BASE)
       expect(silentRefreshUrl.pathname).toBe('/api/auth/silent-refresh')
       const destination = silentRefreshUrl.searchParams.get('redirect') ?? ''
       expect(destination).toMatch(/_r=2/)
     })
+
+    // Both silent-refresh sites (public route and protected route) must satisfy the same two
+    // things every middleware redirect here does: a `Location` Next can parse with no base,
+    // and an origin that is the requested one rather than any other. A forged `Host` reaches
+    // the header — Next strips it before the browser sees it — but it must never be able to
+    // put a DIFFERENT origin there, which is the case Next leaves alone.
+    it.each([
+      ['a public route', '/', { has_session: '1' }],
+      ['a protected route', '/dashboard', { has_session: '1' }]
+    ])(
+      'emits the silent-refresh redirect on our own origin from %s',
+      async (_case, path, cookies) => {
+        const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+        const request = makeMockRequest({ url: `https://attacker.example${path}`, cookies })
+
+        const response = await proxy(request as never)
+        const location = response.headers.get('location') ?? ''
+
+        expect(() => new URL(location)).not.toThrow()
+        expect(new URL(location).origin).toBe('https://attacker.example')
+        expect(new URL(location).pathname).toBe('/api/auth/silent-refresh')
+      }
+    )
 
     // No cookies at all → straight to login, no refresh attempt. The
     // hasCookie + has_session discriminator lives in NEST-174; this
@@ -230,7 +258,7 @@ describe('createAuthProxy — redirect loop prevention', () => {
 
       const response = await proxy(request as never)
 
-      const url = new URL(response.headers.get('location') ?? '')
+      const url = new URL(response.headers.get('location') ?? '', RELATIVE_BASE)
       expect(url.pathname).toBe('/auth/login')
       // No reason signal here — this is a "never logged in" case,
       // not an expiry case, so the loop-break hint is absent.

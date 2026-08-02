@@ -1,4 +1,6 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator'
+import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
+
+import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
 /**
  * Query parameters for the OAuth initiation endpoint (`GET /oauth/:provider`).
@@ -23,5 +25,6 @@ export class OAuthInitiateQueryDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
   tenantId!: string
 }

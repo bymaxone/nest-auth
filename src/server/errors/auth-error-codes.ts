@@ -69,14 +69,16 @@ export const AUTH_ERROR_CODES = {
   /** JWT is malformed, has an invalid signature, or the referenced user does not exist. */
   TOKEN_INVALID: 'auth.token_invalid',
 
+  /**
+   * Internal-only: the request carried no credential at all. Never reaches a client —
+   * surfaced as {@link AUTH_ERROR_CODES.TOKEN_INVALID}, so a caller cannot tell "you sent
+   * nothing" from "you sent something unusable". Kept for logs and for the shared error
+   * catalog, which rust-auth holds identical.
+   */
+  TOKEN_MISSING: 'auth.token_missing',
+
   /** Refresh token not found in Redis — expired or revoked. */
   REFRESH_TOKEN_INVALID: 'auth.refresh_token_invalid',
-
-  /** Session associated with the refresh token no longer exists in Redis. */
-  SESSION_EXPIRED: 'auth.session_expired',
-
-  /** Maximum concurrent session limit reached (informational — FIFO eviction handles this automatically). */
-  SESSION_LIMIT_REACHED: 'auth.session_limit_reached',
 
   /** Attempted to revoke a session that does not exist or does not belong to the user. */
   SESSION_NOT_FOUND: 'auth.session_not_found',
@@ -90,6 +92,17 @@ export const AUTH_ERROR_CODES = {
 
   /** Login attempted when `emailVerification.required` is true and email is unverified. */
   EMAIL_NOT_VERIFIED: 'auth.email_not_verified',
+
+  /**
+   * The address-change token is unknown, expired, already used, or no longer bound to the
+   * password it was minted against.
+   *
+   * One code for all four, deliberately: the holder of a bad link learns only that it does
+   * not work, which is all they can act on. Telling them *why* would say whether an address
+   * change is pending for the account — and a change request that an attacker planted is
+   * exactly the thing they would want confirmed.
+   */
+  EMAIL_CHANGE_TOKEN_INVALID: 'auth.email_change_token_invalid',
 
   // ---------------------------------------------------------------------------
   // MFA
@@ -113,33 +126,61 @@ export const AUTH_ERROR_CODES = {
   /** MFA temporary token (5-minute JWT) is invalid or expired. */
   MFA_TEMP_TOKEN_INVALID: 'auth.mfa_temp_token_invalid',
 
-  /** Submitted recovery code does not match any stored hash. */
-  RECOVERY_CODE_INVALID: 'auth.recovery_code_invalid',
+  /**
+   * Another MFA state change for the same account is already in flight.
+   *
+   * Every MFA transition is a read-modify-write over one repository record that carries
+   * `mfaEnabled`, the secret and the recovery codes together, and the write replaces all three
+   * wholesale. Interleaved, two of them silently undo each other: a challenge that read the
+   * codes before a `regenerate` and spliced after it restores the whole old set the user had
+   * just replaced, and a challenge that splices after a `disable` completes puts `mfaEnabled`
+   * back with the pre-disable secret. Refusing the second caller is how the library serializes
+   * them. Retryable — the losing caller may simply try again.
+   */
+  MFA_STATE_CONFLICT: 'auth.mfa_state_conflict',
 
   // ---------------------------------------------------------------------------
   // Password
   // ---------------------------------------------------------------------------
 
-  /** Password does not meet minimum strength requirements (e.g., fewer than 8 characters). */
-  PASSWORD_TOO_WEAK: 'auth.password_too_weak',
+  /**
+   * The password appears in a known-breach corpus, or on the offline common-password screen.
+   * It may satisfy every length and complexity rule and still be one an attacker tries first,
+   * which is why the policy checks live in the request DTO and this does not.
+   */
+  PASSWORD_COMPROMISED: 'auth.password_compromised',
 
   /** Password reset token not found in Redis. */
   PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
-
-  /** Password reset token found but its TTL has expired. */
-  PASSWORD_RESET_TOKEN_EXPIRED: 'auth.password_reset_token_expired',
 
   // ---------------------------------------------------------------------------
   // OTP (email verification, password reset via OTP)
   // ---------------------------------------------------------------------------
 
-  /** Submitted OTP code does not match the stored value. */
+  /**
+   * An OTP verification failed. The **only** code an OTP failure ever answers with: a wrong
+   * code, a record that is not in Redis, and an exhausted attempt ceiling are deliberately
+   * indistinguishable, and take the same time.
+   *
+   * Telling them apart defeated the anti-enumeration in front of them. `forgot-password`
+   * answers the same whether or not the address exists, but only writes an OTP record when it
+   * does — so one wrong code afterwards used to say which it had been.
+   */
   OTP_INVALID: 'auth.otp_invalid',
 
-  /** OTP not found in Redis — TTL has expired. */
+  /**
+   * Internal-only: the OTP record was not in Redis. Never reaches a client — surfaced as
+   * {@link AUTH_ERROR_CODES.OTP_INVALID}, the same treatment {@link
+   * AUTH_ERROR_CODES.TOKEN_EXPIRED} gets. Kept for logs and for the shared error catalog,
+   * which rust-auth holds identical.
+   */
   OTP_EXPIRED: 'auth.otp_expired',
 
-  /** OTP verification failed more than 5 times — token is now locked. */
+  /**
+   * Internal-only: OTP verification hit the five-attempt ceiling. Never reaches a client —
+   * surfaced as {@link AUTH_ERROR_CODES.OTP_INVALID}, because only a record that exists can
+   * reach a ceiling, which is the same disclosure by a slower route.
+   */
   OTP_MAX_ATTEMPTS: 'auth.otp_max_attempts',
 
   // ---------------------------------------------------------------------------
@@ -151,6 +192,26 @@ export const AUTH_ERROR_CODES = {
 
   /** Generic access-denied fallback when no more specific code applies. */
   FORBIDDEN: 'auth.forbidden',
+
+  /**
+   * The request body or query failed DTO validation. Per-field failures serialize into
+   * `error.details` as `[{ field, message }]`. Raised by the module's validation pipe so a
+   * malformed request answers in the same envelope as every other error rather than in the
+   * framework's default shape — the same code and the same details rust-auth emits.
+   */
+  VALIDATION: 'auth.validation',
+
+  /**
+   * The caller exceeded a per-IP rate limit on an auth route. Carries `Retry-After`.
+   * Distinct from `ACCOUNT_LOCKED`, which is the per-identity brute-force lockout.
+   */
+  TOO_MANY_REQUESTS: 'auth.too_many_requests',
+
+  /**
+   * A state-changing request carrying the session cookie came from an origin the deployment
+   * does not trust. Raised by `TrustedOriginGuard` — see `cookies.trustedOrigins`.
+   */
+  UNTRUSTED_ORIGIN: 'auth.untrusted_origin',
 
   // ---------------------------------------------------------------------------
   // Invitations
@@ -174,7 +235,17 @@ export const AUTH_ERROR_CODES = {
   // ---------------------------------------------------------------------------
 
   /** Platform-admin endpoint accessed with a dashboard JWT instead of a platform JWT. */
-  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required'
+  PLATFORM_AUTH_REQUIRED: 'auth.platform_auth_required',
+
+  /**
+   * An unexpected internal failure. The cause is logged and never serialized.
+   *
+   * Raised only by {@link AuthExceptionFilter}, which a host registers to give unhandled
+   * failures the same `{ error: { code, message, details } }` envelope everything else
+   * answers with. Without the filter the framework's own 500 shape stands, which is the
+   * behaviour this library had before it existed.
+   */
+  INTERNAL: 'auth.internal'
 } as const
 
 /**
@@ -206,28 +277,32 @@ export const AUTH_ERROR_MESSAGES: Readonly<Record<AuthErrorCode, string>> = {
   'auth.token_revoked': 'Token revoked',
   'auth.token_invalid': 'Invalid token',
   'auth.refresh_token_invalid': 'Invalid or expired refresh token',
-  'auth.session_expired': 'Session expired',
-  'auth.session_limit_reached': 'Session limit reached',
   'auth.session_not_found': 'Session not found',
   'auth.email_already_exists': 'Email already registered',
   'auth.email_not_verified': 'Email not verified',
+  'auth.email_change_token_invalid': 'Invalid or expired email change link',
   'auth.mfa_required': 'Two-factor authentication required',
   'auth.mfa_invalid_code': 'Invalid MFA code',
   'auth.mfa_already_enabled': 'MFA is already enabled',
   'auth.mfa_not_enabled': 'MFA is not enabled',
   'auth.mfa_setup_required': 'MFA setup required',
   'auth.mfa_temp_token_invalid': 'Invalid or expired temporary MFA token',
-  'auth.recovery_code_invalid': 'Invalid recovery code',
-  'auth.password_too_weak': 'Password too weak',
+  'auth.mfa_state_conflict': 'Another MFA change is in progress. Please try again.',
+  'auth.password_compromised':
+    'This password has appeared in a data breach. Please choose a different one.',
   'auth.password_reset_token_invalid': 'Invalid password reset token',
-  'auth.password_reset_token_expired': 'Expired password reset token',
   'auth.otp_invalid': 'Invalid OTP code',
   'auth.otp_expired': 'Expired OTP code',
   'auth.otp_max_attempts': 'Maximum number of attempts exceeded',
   'auth.insufficient_role': 'Insufficient permission',
   'auth.forbidden': 'Access denied',
+  'auth.validation': 'Validation failed',
+  'auth.too_many_requests': 'Too many requests. Please try again shortly.',
+  'auth.untrusted_origin': 'Request origin not allowed',
   'auth.invalid_invitation_token': 'Invalid or expired invitation token',
   'auth.oauth_failed': 'OAuth authentication failed',
   'auth.oauth_email_mismatch': 'OAuth email does not match',
-  'auth.platform_auth_required': 'Platform authentication required'
+  'auth.token_missing': 'Token missing',
+  'auth.platform_auth_required': 'Platform authentication required',
+  'auth.internal': 'Internal server error'
 }

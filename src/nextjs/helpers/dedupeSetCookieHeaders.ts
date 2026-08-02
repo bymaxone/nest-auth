@@ -20,11 +20,11 @@
  * its structured attributes so dedup logic (and any future cookie
  * inspection) can work against a typed object instead of raw strings.
  *
- * {@link getSetCookieHeaders} is a fallback that extracts the list of
- * raw Set-Cookie strings from either a modern `Headers.getSetCookie()`
- * (Node 18.14+ / undici 5.19+) or the legacy `get('set-cookie')` (which
- * concatenates cookies with commas — only safe when the values don't
- * themselves contain unquoted commas).
+ * {@link getSetCookieHeaders} extracts the list of raw Set-Cookie strings
+ * from either `Headers.getSetCookie()` or, for a header-like object that
+ * does not implement it, `get('set-cookie')` — which concatenates cookies
+ * with commas, and is only safe when the values do not themselves contain
+ * unquoted commas.
  *
  * Edge-Runtime-safe: pure string manipulation, no Node-only APIs.
  *
@@ -63,7 +63,7 @@ const MAX_SET_COOKIE_LENGTH = 8192
 /**
  * Maximum number of `Set-Cookie` headers we will accept in a single
  * combined header value. A bound on the cooperative product of size
- * and count keeps the legacy splitter's worst case at O(N) instead of
+ * and count keeps the comma splitter's worst case at O(N) instead of
  * unbounded O(N²) against adversarial input.
  */
 const MAX_SET_COOKIE_COUNT = 64
@@ -145,6 +145,7 @@ export function parseSetCookieHeader(raw: string): ParsedSetCookie {
   // defined — the `?? ''` only exists to satisfy
   // `noUncheckedIndexedAccess` and is never executed at runtime.
   /* istanbul ignore next -- defensive `noUncheckedIndexedAccess` fallback */
+  // Stryker disable next-line StringLiteral: unreachable — `split` always yields at least one element, so the fallback's value can never be read
   const nameValueSegment = segments[0] ?? ''
   const attributeSegments = segments.slice(1)
 
@@ -311,13 +312,14 @@ export function dedupeSetCookieHeaders(cookies: readonly string[]): string[] {
  * Return the array of raw `Set-Cookie` header strings from a
  * {@link HeadersLike}.
  *
- * Prefers the modern `Headers.getSetCookie()` API (Node 18.14+,
- * undici 5.19+) which correctly separates multiple Set-Cookie headers.
- * Falls back to splitting the single comma-joined value returned by
- * `get('set-cookie')` on older runtimes — this split is aware that
- * commas inside `Expires` attribute values (e.g.,
- * `Expires=Wed, 09 Jun 2021 10:18:14 GMT`) must NOT be treated as
- * separators.
+ * Prefers `Headers.getSetCookie()`, which correctly separates multiple
+ * Set-Cookie headers. Every runtime this library supports has it — the
+ * fallback is not for old Node but for the header-like objects consumers
+ * legitimately pass instead of a real `Headers`: test doubles, framework
+ * wrappers, and hand-rolled shims, all of which `HeadersLike` admits by
+ * typing the method optional. For those, the single comma-joined value from
+ * `get('set-cookie')` is split with an awareness that commas inside `Expires`
+ * values (`Expires=Wed, 09 Jun 2021 10:18:14 GMT`) are NOT separators.
  *
  * @param headers - Any object with `get()` and optionally `getSetCookie()`.
  * @returns An array of raw `Set-Cookie` header strings (possibly empty).
@@ -381,8 +383,7 @@ function emptyParsedCookie(): ParsedSetCookie {
 }
 
 /**
- * Split a legacy comma-joined `Set-Cookie` header into individual
- * cookie strings.
+ * Split a comma-joined `Set-Cookie` header into individual cookie strings.
  *
  * A comma alone is ambiguous: the `Expires=Wed, 09 Jun 2021 10:18:14 GMT`
  * attribute embeds a comma that is NOT a separator. We therefore only

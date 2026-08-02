@@ -12,6 +12,8 @@ import { AuthException } from '../errors/auth-exception'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
+import { readStampedEpoch } from '../utils'
+import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 
 /**
@@ -72,9 +74,7 @@ export class JwtPlatformGuard implements CanActivate {
     // Verify signature and expiry. Algorithm is pinned from options — rejects alg:none and RS256.
     let payload: PlatformJwtPayload
     try {
-      payload = this.jwtService.verify<PlatformJwtPayload>(token, {
-        algorithms: [this.options.jwt.algorithm]
-      })
+      payload = verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token)
     } catch {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -97,6 +97,19 @@ export class JwtPlatformGuard implements CanActivate {
     // Revocation check: rv:{jti} is set on logout with remaining TTL.
     const revoked = await this.redis.get(`rv:${payload.jti}`)
     if (revoked !== null) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
+    // Bulk revocation check: an invalidating event on the platform plane advances the admin's
+    // token epoch (`pep:{sub}`), and any access token stamped below it predates that event.
+    // Platform tokens have carried the stamp since they were introduced — issuing reads
+    // `pep:` — so a guard that never read it back meant a platform epoch bump revoked
+    // nothing: "log out everywhere" killed the refresh sessions while every outstanding
+    // access token kept working to expiry. Mirrors JwtAuthGuard (and rust-auth's verify,
+    // which has always enforced the admin epoch). Surfaced as TOKEN_INVALID for the same
+    // no-oracle reason as the jti revocation above.
+    const epoch = await this.redis.getUserTokenEpoch(payload.sub, 'platform')
+    if (readStampedEpoch(payload) < epoch) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

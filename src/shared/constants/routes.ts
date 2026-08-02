@@ -109,6 +109,18 @@ export const AUTH_SESSION_ROUTES = {
 } as const
 
 /**
+ * Address-change routes (`controllers.emailChange: true`).
+ *
+ * Mounted under `email/` (`src/server/controllers/email-change.controller.ts`).
+ */
+export const AUTH_EMAIL_CHANGE_ROUTES = {
+  /** POST — request a change; mails a token to the new address. */
+  request: 'email/change',
+  /** POST — confirm the change with that token. */
+  confirm: 'email/change/confirm'
+} as const
+
+/**
  * Invitation routes (`controllers.invitations: true`).
  *
  * Mounted under `invitations/`
@@ -118,7 +130,9 @@ export const AUTH_INVITATION_ROUTES = {
   /** POST — create a new invitation (admin-only). */
   create: 'invitations',
   /** POST — accept an invitation token and register the recipient. */
-  accept: 'invitations/accept'
+  accept: 'invitations/accept',
+  /** POST — withdraw a pending invitation before it is accepted (admin-only). */
+  revoke: 'invitations/revoke'
 } as const
 
 /**
@@ -133,7 +147,8 @@ export const AUTH_ROUTES = {
   password: AUTH_PASSWORD_ROUTES,
   platform: AUTH_PLATFORM_ROUTES,
   sessions: AUTH_SESSION_ROUTES,
-  invitations: AUTH_INVITATION_ROUTES
+  invitations: AUTH_INVITATION_ROUTES,
+  emailChange: AUTH_EMAIL_CHANGE_ROUTES
 } as const
 
 /**
@@ -181,6 +196,9 @@ const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   'mfa/disable',
   // Invitation acceptance issues tokens
   'invitations/accept',
+  // The address-change confirmation is public: the holder is proving control of a mailbox,
+  // not of a session.
+  'email/change/confirm',
   // Platform endpoints
   'platform/login',
   'platform/refresh',
@@ -201,6 +219,26 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
 ] as const
 
 /**
+ * Strip leading and trailing `/` characters without a regular expression.
+ *
+ * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
+ * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
+ * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
+ * was never reachable in practice; a scan cannot know that, and neither can the next reader.
+ * A pair of scans is linear and says what it does.
+ *
+ * @param value - The string to trim.
+ * @returns `value` with every leading and trailing `/` removed.
+ */
+function trimSlashes(value: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value[start] === '/') start += 1
+  while (end > start && value[end - 1] === '/') end -= 1
+  return value.slice(start, end)
+}
+
+/**
  * Build the pathname-suffix skip list that `createAuthFetch` uses to
  * decide whether a 401 from a given URL should trigger a refresh.
  *
@@ -215,7 +253,7 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
  *   Default is `'auth'` when omitted.
  */
 export function buildAuthRefreshSkipSuffixes(routePrefix: string = 'auth'): readonly string[] {
-  const normalized = routePrefix.replace(/^\/+|\/+$/g, '')
+  const normalized = trimSlashes(routePrefix)
   const prefix = normalized.length > 0 ? `/${normalized}` : ''
   return [
     ...AUTH_REFRESH_SKIP_CONTROLLER_PATHS.map((path) => `${prefix}/${path}`),
@@ -226,9 +264,9 @@ export function buildAuthRefreshSkipSuffixes(routePrefix: string = 'auth'): read
 /**
  * Default pathname-suffix skip list for the canonical `'auth'` prefix.
  *
- * Exported for backwards compatibility and for consumers who know they
- * use the default prefix. Non-default deployments should call
- * {@link buildAuthRefreshSkipSuffixes} directly or pass `routePrefix`
- * to `createAuthFetch`/`createAuthClient`.
+ * A convenience for the overwhelmingly common case — the default `routePrefix: 'auth'` —
+ * so a consumer on it does not have to call the builder to get the same array. Any other
+ * prefix must call {@link buildAuthRefreshSkipSuffixes} or pass `routePrefix` to
+ * `createAuthFetch` / `createAuthClient`: this list would silently skip the wrong paths.
  */
 export const AUTH_REFRESH_SKIP_PATH_SUFFIXES = buildAuthRefreshSkipSuffixes()

@@ -93,6 +93,10 @@ export default defineConfig([
       'react',
       'react-dom',
       'next',
+      // Must stay external: bundling the marker in would resolve it here, at build time,
+      // instead of in the consumer's bundler — where the `react-server` condition is what
+      // decides whether the import is allowed. Inlined, the guard stops guarding.
+      'server-only',
       '@bymax-one/nest-auth/shared',
       '@bymax-one/nest-auth/client',
       '@bymax-one/nest-auth/react'

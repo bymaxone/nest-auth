@@ -113,6 +113,59 @@ export interface IEmailProvider {
   sendEmailVerificationOtp(email: string, otp: string, locale?: string): Promise<void>
 
   /**
+   * Notifies the user that the password on their account has changed.
+   *
+   * Called after a completed password change *and* after a completed password reset. Both are
+   * credential-binding events, and NIST SP 800-63B §4.6 requires the subscriber to be notified
+   * through a channel independent of the transaction that made the change. The classic
+   * takeover starts with a compromised mailbox: the attacker triggers a reset, completes it,
+   * and deletes the mail. This notice is what turns "the victim finds out days later, at a
+   * failed login" into "the victim finds out now" — and it is the one credential change this
+   * interface used to stay silent about while announcing every MFA change unprompted.
+   *
+   * **Optional.** Declared with `?` so an existing provider keeps compiling; the library calls
+   * it when present and logs at debug when it is not, rather than failing a password change
+   * over a missing notification.
+   *
+   * @param email - Recipient's email address.
+   * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
+   */
+  sendPasswordChangedNotification?(email: string, locale?: string): Promise<void>
+
+  /**
+   * Sends the address-change verification link to the **new** address.
+   *
+   * The token goes here and nowhere else: receiving it is what proves the requester controls
+   * the address before it becomes the account's. The old address gets no token — only the
+   * notification below, and only once the change has actually happened.
+   *
+   * Optional on the interface so an existing consumer keeps compiling, but the flow refuses
+   * to mint a token when it is absent rather than writing one nobody will ever receive.
+   *
+   * @param newEmail - The address being moved to.
+   * @param token - The raw single-use token. The provider builds the confirmation URL.
+   * @param locale - Optional locale for the template.
+   */
+  sendEmailChangeVerification?(newEmail: string, token: string, locale?: string): Promise<void>
+
+  /**
+   * Notifies the **old** address that the account's address has changed.
+   *
+   * NIST SP 800-63B §4.6 asks for notification of a credential change, and the address is the
+   * recovery credential: someone who moves it can then drive a password reset to a mailbox
+   * the owner does not read. This message is what puts that in front of the owner while they
+   * still control the address it arrives at.
+   *
+   * Fire-and-forget — a delivery failure does not roll back a change the user asked for and
+   * has already proven.
+   *
+   * @param oldEmail - The address the account is leaving.
+   * @param newEmail - The address it moved to, so the notice can say what happened.
+   * @param locale - Optional locale for the template.
+   */
+  sendEmailChangedNotification?(oldEmail: string, newEmail: string, locale?: string): Promise<void>
+
+  /**
    * Notifies the user that multi-factor authentication (MFA) has been enabled on
    * their account.
    *

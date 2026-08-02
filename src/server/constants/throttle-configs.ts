@@ -36,11 +36,42 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** POST /auth/refresh — 10 requests per minute per IP. */
   refresh: { default: { limit: 10, ttl: 60_000 } },
 
+  /**
+   * POST /auth/logout — 20 requests per minute per IP.
+   *
+   * The route is public: it has to be, or a user whose 15-minute access token expired could
+   * not sign out and the refresh session would live out its full week on a device they had
+   * just abandoned. Public and unlimited is a different thing, though — each call costs a
+   * SHA-256 and several Redis round trips, and nothing about the caller is known. The ceiling
+   * is deliberately loose: a browser with several tabs can legitimately fire a handful at
+   * once, and being rate-limited out of signing out would be its own security problem.
+   */
+  logout: { default: { limit: 20, ttl: 60_000 } },
+
+  /**
+   * POST /auth/ws-ticket — 20 requests per minute per IP.
+   *
+   * Authenticated, but every call writes a fresh single-use ticket key to Redis, so an
+   * authenticated caller could otherwise mint them without bound. A reconnecting client needs
+   * only one per socket; 20 covers a flapping connection without covering a loop.
+   */
+  wsTicket: { default: { limit: 20, ttl: 60_000 } },
+
   /** POST /auth/password/forgot-password — 3 requests per 5 minutes per IP. */
   forgotPassword: { default: { limit: 3, ttl: 300_000 } },
 
   /** POST /auth/password/reset-password — 3 requests per 5 minutes per IP. */
   resetPassword: { default: { limit: 3, ttl: 300_000 } },
+
+  /**
+   * POST /auth/password/change — 5 requests per minute per IP.
+   *
+   * Authenticated, so the caller is already known — but each call spends a scrypt verification
+   * of the current password plus a scrypt derivation of the new one, which is the most
+   * expensive pair of operations in the library. The ceiling is the same as `login`'s for the
+   * same reason: it is a password-guessing surface, just one that needs a live session first.
+   */
+  changePassword: { default: { limit: 5, ttl: 60_000 } },
 
   /**
    * POST /auth/password/verify-otp — 3 requests per 5 minutes per IP.
@@ -85,6 +116,20 @@ export const AUTH_THROTTLE_CONFIGS = {
 
   /** POST /auth/invitations/accept — 5 requests per minute per IP. */
   invitationAccept: { default: { limit: 5, ttl: 60_000 } },
+
+  /** POST /auth/invitations/revoke — 10 requests per hour per IP, matching the mint. */
+  invitationRevoke: { default: { limit: 10, ttl: 3_600_000 } },
+
+  /**
+   * POST /auth/email/change — 3 requests per 5 minutes per IP.
+   *
+   * Matches the reset-email limits: the request sends mail to an address the caller supplies,
+   * so an unbounded one is a way to make the deployment send mail on demand.
+   */
+  emailChangeRequest: { default: { limit: 3, ttl: 300_000 } },
+
+  /** POST /auth/email/change/confirm — 5 requests per minute per IP. */
+  emailChangeConfirm: { default: { limit: 5, ttl: 60_000 } },
 
   /** GET /auth/sessions — 30 requests per minute per IP. */
   listSessions: { default: { limit: 30, ttl: 60_000 } },

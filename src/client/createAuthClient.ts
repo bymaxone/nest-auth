@@ -175,11 +175,35 @@ export interface AuthClient {
 }
 
 /**
+ * Strip leading and trailing `/` characters without a regular expression.
+ *
+ * The obvious `replace(/^\/+|\/+$/g, '')` is quadratic on a run of slashes — the `$`-anchored
+ * alternative backtracks over every prefix of the run — which CodeQL flags as a polynomial
+ * ReDoS. The input here is deployment configuration rather than anything a caller sends, so it
+ * was never reachable in practice; a scan cannot know that, and neither can the next reader.
+ * A pair of scans is linear and says what it does.
+ *
+ * @param value - The string to trim.
+ * @param leading - Whether to trim the leading run too. `baseUrl` keeps its leading slash
+ *   because a root-relative base (`/api`) is a legitimate value.
+ * @returns `value` with the requested runs of `/` removed.
+ */
+function trimSlashes(value: string, leading: boolean): string {
+  let start = 0
+  let end = value.length
+  if (leading) {
+    while (start < end && value[start] === '/') start += 1
+  }
+  while (end > start && value[end - 1] === '/') end -= 1
+  return value.slice(start, end)
+}
+
+/**
  * Trim trailing slashes from `baseUrl` so concatenation with route
  * paths produces exactly one separator regardless of the input form.
  */
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '')
+  return trimSlashes(baseUrl, false)
 }
 
 /**
@@ -187,7 +211,7 @@ function normalizeBaseUrl(baseUrl: string): string {
  * leading slashes; the join routine adds the separator itself.
  */
 function normalizeRoutePrefix(prefix: string): string {
-  return prefix.replace(/^\/+|\/+$/g, '')
+  return trimSlashes(prefix, true)
 }
 
 /**
@@ -203,14 +227,20 @@ function jsonBody(value: unknown): string {
 /**
  * Best-effort `AuthErrorResponse` extraction from a raw response body
  * string. Returns `undefined` when the text is empty, not JSON, or
- * does not match the canonical error shape. Centralized so the
+ * does not match either recognized error shape. Centralized so the
  * happy and no-content paths produce identical error envelopes.
+ *
+ * The `response` is needed because the server's own error envelope
+ * carries no status information in the body — see
+ * {@link readErrorEnvelope}.
  */
-function extractErrorBody(text: string): AuthErrorResponse | undefined {
+function extractErrorBody(text: string, response: Response): AuthErrorResponse | undefined {
   // Stryker disable next-line ConditionalExpression: empty-body fast path is an optimization; an empty string also makes JSON.parse throw, which the surrounding try/catch turns into the same `undefined`
   if (text.length === 0) return undefined
   try {
     const parsed: unknown = JSON.parse(text)
+    const fromEnvelope = readErrorEnvelope(parsed, response)
+    if (fromEnvelope !== undefined) return fromEnvelope
     return isAuthErrorBody(parsed) ? parsed : undefined
   } catch {
     return undefined
@@ -223,7 +253,7 @@ function extractErrorBody(text: string): AuthErrorResponse | undefined {
  * for branching on `response.ok` first.
  */
 function throwAuthError(response: Response, text: string): never {
-  const body = extractErrorBody(text)
+  const body = extractErrorBody(text, response)
   const message = body?.message ?? `Request failed with status ${response.status}`
   throw new AuthClientError(message, response.status, body)
 }
@@ -277,10 +307,66 @@ async function expectNoContent(response: Response): Promise<void> {
 }
 
 /**
- * Type-guard for the canonical server error body shape.
+ * Fallback for `AuthErrorResponse.error` when the transport supplies
+ * no reason phrase — HTTP/2 and HTTP/3 never send one, so an empty
+ * `statusText` is the norm on modern deployments rather than an
+ * anomaly.
+ */
+const UNKNOWN_STATUS_TEXT = 'Error'
+
+/**
+ * Lift the @bymax-one/nest-auth error envelope into the flat
+ * {@link AuthErrorResponse} view exposed to consumers.
  *
- * Conservative — checks for the three structural fields that
- * AuthException guarantees. The `code` field is optional so callers
+ * The server's `AuthException` serializes to
+ * `{ error: { code, message, details } }` — `details` being `null`
+ * when the thrower supplied none. That body carries no status
+ * information of its own, so `error` and `statusCode` are filled from
+ * the HTTP response, keeping the consumer-facing shape identical to
+ * the one produced by a flat NestJS exception body.
+ *
+ * Returns `undefined` for anything that is not that envelope (a
+ * primitive, a flat NestJS body, an HTML error page already rejected
+ * upstream by `JSON.parse`, or an envelope missing `code`/`message`),
+ * letting the caller fall through to the flat-body guard.
+ */
+function readErrorEnvelope(value: unknown, response: Response): AuthErrorResponse | undefined {
+  const envelope = (value as { error?: unknown } | null)?.error
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: object-type guard precedes the authoritative field checks; a non-object envelope also fails those (or the caller's catch swallows the null-deref), yielding the same `undefined`
+  if (typeof envelope !== 'object' || envelope === null) return undefined
+
+  const candidate = envelope as Record<string, unknown>
+  const code = candidate['code']
+  const message = candidate['message']
+  if (typeof code !== 'string' || typeof message !== 'string') return undefined
+
+  const details = candidate['details']
+  return {
+    message,
+    error: response.statusText.length > 0 ? response.statusText : UNKNOWN_STATUS_TEXT,
+    statusCode: response.status,
+    code,
+    // A non-object `details` is not something the server emits; treat
+    // it as absent rather than propagating an unusable value under a
+    // type that promises a record.
+    // Stryker disable ConditionalExpression: equivalent — `typeof null` is `'object'`, so
+    // dropping the null check casts `null` to the record type and yields the very `null` the
+    // other branch returns. Block form because the mutant sits two lines below a wrapped
+    // comment, where the per-line directive points at the comment's own continuation.
+    details:
+      typeof details === 'object' && details !== null ? (details as Record<string, unknown>) : null
+    // Stryker restore ConditionalExpression
+  }
+}
+
+/**
+ * Type-guard for the flat NestJS error body shape.
+ *
+ * Conservative — checks for the three structural fields that a
+ * built-in `HttpException` guarantees (a `ValidationPipe` 400, or any
+ * non-auth exception thrown by the consumer's app). The library's own
+ * errors do NOT take this path; they are handled by
+ * {@link readErrorEnvelope}. The `code` field is optional so callers
  * cannot silently rely on it.
  */
 function isAuthErrorBody(value: unknown): value is AuthErrorResponse {
@@ -306,8 +392,9 @@ function buildUrl(baseUrl: string, routePrefix: string, path: string): string {
   /* istanbul ignore next -- forward-compat: the current public API only
      composes relative AUTH_ROUTES values; the absolute-path branch keeps
      buildUrl correct if a future route is mounted at a non-prefixed path. */
-  // Stryker disable next-line ConditionalExpression,MethodExpression: forward-compat absolute-path branch; every route this builds is relative and none ends with '/', so startsWith('/') vs endsWith('/') vs false are indistinguishable
+  // Stryker disable next-line ConditionalExpression,MethodExpression,BlockStatement: forward-compat absolute-path branch; every route this builds is relative and none ends with '/', so startsWith('/') vs endsWith('/') vs false are indistinguishable
   if (path.startsWith('/')) {
+    // Stryker disable next-line StringLiteral: unreachable — no route this builds is absolute, so the branch never returns
     return `${baseUrl}${path}`
   }
   return routePrefix.length > 0 ? `${baseUrl}/${routePrefix}/${path}` : `${baseUrl}/${path}`

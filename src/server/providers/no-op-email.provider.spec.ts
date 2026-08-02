@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
+import { maskEmail } from '../utils/mask-email'
 import { NoOpEmailProvider } from './no-op-email.provider'
 
 // ---------------------------------------------------------------------------
@@ -36,10 +37,13 @@ describe('NoOpEmailProvider', () => {
       ).resolves.toBeUndefined()
     })
 
-    // Verifies that the no-op implementation logs the recipient email for observability.
-    it('should log the recipient email', async () => {
+    // The recipient is logged MASKED. This is the default provider — a deployment that ships
+    // without wiring one gets it — so an unmasked address here writes every user's email to
+    // stdout on every send, a PII disclosure produced by an omission rather than a decision.
+    it('should log the recipient address masked', async () => {
       await provider.sendPasswordResetToken('user@example.com', 'token')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
 
     // Verifies that the actual token value is never logged to prevent accidental secret leakage.
@@ -62,10 +66,11 @@ describe('NoOpEmailProvider', () => {
       ).resolves.toBeUndefined()
     })
 
-    // Verifies that the recipient email is logged for observability during development.
-    it('should log the recipient email', async () => {
+    // Masked for the same reason as above: this is the default provider.
+    it('should log the recipient address masked', async () => {
       await provider.sendPasswordResetOtp('user@example.com', '123456')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
   })
 
@@ -82,9 +87,10 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email is included in the log output.
-    it('should log the recipient email', async () => {
+    it('should log the recipient address masked', async () => {
       await provider.sendEmailVerificationOtp('user@example.com', '654321')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
   })
 
@@ -99,9 +105,10 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email appears in the log output for the MFA-enabled notification.
-    it('should log the recipient email', async () => {
+    it('should log the recipient address masked', async () => {
       await provider.sendMfaEnabledNotification('user@example.com')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
   })
 
@@ -118,9 +125,10 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email appears in the log output for the MFA-disabled notification.
-    it('should log the recipient email', async () => {
+    it('should log the recipient address masked', async () => {
       await provider.sendMfaDisabledNotification('user@example.com')
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
   })
 
@@ -139,9 +147,10 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the recipient email is logged when a new session alert is sent.
-    it('should log the recipient email', async () => {
+    it('should log the recipient address masked', async () => {
       await provider.sendNewSessionAlert('user@example.com', sessionInfo)
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('user@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('user@example.com'))
     })
   })
 
@@ -165,9 +174,10 @@ describe('NoOpEmailProvider', () => {
     })
 
     // Verifies that the invitee email is included in the log output when an invitation is sent.
-    it('should log the recipient email', async () => {
+    it('should log the recipient address masked', async () => {
       await provider.sendInvitation('invitee@example.com', inviteData)
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(maskEmail('invitee@example.com')))
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('invitee@example.com'))
     })
   })
 })

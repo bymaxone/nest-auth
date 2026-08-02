@@ -8,6 +8,285 @@ import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
+
+/**
+ * Lifetime of a token-epoch key, in seconds.
+ *
+ * Pinned to the {@link TOKEN_EPOCH_RETENTION_SECONDS} store contract rather than repeating the
+ * literal: startup validation rejects a `jwt.accessExpiresIn` longer than that bound, so a bump
+ * can never lapse while a pre-bump access token is still presentable. Deriving the TTL from the
+ * same constant the validation reads is what keeps the two from drifting apart. A small integer
+ * per reset-affected user is negligible.
+ */
+const EPOCH_TTL_SECONDS = TOKEN_EPOCH_RETENTION_SECONDS
+
+/**
+ * Entropy of a freshly-minted WebSocket ticket, in bytes (256-bit, like the opaque refresh
+ * token). rust-auth mints the same width, so neither backend issues the weaker ticket.
+ */
+const WS_TICKET_ENTROPY_BYTES = 32
+
+/** Tag the rotation script prepends to a session recovered from the grace window. */
+const GRACE_TAG = 'GRACE:'
+
+/** Tag the rotation script prepends to the family id of a replayed consumed token. */
+const REUSED_TAG = 'REUSED:'
+
+/**
+ * The key prefixes each identity plane rotates over. The two planes are keyed by ids from
+ * different consumer repositories, which may legitimately collide, so every keyspace is
+ * separated — sharing one would let a revoke on one plane log the other out.
+ */
+const REFRESH_PREFIXES = {
+  dashboard: {
+    live: 'rt',
+    grace: 'rp',
+    consumed: 'cf',
+    family: 'fam',
+    index: 'sess',
+    detail: 'sd'
+  },
+  platform: {
+    live: 'prt',
+    grace: 'prp',
+    consumed: 'pcf',
+    family: 'pfam',
+    index: 'psess',
+    detail: 'psd'
+  }
+} as const
+
+/**
+ * Selects the prefix set for an identity plane.
+ *
+ * Written as an explicit branch rather than an index expression: the two planes are the whole
+ * domain, and naming them keeps the lookup out of reach of a computed key.
+ *
+ * @param kind - The identity plane.
+ * @returns That plane's key prefixes.
+ */
+function prefixesFor(
+  kind: 'dashboard' | 'platform'
+): (typeof REFRESH_PREFIXES)['dashboard' | 'platform'] {
+  return kind === 'platform' ? REFRESH_PREFIXES.platform : REFRESH_PREFIXES.dashboard
+}
+
+/**
+ * Atomic refresh-token rotation with a grace window and reuse detection.
+ *
+ * Held byte-identical to rust-auth's `crates/bymax-auth-redis/src/lua/refresh_rotate.lua`
+ * so a session written by either backend rotates identically under the other.
+ *
+ * ```text
+ * KEYS[1] = rt:{sha256(old)}   KEYS[2] = rt:{sha256(new)}   KEYS[3] = rp:{sha256(old)}
+ * KEYS[4] = cf:{sha256(old)}   KEYS[5] = fam:{family}     KEYS[6] = sess:{userId}
+ * ARGV[1] = new session JSON   ARGV[2] = refresh TTL (s)    ARGV[3] = grace TTL (s; 0 skips)
+ * ARGV[4] = family id ('' = no family, skip family work)
+ * ARGV[5] = sha256(old)        ARGV[6] = sha256(new)
+ * ARGV[7] = the live-session key prefix, namespace included, for the successor probe
+ * ARGV[8] = the live-session member prefix for the session index ('rt' / 'prt')
+ * ARGV[9] = the grace-pointer member prefix for the session index ('rp' / 'prp')
+ * ```
+ *
+ * The grace pointer stores `{successorHash}:{session JSON}` — the hash of the session the
+ * rotation produced, then a colon, then the record itself (split on the FIRST colon). Recovery is gated on that
+ * successor still being live, because a grace pointer exists for exactly one purpose: to
+ * cover the retry where the old token was consumed but the client never received the new one.
+ * Once the successor is gone — revoked from the session list, or swept by "log out everywhere"
+ * — there is nothing left to recover *to*, and honouring the pointer would hand back a fresh
+ * full-lifetime session built from the record the user just revoked. Held byte-identical by
+ * rust-auth, which can serve the same deployment.
+ *
+ * The script deliberately never decodes a stored record: every JSON value it touches is
+ * returned to the caller and parsed there, by a real parser rather than Lua's `cjson`.
+ */
+/**
+ * Writes the session a grace recovery produces — but only if the account still has one.
+ *
+ * The rotation script moved the session-index bookkeeping inside itself precisely to close the
+ * window in which "log out everywhere" could miss a session a rotation had just minted. The
+ * GRACE arm was left outside it: the script returned the recovered record and the caller then
+ * wrote `rt:`, `sess:` and `fam:` several awaits later. A `revoke_all` landing in between —
+ * from a password reset, an MFA enable, or a ban compensation — swept an index that did not yet
+ * contain the session, and the session survived a revocation the user was told had happened.
+ * Its access token is signed after the write, so it carries the *post-bump* epoch and verifies.
+ * An attacker holding a stolen token gets one grace-eligible token per rotation, so they can
+ * keep a continuous stream of these in flight for exactly as long as the victim's reset takes.
+ *
+ * The witness is the per-user session index. `sweepSessionIndex` deletes the set once it has
+ * removed every member, so its absence is precisely "a revoke-all has run"; the successor the
+ * grace pointer named is itself indexed, so a legitimate recovery always finds the set present.
+ * Checking it and writing in one script makes the two serialize: either the sweep runs first
+ * and the recovery is refused, or the recovery runs first and the sweep sees the session.
+ *
+ * The family index is re-checked here for the same reason — the caller's own `EXISTS` ran
+ * before the write, so a `revoke_family` in between would have been undone by the `SADD` that
+ * follows it.
+ *
+ * KEYS: `{live}:{newHash}`, `{index}:{userId}`, `{family}:{familyId}`.
+ * ARGV: session JSON, refresh TTL, family id (`''` for none), live prefix, new hash.
+ * Returns 1 when the session was written, 0 when the account had already been swept.
+ */
+const RECOVER_GRACE_LUA = `
+if redis.call('EXISTS', KEYS[2]) == 0 then
+  return 0
+end
+if ARGV[3] ~= '' and redis.call('EXISTS', KEYS[3]) == 0 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+if ARGV[3] ~= '' then
+  redis.call('SADD', KEYS[3], ARGV[5])
+  redis.call('EXPIRE', KEYS[3], ARGV[2])
+end
+return 1
+`
+
+const ROTATE_LUA = `
+local old = redis.call('GET', KEYS[1])
+if old then
+  redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+  -- A zero grace window means no grace recovery: skip the pointer rather than issue an
+  -- \`EX 0\` SET, which Redis rejects.
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SET', KEYS[3], ARGV[6] .. ':' .. ARGV[1], 'EX', ARGV[3])
+  end
+  -- Plant the consumed-family marker (it outlives the much shorter grace window) and move the
+  -- family membership onto the new hash, so a post-grace replay is detected as a reuse and the
+  -- whole lineage stays revocable. A session with no family skips this bookkeeping.
+  if ARGV[4] ~= '' then
+    redis.call('SET', KEYS[4], ARGV[4], 'EX', ARGV[2])
+    redis.call('SREM', KEYS[5], ARGV[5])
+    redis.call('SADD', KEYS[5], ARGV[6])
+    redis.call('EXPIRE', KEYS[5], ARGV[2])
+  end
+  -- Session-index bookkeeping, INSIDE the script rather than after it. Left to the caller, it
+  -- opened a window between the consume and the SADD in which "log out everywhere" could sweep
+  -- the index: the sweep would not see the session this rotation had just minted, and that
+  -- session would survive a revocation the user was told had happened — and go on rotating,
+  -- re-stamping a fresh access token under every later epoch. An attacker holding a stolen
+  -- token and refreshing in a loop can aim for that window, and the moment they would aim for
+  -- it is precisely the password reset trying to evict them. Inside the script the two
+  -- serialize: either the sweep sees the new member and revokes it, or the rotation runs after
+  -- the sweep and finds no live key to rotate.
+  --
+  -- The grace pointer is indexed too, or a token rotated away moments before the sweep could
+  -- still recover a session for the whole grace window.
+  --
+  -- KEYS[6] is touched only here, on the live path — which the caller can only reach when its
+  -- own pre-read of KEYS[1] succeeded, so the key is always the real owner's index.
+  redis.call('SREM', KEYS[6], ARGV[8] .. ':' .. ARGV[5])
+  redis.call('SADD', KEYS[6], ARGV[8] .. ':' .. ARGV[6])
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SADD', KEYS[6], ARGV[9] .. ':' .. ARGV[5])
+  end
+  redis.call('EXPIRE', KEYS[6], ARGV[2])
+  redis.call('DEL', KEYS[1])
+  return old
+end
+local grace = redis.call('GET', KEYS[3])
+if grace then
+  -- The window is single-shot: consume the pointer so one captured token cannot mint a fresh
+  -- session on every request for the whole window. It exists to cover the one retry where the
+  -- old token was consumed but the client never received the new one.
+  redis.call('DEL', KEYS[3])
+  -- \`{successorHash}:{json}\`. Recovery only makes sense while the session the rotation
+  -- produced is still live: once it has been revoked, the retry this window exists for has
+  -- nothing to land on, and recovering would rebuild a full-lifetime session out of the very
+  -- record the user just revoked. Falling through here reaches the reuse check below, which
+  -- is the correct reading of a consumed token presented after its successor died.
+  -- Split on the FIRST colon rather than a fixed width: the hash is hex and the record is
+  -- JSON, so neither can contain one before the separator, and a fixed width would silently
+  -- mis-split any hash that is not exactly sha256-hex.
+  local sep = string.find(grace, ':', 1, true)
+  if sep then
+    local successor = string.sub(grace, 1, sep - 1)
+    if redis.call('EXISTS', ARGV[7] .. ':' .. successor) == 1 then
+      return 'GRACE:' .. string.sub(grace, sep + 1)
+    end
+  end
+end
+-- Post-grace reuse: the consumed-family marker outlives the grace pointer, so its presence
+-- here means this token was validly issued and already rotated — a replay of a consumed token.
+local family = redis.call('GET', KEYS[4])
+if family then
+  return 'REUSED:' .. family
+end
+return false
+`
+
+/**
+ * Revokes every live session in a refresh-token family in one transaction.
+ *
+ * Held byte-identical to rust-auth's `crates/bymax-auth-redis/src/lua/revoke_family.lua`.
+ *
+ * ```text
+ * KEYS[1] = fam:{family} (already namespaced)
+ * ARGV[1] = namespace   ARGV[2] = live prefix   ARGV[3] = detail prefix
+ * ARGV[4] = the owner's index key, or '' when no member record was readable
+ * ```
+ *
+ * The owner is resolved by the caller rather than decoded here: every member of one family
+ * belongs to the same user, and reading one record in the host language keeps the script free
+ * of `cjson`. The script still re-reads the membership itself, so a member added between the
+ * two steps is revoked too.
+ */
+const REVOKE_FAMILY_LUA = `
+local members = redis.call('SMEMBERS', KEYS[1])
+if #members == 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+local ns, rt, sd, sess_key = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
+for _, hash in ipairs(members) do
+  redis.call('DEL', ns .. ':' .. rt .. ':' .. hash)
+  redis.call('DEL', ns .. ':' .. sd .. ':' .. hash)
+  if sess_key ~= '' then
+    -- The index stores full key suffixes, not bare hashes, so the member to prune is
+    -- \`rt:{hash}\` (\`prt:{hash}\` on the platform plane).
+    redis.call('SREM', sess_key, rt .. ':' .. hash)
+  end
+end
+redis.call('DEL', KEYS[1])
+return #members
+`
+
+/** The rotation bundle {@link AuthRedisService.rotateRefreshSession} consumes. */
+export interface RefreshRotationParams {
+  /** Which identity plane is rotating; selects the whole prefix set. */
+  kind: 'dashboard' | 'platform'
+  /** SHA-256 of the presented (old) refresh token. */
+  oldHash: string
+  /** SHA-256 of the freshly minted refresh token. */
+  newHash: string
+  /** Serialized session record to store under the new hash. */
+  newSessionJson: string
+  /** Family of the presented session; `''` when it belongs to no lineage. */
+  familyId: string
+  /**
+   * Owner of the session being rotated, for the per-user session index the script now
+   * maintains itself. Taken from the record the caller pre-read, which is what makes it the
+   * real owner: the script touches this index only on the live-rotation path, and that path
+   * is unreachable unless that pre-read found the session.
+   */
+  userId: string
+  /** Refresh-session lifetime in seconds. */
+  refreshTtl: number
+  /** Grace-pointer lifetime in seconds; `0` writes no pointer. */
+  graceTtl: number
+}
+
+/** What {@link AuthRedisService.rotateRefreshSession} found for the presented token. */
+export type RefreshRotationOutcome =
+  | { kind: 'rotated'; sessionJson: string }
+  | { kind: 'grace'; sessionJson: string }
+  | { kind: 'reused'; familyId: string }
+  | { kind: 'invalid' }
 
 /**
  * Internal Redis service for @bymax-one/nest-auth.
@@ -79,8 +358,12 @@ export class AuthRedisService {
    *
    * @param key - Application key (namespace prefix is applied automatically).
    */
-  async del(key: string): Promise<void> {
-    await this.redis.del(this.prefix(key))
+  async del(key: string): Promise<boolean> {
+    // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
+    // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
+    // from "someone else already had". Callers that only want the key gone can ignore it.
+    const removed = await this.redis.del(this.prefix(key))
+    return typeof removed === 'number' && removed > 0
   }
 
   /**
@@ -208,6 +491,200 @@ export class AuthRedisService {
   }
 
   // ---------------------------------------------------------------------------
+  // Refresh-token rotation and family revocation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Atomically rotates a refresh session, plants the reuse-detection bookkeeping, and
+   * reports what the presented token actually was.
+   *
+   * Byte-identical in behaviour to rust-auth's `refresh_rotate.lua`, so both backends can
+   * drive the same Redis. In one round trip it:
+   *
+   * - consumes the live session (`GET` + `DEL`) and writes the new one,
+   * - writes the rotation grace pointer, unless the grace window is zero,
+   * - plants the consumed-family marker `cf:{oldHash}` and moves the family membership
+   *   from the old hash to the new one.
+   *
+   * Writes happen **before** the old key is deleted. Redis does not roll back a script's
+   * earlier writes, so a failing write aborts the script with the old token still intact —
+   * the old token is never consumed without the new session being persisted and the
+   * consumed marker planted, which is what makes reuse detection crash-safe.
+   *
+   * @param params - The rotation bundle; see {@link RefreshRotationParams}.
+   * @returns What the presented token was: a live session (`rotated`), a replay inside the
+   *   grace window (`grace`), a replay of a consumed token past its grace window
+   *   (`reused`, carrying the compromised family), or never-issued (`invalid`).
+   */
+  async rotateRefreshSession(params: RefreshRotationParams): Promise<RefreshRotationOutcome> {
+    const p = prefixesFor(params.kind)
+    const raw = await this.eval(
+      ROTATE_LUA,
+      [
+        `${p.live}:${params.oldHash}`,
+        `${p.live}:${params.newHash}`,
+        `${p.grace}:${params.oldHash}`,
+        `${p.consumed}:${params.oldHash}`,
+        `${p.family}:${params.familyId}`,
+        `${p.index}:${params.userId}`
+      ],
+      [
+        params.newSessionJson,
+        String(params.refreshTtl),
+        String(params.graceTtl),
+        params.familyId,
+        params.oldHash,
+        params.newHash,
+        this.prefix(p.live),
+        p.live,
+        p.grace
+      ]
+    )
+    if (typeof raw !== 'string') return { kind: 'invalid' }
+    if (raw.startsWith(GRACE_TAG)) {
+      const sessionJson = raw.slice(GRACE_TAG.length)
+      const alive = await this.familyIsAlive(sessionJson, p.family)
+      return alive ? { kind: 'grace', sessionJson } : { kind: 'invalid' }
+    }
+    if (raw.startsWith(REUSED_TAG)) {
+      return { kind: 'reused', familyId: raw.slice(REUSED_TAG.length) }
+    }
+    return { kind: 'rotated', sessionJson: raw }
+  }
+
+  /**
+   * Writes the session a grace recovery produced, atomically with the check that the account
+   * has not been swept out from under it.
+   *
+   * See {@link RECOVER_GRACE_LUA} for what this closes and why the per-user session index is
+   * the right witness.
+   *
+   * @param params - The same bundle a rotation takes, minus the pointer fields the grace arm
+   *   has already consumed.
+   * @returns `true` when the session was written; `false` when a revoke-all or a family
+   *   revocation had already run, in which case the caller must refuse the rotation.
+   */
+  async writeRecoveredSession(params: {
+    kind: 'dashboard' | 'platform'
+    newHash: string
+    newSessionJson: string
+    familyId: string
+    userId: string
+    refreshTtl: number
+  }): Promise<boolean> {
+    const p = prefixesFor(params.kind)
+    const written = await this.eval(
+      RECOVER_GRACE_LUA,
+      [
+        `${p.live}:${params.newHash}`,
+        `${p.index}:${params.userId}`,
+        `${p.family}:${params.familyId}`
+      ],
+      [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
+    )
+    // Narrowed rather than compared straight to `1`. `eval` answers `unknown`, and a client
+    // that surfaced the Lua integer reply as a string would make `=== 1` false — reporting a
+    // successful write as a sweep, and refusing a rotation whose session was already stored.
+    // The other script call sites in this file narrow for the same reason.
+    return typeof written === 'number' ? written === 1 : written === '1'
+  }
+
+  /**
+   * Whether the lineage a recovered grace record belongs to is still alive.
+   *
+   * A grace pointer can outlive its own lineage: reuse detection revokes the family's live
+   * sessions, but a pointer planted by an *earlier* rotation of that same lineage can still be
+   * inside its (much shorter) window at that moment — detection only proves the replayed
+   * token's own pointer expired, which says nothing about a younger sibling's. Recovering from
+   * such a pointer would mint a fresh session carrying the revoked family id and hand the thief
+   * back the lineage the revocation just killed.
+   *
+   * A record written before families existed carries none and recovers as before.
+   *
+   * @param sessionJson - The record the grace pointer held.
+   * @param familyPrefix - The family-index prefix for the plane being rotated.
+   * @returns `false` only when the record names a family whose index is gone.
+   */
+  private async familyIsAlive(sessionJson: string, familyPrefix: string): Promise<boolean> {
+    let familyId: unknown
+    try {
+      familyId = (JSON.parse(sessionJson) as Record<string, unknown>)['familyId']
+    } catch {
+      // Deliberately swallowed: a malformed record names no family, so there is nothing to
+      // check, and it is rejected downstream by the session parser with its own warning.
+      // Reporting it as a dead family here would be a misleading theft signal.
+    }
+    if (typeof familyId !== 'string' || familyId === '') return true
+    const present = await this.redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
+    return present === 1
+  }
+
+  /**
+   * Revokes every live session in one refresh-token family, in a single transaction.
+   *
+   * Called on reuse detection: the whole lineage descending from the compromised login is
+   * deleted, forcing each holder to re-authenticate. This is deliberately narrower than
+   * {@link invalidateUserSessions} — the OWASP-recommended behaviour is to kill the stolen
+   * token's chain, not to log the user's other legitimate devices out.
+   *
+   * Idempotent: an empty, unknown, or already-cleared family is a no-op.
+   *
+   * @param familyId - The family id carried by the consumed-token marker.
+   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`.
+   * @returns The number of members removed and the account the family belonged to. The owner
+   *   is reported because the caller cannot obtain it any other way: the presented token's own
+   *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
+   *   the only surviving link between the replayed token and an account. It is `''` when no
+   *   member record was readable.
+   */
+  async revokeFamily(
+    familyId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<{ removed: number; ownerId: string }> {
+    if (familyId === '') return { removed: 0, ownerId: '' }
+    const p = prefixesFor(kind)
+    const members = await this.smembers(`${p.family}:${familyId}`)
+    const ownerId = await this.readFamilyOwner(members, p.live)
+    const indexKey = ownerId === '' ? '' : this.prefix(`${p.index}:${ownerId}`)
+    const removed = await this.eval(
+      REVOKE_FAMILY_LUA,
+      [`${p.family}:${familyId}`],
+      [this.namespace, p.live, p.detail, indexKey]
+    )
+    return { removed: typeof removed === 'number' ? removed : 0, ownerId }
+  }
+
+  /**
+   * Resolves the id of the user a family belongs to.
+   *
+   * Every member of one family descends from the same login, so the first readable record
+   * names the owner. Reading it here rather than decoding JSON inside the revocation script
+   * keeps the script free of `cjson` and uses a real parser on the stored record.
+   *
+   * @param members - The family index members (bare session hashes).
+   * @param livePrefix - The live-session prefix for the plane (`rt` or `prt`).
+   * @returns The owner's id, or `''` when no member record is readable — every member may have
+   *   already expired, in which case there is nothing left to prune and nobody left to name.
+   */
+  private async readFamilyOwner(members: string[], livePrefix: string): Promise<string> {
+    for (const hash of members) {
+      const record = await this.get(`${livePrefix}:${hash}`)
+      if (record === null) continue
+      let userId: unknown
+      try {
+        userId = (JSON.parse(record) as Record<string, unknown>)['userId']
+      } catch {
+        // Deliberately swallowed: an unreadable member names no owner, and the next member
+        // may still name one. The loop's own guard rejects the undefined that leaves here.
+      }
+      if (typeof userId === 'string' && userId !== '') {
+        return userId
+      }
+    }
+    return ''
+  }
+
+  // ---------------------------------------------------------------------------
   // Atomic compound operations
   // ---------------------------------------------------------------------------
 
@@ -249,27 +726,73 @@ export class AuthRedisService {
   }
 
   /**
-   * Atomically deletes all refresh sessions for a user.
+   * Atomically deletes every refresh session belonging to one identity plane.
    *
-   * Reads the `sess:{userId}` Redis SET whose members are full key suffixes
-   * (e.g. `rt:{hash}` for dashboard sessions, `prt:{hash}` for platform sessions).
-   * Deletes each corresponding namespaced key and then removes the SET itself —
-   * all in a single Lua transaction to prevent the race where a concurrent login
-   * could add a new session between the SMEMBERS read and the final DEL.
+   * The set members are full key suffixes — `rt:{hash}`/`rp:{hash}` on the dashboard plane,
+   * `prt:{hash}`/`prp:{hash}` on the platform plane — so a member names the key to delete
+   * outright. Grace pointers are members too, which is what lets a revoke-all also kill a
+   * refresh token that was rotated away but is still inside its grace window.
    *
-   * @param userId - Internal user ID whose sessions will be invalidated.
+   * Only members carrying one of the two supplied prefixes are touched. That filter is the
+   * point: a dashboard user id and a platform admin id come from different repositories and
+   * may legitimately collide, and an unfiltered sweep would let revoking one plane log the
+   * other out. Members that do not match are left in place, and the SET itself is deleted
+   * only once it is empty.
+   *
+   * The whole sweep is one Lua transaction, closing the race where a concurrent login adds a
+   * session between the SMEMBERS read and the delete.
+   *
+   * @param setKey - The un-namespaced index key (`sess:{id}` or `psess:{id}`).
+   * @param livePrefix - Member prefix for live sessions (`rt:` or `prt:`).
+   * @param gracePrefix - Member prefix for rotation grace pointers (`rp:` or `prp:`).
+   * @param detailPrefix - Key prefix for the per-session detail record (`sd:` or `psd:`).
    */
-  async invalidateUserSessions(userId: string): Promise<void> {
+  private async sweepSessionIndex(
+    setKey: string,
+    livePrefix: string,
+    gracePrefix: string,
+    detailPrefix: string
+  ): Promise<void> {
     await this.eval(
       `local members = redis.call('SMEMBERS', KEYS[1])
-       local ns = ARGV[1]
+       local ns, live, grace, detail = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
        for _, member in ipairs(members) do
-         redis.call('DEL', ns .. ':' .. member)
+         local isLive = string.sub(member, 1, string.len(live)) == live
+         if isLive or string.sub(member, 1, string.len(grace)) == grace then
+           redis.call('DEL', ns .. ':' .. member)
+           if isLive then
+             redis.call('DEL', ns .. ':' .. detail .. string.sub(member, string.len(live) + 1))
+           end
+           redis.call('SREM', KEYS[1], member)
+         end
        end
-       redis.call('DEL', KEYS[1])`,
-      [`sess:${userId}`],
-      [this.namespace]
+       if redis.call('SCARD', KEYS[1]) == 0 then
+         redis.call('DEL', KEYS[1])
+       end`,
+      [setKey],
+      [this.namespace, livePrefix, gracePrefix, detailPrefix]
     )
+  }
+
+  /**
+   * Atomically deletes all refresh sessions for a user on the given identity plane.
+   *
+   * Each plane sweeps only its own index — `sess:` for dashboard, `psess:` for platform — so
+   * an admin and a user who happen to share an id never revoke each other's sessions.
+   *
+   * @param userId - Internal user or admin ID whose sessions will be invalidated.
+   * @param kind - Which identity plane to revoke. Defaults to `'dashboard'`.
+   */
+  async invalidateUserSessions(
+    userId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<void> {
+    if (kind === 'platform') {
+      await this.sweepSessionIndex(`psess:${userId}`, 'prt:', 'prp:', 'psd:')
+      return
+    }
+
+    await this.sweepSessionIndex(`sess:${userId}`, 'rt:', 'rp:', 'sd:')
   }
 
   /**
@@ -297,67 +820,178 @@ export class AuthRedisService {
   }
 
   // ---------------------------------------------------------------------------
-  // Access-token cutoff (bulk revocation of stateless access tokens)
+  // Token epoch (bulk revocation of stateless access tokens)
   // ---------------------------------------------------------------------------
 
   /**
-   * Records a per-user access-token cutoff timestamp under `utc:{userId}`.
+   * Reads the user's token **epoch** — a per-user generation counter — defaulting to `0`.
    *
-   * Access tokens are stateless JWTs, so the server does not track their
-   * individual `jti`s and cannot add them to the per-`jti` revocation list on a
-   * bulk event (password reset, refresh-token-reuse detection). Instead the guard
-   * rejects any access token whose `iat` predates this cutoff, invalidating every
-   * token issued before it in one write — without enumerating them.
+   * Access tokens are stateless JWTs: the server does not track their individual `jti`s and
+   * cannot enumerate them on a bulk event such as a password reset. Instead every token is
+   * stamped with the epoch current at issuance, and a token stamped below the stored epoch is
+   * rejected — one write invalidates every outstanding token for that user.
    *
-   * @param userId - Internal user ID whose pre-cutoff access tokens are revoked.
-   * @param cutoffEpochSeconds - Unix time (seconds); tokens with `iat < cutoff` are rejected.
-   * @param ttlSeconds - Key lifetime — set to the access-token max age so the key
-   *   auto-expires exactly when no pre-cutoff token can still be unexpired.
+   * The counter replaced an `iat < cutoff` timestamp comparison, which could not separate a
+   * token issued in the same second as the reset from one issued just before it, and depended
+   * on the token carrying a well-formed `iat` at all.
+   *
+   * This is a plain read: it never creates the key, so only a user who has actually been
+   * bumped carries one.
+   *
+   * @param userId - Internal user or admin ID to look up.
+   * @param kind - Which identity plane to read. Defaults to `'dashboard'`.
+   * @returns The stored epoch, or `0` when none is stored or the value is unreadable.
    */
-  async setUserTokenCutoff(
+  async getUserTokenEpoch(
     userId: string,
-    cutoffEpochSeconds: number,
-    ttlSeconds: number
-  ): Promise<void> {
-    await this.set(`utc:${userId}`, String(cutoffEpochSeconds), ttlSeconds)
-  }
-
-  /**
-   * Reads the per-user access-token cutoff timestamp, or `null` when none is set.
-   *
-   * @param userId - Internal user ID to look up.
-   * @returns The cutoff Unix time in seconds, or `null` if absent or unparseable.
-   */
-  async getUserTokenCutoff(userId: string): Promise<number | null> {
-    const raw = await this.get(`utc:${userId}`)
-    if (raw === null) return null
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<number> {
+    const raw = await this.get(`${kind === 'platform' ? 'pep' : 'ep'}:${userId}`)
+    // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
+    // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
+    // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
+    // silently disable bulk revocation for that user. A negative value clamps up for the same
+    // reason.
     const parsed = Number(raw)
-    return Number.isFinite(parsed) ? parsed : null
+    return Number.isInteger(parsed) ? Math.max(0, parsed) : 0
   }
 
   /**
-   * Revokes every outstanding token for a user in a single call: deletes all
-   * refresh sessions AND records an access-token cutoff at the current time.
+   * Reads the owner recorded on a stored refresh session, or `''` when there is none.
    *
-   * Combines the two halves of a full-account revocation. Deleting the refresh
-   * sessions stops rotation, but stateless access tokens are not tracked per-`jti`
-   * and would stay valid until their natural `exp`; the cutoff makes the guard
-   * reject every access token issued before now. Invoke on any event that must
-   * terminate all of a user's sessions at once — password reset, or refresh-token
-   * reuse detection. The cutoff key lifetime equals the access-token max age, after
-   * which no pre-cutoff token can still be unexpired.
+   * Logout uses this instead of the access token's `sub`: presenting the refresh token proves
+   * possession, and the stored record proves whose session it is. An access token's claims
+   * cannot serve that purpose when the token is allowed to be absent or expired — and taking
+   * the owner from an unverified token would let a caller aim the revocation at someone else.
    *
-   * @param userId - Internal user ID whose sessions and access tokens are revoked.
-   * @param accessTokenMaxAgeMs - Access-token max age in ms; sets the cutoff key TTL.
+   * A record that is missing, unparseable, or carries no string `userId` answers `''`: there
+   * is nothing to attribute the logout to, which the caller treats as "no live session".
+   *
+   * @param key - The un-namespaced session key (`rt:{hash}` or `prt:{hash}`).
+   * @returns The recorded user id, or `''`.
    */
-  async revokeAllUserTokens(userId: string, accessTokenMaxAgeMs: number): Promise<void> {
-    await this.invalidateUserSessions(userId)
-    const cutoffEpochSeconds = Math.floor(Date.now() / 1000)
-    // Clamp the TTL to a minimum of 1 second. A misconfigured `accessCookieMaxAgeMs`
-    // (0, negative, or NaN) would otherwise make `SET ... EX` fail or expire the cutoff
-    // immediately — letting pre-cutoff access tokens become valid again. `|| 1` maps a
-    // falsy/NaN ceil to 1; `Math.max` catches a truthy-negative ceil.
-    const ttlSeconds = Math.max(1, Math.ceil(accessTokenMaxAgeMs / 1000) || 1)
-    await this.setUserTokenCutoff(userId, cutoffEpochSeconds, ttlSeconds)
+  async readSessionOwner(key: string): Promise<string> {
+    const raw = await this.get(key)
+    if (raw === null) return ''
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed !== 'object' || parsed === null) return ''
+      const userId = (parsed as Record<string, unknown>)['userId']
+      return typeof userId === 'string' ? userId : ''
+    } catch {
+      // A malformed record names nobody. The session parser reports it on the paths that
+      // need to fail loudly; here the caller only wants an owner or the absence of one.
+      return ''
+    }
   }
+
+  /**
+   * Atomically advances the user's token epoch and returns the new value, invalidating every
+   * outstanding access token for that user at once.
+   *
+   * The TTL is re-applied on every bump and is deliberately far longer than any access token
+   * lives, so a bump stays in force for the whole window a pre-bump token could still be
+   * presented. Once it lapses the counter restarts at zero, which is safe *because* the window
+   * runs from the latest bump: by then every token stamped below it has expired anyway.
+   *
+   * @param userId - Internal user or admin ID whose outstanding access tokens are revoked.
+   * @param kind - Which identity plane to bump. Defaults to `'dashboard'`.
+   * @returns The epoch after the increment.
+   */
+  async bumpUserTokenEpoch(
+    userId: string,
+    kind: 'dashboard' | 'platform' = 'dashboard'
+  ): Promise<number> {
+    const key = `${kind === 'platform' ? 'pep' : 'ep'}:${userId}`
+    // `EXPIRE` on EVERY increment, not only the first — which is why this cannot reuse
+    // `incrWithFixedTtl`, whose refusal to extend is the whole point of a fixed rate-limit
+    // window. Here that behaviour would anchor the retention window to the *first* bump a user
+    // ever took: a password reset on day 0 and a "sign out everywhere" on day 29 would share
+    // one expiry, the key would vanish on day 30 while the tokens the second bump revoked were
+    // still inside their lifetime, and `getUserTokenEpoch` would answer 0 — under which
+    // `stamped < epoch` is false for every token and the revocation quietly stops applying.
+    // rust-auth has always issued the unconditional `EXPIRE`; this is the same contract.
+    const result = await this.eval(
+      `local v = redis.call('INCR', KEYS[1])
+       redis.call('EXPIRE', KEYS[1], ARGV[1])
+       return v`,
+      [key],
+      [String(EPOCH_TTL_SECONDS)]
+    )
+    return typeof result === 'number' ? result : 0
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebSocket upgrade tickets
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Mints a single-use WebSocket upgrade ticket holding a verified-identity snapshot.
+   *
+   * The browser `WebSocket` API cannot set handshake headers, which leaves a browser client
+   * with no way to present an `Authorization` header at the upgrade. The alternative most
+   * codebases reach for — the access token in the query string — puts a long-lived credential
+   * into access logs, browser history and proxy caches. This is the other answer: an opaque,
+   * ~30-second, single-use ticket that is worthless the moment it is redeemed.
+   *
+   * Only `sha256(ticket)` becomes a key, so a Redis dump never yields a usable ticket, and the
+   * access token is never echoed into the value — the snapshot carries the identity the socket
+   * is authorized as, nothing that could be replayed against the REST surface.
+   *
+   * @param snapshot - The verified-identity snapshot to bind to the ticket.
+   * @param ttlSeconds - Lifetime of the ticket in seconds.
+   * @returns The raw ticket to hand to the client — never persisted in this form.
+   */
+  async mintWsTicket(snapshot: WsTicketSnapshot, ttlSeconds: number): Promise<string> {
+    const ticket = generateSecureToken(WS_TICKET_ENTROPY_BYTES)
+    await this.set(`wst:${sha256(ticket)}`, JSON.stringify(snapshot), ttlSeconds)
+    return ticket
+  }
+
+  /**
+   * Redeems a WebSocket upgrade ticket, consuming it in the same round trip.
+   *
+   * `GETDEL` is what makes the ticket single-use: the first redemption wins, and a second
+   * presentation of a captured upgrade URL finds nothing. A ticket that is unknown, expired or
+   * already redeemed is indistinguishable here by design — all three return `null`.
+   *
+   * @param ticket - The raw ticket presented at the handshake.
+   * @returns The bound snapshot, or `null` when the ticket cannot be redeemed.
+   */
+  async redeemWsTicket(ticket: string): Promise<WsTicketSnapshot | null> {
+    const raw = await this.getdel(`wst:${sha256(ticket)}`)
+    if (raw === null) return null
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      return isWsTicketSnapshot(parsed) ? parsed : null
+    } catch {
+      // A stored value that will not parse is a corrupted record, not a valid ticket. It has
+      // already been consumed by the GETDEL above, which is the right outcome either way.
+      return null
+    }
+  }
+}
+
+/**
+ * Whether an unknown value is a well-formed {@link WsTicketSnapshot}.
+ *
+ * The record is read back from Redis, which the sibling implementation also writes, so it is
+ * parsed defensively rather than cast: a snapshot missing `mfaVerified` would otherwise
+ * authorize a socket as MFA-satisfied through an `undefined` that reads as false only by luck
+ * of the comparison used downstream.
+ *
+ * @param value - The parsed JSON read back from the store.
+ * @returns `true` when every required field is present and correctly typed.
+ */
+function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record['sub'] === 'string' &&
+    typeof record['role'] === 'string' &&
+    typeof record['status'] === 'string' &&
+    typeof record['mfaEnabled'] === 'boolean' &&
+    typeof record['mfaVerified'] === 'boolean' &&
+    (record['tenantId'] === undefined || typeof record['tenantId'] === 'string')
+  )
 }

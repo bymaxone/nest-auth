@@ -14,6 +14,8 @@ import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { MfaService } from '../services/mfa.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { MfaController } from './mfa.controller'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -142,6 +144,10 @@ describe('MfaController', () => {
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(TrustedOriginGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AuthRateLimitGuard)
+      .useValue({ canActivate: () => true })
       .compile()
 
     controller = module.get(MfaController)
@@ -156,9 +162,9 @@ describe('MfaController', () => {
     it('should call mfaService.setup with the user sub and return the setup result', async () => {
       mockMfaService.setup.mockResolvedValue(MFA_SETUP_RESULT)
 
-      const result = await controller.setup(JWT_PAYLOAD as never)
+      const result = await controller.setup(JWT_PAYLOAD as never, { password: 'pw' })
 
-      expect(mockMfaService.setup).toHaveBeenCalledWith(JWT_PAYLOAD.sub)
+      expect(mockMfaService.setup).toHaveBeenCalledWith(JWT_PAYLOAD.sub, 'dashboard', 'pw')
       expect(result).toBe(MFA_SETUP_RESULT)
     })
 
@@ -168,7 +174,9 @@ describe('MfaController', () => {
         new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
       )
 
-      await expect(controller.setup(JWT_PAYLOAD as never)).rejects.toThrow(AuthException)
+      await expect(controller.setup(JWT_PAYLOAD as never, { password: 'pw' })).rejects.toThrow(
+        AuthException
+      )
     })
   })
 
@@ -409,6 +417,100 @@ describe('MfaController', () => {
       const dtoWithToken = { mfaTempToken: 'body.temp.jwt', code: '654321' }
 
       await controller.challenge(dtoWithToken as never, reqWithoutCookie, res)
+
+      expect(res.clearCookie).not.toHaveBeenCalled()
+    })
+
+    /**
+     * The cookie is read defensively because the jar is attacker-shaped input:
+     * a client can send `mfa_temp_token` as anything, and `cookie-parser` hands
+     * it over as whatever it parsed. Only a non-empty string counts as a token;
+     * anything else has to read as *absent*, or the controller would forward a
+     * number to the service and treat a bodiless request as authenticated.
+     */
+    it.each([
+      ['a non-string value', 42],
+      ['an empty string', ''],
+      ['an object', { nested: 'value' }]
+    ])('should treat %s in the cookie jar as no cookie at all', async (_label, value) => {
+      mockMfaService.challenge.mockResolvedValue(AUTH_RESULT)
+      mockTokenDelivery.deliverAuthResponse.mockReturnValue({ user: SAFE_USER })
+      const req = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: { mfa_temp_token: value }
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await controller.challenge(
+        { mfaTempToken: 'body.temp.jwt', code: '654321' } as never,
+        req,
+        res
+      )
+
+      // The body value drove the call, untouched by the junk in the jar…
+      expect(mockMfaService.challenge).toHaveBeenCalledWith(
+        'body.temp.jwt',
+        '654321',
+        '1.2.3.4',
+        'UA'
+      )
+      // …and nothing is cleared, because there was no cookie-borne token to clear.
+      expect(res.clearCookie).not.toHaveBeenCalled()
+    })
+
+    /**
+     * With neither source carrying a token the request is refused with the
+     * library's own envelope — not with whatever a property access on
+     * `undefined` would produce, which is a 500 and a stack trace in the log.
+     */
+    it('should refuse with MFA_TEMP_TOKEN_INVALID when neither body nor cookie has a token', async () => {
+      const req = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: {}
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ code: '654321' } as never, req, res)
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+
+      // An empty body value is a *present* token as far as `??` is concerned — it never falls
+      // through to the cookie — so the emptiness half of the guard is the only thing standing
+      // between it and a verify call on an empty string.
+      await expect(
+        controller.challenge({ mfaTempToken: '', code: '654321' } as never, req, res)
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      expect(mockMfaService.challenge).not.toHaveBeenCalled()
+    })
+
+    /**
+     * The clear-on-failure path is conditioned on a cookie having been read, not
+     * on the error alone: with the token from the body there is no cookie to
+     * clear, and calling `clearCookie` anyway would emit a `Set-Cookie` for a
+     * cookie the browser never had.
+     */
+    it('should not clear a cookie that was never sent when the challenge fails', async () => {
+      const { AuthException } = await import('../errors/auth-exception')
+      mockMfaService.challenge.mockRejectedValue(
+        new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+      )
+      const req = {
+        ip: '1.2.3.4',
+        headers: { 'user-agent': 'UA' },
+        cookies: {}
+      } as unknown as Request
+      const res = { cookie: jest.fn(), clearCookie: jest.fn() } as unknown as Response
+
+      await expect(
+        controller.challenge({ mfaTempToken: 'body.temp.jwt', code: '654321' } as never, req, res)
+      ).rejects.toThrow(AuthException)
 
       expect(res.clearCookie).not.toHaveBeenCalled()
     })
@@ -668,36 +770,31 @@ describe('MfaController', () => {
         'dashboard'
       )
     })
-
-    // Verifies that a PlatformJwtPayload user triggers context='platform' in the service call.
-    it('should pass context=platform when user.type is platform', async () => {
-      mockMfaService.disable.mockResolvedValue(undefined)
-      const platformUser = {
-        sub: 'admin-1',
-        type: 'platform' as const,
-        role: 'super-admin',
-        jti: 'jti',
-        mfaEnabled: true,
-        mfaVerified: false,
-        iat: 0,
-        exp: 9_999_999_999
-      }
-
-      await controller.disable(platformUser as never, dto as never, mockReq)
-
-      expect(mockMfaService.disable).toHaveBeenCalledWith(
-        'admin-1',
-        dto.code,
-        '1.2.3.4',
-        'TestBrowser',
-        'platform'
-      )
-    })
   })
 
   // ---------------------------------------------------------------------------
   // regenerateRecoveryCodes
   // ---------------------------------------------------------------------------
+
+  // This controller is dashboard-only by its guard: `JwtAuthGuard` runs
+  // `assertTokenType(payload, 'dashboard')`, so a platform token never reaches it and the
+  // platform surface has its own controller. The plane it passes to the service is therefore
+  // fixed, not read off the payload — a branch that read it could never take its other arm,
+  // and the tests that exercised it were feeding the method a payload the guard would refuse.
+  it('always acts on the dashboard plane, whatever a payload claims', async () => {
+    mockMfaService.disable.mockResolvedValue(undefined)
+    const impossible = { sub: 'admin-1', type: 'platform' as const, jti: 'jti' }
+
+    await controller.disable(impossible as never, { code: '123456' } as never, mockReq)
+
+    expect(mockMfaService.disable).toHaveBeenCalledWith(
+      'admin-1',
+      '123456',
+      expect.any(String),
+      expect.any(String),
+      'dashboard'
+    )
+  })
 
   describe('regenerateRecoveryCodes', () => {
     const dto = { code: '654321' }
@@ -723,31 +820,6 @@ describe('MfaController', () => {
         'dashboard'
       )
       expect(result).toBe(REGENERATE_RESULT)
-    })
-
-    // Verifies that a PlatformJwtPayload user routes the call with context='platform'.
-    it('should pass context=platform when user.type is platform', async () => {
-      mockMfaService.regenerateRecoveryCodes.mockResolvedValue(REGENERATE_RESULT)
-      const platformUser = {
-        sub: 'admin-1',
-        type: 'platform' as const,
-        role: 'super-admin',
-        jti: 'jti',
-        mfaEnabled: true,
-        mfaVerified: false,
-        iat: 0,
-        exp: 9_999_999_999
-      }
-
-      await controller.regenerateRecoveryCodes(platformUser as never, dto as never, mockReq)
-
-      expect(mockMfaService.regenerateRecoveryCodes).toHaveBeenCalledWith(
-        'admin-1',
-        dto.code,
-        '1.2.3.4',
-        'TestBrowser',
-        'platform'
-      )
     })
 
     // Verifies that ip and userAgent fall back to empty strings when absent

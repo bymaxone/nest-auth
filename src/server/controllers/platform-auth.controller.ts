@@ -9,19 +9,23 @@ import {
   Req,
   UseGuards,
   UsePipes,
-  ValidationPipe
+  UseInterceptors
 } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import type { Request } from 'express'
 
 import { AUTH_THROTTLE_CONFIGS } from '../constants/throttle-configs'
+import { AuthRateLimit } from '../decorators/auth-rate-limit.decorator'
 import { CurrentUser } from '../decorators/current-user.decorator'
 import { Public } from '../decorators/public.decorator'
 import { MfaChallengeDto } from '../dto/mfa-challenge.dto'
 import { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtPlatformGuard } from '../guards/jwt-platform.guard'
+import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type {
   AuthResult,
   MfaChallengeResult,
@@ -29,6 +33,7 @@ import type {
 } from '../interfaces/auth-result.interface'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
+import { createAuthValidationPipe } from '../pipes/auth-validation.pipe'
 import { MfaService } from '../services/mfa.service'
 import { PlatformAuthService } from '../services/platform-auth.service'
 import type { PlatformBearerAuthResponse } from '../services/token-delivery.service'
@@ -98,8 +103,10 @@ function isMfaChallenge(
  *
  * @layer Controller
  */
+@UseInterceptors(NoStoreInterceptor)
 @Controller('platform')
-@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+@UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
+@UsePipes(createAuthValidationPipe())
 export class PlatformAuthController {
   constructor(
     private readonly platformAuthService: PlatformAuthService,
@@ -123,6 +130,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.platformLogin)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.platformLogin)
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -166,6 +174,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaChallenge)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaChallenge)
   @HttpCode(HttpStatus.OK)
   @Post('mfa/challenge')
   async mfaChallenge(
@@ -233,13 +242,22 @@ export class PlatformAuthController {
    * @param user - JWT payload from the verified platform access token.
    * @param req - Incoming request (used to extract the raw refresh token from the body).
    */
-  @UseGuards(JwtPlatformGuard)
+  @Public()
+  @Throttle(AUTH_THROTTLE_CONFIGS.logout)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.logout)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
-  async logout(@CurrentUser() user: PlatformJwtPayload, @Req() req: Request): Promise<void> {
+  async logout(@Req() req: Request): Promise<void> {
+    // Public for the same reason the dashboard route is: an operator who stepped away for
+    // longer than the fifteen-minute access lifetime must still be able to sign out, or the
+    // seven-day refresh session of the highest-privilege identity in the system lives on at a
+    // console they believed they had left. The refresh token is what authorizes the operation,
+    // the stored record names its owner, and the access token is verified (signature and
+    // algorithm, expiry aside) before its `jti` is blacklisted.
+    const accessToken = this.tokenDelivery.extractPlatformAccessToken(req) ?? ''
     // Always reads from req.body — platform sessions never use cookie delivery.
     const rawRefreshToken = this.tokenDelivery.extractPlatformRefreshToken(req) ?? ''
-    await this.platformAuthService.logout(user.sub, user.jti, user.exp, rawRefreshToken)
+    await this.platformAuthService.logout(accessToken, rawRefreshToken)
   }
 
   // ---------------------------------------------------------------------------
@@ -261,6 +279,7 @@ export class PlatformAuthController {
    */
   @Public()
   @Throttle(AUTH_THROTTLE_CONFIGS.refresh)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.refresh)
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   async refresh(@Req() req: Request): Promise<PlatformBearerAuthResponse> {
@@ -288,7 +307,7 @@ export class PlatformAuthController {
    * Revokes all active platform sessions for the authenticated administrator.
    *
    * Uses an atomic Lua script to delete all refresh session keys (primary `prt:`
-   * keys and grace-pointer `prp:` keys) tracked in the `sess:{userId}` Redis SET.
+   * keys and grace-pointer `prp:` keys) tracked in the `psess:{userId}` Redis SET.
    *
    * @param user - JWT payload from the verified platform access token.
    *
@@ -301,6 +320,7 @@ export class PlatformAuthController {
    */
   @UseGuards(JwtPlatformGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
+  @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('sessions')
   async revokeSessions(@CurrentUser() user: PlatformJwtPayload): Promise<void> {

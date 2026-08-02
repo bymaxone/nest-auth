@@ -11,7 +11,12 @@
 import { createHash } from 'node:crypto'
 
 import { DEFAULT_OPTIONS } from './default-options'
-import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { MAX_VERIFY_WINDOW } from '../crypto/totp'
+import type {
+  BymaxAuthModuleOptions,
+  ClientIpSource
+} from '../interfaces/auth-module-options.interface'
 
 /**
  * Domain-separation label for the HMAC key derivation. Changing this value is
@@ -55,8 +60,16 @@ export type ResolvedOptions = Omit<
   | 'userStatusCacheTtlSeconds'
   | 'secureCookies'
   | 'mfa'
+  | 'rateLimit'
 > & {
-  jwt: Required<BymaxAuthModuleOptions['jwt']>
+  // `previousSecrets` stays optional: it is absent unless a rotation is in progress, and
+  // `Required` would force every consumer to declare an empty array to mean "not rotating".
+  // `issuer` and `audience` stay OPTIONAL through the resolution, unlike every other jwt
+  // field: their absence is the default and it is meaningful. Defaulting them to a string
+  // would make every deployment stamp and require a value nobody chose, and turning the check
+  // on by accident is exactly the failure mode that splits two backends apart.
+  jwt: Required<Omit<BymaxAuthModuleOptions['jwt'], 'previousSecrets' | 'issuer' | 'audience'>> &
+    Pick<BymaxAuthModuleOptions['jwt'], 'previousSecrets' | 'issuer' | 'audience'>
   password: Required<NonNullable<BymaxAuthModuleOptions['password']>>
   tokenDelivery: NonNullable<BymaxAuthModuleOptions['tokenDelivery']>
   cookies: Required<Omit<NonNullable<BymaxAuthModuleOptions['cookies']>, 'resolveDomains'>> &
@@ -68,6 +81,12 @@ export type ResolvedOptions = Omit<
   emailVerification: Required<NonNullable<BymaxAuthModuleOptions['emailVerification']>>
   platform: Required<NonNullable<BymaxAuthModuleOptions['platform']>>
   invitations: Required<NonNullable<BymaxAuthModuleOptions['invitations']>>
+  emailChange: Required<NonNullable<BymaxAuthModuleOptions['emailChange']>>
+  // The shape is stated outright rather than derived from the option union: by this point
+  // validation has run, so the discrimination that forces a consumer to name the source has
+  // done its job and the resolved value is simply both fields, always present. The source's own
+  // type still comes from the contract, so the two cannot drift apart.
+  rateLimit: { enabled: boolean; clientIpSource: ClientIpSource }
   controllers: Required<NonNullable<BymaxAuthModuleOptions['controllers']>>
   blockedStatuses: string[]
   redisNamespace: string
@@ -86,6 +105,16 @@ export type ResolvedOptions = Omit<
    * cryptographically independent.
    */
   hmacKey: string
+  /**
+   * HMAC keys derived from `jwt.previousSecrets`, in the order given. Empty unless a rotation
+   * is in progress.
+   *
+   * Read-only, like the secrets they come from: a recovery-code digest written under a retired
+   * key still verifies, so rotating `jwt.secret` does not lock users out of the codes they
+   * printed and filed. Nothing is ever newly written under one — a code that matches here is
+   * consumed and the set is regenerated under the current key.
+   */
+  previousHmacKeys: string[]
   /** When provided, all sub-fields are resolved with defaults applied. */
   mfa?: Required<NonNullable<BymaxAuthModuleOptions['mfa']>>
 }
@@ -154,13 +183,23 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
   validatePasswordResetOtpLength(userOptions.passwordReset)
   validatePasswordCostFactor(userOptions.password)
+  validatePasswordMemoryParameters(userOptions.password)
+  validateMfaVerificationParameters(userOptions.mfa)
+  validateBruteForce(userOptions.bruteForce)
   validateOAuthProviders(userOptions.oauth)
+  validateClientIpSource(userOptions.rateLimit)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
+
+  // Split the binding off the rest of the jwt group so the empty-string case can be dropped
+  // rather than spread through: spreading `{}` over an already-set key does not remove it.
+  const { issuer: rawIssuer, audience: rawAudience, ...jwtWithoutBinding } = userOptions.jwt
   validateOAuthErrorRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateSameSiteNoneRequiresSecure(userOptions)
+  validateTrustedOrigins(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
+  validateAccessLifetimeAgainstEpochRetention(userOptions.jwt)
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
   // mfa is re-added below with defaults applied.
@@ -171,7 +210,17 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
     jwt: {
       ...DEFAULT_OPTIONS.jwt,
-      ...userOptions.jwt
+      ...jwtWithoutBinding,
+      // `''` means unconfigured, decided HERE and nowhere else. A consumer threading an unset
+      // environment variable through must not silently turn the binding on — and the two
+      // places that read these values (the signer and the verifier) only agree on what
+      // "configured" means if exactly one of them decides it.
+      //
+      // A truthy test rather than two comparisons: for a string, "present and not empty" is
+      // exactly what truthiness means, and the values reaching the readers are then either a
+      // real binding or nothing at all.
+      ...(rawIssuer ? { issuer: rawIssuer } : {}),
+      ...(rawAudience ? { audience: rawAudience } : {})
     },
 
     password: {
@@ -216,6 +265,11 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       ...userOptions.invitations
     },
 
+    emailChange: {
+      ...DEFAULT_OPTIONS.emailChange,
+      ...userOptions.emailChange
+    },
+
     controllers: {
       ...DEFAULT_OPTIONS.controllers,
       ...userOptions.controllers
@@ -231,9 +285,21 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       userOptions.userStatusCacheTtlSeconds ?? DEFAULT_OPTIONS.userStatusCacheTtlSeconds,
 
     // Evaluated once at startup — not re-evaluated per request.
+    //
+    // `clientIpSource` has no default and `validateClientIpSource` has already refused a
+    // deployment that left it unset with limiting on. The fallback here is reached only when
+    // limiting is OFF, where the value is never read; `'peer'` is the inert choice because it
+    // consults no request header at all.
+    rateLimit: {
+      ...DEFAULT_OPTIONS.rateLimit,
+      ...userOptions.rateLimit,
+      clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
+    },
+
     secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
 
     hmacKey: deriveHmacKey(userOptions.jwt.secret),
+    previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
 
     ...(userOptions.mfa !== undefined && {
       mfa: { ...DEFAULT_OPTIONS.mfa, ...userOptions.mfa } as Required<
@@ -249,6 +315,52 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 // Validation helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Requires a deployment with rate limiting on to say how the client IP is derived.
+ *
+ * There is no safe default, because the two failure modes are opposite and both are silent.
+ * `'peer'` reads the socket address: correct when the app is directly exposed, and behind any
+ * proxy it is the PROXY's address for every client — so all of them share one bucket and a
+ * single caller sending five logins in a minute locks every user out for the rest of the
+ * window, with no credential. `'trusted-proxy'` reads `req.ip`, which honours `trust proxy`:
+ * correct behind exactly the configured hop count, and directly exposed it is whatever the
+ * caller put in `X-Forwarded-For` — a limiter whose key the attacker picks enforces nothing.
+ *
+ * A default would pick one of those for a deployment shape this library cannot see. Nothing
+ * detects the mismatch at runtime either: both look like a working limiter. So the deployment
+ * states it, and a deployment that has not thought about it fails at startup rather than
+ * shipping a control that reports success.
+ *
+ * @param rateLimit - The rate-limit option group. Required by the contract; still checked
+ *   here, because the type binds a TypeScript consumer and nobody else.
+ * @throws When rate limiting is on and `clientIpSource` is absent, or is anything other than
+ *   `'peer'` or `'trusted-proxy'` — the union type binds a TypeScript consumer and nobody else.
+ */
+function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']): void {
+  if (rateLimit?.enabled === false) return
+  // The value is checked, not merely its presence. The union type constrains a TypeScript
+  // consumer and nobody else — this is a published npm package, so the option arrives from
+  // JavaScript, from JSON, and from environment plumbing that has no types at all. A misspelt
+  // `'trusted_proxy'` would satisfy a presence check and then fall through the guard's
+  // `=== 'trusted-proxy'` into the peer branch, which is the exact outcome the message below
+  // spends a paragraph warning about: every client behind the proxy in one bucket, one caller
+  // able to rate-limit the whole user base, and nothing anywhere reporting a problem.
+  if (rateLimit?.clientIpSource === 'peer' || rateLimit?.clientIpSource === 'trusted-proxy') {
+    return
+  }
+  throw new Error(
+    `[BymaxAuthModule] rateLimit.clientIpSource must be 'peer' or 'trusted-proxy' when rate ` +
+      `limiting is enabled (current: ${JSON.stringify(rateLimit?.clientIpSource)}). ` +
+      `Set 'peer' when the application is directly exposed (the limit keys on the socket ` +
+      `address), or 'trusted-proxy' when it runs behind a proxy and 'trust proxy' is ` +
+      `configured for the real hop count (the limit keys on the forwarded client address). ` +
+      `There is no default: 'peer' behind a proxy puts every client in ONE bucket, so one ` +
+      `caller can rate-limit your whole user base, and 'trusted-proxy' without a proxy lets ` +
+      `the caller choose their own key. Both look like a working limiter. Pass ` +
+      `rateLimit.enabled: false if the limits are enforced at the edge instead.`
+  )
+}
+
 function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
   if (!jwt) {
     throw new Error(
@@ -257,6 +369,47 @@ function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
   }
   validateJwtSecret(jwt.secret)
   validateJwtAlgorithm(jwt.algorithm)
+  validatePreviousSecrets(jwt)
+}
+
+/**
+ * Validate the retired secrets accepted for verification during a rotation.
+ *
+ * Each is held to the same bar as the current secret: they still verify tokens, so a weak one
+ * is as forgeable as a weak current secret would be. A retired secret equal to the current one
+ * is rejected too — it means the rotation never happened, and a config that reads as rotated
+ * while nothing changed is worse than one that never claimed to.
+ *
+ * @param jwt - The user-supplied `jwt` option block.
+ * @throws If any entry is not a string, fails the secret rules, or repeats another entry.
+ */
+function validatePreviousSecrets(jwt: BymaxAuthModuleOptions['jwt']): void {
+  const previous = jwt.previousSecrets
+  if (previous === undefined) return
+
+  if (!Array.isArray(previous)) {
+    throw new Error(`[BymaxAuthModule] jwt.previousSecrets must be an array of strings when set.`)
+  }
+
+  const seen = new Set<string>([jwt.secret])
+  for (const [index, secret] of previous.entries()) {
+    if (typeof secret !== 'string') {
+      throw new Error(
+        `[BymaxAuthModule] jwt.previousSecrets[${index}] must be a string. ` +
+          `Every entry still verifies tokens, so each is held to the same rules as jwt.secret.`
+      )
+    }
+    validateJwtSecret(secret)
+    if (seen.has(secret)) {
+      throw new Error(
+        `[BymaxAuthModule] jwt.previousSecrets[${index}] repeats jwt.secret or an earlier entry. ` +
+          `A retired secret equal to the current one means the rotation did not happen, and a ` +
+          `configuration that reads as rotated while nothing changed is worse than one that ` +
+          `never claimed to.`
+      )
+    }
+    seen.add(secret)
+  }
 }
 
 function validateJwtSecret(secret: string): void {
@@ -307,6 +460,41 @@ const BASE64_STANDARD_RE = /^[A-Za-z0-9+/]+={0,2}$/
  */
 const BASE64_URL_RE = /^[A-Za-z0-9_-]+={0,2}$/
 
+/**
+ * Assert a value is base64 for exactly 32 bytes — an AES-256 key.
+ *
+ * @param key - The configured value.
+ * @param label - The option path, for the error message.
+ * @throws If the value is not valid base64 or does not decode to 32 bytes.
+ */
+function assertAes256Key(key: unknown, label: string): void {
+  if (typeof key !== 'string' || key === '') {
+    throw new Error(`[BymaxAuthModule] ${label} must be a non-empty base64 string.`)
+  }
+
+  // Accept both standard base64 and base64url alphabets so consumers using
+  // `randomBytes(32).toString('base64url')` (which produces `-` and `_` in
+  // place of `+` and `/`) do not hit a confusing "invalid base64" error.
+  if (!BASE64_STANDARD_RE.test(key) && !BASE64_URL_RE.test(key)) {
+    throw new Error(
+      `[BymaxAuthModule] ${label} must be valid base64 — accepted alphabets: ` +
+        `standard (A-Z a-z 0-9 + /) or base64url (A-Z a-z 0-9 - _), padding optional. ` +
+        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
+    )
+  }
+
+  // Buffer's 'base64' decoder accepts both alphabets (treating `-` and `_` as `+` and `/`),
+  // so a single decode call works for both formats.
+  const decoded = Buffer.from(key, 'base64')
+  if (decoded.length !== 32) {
+    throw new Error(
+      `[BymaxAuthModule] ${label} must decode from base64 to exactly 32 bytes ` +
+        `for AES-256-GCM (decoded: ${decoded.length} bytes). ` +
+        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
+    )
+  }
+}
+
 function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
   if (mfa === undefined) return
 
@@ -317,29 +505,30 @@ function validateMfaEncryptionKey(mfa: BymaxAuthModuleOptions['mfa']): void {
     )
   }
 
-  // Accept both standard base64 and base64url alphabets so consumers using
-  // `randomBytes(32).toString('base64url')` (which produces `-` and `_` in
-  // place of `+` and `/`) do not hit a confusing "invalid base64" error.
-  const isStandard = BASE64_STANDARD_RE.test(mfa.encryptionKey)
-  const isUrlSafe = BASE64_URL_RE.test(mfa.encryptionKey)
+  assertAes256Key(mfa.encryptionKey, 'mfa.encryptionKey')
 
-  if (!isStandard && !isUrlSafe) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.encryptionKey must be valid base64 — accepted alphabets: ` +
-        `standard (A-Z a-z 0-9 + /) or base64url (A-Z a-z 0-9 - _), padding optional. ` +
-        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
-    )
-  }
-
-  // Buffer's 'base64' decoder accepts both alphabets (treating `-` and `_` as `+` and `/`),
-  // so a single decode call works for both formats.
-  const decoded = Buffer.from(mfa.encryptionKey, 'base64')
-  if (decoded.length !== 32) {
-    throw new Error(
-      `[BymaxAuthModule] mfa.encryptionKey must decode from base64 to exactly 32 bytes ` +
-        `for AES-256-GCM (decoded: ${decoded.length} bytes). ` +
-        `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
-    )
+  // Retired keys still decrypt stored secrets, so each is held to the same bar as the current
+  // one — a 16-byte "key" here would throw at the first challenge, not at startup.
+  const previous = mfa.previousEncryptionKeys
+  if (previous !== undefined) {
+    if (!Array.isArray(previous)) {
+      throw new Error(
+        `[BymaxAuthModule] mfa.previousEncryptionKeys must be an array of base64 keys when set.`
+      )
+    }
+    const seen = new Set<string>([mfa.encryptionKey])
+    for (const [index, key] of previous.entries()) {
+      assertAes256Key(key, `mfa.previousEncryptionKeys[${index}]`)
+      if (seen.has(key)) {
+        throw new Error(
+          `[BymaxAuthModule] mfa.previousEncryptionKeys[${index}] repeats mfa.encryptionKey or ` +
+            `an earlier entry. A retired key equal to the current one means the rotation did ` +
+            `not happen, and a configuration that reads as rotated while nothing changed is ` +
+            `worse than one that never claimed to.`
+        )
+      }
+      seen.add(key)
+    }
   }
 
   if (!mfa.issuer) {
@@ -406,9 +595,38 @@ function validatePasswordResetOtpLength(
   }
 }
 
+/**
+ * Rejects a scrypt parameter that is not a whole number.
+ *
+ * `crypto.scrypt` requires integral `N`, `r` and `p` and throws when handed anything else — but
+ * it throws on the first derivation, which is the first login on a deployed instance, not at
+ * startup. Nothing else here catches it: the power-of-two test on `costFactor` is a bitwise
+ * expression, and bitwise operators coerce to int32, so `16384.5 & 16383.5` is evaluated as
+ * `16384 & 16383` and reports a clean power of two. `blockSize` and `parallelization` are only
+ * bounded from below. A fractional value therefore passes every check this module makes and
+ * fails in production, on the request that matters most.
+ *
+ * `Number.isInteger` also answers `false` for `NaN` and both infinities, which arrive the same
+ * way a fraction does — from JSON, from an environment variable, from untyped JavaScript.
+ *
+ * @param name - The option path, for the message.
+ * @param value - The configured value, if any.
+ * @throws When `value` is present and not an integer.
+ */
+function assertIntegralScryptParameter(name: string, value: number | undefined): void {
+  if (value === undefined || Number.isInteger(value)) return
+  throw new Error(
+    `[BymaxAuthModule] password.${name} must be an integer (current: ${value}). ` +
+      `Node's crypto.scrypt rejects a non-integral cost parameter, and it does so on the ` +
+      `first derivation — which is the first login after deploy, not at startup.`
+  )
+}
+
 function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']): void {
   const costFactor = password?.costFactor
   if (costFactor === undefined) return
+
+  assertIntegralScryptParameter('costFactor', costFactor)
 
   if (costFactor < 16_384) {
     throw new Error(
@@ -421,6 +639,176 @@ function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']
   if ((costFactor & (costFactor - 1)) !== 0) {
     throw new Error(
       `[BymaxAuthModule] password.costFactor must be a power of 2 (current: ${costFactor}).`
+    )
+  }
+}
+
+/**
+ * Bounds the two values that decide whether the account lockout exists at all.
+ *
+ * `windowSeconds` is handed straight to Redis as the counter's `EXPIRE`. Redis **deletes** a
+ * key on `EXPIRE key 0`, so a zero window destroys every failure counter at the moment it is
+ * created: the count never exceeds one, `isLockedOut` is permanently false, and the only
+ * remaining defence against credential stuffing is the per-IP limiter — which a distributed
+ * caller sidesteps. Nothing about that failure is visible; the configuration reads as "5
+ * attempts per 0 seconds" and the library reports no problem.
+ *
+ * `maxAttempts` fails in both directions: `0` locks every account out permanently (the count
+ * is always `>= 0`), and a very large value disables the lockout as thoroughly as the zero
+ * window does. The ceiling is generous — it exists to catch `1_000_000`, not to second-guess
+ * a deployment that wants 20.
+ *
+ * @param bruteForce - The configured brute-force group, if any.
+ * @throws If either value falls outside its range.
+ */
+function validateBruteForce(bruteForce: BymaxAuthModuleOptions['bruteForce']): void {
+  const windowSeconds = bruteForce?.windowSeconds
+  if (windowSeconds !== undefined && (!Number.isInteger(windowSeconds) || windowSeconds < 1)) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.windowSeconds must be a whole number of at least 1 ` +
+        `(current: ${windowSeconds}). Redis deletes a key on \`EXPIRE key 0\`, so a zero or ` +
+        `negative window destroys each failure counter as it is created and the account ` +
+        `lockout never engages — silently, with the configuration still reading as enabled.`
+    )
+  }
+
+  const maxAttempts = bruteForce?.maxAttempts
+  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.maxAttempts must be a whole number of at least 1 ` +
+        `(current: ${maxAttempts}). Zero locks out every account permanently, because a ` +
+        `freshly created counter already satisfies "attempts >= 0".`
+    )
+  }
+  if (maxAttempts !== undefined && maxAttempts > MAX_BRUTE_FORCE_ATTEMPTS) {
+    throw new Error(
+      `[BymaxAuthModule] bruteForce.maxAttempts must not exceed ${MAX_BRUTE_FORCE_ATTEMPTS} ` +
+        `(current: ${maxAttempts}). A threshold this high disables the lockout as effectively ` +
+        `as switching it off, while the configuration still reads as enabled.`
+    )
+  }
+}
+
+/**
+ * Ceiling on `bruteForce.maxAttempts`. Generous by design: it catches a value that disables
+ * the control, not a deployment that prefers a looser threshold than the default 5.
+ */
+const MAX_BRUTE_FORCE_ATTEMPTS = 100
+
+/**
+ * The per-derivation memory ceiling for the password KDF, in bytes.
+ *
+ * 512 MiB is four times the shipped default (`N = 131072`, `r = 8` → 128 MiB, the OWASP
+ * recommendation). A value above it is a misconfiguration rather than a stronger setting: see
+ * `validatePasswordMemoryParameters` for the arithmetic an operator needs to raise it knowingly.
+ */
+const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
+
+/**
+ * Bounds the scrypt parameters that carry its memory hardness.
+ *
+ * `costFactor` has a floor, but scrypt's memory cost is `128 * N * r` — `blockSize` is a
+ * multiplier on it, so `r = 1` cuts the memory an `N` floor is there to guarantee by eight
+ * and the floor stops meaning what it says. `parallelization` below 1 is not a weaker
+ * setting but an invalid one: `crypto.scrypt` rejects it at the first hash, which is a
+ * credential path failing at runtime over something startup could have caught.
+ *
+ * @param password - The configured password group, if any.
+ * @throws If either parameter is below its floor.
+ */
+
+function validatePasswordMemoryParameters(password: BymaxAuthModuleOptions['password']): void {
+  const blockSize = password?.blockSize
+  assertIntegralScryptParameter('blockSize', blockSize)
+  if (blockSize !== undefined && blockSize < 8) {
+    throw new Error(
+      `[BymaxAuthModule] password.blockSize must be at least 8 (current: ${blockSize}). ` +
+        `scrypt's memory cost is 128 * N * r, so a smaller block size divides the memory ` +
+        `hardness that password.costFactor's floor exists to guarantee.`
+    )
+  }
+
+  const parallelization = password?.parallelization
+  assertIntegralScryptParameter('parallelization', parallelization)
+  if (parallelization !== undefined && parallelization < 1) {
+    throw new Error(
+      `[BymaxAuthModule] password.parallelization must be at least 1 ` +
+        `(current: ${parallelization}).`
+    )
+  }
+
+  // …and a ceiling, because the floor above only guarded one direction.
+  //
+  // scrypt's memory cost is `128 * N * r` bytes PER DERIVATION, and a derivation runs on a
+  // libuv threadpool thread — `UV_THREADPOOL_SIZE`, four by default. So the resident working
+  // set an unauthenticated login flood can pin is `threadpool * 128 * N * r`: at the shipped
+  // defaults that is ~512 MiB, which is deliberate and bounded by the route limiter. Nothing
+  // bounded it upwards, though, so a deployment that raised `costFactor` "for safety" could
+  // make one unauthenticated request cost gigabytes — and `compareDummy` runs the full
+  // derivation for an address that does not exist, by design, to close the timing oracle.
+  //
+  // The ceiling is not a recommendation. It is the line past which the value is a mistake
+  // rather than a stronger setting, and an operator who genuinely wants more should be told
+  // the arithmetic rather than discovering it under load.
+  const effectiveN = password?.costFactor ?? DEFAULT_OPTIONS.password.costFactor
+  const effectiveR = password?.blockSize ?? DEFAULT_OPTIONS.password.blockSize
+  const bytesPerDerivation = 128 * effectiveN * effectiveR
+  if (bytesPerDerivation > MAX_KDF_BYTES_PER_DERIVATION) {
+    throw new Error(
+      `[BymaxAuthModule] password.costFactor ${effectiveN} with blockSize ${effectiveR} ` +
+        // Rounded UP, so the figure can never be printed as equal to the ceiling it is above:
+        // "needs 512 MiB, above the 512 MiB ceiling" reads as a bug in the check rather than a
+        // misconfiguration. No configuration reaching here can currently produce a fractional
+        // figure — `validatePasswordCostFactor` runs first and requires a power of two, so
+        // `128 * N * r` is always a whole number of MiB — which is exactly why this is written
+        // as the rounding that stays correct if that constraint is ever relaxed, rather than
+        // left to be re-derived by whoever relaxes it.
+        `needs ${Math.ceil(bytesPerDerivation / 1024 / 1024)} MiB per derivation ` +
+        `(scrypt uses 128 * N * r), above the ${MAX_KDF_BYTES_PER_DERIVATION / 1024 / 1024} ` +
+        `MiB ceiling. Each derivation occupies one libuv threadpool thread ` +
+        `(UV_THREADPOOL_SIZE, 4 by default), and an unauthenticated login pays the full cost ` +
+        `even for an address that does not exist — the dummy derivation that closes the ` +
+        `timing oracle. So the resident working set a login flood can pin is ` +
+        `threadpool * that figure. Lower costFactor, or raise the ceiling deliberately if the ` +
+        `host is sized for it.`
+    )
+  }
+}
+
+/**
+ * Bounds the two MFA parameters that decide how much a second factor is worth.
+ *
+ * `totpWindow` is counted in 30-second steps on either side of now, so the number of codes
+ * valid at any moment is `2 * totpWindow + 1`. At the default of 1 that is three; at 60 it
+ * is 121, and a six-digit code is then a hundred times easier to guess than the digits
+ * suggest. The ceiling here is deliberately generous — it is not a recommendation, it is the
+ * line past which the value is a mistake rather than a tolerance for clock skew.
+ *
+ * `recoveryCodeCount` of zero enrols an account with no recovery path at all: lose the
+ * authenticator and the account is gone, with the library reporting nothing wrong.
+ *
+ * @param mfa - The configured MFA group, if any.
+ * @throws If either value falls outside its range.
+ */
+function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): void {
+  const totpWindow = mfa?.totpWindow
+  if (totpWindow !== undefined && (totpWindow < 0 || totpWindow > MAX_VERIFY_WINDOW)) {
+    throw new Error(
+      `[BymaxAuthModule] mfa.totpWindow must be between 0 and ${MAX_VERIFY_WINDOW} inclusive ` +
+        `(current: ${totpWindow}). The window is counted in 30-second steps on either side ` +
+        `of now, so ${2 * totpWindow + 1} codes would be valid at once. RFC 6238 §5.2 ` +
+        `recommends at most one step of tolerance; the default of 1 accepts three codes. ` +
+        `The bound matches the drift window the verifier actually applies, so a configured ` +
+        `value always means what it says instead of being silently clamped.`
+    )
+  }
+
+  const recoveryCodeCount = mfa?.recoveryCodeCount
+  if (recoveryCodeCount !== undefined && (recoveryCodeCount < 1 || recoveryCodeCount > 50)) {
+    throw new Error(
+      `[BymaxAuthModule] mfa.recoveryCodeCount must be between 1 and 50 inclusive ` +
+        `(current: ${recoveryCodeCount}). Zero enrols an account with no way back if the ` +
+        `authenticator is lost.`
     )
   }
 }
@@ -614,6 +1002,88 @@ function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions)
   }
 }
 
+/**
+ * Validates that the trusted-origin allowlist and the `SameSite` posture agree.
+ *
+ * The allowlist only ever matters under `SameSite=None`: that is the one setting where the
+ * browser sends the session cookie on a cross-site state-changing request, and therefore the
+ * one setting where an origin needs authorizing. Either half without the other is a
+ * misconfiguration that fails quietly — `'none'` with no list rejects every cross-site call,
+ * a list under `'lax'` is never consulted — so both are refused at startup rather than
+ * discovered in production.
+ */
+function validateTrustedOrigins(userOptions: BymaxAuthModuleOptions): void {
+  const sameSite = userOptions.cookies?.sameSite ?? DEFAULT_OPTIONS.cookies.sameSite
+  const trustedOrigins = userOptions.cookies?.trustedOrigins ?? []
+
+  if (sameSite === 'none' && trustedOrigins.length === 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.sameSite is 'none' but cookies.trustedOrigins is empty. ` +
+        `SameSite=None sends the session cookie on every cross-site request, so the origins ` +
+        `allowed to make one must be named — with none listed, every cross-site call that ` +
+        `changes state is rejected. Set cookies.trustedOrigins: ['https://app.example.com'].`
+    )
+  }
+
+  // A cookie-domain resolver puts the list back in play under 'lax'/'strict' too. Those
+  // withhold the cookie CROSS-SITE, not cross-ORIGIN: a deployment serving app.example.com and
+  // api.example.com from one `.example.com` cookie is same-site, so the browser sends it on a
+  // POST between them — and `Sec-Fetch-Site: same-site` is not one of the values that proves a
+  // request came from the app itself, so `TrustedOriginGuard` falls through to the origin
+  // check. Refusing the list there left that deployment with no configuration at all: the
+  // cookie arrives, the request is refused 403, and the one setting that would have allowed it
+  // was rejected at startup.
+  const sharesACookieDomain = userOptions.cookies?.resolveDomains !== undefined
+
+  if (sameSite !== 'none' && !sharesACookieDomain && trustedOrigins.length > 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.trustedOrigins is set but cookies.sameSite is '${sameSite}' ` +
+        `and no cookies.resolveDomains is configured. The browser sends the session cookie ` +
+        `cross-origin under that posture only when a shared cookie domain makes the origins ` +
+        `same-site, so without one the allowlist is never consulted. Use ` +
+        `cookies.sameSite: 'none' (with secureCookies: true), add cookies.resolveDomains for a ` +
+        `subdomain deployment, or drop trustedOrigins.`
+    )
+  }
+
+  const malformed = trustedOrigins.filter((origin) => !isAbsoluteOrigin(origin))
+  if (malformed.length > 0) {
+    throw new Error(
+      `[BymaxAuthModule] cookies.trustedOrigins contains entries that are not absolute ` +
+        `origins: ${malformed.join(', ')}. Each entry is compared verbatim against the ` +
+        `request's Origin header, which is always 'scheme://host[:port]' with no path or ` +
+        `trailing slash — anything else can never match.`
+    )
+  }
+}
+
+/**
+ * Whether a string is exactly an origin: scheme, host, optional port, nothing else.
+ *
+ * Parsing rather than pattern-matching, then requiring the round trip to be identical, is what
+ * rejects a trailing slash, a path, or credentials — all of which parse fine but never equal
+ * an `Origin` header.
+ *
+ * @param value - The configured entry.
+ * @returns `true` when the value is a bare absolute origin.
+ */
+function isAbsoluteOrigin(value: string): boolean {
+  try {
+    return new URL(value).origin === value
+  } catch {
+    // Not a URL at all — a bare hostname or a typo.
+    return false
+  }
+}
+
+/**
+ * Hard ceiling on `jwt.refreshGraceWindowSeconds`, in seconds (five minutes).
+ *
+ * Deliberately far above the 30-second default and far below anything that could be mistaken
+ * for a session policy. `rust-auth` enforces the identical bound.
+ */
+const MAX_REFRESH_GRACE_WINDOW_SECONDS = 300
+
 function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
   const graceSeconds =
     jwt.refreshGraceWindowSeconds ?? DEFAULT_OPTIONS.jwt.refreshGraceWindowSeconds
@@ -634,6 +1104,142 @@ function validateRefreshGraceWindow(jwt: BymaxAuthModuleOptions['jwt']): void {
         `the refresh token lifetime jwt.refreshExpiresInDays * 86400 (${refreshLifetimeSeconds} s). ` +
         `A grace window equal to or longer than the token lifetime would allow grace pointers ` +
         `to outlive the refresh session they protect.`
+    )
+  }
+
+  // The relative bound above is not enough on its own: a 6-day window under a 7-day refresh
+  // passes it. This window is the span in which an already-consumed refresh token still buys a
+  // session, so it is the replay window for a stolen one — it exists to cover a single network
+  // retry, measured in seconds, not a policy knob measured in days.
+  if (graceSeconds < 0 || graceSeconds > MAX_REFRESH_GRACE_WINDOW_SECONDS) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.refreshGraceWindowSeconds must be between 0 and ` +
+        `${MAX_REFRESH_GRACE_WINDOW_SECONDS} inclusive (current: ${graceSeconds}). The window is ` +
+        `how long an already-consumed refresh token still recovers a session, so it is exactly ` +
+        `the replay window for a stolen one. It covers a client that rotated but never received ` +
+        `the response — a retry, not a policy. 0 disables grace recovery entirely.`
+    )
+  }
+}
+
+/**
+ * Seconds per unit accepted in a `jwt.accessExpiresIn` time string.
+ *
+ * The vocabulary is `ms`'s, because `@nestjs/jwt` hands the value straight to that parser. It is
+ * reproduced rather than depended on: the library ships zero direct dependencies, and the epoch
+ * bound below needs the value as a number before any token is ever signed.
+ */
+const DURATION_UNIT_SECONDS: Record<string, number> = {
+  ms: 0.001,
+  msec: 0.001,
+  msecs: 0.001,
+  millisecond: 0.001,
+  milliseconds: 0.001,
+  s: 1,
+  sec: 1,
+  secs: 1,
+  second: 1,
+  seconds: 1,
+  m: 60,
+  min: 60,
+  mins: 60,
+  minute: 60,
+  minutes: 60,
+  h: 3_600,
+  hr: 3_600,
+  hrs: 3_600,
+  hour: 3_600,
+  hours: 3_600,
+  d: 86_400,
+  day: 86_400,
+  days: 86_400,
+  w: 604_800,
+  week: 604_800,
+  weeks: 604_800,
+  y: 31_557_600,
+  yr: 31_557_600,
+  yrs: 31_557_600,
+  year: 31_557_600,
+  years: 31_557_600
+}
+
+/** Strips the leading amount — digits, decimal point, and any space before the unit. */
+// Stryker disable Regex: the `^` is equivalent under the `amount > 0` guard below. A string
+// that reaches the unit lookup with a usable amount has its numeric run at index 0, so an
+// unanchored search finds the same match; one whose numeric run starts later makes
+// `Number.parseFloat` return NaN and is rejected on the amount, never on the unit. Verified
+// against 211k generated inputs — anchored and unanchored agree on every one. The anchor stays
+// because it states what this pattern is for, and would become load-bearing again the moment
+// someone relaxes that guard.
+const DURATION_AMOUNT_PREFIX = /^[\d.\s]+/
+// Stryker restore Regex
+
+/**
+ * Convert a `jwt.accessExpiresIn` time string to seconds.
+ *
+ * A bare number is deliberately not accepted. `ms` reads it as milliseconds while a reader almost
+ * always means seconds, and the two differ by a factor of a thousand on a value that decides how
+ * long a stolen access token stays usable — so the ambiguity is rejected rather than guessed at.
+ * A number with no unit leaves nothing for the unit table to match, which is what rejects it.
+ *
+ * Parsed as amount-then-unit rather than through one anchored pattern so that every branch here
+ * is reachable from a real configuration value: a capture group the pattern already guarantees
+ * would still need an unreachable "absent" arm to satisfy `noUncheckedIndexedAccess`.
+ *
+ * @param value - The configured time span, e.g. `'15m'`, `'1 hour'`, `'900s'`.
+ * @returns The span in seconds, or `undefined` when the string is not a positive time span
+ *   `ms` accepts.
+ */
+function durationToSeconds(value: string): number | undefined {
+  const trimmed = value.trim()
+  const unit = trimmed.replace(DURATION_AMOUNT_PREFIX, '').toLowerCase()
+  const seconds = DURATION_UNIT_SECONDS[unit]
+  const amount = Number.parseFloat(trimmed)
+
+  // A non-positive lifetime is rejected here rather than compared against the bound below: it is
+  // not a value that "fits", it is a token that expires at or before it is issued.
+  if (seconds === undefined || !(amount > 0)) return undefined
+
+  return amount * seconds
+}
+
+/**
+ * Reject an access-token lifetime that outlives the window a store keeps a bumped token epoch
+ * readable.
+ *
+ * The epoch is what makes a stateless access token revocable: a password reset bumps the user's
+ * generation, and every token minted before it stops verifying. That only holds while the bumped
+ * value is still readable — once the record expires the lookup falls back to `0`, the comparison
+ * stops firing, and a token the reset revoked verifies again. An access token allowed to outlive
+ * {@link TOKEN_EPOCH_RETENTION_SECONDS} would sit in exactly that gap, so the bound is enforced
+ * at startup, where it is a configuration error, rather than discovered as a silent fail-open.
+ *
+ * An unparseable time string is rejected here too: `@nestjs/jwt` would otherwise fail at the
+ * first sign, long after startup, and a value this function cannot read is a value the bound
+ * cannot be checked against. rust-auth enforces the same rule
+ * (`AccessLifetimeExceedsEpochRetention`) over a `Duration`, which cannot be malformed.
+ *
+ * @param jwt - The user-supplied `jwt` option block.
+ * @throws If `accessExpiresIn` is malformed or exceeds the epoch retention window.
+ */
+function validateAccessLifetimeAgainstEpochRetention(jwt: BymaxAuthModuleOptions['jwt']): void {
+  const configured = jwt.accessExpiresIn ?? DEFAULT_OPTIONS.jwt.accessExpiresIn
+  const seconds = durationToSeconds(configured)
+
+  if (seconds === undefined) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.accessExpiresIn must be a time span such as '15m', '1h' or '900s'. ` +
+        `Got: '${configured}'. A value the signer cannot read would fail at the first token ` +
+        `issued, and leaves the token-epoch retention bound unverifiable at startup.`
+    )
+  }
+
+  if (seconds > TOKEN_EPOCH_RETENTION_SECONDS) {
+    throw new Error(
+      `[BymaxAuthModule] jwt.accessExpiresIn ('${configured}' = ${seconds} s) must not exceed the ` +
+        `token-epoch retention window (${TOKEN_EPOCH_RETENTION_SECONDS} s). An access token that ` +
+        `outlives the stored epoch would survive the password reset that revoked it: the epoch ` +
+        `lookup falls back to 0 once the record expires, and the staleness check stops firing.`
     )
   }
 }

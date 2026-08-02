@@ -53,7 +53,8 @@ const mockTokenDelivery = {
 }
 
 const mockRedis = {
-  get: jest.fn()
+  get: jest.fn(),
+  getUserTokenEpoch: jest.fn()
 }
 
 const mockOptions = {
@@ -93,6 +94,8 @@ describe('JwtPlatformGuard', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // Never bumped unless a test arranges it — the numeric zero every fresh admin reads as.
+    mockRedis.getUserTokenEpoch.mockResolvedValue(0)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -342,6 +345,77 @@ describe('JwtPlatformGuard', () => {
       await guard.canActivate(ctx as never)
 
       expect(mockRedis.get).toHaveBeenCalledWith(`rv:${VALID_JTI}`)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Token epoch — bulk revocation on the platform plane
+  // ---------------------------------------------------------------------------
+
+  describe('token epoch', () => {
+    // A token stamped below the admin's current generation predates an invalidating event
+    // (an MFA state change, a revoke-all) and must be rejected. Platform tokens have carried
+    // the stamp since they were introduced; without this read-back, a platform epoch bump
+    // revoked nothing — "log out everywhere" killed the refresh sessions while every access
+    // token worked on to expiry. rust-auth's verify has always enforced the admin epoch.
+    it('should reject a platform token stamped below the current epoch', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: 1 })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(2)
+
+      const ctx = makeContext('some.jwt.token')
+      let caught: AuthException | undefined
+      try {
+        await guard.canActivate(ctx as never)
+      } catch (e) {
+        caught = e as AuthException
+      }
+      expect(caught).toBeInstanceOf(AuthException)
+      // TOKEN_INVALID, not a dedicated code — indistinguishable from a malformed token, so
+      // the response leaks no oracle for whether this admin has been bumped.
+      expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
+        AUTH_ERROR_CODES.TOKEN_INVALID
+      )
+      // The PLATFORM epoch — the two planes have colliding id spaces, so reading `ep:` here
+      // would let a dashboard user's reset revoke an unrelated admin's tokens and vice versa.
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'platform')
+    })
+
+    // A token stamped at the current generation is still valid — the bump must not lock the
+    // admin out of the session they established after the invalidating event.
+    it('should allow a platform token stamped at the current epoch', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: 2 })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(2)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+    })
+
+    // With no bump recorded the check is a pure no-op: the stored epoch is 0 and so is every
+    // token's stamp, so nothing is rejected until an invalidating event actually happens.
+    it('should allow an unstamped platform token when the admin has never been bumped', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+    })
+
+    // A token whose epoch claim is unusable (a string, NaN) reads as generation 0, so a
+    // bumped admin's stale-but-tampered token still dies rather than sailing past the check.
+    it('should reject a token whose epoch claim is unusable once the admin is bumped', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, epoch: 'abc' })
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.getUserTokenEpoch.mockResolvedValue(1)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
     })
   })
 

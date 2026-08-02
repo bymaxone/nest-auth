@@ -14,7 +14,7 @@
   <a href="https://www.npmjs.com/package/@bymax-one/nest-auth"><img src="https://img.shields.io/npm/dm/@bymax-one/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="npm downloads" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bymaxone/nest-auth/ci.yml?branch=main&style=flat-square&colorA=000000&label=CI" alt="CI status" /></a>
   <a href="https://github.com/bymaxone/nest-auth/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square&colorA=000000" alt="coverage" /></a>
-  <a href="https://github.com/bymaxone/nest-auth/blob/main/docs/mutation_testing_results.md"><img src="https://img.shields.io/badge/mutation-99.10%25-brightgreen?style=flat-square&colorA=000000" alt="mutation score" /></a>
+  <a href="https://github.com/bymaxone/nest-auth/blob/main/docs/mutation_testing_results.md"><img src="https://img.shields.io/badge/mutation-100%25-brightgreen?style=flat-square&colorA=000000" alt="mutation score" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/bymaxone/nest-auth"><img src="https://api.scorecard.dev/projects/github.com/bymaxone/nest-auth/badge?style=flat-square" alt="OpenSSF Scorecard" /></a>
   <a href="https://github.com/bymaxone/nest-auth/blob/main/LICENSE"><img src="https://img.shields.io/github/license/bymaxone/nest-auth?style=flat-square&colorA=000000&colorB=000000" alt="license" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
@@ -70,6 +70,12 @@ pnpm add @bymax-one/nest-auth
 - ✅ **HttpOnly Cookies** — Secure, SameSite, path-scoped refresh tokens by default
 - ✅ **Timing-Safe Comparisons** — All secret comparisons use `crypto.timingSafeEqual`
 - ✅ **JWT Revocation** — Instant access token revocation via Redis JTI blacklist
+- ✅ **Refresh-Token Reuse Detection** — Replaying a consumed token revokes that login's whole lineage, and only that lineage
+- ✅ **Bulk Access-Token Revocation** — A password reset advances a per-user token epoch, invalidating every outstanding access token in one write
+- ✅ **Absolute Session Lifetime** — Optional hard cap on how long one login can be extended by rotation
+- ✅ **Cross-Site Request Refusal** — Cookie-authenticated writes from an untrusted origin are rejected (matters under `SameSite=None`)
+- ✅ **Breached-Password Refusal** — Optional Have I Been Pwned check by k-anonymity range; the password never leaves the process
+- ✅ **Per-IP Rate Limiting** — Enforced by the library over Redis, so the limit holds across instances with no host wiring
 
 ### 🏢 Multi-Tenant & Platform
 
@@ -141,8 +147,14 @@ pnpm add @nestjs/common @nestjs/core @nestjs/jwt @nestjs/throttler @nestjs/webso
 pnpm add react
 
 # Next.js subpath (optional)
-pnpm add next react
+pnpm add next react server-only
 ```
+
+> [!NOTE]
+> `server-only` is what makes importing the Next.js JWT helper from a Client Component a
+> **build error**. That module receives the HS256 secret, and a secret in a client chunk is a
+> secret published to every visitor — with nothing downstream to notice. It is a marker package
+> with no runtime behaviour, and Next.js's own documentation prescribes it for exactly this.
 
 > [!IMPORTANT]
 > Requires `@nestjs/throttler >= 6.0.0` for `AUTH_THROTTLE_CONFIGS` decorators to be honored.
@@ -582,28 +594,154 @@ export const POST = createLogoutHandler({
 
 ---
 
+### WebSocket upgrades
+
+The browser `WebSocket` API cannot set handshake headers, so a browser client cannot send
+`Authorization: Bearer <token>` at the upgrade. The usual workaround puts the access token in the
+query string, where it lands in access logs, browser history and proxy caches — a long-lived
+credential in plaintext. `WsJwtGuard` refuses it.
+
+The supported path is a single-use ticket:
+
+```typescript
+// 1. Mint from an authenticated session (POST, cookies or bearer as usual).
+const { ticket, expiresIn } = await fetch('/auth/ws-ticket', {
+  method: 'POST',
+  credentials: 'include'
+}).then((r) => r.json())
+
+// 2. Open the socket with it. The ticket is consumed by the first redemption.
+const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
+```
+
+The ticket is opaque, 32 bytes of CSPRNG output, and lives 30 seconds. Only `sha256(ticket)` is
+ever a Redis key, and the stored value is a verified-identity **snapshot** — no `jti`, no
+signature, no expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned
+back into a session. Minting requires an authenticated session in good standing that has already
+satisfied MFA, so a ticket never carries more authority than the request that asked for it.
+
+Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
+both channels are accepted, and a ticket wins when both are present.
+
+---
+
 ## ⚙️ Configuration
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group             | Key Options                                                                                       | Default                   |
-| ----------------- | ------------------------------------------------------------------------------------------------- | ------------------------- |
-| **jwt**           | `secret` (required), `accessExpiresIn`, `refreshExpiresInDays`, `algorithm`                       | `15m`, `7d`, `HS256`      |
-| **password**      | `costFactor`, `blockSize`, `parallelization`                                                      | scrypt N=2¹⁵, r=8, p=1    |
-| **tokenDelivery** | `'cookie'` \| `'bearer'` \| `'both'`                                                              | `'cookie'`                |
-| **cookies**       | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `resolveDomains` | — (see cookie section)    |
-| **mfa**           | `encryptionKey`, `issuer`, `totpWindow`, `recoveryCodeCount`                                      | —                         |
-| **sessions**      | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`, `evictionStrategy`                        | `false`, `5`, —, `'fifo'` |
-| **bruteForce**    | `maxAttempts`, `windowSeconds`                                                                    | `5`, `900`                |
-| **passwordReset** | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                     | `'token'`                 |
-| **platform**      | `enabled`                                                                                         | `false`                   |
-| **invitations**   | `enabled`, `tokenTtlSeconds`                                                                      | `false`                   |
-| **roles**         | `hierarchy` (required), `platformHierarchy`                                                       | —                         |
-| **oauth**         | `google: { clientId, clientSecret, callbackUrl }`                                                 | —                         |
-| **controllers**   | Toggle individual controllers on/off                                                              | All enabled               |
+| Group                 | Key Options                                                                                                                                         | Default                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, off, `HS256`, both off     |
+| **password**          | `costFactor`, `blockSize`, `parallelization`                                                                                                        | scrypt N=2¹⁷, r=8, p=1                  |
+| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                              |
+| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)      |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                         |
+| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                              |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                    |
+| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                               |
+| **platform**          | `enabled`                                                                                                                                           | `false`                                 |
+| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                 |
+| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                         | —                                       |
+| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                       |
+| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                           |
+| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                    |
+| **controllers**       | Toggle individual controllers on/off                                                                                                                | `auth`, `passwordReset` on; rest opt-in |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
+
+> [!IMPORTANT]
+> **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled — there is no
+> default. The option group is a discriminated union, so TypeScript refuses the omission at
+> compile time; the module also refuses to start without it, because the type binds TypeScript
+> and nothing else. Set `'peer'` when the application is
+> directly exposed: the limit keys on the socket address, read from the connection and never
+> from a forwarding header. Set `'trusted-proxy'` when it runs behind a proxy and `trust proxy`
+> is configured for the real hop count: the limit keys on `req.ip`, the forwarded client
+> address. Neither can be the default, because each is a working limiter in one deployment and
+> no limiter at all in the other — `'peer'` behind a proxy puts every client in **one** bucket,
+> so a single caller can rate-limit your whole user base with no credential, and
+> `'trusted-proxy'` without a proxy lets the caller choose their own key. Both look like a
+> working limiter at runtime. Pass `rateLimit.enabled: false` if the limits are enforced at the
+> edge instead.
+
+> [!TIP]
+> **Binding tokens to an issuer and an audience.** `jwt.issuer` and `jwt.audience` are off by
+> default. Set either and its value is stamped on every token this backend mints and **required**
+> on every token it verifies — one carrying a different value, or none at all, is rejected.
+> That matters with HS256, where the verifier can also sign: every service holding the secret to
+> check a token can mint one, so audience binding is what stops a token minted for one service
+> being replayed at another that trusts the same secret.
+>
+> Two things to know before switching it on. Both backends of a shared deployment must carry the
+> same pair, or they stop accepting each other's tokens. And enabling it invalidates the access
+> tokens already in flight, since those were minted without the claims — a window of one
+> access-token lifetime, which clients close by refreshing. An empty string reads as unconfigured
+> rather than as "require the empty issuer", so an unset environment variable cannot turn the
+> check on by accident.
+
+> **Rotating the signing secret.** `jwt.previousSecrets` lists secrets retired by a rotation,
+> accepted for verification only. Without it, changing `jwt.secret` signs every user out the
+> moment the new configuration rolls out **and** invalidates every stored recovery-code digest —
+> those are keyed by an HMAC derived from the secret, so users lose the codes they printed and
+> filed. With it, both keep working while tokens issued under the old secret drain, and a
+> rotation becomes a rollout. Remove the entry once the longest-lived token signed under it has
+> expired: every entry is a key that still opens the door. `mfa.encryptionKey` rotates the same
+> way, through its own list — see below.
+
+> [!TIP]
+> **Rotating the MFA encryption key.** `mfa.previousEncryptionKeys` lists AES-256 keys retired by
+> a rotation of `mfa.encryptionKey`. The stored ciphertext carries no key identifier, so without
+> the list a change of key makes every enrolled user's TOTP secret undecryptable at once, with no
+> way back — their authenticator simply stops matching. With it, a stored secret that opened
+> under a retired key is **re-encrypted under the current one** on the next successful challenge,
+> so the rotation drains on its own instead of requiring the retired key to stay configured
+> forever. Each entry is validated at startup exactly like the current key (base64, exactly 32
+> bytes, and never equal to the current key or to another entry), because a malformed one would
+> otherwise surface at a user's first challenge rather than at boot. Drop the entry once your
+> enrolled users have had time to authenticate at least once.
+
+> [!IMPORTANT]
+> **The parameters that carry a control's strength are bounded at startup.** `mfa.totpWindow`
+> must be `0..=10`: the window counts 30-second steps on _either_ side of now, so `2n + 1`
+> codes are valid at once — three at the default of 1, but 121 at 60, which makes a six-digit
+> code a hundred times easier to guess while the configuration still reads as "MFA enabled".
+> `mfa.recoveryCodeCount` must be `1..=50`, because zero enrols an account with no way back
+> if the authenticator is lost. `password.blockSize` must be at least 8 and
+> `password.parallelization` at least 1: scrypt's memory cost is `128 * N * r`, so a smaller
+> block size divides the hardness that `password.costFactor`'s floor exists to guarantee —
+> invisibly, since the bounded parameter is still intact. `rust-auth` enforces the identical
+> ranges.
+
+> [!IMPORTANT]
+> `jwt.accessExpiresIn` must not exceed **30 days**, the window the store keeps a bumped token
+> epoch readable. The epoch is what makes a stateless access token revocable: a password reset
+> advances it and every token stamped below it stops verifying — but only while the bumped value
+> is still there. A longer-lived access token would outlive it, the lookup would fall back to
+> `0`, and a token the reset revoked would verify again. Startup refuses the configuration
+> rather than letting it fail open, and rejects an unreadable time span or a non-positive
+> lifetime on the same pass.
+
+Two options are deliberately off by default because switching them on changes behaviour for
+sessions and origins that already exist:
+
+- `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation. Without
+  it, a client refreshing every fifteen minutes keeps a session alive forever.
+- `cookies.trustedOrigins` is required as soon as `cookies.sameSite: 'none'` is set, and refused
+  otherwise — that posture is the only one where the browser sends the session cookie
+  cross-site, and it is the only one where the origin check has anything to authorize.
+
+The breach check is opt-in for a different reason: it is the only part of the credential path
+that reaches the network, and a library should not start talking to a third party because it was
+upgraded. Wire it explicitly:
+
+```typescript
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({ ... }),
+  extraProviders: [{ provide: BYMAX_AUTH_BREACH_CHECKER, useClass: HibpBreachChecker }]
+})
+```
 
 ---
 
@@ -694,17 +832,22 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 
 ## 🛡️ Security Table
 
-| Layer             | Implementation                                     |
-| ----------------- | -------------------------------------------------- |
-| Password Hashing  | `node:crypto` scrypt (N=2¹⁵, r=8, p=1, keyLen=64)  |
-| MFA Encryption    | AES-256-GCM with 12-byte random IV per call        |
-| TOTP              | HMAC-SHA1 per RFC 4226/6238, ±1 step window        |
-| Token Generation  | `crypto.randomBytes(32)` — 256 bits of entropy     |
-| Secret Comparison | `crypto.timingSafeEqual` (constant-time)           |
-| JWT               | HS256 via `@nestjs/jwt`, JTI blacklist via Redis   |
-| Cookies           | HttpOnly, Secure, SameSite=Strict, path-scoped     |
-| Brute-Force       | Redis atomic counters per HMAC(email, jwt.secret)  |
-| CSRF (OAuth)      | 64-char hex state nonce, single-use via `getdel()` |
+| Layer              | Implementation                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| Password Hashing   | `node:crypto` scrypt (N=2¹⁷, r=8, p=1, keyLen=64) — OWASP's recommended minimum                        |
+| MFA Encryption     | AES-256-GCM with 12-byte random IV per call                                                            |
+| TOTP               | HMAC-SHA1 per RFC 4226/6238, ±1 step window                                                            |
+| Token Generation   | `crypto.randomBytes(32)` — 256 bits of entropy                                                         |
+| Secret Comparison  | `crypto.timingSafeEqual` (constant-time)                                                               |
+| JWT                | HS256 via `@nestjs/jwt`, JTI blacklist via Redis                                                       |
+| Cookies            | HttpOnly, Secure, SameSite=Strict, path-scoped                                                         |
+| Brute-Force        | Redis atomic counters per HMAC(email, jwt.secret)                                                      |
+| CSRF (OAuth)       | 64-char hex state nonce, single-use via `getdel()`                                                     |
+| Refresh Rotation   | Single-use tokens with a grace window; a replay past it revokes that login's whole family lineage      |
+| Cross-Site Writes  | `Origin` / `Sec-Fetch-Site` check on cookie-authenticated writes — the gap `SameSite=None` leaves open |
+| Breached Passwords | Optional Have I Been Pwned range check by k-anonymity; only a 5-char SHA-1 prefix leaves the process   |
+| Rate Limiting      | Per-IP fixed-window counters in Redis, keyed by `HMAC(ip)` — enforced by the library, not by the host  |
+| Session Lifetime   | Optional absolute cap on how long one login can be extended by rotation                                |
 
 > [!IMPORTANT]
 > This package uses **zero external cryptographic dependencies**. All operations use Node.js native `node:crypto`, eliminating supply chain attack vectors for critical security code.
@@ -730,9 +873,9 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **99.10% mutation score** — verified with [Stryker](https://stryker-mutator.io/): thousands of small faults are seeded into the source and the suite must catch them
-- ✅ **1,980 tests** — unit and end-to-end, spanning all five subpaths
-- ✅ **Security paths at 100% mutation** — `crypto/` and `guards/` are fully killed; refresh-cookie `HttpOnly`, session-hash validation, TOTP zero-padding, and response-splitting defenses are each pinned by a dedicated test
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 3,474 seeded faults killed, **no survivors and nothing left uncovered**, against a `break` threshold of 95
+- ✅ **2,458 tests** — unit and end-to-end, spanning all five subpaths
+- ✅ **Every equivalent mutant documented** — the handful that no test can kill (a redundant guard, a dependency array of stable references) carries an inline `// Stryker disable` with the reason it cannot be killed, so the score is an accounting rather than a number
 
 ```bash
 pnpm test          # unit suite
@@ -751,36 +894,46 @@ pnpm mutation      # Stryker mutation testing
 
 Conditionally registered controllers (mfa, sessions, platform, invitations, oauth, password-reset) only mount their endpoints when the corresponding feature is enabled in `BymaxAuthModule.registerAsync()`.
 
-| Method | Path                        | Auth / Guard                      | Description                                                 |
-| ------ | --------------------------- | --------------------------------- | ----------------------------------------------------------- |
-| POST   | `/register`                 | Public                            | Register a new dashboard user and issue tokens              |
-| POST   | `/login`                    | Public                            | Authenticate with email/password (may return MFA challenge) |
-| POST   | `/logout`                   | `JwtAuthGuard`                    | Revoke tokens and clear session                             |
-| POST   | `/refresh`                  | Public (refresh cookie)           | Rotate refresh token, issue new access token                |
-| GET    | `/me`                       | `JwtAuthGuard`                    | Current dashboard user payload                              |
-| POST   | `/verify-email`             | Public                            | Verify email with OTP                                       |
-| POST   | `/resend-verification`      | Public                            | Resend email-verification OTP                               |
-| POST   | `/password/forgot-password` | Public                            | Request password reset (token or OTP)                       |
-| POST   | `/password/reset-password`  | Public                            | Submit new password with reset token                        |
-| POST   | `/password/verify-otp`      | Public                            | Verify password-reset OTP                                   |
-| POST   | `/password/resend-otp`      | Public                            | Resend password-reset OTP                                   |
-| POST   | `/mfa/setup`                | `JwtAuthGuard`                    | Generate TOTP secret and recovery codes                     |
-| POST   | `/mfa/verify-enable`        | `JwtAuthGuard`                    | Confirm setup and enable MFA                                |
-| POST   | `/mfa/challenge`            | Public + `@SkipMfa()`             | Submit TOTP/recovery code after login                       |
-| POST   | `/mfa/disable`              | `JwtAuthGuard`                    | Disable MFA for the current user                            |
-| GET    | `/sessions`                 | `JwtAuthGuard`, `UserStatusGuard` | List active sessions for the current user                   |
-| DELETE | `/sessions/all`             | `JwtAuthGuard`, `UserStatusGuard` | Revoke all sessions                                         |
-| DELETE | `/sessions/:id`             | `JwtAuthGuard`, `UserStatusGuard` | Revoke a specific session                                   |
-| POST   | `/invitations`              | `JwtAuthGuard`                    | Create a tenant invitation                                  |
-| POST   | `/invitations/accept`       | Public                            | Accept an invitation and create the user                    |
-| POST   | `/platform/login`           | Public                            | Platform admin login (separate token context)               |
-| POST   | `/platform/mfa/challenge`   | Public                            | Platform admin MFA challenge                                |
-| GET    | `/platform/me`              | `JwtPlatformGuard`                | Current platform admin payload                              |
-| POST   | `/platform/logout`          | `JwtPlatformGuard`                | Revoke platform tokens                                      |
-| POST   | `/platform/refresh`         | Public (platform refresh cookie)  | Rotate platform refresh token                               |
-| DELETE | `/platform/sessions`        | `JwtPlatformGuard`                | Revoke all platform sessions                                |
-| GET    | `/oauth/:provider`          | Public + `@SkipMfa()`             | Initiate OAuth authorization redirect                       |
-| GET    | `/oauth/:provider/callback` | Public + `@SkipMfa()`             | Handle OAuth callback, exchange code, issue tokens          |
+| Method | Path                        | Auth / Guard                       | Description                                                 |
+| ------ | --------------------------- | ---------------------------------- | ----------------------------------------------------------- |
+| POST   | `/register`                 | Public                             | Register a new dashboard user and issue tokens              |
+| POST   | `/login`                    | Public                             | Authenticate with email/password (may return MFA challenge) |
+| POST   | `/logout`                   | `JwtAuthGuard`                     | Revoke tokens and clear session                             |
+| POST   | `/refresh`                  | Public (refresh cookie)            | Rotate refresh token, issue new access token                |
+| GET    | `/me`                       | `JwtAuthGuard`                     | Current dashboard user payload                              |
+| POST   | `/verify-email`             | Public                             | Verify email with OTP                                       |
+| POST   | `/resend-verification`      | Public                             | Resend email-verification OTP                               |
+| POST   | `/password/forgot-password` | Public                             | Request password reset (token or OTP)                       |
+| POST   | `/password/reset-password`  | Public                             | Submit new password with reset token                        |
+| POST   | `/password/verify-otp`      | Public                             | Verify password-reset OTP                                   |
+| POST   | `/password/resend-otp`      | Public                             | Resend password-reset OTP                                   |
+| POST   | `/mfa/setup`                | `JwtAuthGuard`                     | Generate TOTP secret and recovery codes                     |
+| POST   | `/mfa/verify-enable`        | `JwtAuthGuard`                     | Confirm setup and enable MFA                                |
+| POST   | `/mfa/challenge`            | Public + `@SkipMfa()`              | Submit TOTP/recovery code after login                       |
+| POST   | `/mfa/disable`              | `JwtAuthGuard`                     | Disable MFA for the current user                            |
+| GET    | `/sessions`                 | `JwtAuthGuard`, `UserStatusGuard`  | List active sessions for the current user                   |
+| DELETE | `/sessions/all`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke all sessions                                         |
+| DELETE | `/sessions/:id`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke a specific session                                   |
+| POST   | `/invitations`              | `JwtAuthGuard`, `UserStatusGuard`  | Create a tenant invitation                                  |
+| POST   | `/invitations/accept`       | Public                             | Accept an invitation and create the user                    |
+| POST   | `/invitations/revoke`       | `JwtAuthGuard`, `UserStatusGuard`  | Withdraw a pending invitation                               |
+| POST   | `/email/change`             | `JwtAuthGuard`, `UserStatusGuard`  | Request an address change (re-proves the current password)  |
+| POST   | `/email/change/confirm`     | Public                             | Confirm it with the token mailed to the new address         |
+| POST   | `/platform/login`           | Public                             | Platform admin login (separate token context)               |
+| POST   | `/platform/mfa/challenge`   | Public                             | Platform admin MFA challenge                                |
+| GET    | `/platform/me`              | `JwtPlatformGuard`                 | Current platform admin payload                              |
+| POST   | `/platform/logout`          | `JwtPlatformGuard`                 | Revoke platform tokens                                      |
+| POST   | `/platform/refresh`         | Public (platform refresh cookie)   | Rotate platform refresh token                               |
+| DELETE | `/platform/sessions`        | `JwtPlatformGuard`                 | Revoke all platform sessions                                |
+| POST   | `/password/change`          | `JwtAuthGuard` + `UserStatusGuard` | Change the password, proving the current one                |
+| GET    | `/oauth/:provider`          | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
+| GET    | `/oauth/:provider/callback` | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
+
+> **The OAuth routes require `cookie-parser`.** `GET /oauth/:provider` plants an HttpOnly
+> `oauth_state` cookie carrying the flow's `state`, and the callback refuses any request that
+> does not send it back — the binding RFC 6749 §10.12 requires, without which an attacker can
+> hand a victim a callback URL and have the victim's browser complete the attacker's login.
+> Mount `app.use(cookieParser())` before the module's routes or every callback answers 401.
 
 ### Server Guards
 
@@ -795,6 +948,30 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 > [!NOTE]
 > Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above.
+
+### One error envelope
+
+Every failure the module raises answers with the same body, so a client parses `error.code` and
+nothing else:
+
+```json
+{ "error": { "code": "auth.invalid_credentials", "message": "…", "details": null } }
+```
+
+That includes malformed requests: the controllers mount `createAuthValidationPipe()`, which
+answers `auth.validation` with the offending fields under `error.details` as
+`[{ "field": "email", "message": "…" }]` rather than the framework's own shape.
+
+Failures the module did **not** raise are the application's to answer, so nothing is imposed on
+them by default. Register the optional filter to bring them into the same envelope:
+
+```typescript
+app.useGlobalFilters(new AuthExceptionFilter())
+```
+
+It passes an `AuthException` through untouched, keeps the status any other `HttpException`
+chose, and answers an unhandled throw with `auth.internal` and a generic message — never the
+thrown one.
 
 ### Server Decorators
 
@@ -829,17 +1006,16 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 The items below are on deck for future minor / major releases. None are shipping today — the list exists so contributors can see where the library is headed and where help is most useful. Open an issue if you'd like to discuss priorities or propose a design.
 
-| Area                        | Item                                                                                                                    | Status    |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
-| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core  | Planned   |
-| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults stay Portuguese; English preset)   | Planned   |
-| Refresh-token families      | Family-level revocation: detect grace-window reuse as a stolen-token signal and invalidate the entire session family    | Planned   |
-| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API | Exploring |
-| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module            | Exploring |
-| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                  | Exploring |
-| Absolute session lifetime   | Hard cap on refresh chains so a session rotated every 6 days does not live forever                                      | Planned   |
-| Pluggable password policy   | `IPasswordPolicy` interface for disallow-lists, complexity classes, and per-tenant rules                                | Planned   |
-| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)      | Exploring |
+| Area                        | Item                                                                                                                                                                                                      | Status    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| OAuth providers             | First-class `oauth.plugins` array so consumers can drop in GitHub / Microsoft / Apple plugins without forking the core                                                                                    | Planned   |
+| Error-message i18n          | `BymaxAuthModule.forRoot({ messages })` override for `AUTH_ERROR_MESSAGES` (defaults are English; ship locale presets)                                                                                    | Planned   |
+| Passwordless / magic link   | `MagicLinkService` + email-delivered single-use link, reusing the existing `generateSecureToken` + `IEmailProvider` API                                                                                   | Exploring |
+| Passkeys / WebAuthn         | Optional WebAuthn primitive as an MFA method (and eventually a first-factor), behind a peer-dep-gated module                                                                                              | Exploring |
+| Per-tenant configuration    | Per-tenant overrides for session limits, MFA enforcement, and password policy resolved at request time                                                                                                    | Exploring |
+| Pluggable password policy   | `IPasswordPolicy` for complexity classes and per-tenant rules (the breach check already ships as `IPasswordBreachChecker`)                                                                                | Planned   |
+| Custom token delivery modes | `ITokenDelivery` for non-cookie / non-bearer transports (custom headers, WebSocket handshakes, split client types)                                                                                        | Exploring |
+| Generated shared types      | Emit `./shared` from one source of truth with a CI drift gate, the way `rust-auth` generates its TypeScript from the Rust types — today the two sides are held in step by the conformance tier and review | Planned   |
 
 > Track progress and discuss proposals on the [issues board](https://github.com/bymaxone/nest-auth/issues).
 

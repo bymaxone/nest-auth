@@ -28,6 +28,9 @@ export const DEFAULT_OPTIONS = {
     // browser cookies outliving the JWT exp claim.
     accessCookieMaxAgeMs: 900_000,
     refreshExpiresInDays: 7,
+    // No cap by default: switching it on ends sessions already older than the cap, which is
+    // a decision a deployment makes, not one an upgrade makes for it.
+    absoluteSessionLifetimeDays: 0,
     algorithm: 'HS256' as const,
     // Security trade-off: 30 s grace window allows token rotation under slow mobile networks.
     // It also extends the replay window for a stolen refresh token by 30 s beyond expiry.
@@ -36,9 +39,13 @@ export const DEFAULT_OPTIONS = {
   },
 
   password: {
-    costFactor: 32_768,
+    costFactor: 131_072,
     blockSize: 8,
-    parallelization: 1
+    parallelization: 1,
+    // Empty: the default checker ships its own bases, and this is where a deployment adds the
+    // context-specific words ASVS v5 §6.2.11 asks for — its product, company and domain names,
+    // which no general corpus contains and which its users reach for first.
+    blocklist: [] as readonly string[]
   },
 
   tokenDelivery: 'cookie' as const,
@@ -59,9 +66,23 @@ export const DEFAULT_OPTIONS = {
     // case that makes OAuth redirects (Google → callback → dashboard) work
     // without dropping the freshly-issued session on the first hop. Consumers
     // that want the stricter posture can override via `cookies.sameSite`.
-    sameSite: 'lax' as const
+    sameSite: 'lax' as const,
+
+    // Empty by default: under the default `sameSite: 'lax'` the browser never sends the
+    // session cookie cross-site, so there is no cross-origin caller to authorize. A
+    // deployment that opts into `sameSite: 'none'` has to name its origins.
+    trustedOrigins: [] as string[]
   },
 
+  rateLimit: {
+    // On by default: the numbers existed before this and did nothing unless the host wired a
+    // throttler, which is the kind of default that reads as protection and is not.
+    enabled: true
+    // No default for `clientIpSource`, deliberately — see `validateClientIpSource`. Neither
+    // value is safe in the wrong deployment shape and neither failure is visible at runtime,
+    // so the deployment states it and a deployment that has not thought about it fails at
+    // startup.
+  },
   mfa: {
     recoveryCodeCount: 8,
     totpWindow: 1
@@ -69,8 +90,7 @@ export const DEFAULT_OPTIONS = {
 
   sessions: {
     enabled: false,
-    defaultMaxSessions: 5,
-    evictionStrategy: 'fifo' as const
+    defaultMaxSessions: 5
   },
 
   bruteForce: {
@@ -102,6 +122,12 @@ export const DEFAULT_OPTIONS = {
     enabled: false
   },
 
+  emailChange: {
+    // 1 h — long enough for someone who just asked for the change to reach their new mailbox,
+    // short enough that a link pointing at the account's recovery credential is not sitting
+    // around for a day. Rate limiting bounds how many can be alive at once.
+    tokenTtlSeconds: 3_600
+  },
   invitations: {
     enabled: false,
     // 48 h (172_800 s) — limits the window during which a forwarded or leaked invitation
@@ -122,7 +148,8 @@ export const DEFAULT_OPTIONS = {
     sessions: false,
     platform: false,
     oauth: false,
-    invitations: false
+    invitations: false,
+    emailChange: false
   },
 
   blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED'],

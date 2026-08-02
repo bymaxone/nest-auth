@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import {
+  BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
@@ -20,6 +21,7 @@ import { OAuthController } from './oauth/oauth.controller'
 import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthService } from './oauth/oauth.service'
 import { AuthController } from './controllers/auth.controller'
+import { EmailChangeController } from './controllers/email-change.controller'
 import { InvitationController } from './controllers/invitation.controller'
 import { MfaController } from './controllers/mfa.controller'
 import { PasswordResetController } from './controllers/password-reset.controller'
@@ -27,10 +29,13 @@ import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
+import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
+import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AuthService } from './services/auth.service'
+import { EmailChangeService } from './services/email-change.service'
 import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { PasswordResetService } from './services/password-reset.service'
@@ -47,7 +52,11 @@ const JWT_SECRET = 'xY9!kL2@mN5#pQ8$rS1%tU4^vW7&zA0B'
 /** Minimal valid options factory. */
 const validOptions = {
   jwt: { secret: JWT_SECRET },
-  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } }
+  roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+  // Required whenever rate limiting is on, which it is by default: there is no safe default
+  // for it, because neither value works in both deployment shapes and neither failure is
+  // visible at runtime. See `validateClientIpSource`.
+  rateLimit: { clientIpSource: 'peer' as const }
 }
 
 /** Minimal mock Redis client (ioredis shape). */
@@ -134,10 +143,13 @@ describe('BymaxAuthModule', () => {
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => ({
-                jwt: { secret: 'tooshort' },
-                roles: { hierarchy: { MEMBER: [] } }
-              }),
+              // Cast because `rateLimit` is a required discriminated group; this case is
+              // about the secret being refused before anything else is looked at.
+              useFactory: () =>
+                ({
+                  jwt: { secret: 'tooshort' },
+                  roles: { hierarchy: { MEMBER: [] } }
+                }) as unknown as BymaxAuthModuleOptions,
               extraProviders: [
                 { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
                 { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
@@ -157,10 +169,13 @@ describe('BymaxAuthModule', () => {
         Test.createTestingModule({
           imports: [
             BymaxAuthModule.registerAsync({
-              useFactory: () => ({
-                jwt: { secret: weakSecret },
-                roles: { hierarchy: { MEMBER: [] } }
-              }),
+              // Cast because `rateLimit` is a required discriminated group; this case is
+              // about the secret being refused before anything else is looked at.
+              useFactory: () =>
+                ({
+                  jwt: { secret: weakSecret },
+                  roles: { hierarchy: { MEMBER: [] } }
+                }) as unknown as BymaxAuthModuleOptions,
               extraProviders: [
                 { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
                 { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
@@ -169,6 +184,28 @@ describe('BymaxAuthModule', () => {
           ]
         }).compile()
       ).rejects.toThrow(/insufficient entropy/)
+    })
+
+    // Scenario: `controllers` returned from `useFactory` instead of passed to `registerAsync`.
+    // Expected: a startup error naming the mistake. Why: Nest decides a module's shape before
+    // any factory runs, so the flags are read by nothing — the endpoints they were meant to
+    // enable are simply absent, and the 404 that follows has its cause in a different object
+    // from the one the developer edited. This was documented for as long as the trap existed;
+    // documentation is not a control.
+    it('should throw when controllers is returned from useFactory rather than passed in', async () => {
+      await expect(
+        Test.createTestingModule({
+          imports: [
+            BymaxAuthModule.registerAsync({
+              useFactory: () => ({ ...validOptions, controllers: { mfa: true } }) as never,
+              extraProviders: [
+                { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+                { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+              ]
+            })
+          ]
+        }).compile()
+      ).rejects.toThrow(/`controllers` must be passed to registerAsync\(\) itself/)
     })
 
     // Verifies that the module fails when controllers.mfa: true is set without the mfa config group.
@@ -339,6 +376,47 @@ describe('BymaxAuthModule', () => {
       // NoOpEmailProvider should still be registered because the class shorthand is not BYMAX_AUTH_EMAIL_PROVIDER
       const emailProvider = module.get(BYMAX_AUTH_EMAIL_PROVIDER)
       expect(emailProvider).toBeInstanceOf(NoOpEmailProvider)
+    })
+
+    // The default checker refuses the common passwords offline. It used to approve
+    // everything, which meant a deployment on defaults accepted `password1` — something NIST
+    // SP 800-63B §3.1.1.2 says a verifier SHALL refuse and ASVS v5 §6.2.4 asks for at Level 1.
+    // The *network* check (HIBP) stays opt-in for the original reason: a library should not
+    // start talking to a third party because it was upgraded.
+    it('should register the common-password checker when the consumer supplies none', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+            ]
+          })
+        ]
+      }).compile()
+
+      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBeInstanceOf(CommonPasswordChecker)
+    })
+
+    // A supplied checker wins, and the fallback is not registered over it — otherwise opting
+    // into the check would silently do nothing.
+    it('should use the consumer-supplied breach checker when one is provided', async () => {
+      const consumerChecker = { isBreached: async () => true }
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+              { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: consumerChecker }
+            ]
+          })
+        ]
+      }).compile()
+
+      expect(module.get(BYMAX_AUTH_BREACH_CHECKER)).toBe(consumerChecker)
     })
 
     // Verifies that the module compiles without extraProviders (defaults to empty array).
@@ -898,6 +976,70 @@ describe('BymaxAuthModule', () => {
 
       expect(module.get(InvitationController)).toBeDefined()
       expect(module.get(InvitationService)).toBeDefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Address-change wiring
+  // ---------------------------------------------------------------------------
+
+  describe('email change controller wiring', () => {
+    const extraProviders = [
+      { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      // A provider that CAN deliver the verification: without it the service refuses to boot,
+      // which is its own test below.
+      {
+        provide: BYMAX_AUTH_EMAIL_PROVIDER,
+        useValue: { sendEmailChangeVerification: jest.fn() }
+      }
+    ]
+
+    // Both halves of the flag: on, the controller and service are registered; off, neither is.
+    it('should register the address-change components when controllers.emailChange: true', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { emailChange: true },
+            extraProviders
+          })
+        ]
+      }).compile()
+
+      expect(module.get(EmailChangeController)).toBeDefined()
+      expect(module.get(EmailChangeService)).toBeDefined()
+    })
+
+    // The default is off, and a consumer who never asks for the flow must not get a route that
+    // mints address-change tokens.
+    it('should register neither when the flag is absent', async () => {
+      const module = await Test.createTestingModule({
+        imports: [BymaxAuthModule.registerAsync({ useFactory: () => validOptions, extraProviders })]
+      }).compile()
+
+      expect(() => module.get(EmailChangeController)).toThrow()
+      expect(() => module.get(EmailChangeService)).toThrow()
+    })
+
+    // Enabling the flow with a provider that cannot deliver the token fails at BOOT rather
+    // than at a user's first attempt — the alternative is minting `ec:` keys nobody receives.
+    it('should refuse to boot when the provider cannot deliver the verification', async () => {
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            controllers: { emailChange: true },
+            extraProviders: [
+              { provide: BYMAX_AUTH_REDIS_CLIENT, useValue: mockRedisClient },
+              { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+              { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: {} }
+            ]
+          })
+        ]
+      }).compile()
+
+      await expect(module.init()).rejects.toThrow(/sendEmailChangeVerification/)
     })
   })
 

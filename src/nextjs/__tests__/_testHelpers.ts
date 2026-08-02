@@ -152,9 +152,13 @@ export const DEFAULT_PROXY_CONFIG: AuthProxyConfig = {
 }
 
 /**
- * Extract the `redirect` query param from a silent-refresh URL so
+ * Extract the `redirect` query param from a silent-refresh `Location` so
  * tests can assert the proxy encoded the destination correctly.
+ *
+ * Resolved against a placeholder base, because the value is a relative path: the proxy stopped
+ * naming an origin in its redirects, and `new URL` alone rejects a path. The placeholder is
+ * discarded — only the query is read.
  */
-export function extractRedirectParam(silentRefreshUrl: string): string | null {
-  return new URL(silentRefreshUrl).searchParams.get('redirect')
+export function extractRedirectParam(silentRefreshLocation: string): string | null {
+  return new URL(silentRefreshLocation, 'https://placeholder.invalid').searchParams.get('redirect')
 }

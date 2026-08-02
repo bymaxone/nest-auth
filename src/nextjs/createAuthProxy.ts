@@ -242,14 +242,21 @@ async function runProxy(
   const pathname = normalizePath(request.nextUrl.pathname)
   const classification = classifyRoute(pathname, resolved)
 
+  // Strip the client's identity headers FIRST, before any branch can return. The stripping is
+  // what makes `x-user-id` trustworthy downstream, and a `return` above it hands a
+  // client-forged value straight to the route handler — which is what `/api/auth/*` used to
+  // do, in direct contradiction of this module's own promise that a forged header "cannot
+  // reach a server component via any response path".
+  const sanitizedHeaders = buildSanitizedRequestHeaders(request, resolved)
+
   if (classification.kind === 'api') {
     // Internal `/api/auth/*` endpoints are owned by the dedicated
-    // route handlers; the proxy just passes them through.
-    return NextResponse.next()
+    // route handlers; the proxy just passes them through — with the
+    // sanitized headers, not the caller's.
+    return NextResponse.next({ request: { headers: sanitizedHeaders } })
   }
 
   const tokenState = await readTokenState(request, resolved)
-  const sanitizedHeaders = buildSanitizedRequestHeaders(request, resolved)
 
   if (isBackgroundRequest(request) && !tokenState.authenticated) {
     // RSC/prefetch/state-tree fetches cannot tolerate a redirect

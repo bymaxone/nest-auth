@@ -1,3 +1,5 @@
+export { assertNotBlocked } from './assert-not-blocked'
+export { readStampedEpoch } from './stamped-epoch'
 export { sanitizeHeaders } from './sanitize-headers'
 export { sleep } from './sleep'
 export { hasRole } from './roles.util'

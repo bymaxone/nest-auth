@@ -87,6 +87,23 @@ function textResponse(status: number, body: string): Response {
   return new Response(body, { status, headers: { 'Content-Type': 'text/html' } })
 }
 
+/**
+ * Build a Response carrying the server's own error envelope —
+ * `{ error: { code, message, details } }`, the exact body
+ * `AuthException` serializes once NestJS's exception filter runs.
+ *
+ * `statusText` is a parameter because the envelope carries no status
+ * text of its own: the client fills `AuthErrorResponse.error` from the
+ * response's reason phrase, which HTTP/2 always leaves empty. Omitting
+ * the argument reproduces that empty-reason-phrase case.
+ */
+function envelopeResponse(status: number, error: unknown, statusText?: string): Response {
+  const headers = { 'Content-Type': 'application/json' }
+  const init: ResponseInit =
+    statusText === undefined ? { status, headers } : { status, statusText, headers }
+  return new Response(JSON.stringify({ error }), init)
+}
+
 // ---------------------------------------------------------------------------
 // createAuthClient — login flow
 // ---------------------------------------------------------------------------
@@ -466,6 +483,312 @@ describe('createAuthClient — error handling', () => {
 
     expect(caught).toBeInstanceOf(Error)
     expect(caught).toBeInstanceOf(AuthClientError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createAuthClient — server error envelope
+// ---------------------------------------------------------------------------
+
+describe('createAuthClient — server error envelope', () => {
+  // The library's own server serializes every AuthException as
+  // `{ error: { code, message, details } }` (see
+  // src/server/errors/auth-exception.ts). This is the primary path:
+  // the stable `code`, the end-user `message`, and the structured
+  // `details` (e.g. the lockout's `retryAfterSeconds`) must all reach
+  // the caller, with `error`/`statusCode` filled from the HTTP
+  // response since the envelope does not repeat them.
+  it('surfaces code, message, and details from the server error envelope', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(
+        429,
+        {
+          code: 'auth.account_locked',
+          message: 'Account temporarily locked',
+          details: { retryAfterSeconds: 300 }
+        },
+        'Too Many Requests'
+      )
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client
+      .login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+      .catch((err: unknown) => {
+        caught = err
+      })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(429)
+      expect(caught.code).toBe('auth.account_locked')
+      expect(caught.message).toBe('Account temporarily locked')
+      expect(caught.body).toEqual({
+        message: 'Account temporarily locked',
+        error: 'Too Many Requests',
+        statusCode: 429,
+        code: 'auth.account_locked',
+        details: { retryAfterSeconds: 300 }
+      })
+    }
+  })
+
+  // The common envelope has `details: null` (AuthException defaults it
+  // when the thrower supplies none), and HTTP/2 never sends a reason
+  // phrase — so `statusText` is empty. Pins both defaults: `details`
+  // stays `null` and `error` falls back to the generic `'Error'`
+  // rather than leaking an empty string into consumer logs.
+  it('normalizes an envelope with null details and no reason phrase', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(401, {
+        code: 'auth.invalid_credentials',
+        message: 'Invalid email or password',
+        details: null
+      })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(
+      client.login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+    ).rejects.toMatchObject({
+      name: 'AuthClientError',
+      status: 401,
+      code: 'auth.invalid_credentials',
+      message: 'Invalid email or password',
+      body: {
+        message: 'Invalid email or password',
+        error: 'Error',
+        statusCode: 401,
+        details: null
+      }
+    })
+  })
+
+  // `details` is typed as a record, and the client is what makes that type honest: an
+  // envelope carrying a string (or a number, or a boolean) there is not something this
+  // server emits, but the client parses whatever answered the request — a proxy, an error
+  // page, a future version. Passing it through would hand a consumer a value their types
+  // promise they can index into.
+  it.each([
+    ['a string', 'not-a-record'],
+    ['a number', 42],
+    ['a boolean', true]
+  ])('normalizes %s in details to null', async (_label, details) => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(400, {
+        code: 'auth.validation_failed',
+        message: 'Bad request',
+        details
+      })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(
+      client.login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+    ).rejects.toMatchObject({ body: { details: null } })
+  })
+
+  // The envelope reaches the void endpoints through `expectNoContent`,
+  // a different call path than `parseJsonOrThrow`. Verifies logout
+  // surfaces the same normalized body rather than a generic failure.
+  it('surfaces the envelope on endpoints that expect no content', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(
+        403,
+        { code: 'auth.forbidden', message: 'Forbidden', details: null },
+        'Forbidden'
+      )
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(client.logout()).rejects.toMatchObject({
+      name: 'AuthClientError',
+      status: 403,
+      code: 'auth.forbidden',
+      message: 'Forbidden'
+    })
+  })
+
+  // `details` is typed as a record; a gateway that rewrites it into a
+  // scalar must not leak an unusable value under that type. Pins the
+  // record check — the code and message still surface, only `details`
+  // degrades to `null`.
+  it('drops a details payload that is not an object', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(401, {
+        code: 'auth.invalid_credentials',
+        message: 'Invalid email or password',
+        details: 'unexpected-scalar'
+      })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.code).toBe('auth.invalid_credentials')
+      expect(caught.body?.details).toBeNull()
+    }
+  })
+
+  // A JSON body shaped like the envelope but whose `code` is not a
+  // string is not the server's envelope. Pins the `code` typeof clause
+  // independently: the client must degrade to the generic error rather
+  // than publishing a non-string as a branchable `code`.
+  it('rejects an envelope whose code is not a string', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(401, { code: 42, message: 'Invalid email or password', details: null })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(401)
+      expect(caught.code).toBeUndefined()
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 401/)
+    }
+  })
+
+  // Same for `message`: pins the `message` typeof clause independently
+  // of `code`, so a guard that checks only one of the two is caught.
+  it('rejects an envelope whose message is missing', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(401, { code: 'auth.invalid_credentials', details: null })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 401/)
+    }
+  })
+
+  // A JSON body that is neither the envelope nor a flat NestJS body —
+  // e.g. an API gateway with its own error format nesting an unrelated
+  // object under `error`. Must degrade to the generic error instead of
+  // publishing a half-parsed body.
+  it('rejects a JSON body that is neither the envelope nor a flat NestJS body', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      envelopeResponse(502, { reason: 'upstream refused', retryable: true })
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.refresh().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(502)
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 502/)
+    }
+  })
+
+  // Regression guard for the flat NestJS shape: a `ValidationPipe` 400
+  // carries `error` as a STRING, not as the envelope object. Envelope
+  // support must not shadow that path — the flat body still passes
+  // through verbatim.
+  it('still parses a flat NestJS body whose error field is a status string', async () => {
+    const flatBody = {
+      message: 'email must be an email',
+      error: 'Bad Request',
+      statusCode: 400
+    }
+    const { authFetch } = makeAuthFetchMock(() => jsonResponse(400, flatBody))
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(
+      client.login({ email: 'not-an-email', password: '__test_only_pw__', tenantId: 't1' })
+    ).rejects.toMatchObject({
+      name: 'AuthClientError',
+      status: 400,
+      message: 'email must be an email',
+      body: flatBody
+    })
+  })
+
+  // A proxy or gateway between client and server can answer with HTML
+  // or plain text. Pins the void-endpoint path (`expectNoContent`)
+  // specifically: parsing must not throw a SyntaxError, it must
+  // degrade to the generic AuthClientError with no body.
+  it('degrades to a generic error when a proxy returns a non-JSON body', async () => {
+    const { authFetch } = makeAuthFetchMock(() =>
+      textResponse(503, '<html><body>Service Unavailable</body></html>')
+    )
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.logout().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(503)
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 503/)
+    }
+  })
+
+  // An error response with no body at all (some load balancers strip
+  // it on 5xx) must reach the caller as the generic AuthClientError —
+  // pinned here on the JSON-parsing path (`getMe`) so the empty-body
+  // short-circuit is exercised for both response helpers.
+  it('degrades to a generic error when the error response body is empty', async () => {
+    const { authFetch } = makeAuthFetchMock(() => new Response('', { status: 502 }))
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client.getMe().catch((err: unknown) => {
+      caught = err
+    })
+
+    expect(caught).toBeInstanceOf(AuthClientError)
+    if (caught instanceof AuthClientError) {
+      expect(caught.status).toBe(502)
+      expect(caught.code).toBeUndefined()
+      expect(caught.body).toBeUndefined()
+      expect(caught.message).toMatch(/Request failed with status 502/)
+    }
+  })
+
+  // A transport failure (DNS, TLS, offline) never produces a Response,
+  // so there is no envelope to read. It must stay distinguishable from
+  // a server-sent auth error: the original rejection propagates
+  // untouched instead of being repackaged as an AuthClientError.
+  it('propagates a network-layer failure without wrapping it as an AuthClientError', async () => {
+    const networkError = new TypeError('Failed to fetch')
+    const { authFetch } = makeAuthFetchMock(() => Promise.reject<Response>(networkError))
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    let caught: unknown
+    await client
+      .login({ email: 'a@b.c', password: '__test_only_pw__', tenantId: 't1' })
+      .catch((err: unknown) => {
+        caught = err
+      })
+
+    expect(caught).toBe(networkError)
+    expect(caught).not.toBeInstanceOf(AuthClientError)
   })
 })
 

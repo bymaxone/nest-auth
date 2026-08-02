@@ -52,6 +52,14 @@ export const BYMAX_AUTH_EMAIL_PROVIDER = Symbol('BYMAX_AUTH_EMAIL_PROVIDER')
 export const BYMAX_AUTH_HOOKS = Symbol('BYMAX_AUTH_HOOKS')
 
 /**
+ * Injection token for the password breach checker (`IPasswordBreachChecker`).
+ *
+ * Optional. When the consumer supplies none, the module registers a checker that approves
+ * every password, so the credential path never reaches the network unless asked to.
+ */
+export const BYMAX_AUTH_BREACH_CHECKER = Symbol('BYMAX_AUTH_BREACH_CHECKER')
+
+/**
  * Token for the `ioredis` Redis client instance.
  * **Required** — must be provided by the host application.
  * Bound to an `ioredis` `Redis` instance configured for the host environment.
