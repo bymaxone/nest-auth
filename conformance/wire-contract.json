@@ -103,7 +103,7 @@
 
   "mfaTransitionLock": {
     "key": "mfalock:{hmac_sha256(hmacKey, '{plane}:{userId}')}",
-    "value": "'1' — presence is the whole meaning",
+    "value": "a per-call nonce (16 CSPRNG bytes, hex) — the release compares against it",
     "ttlSeconds": 10,
     "$comment": [
       "Serializes MFA state transitions for one account. Every transition rewrites a single",
@@ -120,6 +120,12 @@
       "made to wait. The TTL is short because the lock is released explicitly; it bounds only a",
       "process that dies mid-transition, and an account whose MFA is briefly unchangeable is",
       "worse than a window this narrow.",
+      "The release must be a compare-and-delete against that nonce, in ONE step. The TTL is",
+      "short and a transition calls into the consumer's repository twice, so a run that",
+      "overruns has already lost the lock: deleting the key unconditionally then removes",
+      "whichever transition holds it now, and a third caller enters beside the second. A GET",
+      "followed by a DEL does not express the check either — the key can be retaken between",
+      "the two round trips, which is the interleaving the nonce exists to catch.",
       "Both implementations must derive the same key, or the two halves of one deployment",
       "serialize against different locks and the property is lost."
     ]

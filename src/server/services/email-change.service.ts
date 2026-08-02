@@ -16,6 +16,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -194,6 +195,12 @@ export class EmailChangeService implements OnModuleInit {
     }
 
     this.assertStillBound(context, user)
+    // The account's standing is re-read here too, and for the same reason the address is: the
+    // request and the confirmation are separated by the whole TTL. A token minted before a
+    // suspension would otherwise still move the recovery address of an account that has since
+    // been suspended or banned — and the recovery address is where a password reset is sent, so
+    // it is the one field a blocked account must not be able to change.
+    assertNotBlocked(user.status, this.options.blockedStatuses)
     // Re-checked here and not only at request time: the two are separated by the whole TTL,
     // and whoever registers the address in between would otherwise lose it to this change.
     await this.assertAddressIsFree(user, context.newEmail)

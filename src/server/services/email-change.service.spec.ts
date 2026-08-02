@@ -62,7 +62,10 @@ const mockRedis = {
 }
 
 const mockOptions = {
-  emailChange: { tokenTtlSeconds: 3600 }
+  emailChange: { tokenTtlSeconds: 3600 },
+  // The confirmation re-reads the account's standing, so the service needs the same blocked
+  // set every other status gate reads.
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED']
 }
 
 /** The stored record a valid token resolves to. */
@@ -284,6 +287,21 @@ describe('EmailChangeService', () => {
         'old@example.com',
         NEW_EMAIL
       )
+    })
+
+    // A suspension landing between the request and the confirmation stops the change. The two
+    // are separated by the whole token TTL, so a link minted while the account was in good
+    // standing is still in a mailbox when the suspension happens — and the address it moves is
+    // where a password reset is sent, which makes it the one field a blocked account most needs
+    // to be unable to change, since changing it is how a suspension gets undone from outside.
+    it('refuses the confirmation once the account has been blocked', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...USER, status: 'SUSPENDED' })
+
+      await expect(service.confirmChange({ token: TOKEN })).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED } }
+      })
+      expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendEmailChangedNotification).not.toHaveBeenCalled()
     })
 
     // The old address is read from the ACCOUNT at confirm time, not from the token. A record
