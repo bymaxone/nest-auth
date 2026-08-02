@@ -37,6 +37,7 @@ import { AUTH_DASHBOARD_ROUTES, AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/s
 
 import { assertValidApiBase, assertValidUpstreamPath } from './helpers/buildRefreshUrl'
 import {
+  assertSafeCookieDomain,
   assertSafeCookieName,
   assertSafeCookiePath,
   isCrossSiteRequest,
@@ -199,6 +200,11 @@ function validateLogoutConfig(config: LogoutHandlerConfig): string {
   )
   const refreshCookiePath = config.refreshCookiePath ?? DEFAULT_REFRESH_COOKIE_PATH
   assertSafeCookiePath(refreshCookiePath, 'createLogoutHandler', 'refreshCookiePath')
+  // Optional, so only validated when supplied — but validated for the same reason the name
+  // and the path are: it is interpolated into a `Set-Cookie` header verbatim.
+  if (config.cookieDomain !== undefined) {
+    assertSafeCookieDomain(config.cookieDomain, 'createLogoutHandler', 'cookieDomain')
+  }
 
   if (config.mode === 'redirect' && !isSafeSameOriginPath(config.loginPath)) {
     throw new Error(

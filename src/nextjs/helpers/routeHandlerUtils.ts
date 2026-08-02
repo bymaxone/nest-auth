@@ -162,6 +162,35 @@ export function assertSafeCookiePath(value: string, factoryName: string, label: 
 }
 
 /**
+ * Throw when `value` is not a safe cookie `Domain`.
+ *
+ * `serializeClearCookie` interpolates this straight into a `Set-Cookie` header, so it has the
+ * same pre-condition `name` and `path` do — and it was added without one. `cookieDomain` is
+ * consumer configuration rather than request input, so reaching it needs a mistake in the host
+ * app rather than an attacker; but a `;` closes the attribute and appends another, and a CR/LF
+ * ends the header and starts a new one, which is response splitting. Validation at factory
+ * construction turns both into a startup error instead of a header the browser reads.
+ *
+ * The shape is deliberately narrow: letters, digits, `-` and `.`, with an optional single
+ * leading `.` for the RFC 6265 shared-domain form (`.example.com`). Everything a real cookie
+ * domain can be, and nothing that can carry an attribute or a newline.
+ *
+ * @param value - The cookie domain string to validate.
+ * @param factoryName - Name of the factory function, used in error messages.
+ * @param label - Human-readable label for the field, used in error messages.
+ * @throws {Error} When `value` could alter the `Set-Cookie` header's meaning.
+ */
+export function assertSafeCookieDomain(value: string, factoryName: string, label: string): void {
+  if (
+    !/^\.?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/.test(
+      value
+    )
+  ) {
+    throw new Error(`${factoryName}: invalid cookie domain "${value}" for ${label}.`)
+  }
+}
+
+/**
  * Remove a single trailing `/` from `value`, if present.
  *
  * @param value - The string from which to remove a trailing slash.

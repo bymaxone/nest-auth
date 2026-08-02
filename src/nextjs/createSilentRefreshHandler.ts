@@ -70,6 +70,7 @@ import {
 } from './helpers/buildRefreshUrl'
 import { dedupeSetCookieHeaders, getSetCookieHeaders } from './helpers/dedupeSetCookieHeaders'
 import {
+  assertSafeCookieDomain,
   assertSafeCookieName,
   assertSafeCookiePath,
   isCrossSiteRequest,
@@ -213,6 +214,11 @@ export function createSilentRefreshHandler(
   )
   const refreshCookiePath = config.refreshCookiePath ?? DEFAULT_REFRESH_COOKIE_PATH
   assertSafeCookiePath(refreshCookiePath, 'createSilentRefreshHandler', 'refreshCookiePath')
+  // Optional, so only validated when supplied — but validated for the same reason the name
+  // and the path are: it is interpolated into a `Set-Cookie` header verbatim.
+  if (config.cookieDomain !== undefined) {
+    assertSafeCookieDomain(config.cookieDomain, 'createSilentRefreshHandler', 'cookieDomain')
+  }
   const refreshUrl = buildRefreshUrl(config.apiBase, config.refreshPath)
 
   return async function silentRefreshHandler(request: NextRequest): Promise<NextResponse> {

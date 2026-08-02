@@ -11,6 +11,7 @@
  */
 
 import {
+  assertSafeCookieDomain,
   assertSafeCookieName,
   assertSafeCookiePath,
   isSafeSameOriginPath,
@@ -410,5 +411,50 @@ describe('serializeClearCookie — Domain', () => {
       expect(header).toContain('SameSite=Strict')
       expect(header).toContain('Max-Age=0')
     }
+  })
+})
+
+/**
+ * `serializeClearCookie` interpolates the domain straight into a `Set-Cookie` header, so it
+ * carries the same pre-condition the name and the path do — and it was added without one.
+ * `cookieDomain` is consumer configuration rather than request input, so reaching this needs a
+ * mistake in the host app rather than an attacker; but a `;` closes the attribute and appends
+ * another, and a CR/LF ends the header and starts a new one, which is response splitting.
+ */
+describe('assertSafeCookieDomain', () => {
+  it.each([
+    'example.com',
+    '.example.com',
+    'app.example.co.uk',
+    'a.b',
+    'xn--80ak6aa92e.com',
+    'my-app.example.com'
+  ])('accepts the real cookie domain %s', (domain) => {
+    expect(() => assertSafeCookieDomain(domain, 'f', 'cookieDomain')).not.toThrow()
+  })
+
+  it.each([
+    ['an attribute separator', 'example.com; Path=/'],
+    ['a header break', 'example.com\r\nSet-Cookie: a=b'],
+    ['a bare LF', 'example.com\nX: y'],
+    ['a NUL', 'example.com\u0000'],
+    ['whitespace', 'example .com'],
+    ['an empty value', ''],
+    ['a leading hyphen', '-example.com'],
+    ['a trailing dot label', 'example..com'],
+    ['a scheme', 'https://example.com'],
+    ['a path', 'example.com/x']
+  ])('refuses %s', (_label, domain) => {
+    expect(() => assertSafeCookieDomain(domain, 'f', 'cookieDomain')).toThrow(
+      /invalid cookie domain/
+    )
+  })
+
+  // The message has to name the field: this throws at factory construction, where the only
+  // context the developer has is the error itself.
+  it('names the factory and the field it rejected', () => {
+    expect(() => assertSafeCookieDomain('bad;x', 'createLogoutHandler', 'cookieDomain')).toThrow(
+      'createLogoutHandler: invalid cookie domain "bad;x" for cookieDomain.'
+    )
   })
 })
