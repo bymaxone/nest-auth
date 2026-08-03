@@ -262,6 +262,10 @@
   "types": "./dist/server/index.d.cts",
   "typesVersions": {
     "*": {
+      "dist/server/index.d.cts": [
+        "./dist/server/index.d.cts",
+        "./dist/server/index.d.ts"
+      ],
       "shared": [
         "./dist/shared/index.d.cts",
         "./dist/shared/index.d.ts"

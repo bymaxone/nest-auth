@@ -268,7 +268,9 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   would then find no declarations at all — the state `typesVersions` exists to
   prevent. TypeScript takes the first path that resolves, so nothing changes for a
   toolchain that understands `.d.cts`. `@types/react` 19 ships the same shape for
-  TypeScript 5.0 and below.
+  TypeScript 5.0 and below. The package root is covered too, keyed on the path in
+  `types` rather than on `"."` — TypeScript matches `typesVersions` patterns against
+  the value of the `types` field, so a `"."` entry never fires.
 - **Four README examples did not compile against the package they document.** The
   module-registration example omitted `rateLimit`, which is a required option group;
   the client example omitted `baseUrl` and a comment claimed it was needed only
