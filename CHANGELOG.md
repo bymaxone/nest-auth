@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-03
+
+The API changes marked **Breaking** below are breaking against `1.0.11`. They are
+released as a minor because the package has no consumers yet — it is published but
+not in use anywhere. The marks stay because the changelog records what changed, not
+who it reached.
+
 This cycle closes the divergences between this library and its Rust counterpart
 [`bymaxone/rust-auth`](https://github.com/bymaxone/rust-auth) — the two can back the same
 deployment over one Redis, so keys, stored record shapes, JWT claims and Lua scripts are a
@@ -994,7 +1001,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/bymaxone/nest-auth/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/bymaxone/nest-auth/compare/v1.0.8...v1.0.9
