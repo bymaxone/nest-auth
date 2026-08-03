@@ -75,19 +75,15 @@ jobs:
             exit 1
           fi
 
-      - name: Verify (typecheck · lint · test · build)
+      - name: Verify (typecheck · lint · test · build · packaging gates)
+        # `prepublishOnly` carries every gate, including the three that inspect the
+        # packed artifact rather than the source tree: `check:exports` resolves each
+        # entry point the way every resolution mode does, `check:runtime` loads them
+        # from the tarball in ESM and CommonJS, and `check:published` compiles the
+        # README against `dist/`. Running it as an explicit step is what gates this
+        # job — the publish below passes `--ignore-scripts`, so npm does not run it
+        # a second time and rebuild the `dist/` these gates just validated.
         run: pnpm prepublishOnly
-
-      - name: Verify published type resolution
-        # attw packs the tarball and resolves every entry point the way each
-        # resolution mode does. A step rather than a prepublishOnly entry: the
-        # publish below passes --ignore-scripts, so prepublishOnly does not run
-        # on that path.
-        run: pnpm check:exports
-
-      - name: Consumer load
-        # attw proves the declarations resolve; it never runs the JavaScript.
-        run: pnpm check:runtime
 
       - name: Publish to npm with provenance
         # `npm publish`, not `pnpm publish`. The registry's `readme` field is
