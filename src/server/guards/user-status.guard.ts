@@ -10,18 +10,7 @@ import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
-
-/**
- * Maps lowercase blocked status values to specific auth error codes.
- * Always normalize the status to lowercase before lookup.
- */
-const STATUS_ERROR_MAP: Record<string, AuthErrorCode> = {
-  banned: AUTH_ERROR_CODES.ACCOUNT_BANNED,
-  inactive: AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
-  suspended: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
-  pending: AUTH_ERROR_CODES.PENDING_APPROVAL,
-  pending_approval: AUTH_ERROR_CODES.PENDING_APPROVAL
-}
+import { assertNotBlocked } from '../utils/assert-not-blocked'
 
 /**
  * Verifies that the authenticated user's account status is not blocked.
@@ -82,13 +71,16 @@ export class UserStatusGuard implements CanActivate {
     }
 
     const normalizedStatus = status.toLowerCase()
-    const blockedStatuses = this.options.blockedStatuses.map((s) => s.toLowerCase())
-    if (blockedStatuses.includes(normalizedStatus)) {
-      const errorCode: AuthErrorCode =
-        // eslint-disable-next-line security/detect-object-injection -- normalizedStatus is a lowercased DB status value
-        STATUS_ERROR_MAP[normalizedStatus] ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE
-      throw new AuthException(errorCode, HttpStatus.FORBIDDEN)
-    }
+    // One definition, in `assertNotBlocked`. This guard used to carry its own copy of the
+    // status → error-code table as a plain object literal, which the sibling implementation
+    // deliberately does NOT use: the status is application-defined data, so an object lookup
+    // resolves INHERITED keys, and a configured status of `constructor` or `toString` would
+    // yield a truthy prototype member that defeats the `??` fallback and reaches `AuthException`
+    // as a non-code value. The copy had drifted past that reasoning, which is the failure mode
+    // duplicated logic has whether or not the drift is reachable — here it needed a consumer to
+    // configure one of those names as a blocked status, so the outcome was a malformed 403 body
+    // rather than a bypass. Deleting the copy removes the question.
+    assertNotBlocked(normalizedStatus, this.options.blockedStatuses)
 
     return true
   }

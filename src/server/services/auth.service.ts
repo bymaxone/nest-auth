@@ -92,12 +92,48 @@ export class AuthService {
    * costs nothing but the upgrade — the old hash keeps working. Errors are logged rather than
    * propagated for that reason.
    *
+   * **`verifiedHash` is what makes this safe to detach.** The task carries the plaintext of the
+   * password it is upgrading, and a KDF derivation is slow by construction, so it lands some
+   * time after the login that scheduled it. In between, the same account may have changed its
+   * password — and the case where that is most likely is exactly the dangerous one: the user
+   * resets *because* the old password was compromised, and the attacker's own login is what
+   * scheduled the task. Writing unconditionally then re-installs the compromised credential
+   * over the new one, the old password works again, the new one does not, and the "password
+   * changed" mail has already gone out. The window is the whole rehash, and `needsRehash` is
+   * true for EVERY account during the parameter migration this feature exists to serve, so it
+   * is not a rare alignment.
+   *
+   * So the write is conditional on the stored hash still being the one that was verified. This
+   * is a re-read rather than a compare-and-set because `IUserRepository` is implemented by the
+   * consuming application and a CAS primitive cannot be required of every backing store; the
+   * remaining race is the repository round-trip rather than the derivation, and it can only
+   * lose an upgrade, never a password — the next login reschedules it.
+   *
    * @param userId - The account whose stored hash is being upgraded.
-   * @param plain - The plaintext just verified against the old hash.
+   * @param tenantId - The tenant that account belongs to, so the re-read cannot answer with a
+   *   different tenant's row in a store whose ids are not globally unique.
+   * @param plain - The plaintext just verified against `verifiedHash`.
+   * @param verifiedHash - The stored hash this upgrade is allowed to replace.
    */
-  private async rehashPassword(userId: string, plain: string): Promise<void> {
+  private async rehashPassword(
+    userId: string,
+    tenantId: string,
+    plain: string,
+    verifiedHash: string
+  ): Promise<void> {
     try {
-      await this.userRepo.updatePassword(userId, await this.passwordService.hash(plain))
+      const upgraded = await this.passwordService.hash(plain)
+      // Tenant-scoped, because `IUserRepository.findById` takes the argument precisely so a
+      // store whose ids are not globally unique cannot answer with another tenant's row. This
+      // is not an admin flow — it is a read on behalf of one account — and an unscoped answer
+      // would have the guard comparing the verified hash against a DIFFERENT row, which either
+      // drops a legitimate upgrade or admits a write the guard exists to refuse.
+      const current = await this.userRepo.findById(userId, tenantId)
+      if (current?.passwordHash !== verifiedHash) {
+        this.logger.log(`rehash on verify skipped — the stored hash changed userId=${userId}`)
+        return
+      }
+      await this.userRepo.updatePassword(userId, upgraded)
     } catch (err: unknown) {
       this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
     }
@@ -134,6 +170,20 @@ export class AuthService {
 
     const context = this.buildHookContext({ tenantId, email: dto.email, ip, userAgent, req })
 
+    /**
+     * Privileged fields the `beforeRegister` hook may set, held SEPARATELY from `dto`.
+     *
+     * They used to be merged into `dto` and read back off it, which made a `role` the hook chose
+     * indistinguishable from one the CALLER sent. Through the shipped controller that was not
+     * reachable — `createAuthValidationPipe()` sets `whitelist` and `forbidNonWhitelisted`, so
+     * `{"role":"ADMIN"}` in the body is a 400 — but `AuthService` is exported precisely so a host
+     * can write its own registration route, and the moment one calls `register(req.body, req)`
+     * the only control standing between an unauthenticated caller and `role: 'ADMIN'` lived in a
+     * different file, on a decorator that host is free not to use. A privilege boundary that
+     * depends on a collaborator's configuration is not a boundary.
+     */
+    let hookOverrides: { role?: string; status?: string; emailVerified?: boolean } = {}
+
     // beforeRegister hook — only hook that can block the flow.
     if (this.hooks?.beforeRegister) {
       const hookResult = await this.hooks.beforeRegister(
@@ -143,11 +193,9 @@ export class AuthService {
       if (!hookResult.allowed) {
         throw new AuthException(AUTH_ERROR_CODES.FORBIDDEN)
       }
-      // Stryker disable next-line ConditionalExpression: spreading a falsy `modifiedData` (`{ ...undefined }`) is a no-op, so guarding with `if (true)` produces the same merged result
+      // Stryker disable next-line ConditionalExpression: spreading a falsy `modifiedData` (`{ ...undefined }`) is a no-op, so guarding with `if (true)` produces the same assignment
       if (hookResult.modifiedData) {
-        // Merge hook overrides immutably — avoids mutating the validated DTO and
-        // bypassing class-validator constraints already applied by the pipe.
-        dto = { ...dto, ...hookResult.modifiedData } as typeof dto
+        hookOverrides = hookResult.modifiedData
       }
     }
 
@@ -172,18 +220,19 @@ export class AuthService {
     await this.passwordService.assertNotCompromised(dto.password)
     const passwordHash = await this.passwordService.hash(dto.password)
 
-    const augmented = dto as Record<string, unknown>
+    // Read from `hookOverrides`, never from `dto`: a caller-supplied `role` or `status` is inert
+    // here no matter how this service is invoked. See the declaration for why that matters.
     const newUser = await this.userRepo.create({
       email: dto.email,
       name: dto.name,
       passwordHash,
       tenantId,
-      ...(typeof augmented['role'] === 'string' && { role: augmented['role'] }),
-      ...(typeof augmented['status'] === 'string' && { status: augmented['status'] }),
+      ...(typeof hookOverrides.role === 'string' && { role: hookOverrides.role }),
+      ...(typeof hookOverrides.status === 'string' && { status: hookOverrides.status }),
       ...(this.options.emailVerification.required
         ? { emailVerified: false }
-        : typeof augmented['emailVerified'] === 'boolean'
-          ? { emailVerified: augmented['emailVerified'] }
+        : typeof hookOverrides.emailVerified === 'boolean'
+          ? { emailVerified: hookOverrides.emailVerified }
           : {})
     })
 
@@ -361,7 +410,7 @@ export class AuthService {
     // parameters would be to invalidate every stored hash. Fire-and-forget, so a slow or
     // failing write never delays or breaks a login that has already succeeded.
     if (this.passwordService.needsRehash(user.passwordHash)) {
-      void this.rehashPassword(user.id, dto.password)
+      void this.rehashPassword(user.id, user.tenantId, dto.password, user.passwordHash)
     }
 
     // MFA challenge path.

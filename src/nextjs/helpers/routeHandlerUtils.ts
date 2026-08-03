@@ -9,14 +9,59 @@
  */
 
 /**
- * Build a `Set-Cookie` string that clears a cookie with the given
- * name on the given path.
+ * `Sec-Fetch-Site` values that prove a request did not come from another site.
  *
- * `HttpOnly`, `Secure`, and `SameSite=Strict` are re-applied to match
- * the attributes the NestJS server uses when the cookie was originally
- * set. RFC 6265bis requires the overwrite to carry the same (or
- * stricter) `SameSite` value, otherwise strict-mode browsers may
- * silently ignore the clear and leave the cookie alive after logout.
+ * `same-origin` is the app calling itself; `none` is a user-initiated navigation (a typed URL,
+ * a bookmark), which no attacker page can cause.
+ */
+const SAFE_FETCH_SITES = new Set(['same-origin', 'none'])
+
+/**
+ * Whether a request to one of the route handlers came from somewhere other than this app.
+ *
+ * These handlers sit in front of the auth backend and every one of them ends by writing
+ * `Set-Cookie`, so a cross-site caller does not need to read the response to get something out
+ * of them. `POST /api/auth/logout` from an attacker's page sends no session cookie under `Lax`,
+ * so the upstream revocation is a no-op — but the handler answers with three `Max-Age=0`
+ * cookies anyway, and a form POST is a top-level navigation, so the browser applies them
+ * first-party. Any page on the internet could sign a visitor out of the app, repeatably. The
+ * silent-refresh GET is the same shape reachable from an `<img>`.
+ *
+ * The check is `Sec-Fetch-Site` alone. `Origin` cannot decide it: a same-origin POST sends one
+ * too, and a route handler has no configured notion of its own origin to compare against —
+ * `request.nextUrl.origin` is derived from `Host`, which is client-controlled. `Sec-Fetch-Site`
+ * is not forgeable by a page and is sent by Chrome 76, Firefox 90 and Safari 16.4 onward; a
+ * request without it is either an older browser or a non-browser client, and is admitted for
+ * the same reason the server-side guard admits that shape.
+ *
+ * @param request - The incoming request.
+ * @returns `true` when the browser has stated the request came from another site.
+ */
+export function isCrossSiteRequest(request: {
+  headers: { get(name: string): string | null }
+}): boolean {
+  const fetchSite = request.headers.get('sec-fetch-site')
+  return fetchSite !== null && !SAFE_FETCH_SITES.has(fetchSite)
+}
+
+/**
+ * Build a `Set-Cookie` string that clears a cookie with the given
+ * name, path and — when the server planted one — domain.
+ *
+ * **A browser matches a deletion on name, domain AND path** (RFC 6265 §5.3).
+ * `domain` used to be absent here, and the server plants a `Domain=` whenever
+ * `cookies.resolveDomains` is configured, so on a subdomain-sharing deployment
+ * this created a NEW host-only cookie and left the domain-scoped originals
+ * alive. The upstream logout still revoked the session, so what survived was a
+ * dead credential in the jar plus a `has_session` that kept driving the proxy
+ * into refresh → fail → `reason=expired` bounces after every logout. The 13-line
+ * note on `refreshCookiePath` explains this exact failure mode for `Path` and
+ * never mentioned `Domain`.
+ *
+ * `HttpOnly` and `Secure` are re-applied for the same reason. `SameSite=Strict`
+ * is deliberately NOT derived from config: RFC 6265bis asks the overwrite to
+ * carry the same or a stricter value, and `Strict` is the strictest, so it
+ * matches a `lax` or `none` plant as well as a `strict` one.
  *
  * PRE-CONDITION: `name` and `path` must have been validated against
  * CR/LF/NUL and other header-smuggling characters via
@@ -26,10 +71,13 @@
  *
  * @param name - Cookie name (pre-validated by {@link assertSafeCookieName}).
  * @param path - Cookie path scope.
+ * @param domain - The `Domain` the cookie was planted with, or `undefined` for
+ *   the host-only default.
  * @returns A `Set-Cookie` header value that clears the named cookie.
  */
-export function serializeClearCookie(name: string, path: string): string {
-  return `${name}=; Path=${path}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
+export function serializeClearCookie(name: string, path: string, domain?: string): string {
+  const scope = domain === undefined ? '' : `; Domain=${domain}`
+  return `${name}=; Path=${path}${scope}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
 }
 
 /**
@@ -110,6 +158,35 @@ export function assertSafeCookieName(value: string, factoryName: string, label: 
 export function assertSafeCookiePath(value: string, factoryName: string, label: string): void {
   if (!/^\/[\x20-\x3A\x3C-\x7E]*$/.test(value)) {
     throw new Error(`${factoryName}: invalid cookie path "${value}" for ${label}.`)
+  }
+}
+
+/**
+ * Throw when `value` is not a safe cookie `Domain`.
+ *
+ * `serializeClearCookie` interpolates this straight into a `Set-Cookie` header, so it has the
+ * same pre-condition `name` and `path` do — and it was added without one. `cookieDomain` is
+ * consumer configuration rather than request input, so reaching it needs a mistake in the host
+ * app rather than an attacker; but a `;` closes the attribute and appends another, and a CR/LF
+ * ends the header and starts a new one, which is response splitting. Validation at factory
+ * construction turns both into a startup error instead of a header the browser reads.
+ *
+ * The shape is deliberately narrow: letters, digits, `-` and `.`, with an optional single
+ * leading `.` for the RFC 6265 shared-domain form (`.example.com`). Everything a real cookie
+ * domain can be, and nothing that can carry an attribute or a newline.
+ *
+ * @param value - The cookie domain string to validate.
+ * @param factoryName - Name of the factory function, used in error messages.
+ * @param label - Human-readable label for the field, used in error messages.
+ * @throws {Error} When `value` could alter the `Set-Cookie` header's meaning.
+ */
+export function assertSafeCookieDomain(value: string, factoryName: string, label: string): void {
+  if (
+    !/^\.?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/.test(
+      value
+    )
+  ) {
+    throw new Error(`${factoryName}: invalid cookie domain "${value}" for ${label}.`)
   }
 }
 

@@ -183,6 +183,28 @@ describe('TokenManagerService', () => {
   // ---------------------------------------------------------------------------
 
   describe('issueTokens', () => {
+    // The recent-authentication marker, and the asymmetry that gives it meaning.
+    //
+    // `issueTokens` is the single point where a dashboard session is BORN — password login,
+    // OAuth callback, MFA challenge completion, invitation acceptance, email verification all
+    // reach it. `reissueTokens` does not, and must not: a refresh proves possession of a token,
+    // not of a credential. That is what makes the marker proof of anything at all, and it is
+    // what stops a stolen session from being rotated into a fresh one (see the paired case in
+    // `reissueTokens`).
+    it('plants the recent-authentication marker, keyed and short-lived', async () => {
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
+
+      const markerWrite = mockRedis.set.mock.calls.find((call) => String(call[0]).startsWith('ra:'))
+      expect(markerWrite).toBeDefined()
+      // Presence is the whole meaning; the value carries nothing.
+      expect(markerWrite?.[1]).toBe('1')
+      expect(markerWrite?.[2]).toBe(300)
+      // The keyspace is shared and readable — the account id is never in it in the clear.
+      expect(String(markerWrite?.[0])).not.toContain(SAFE_USER.id)
+    })
+
     // Verifies that issueTokens stores the refresh session in Redis with the correct TTL in seconds.
     it('should store refresh session in Redis with correct TTL', async () => {
       mockRedis.set.mockResolvedValue(undefined)
@@ -440,6 +462,27 @@ describe('TokenManagerService', () => {
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'grace', sessionJson })
       mockRedis.set.mockResolvedValue(undefined)
     }
+
+    // THE property that makes the recent-authentication marker worth anything: a rotation must
+    // not refresh it. A refresh proves possession of a token, not of a credential — so if
+    // rotating re-planted the mark, an attacker holding a stolen session could keep it fresh
+    // indefinitely and the freshness gate on MFA enrolment would gate nothing at all. Both
+    // rotation paths are covered, because the grace path writes a session record too and is the
+    // easier one to forget.
+    it.each([
+      ['a live rotation', armLiveRotation],
+      ['a grace-window recovery', armGraceRotation]
+    ])('does not refresh the recent-authentication marker on %s', async (_label, arm) => {
+      arm()
+      mockRedis.set.mockClear()
+
+      await service.reissueTokens('old-raw-token', '1.2.3.4', 'TestBrowser')
+
+      const markerWrites = mockRedis.set.mock.calls.filter((call) =>
+        String(call[0]).startsWith('ra:')
+      )
+      expect(markerWrites).toHaveLength(0)
+    })
 
     // Verifies that mfaEnabled:true in the stored session is propagated into the rotated access token.
     // This is a critical security property: MfaRequiredGuard must continue to enforce MFA after rotation.

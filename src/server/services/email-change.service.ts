@@ -6,9 +6,10 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { generateSecureToken, sha256 } from '../crypto/secure-token'
+import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
 import type { ChangeEmailDto } from '../dto/change-email.dto'
 import type { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -96,7 +97,8 @@ export class EmailChangeService implements OnModuleInit {
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     private readonly passwordService: PasswordService,
-    private readonly redis: AuthRedisService
+    private readonly redis: AuthRedisService,
+    private readonly bruteForce: BruteForceService
   ) {}
 
   /**
@@ -147,11 +149,26 @@ export class EmailChangeService implements OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
+    // Counted like a login, and for the same reason. This door asks for the account password
+    // and used to refuse nothing, so a caller holding a stolen access token but not the
+    // password could guess it here without limit — and winning it moves the address the
+    // account recovers through, which is persistence rather than a single theft. The per-route
+    // IP limit is not that control: a distributed caller sidesteps it, and it is not keyed to
+    // the account under attack. Namespaced by flow so it cannot lock the owner out of `login`.
+    const bfIdentifier = hmacSha256(`reauth:email-change:${userId}`, this.options.hmacKey)
+    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(`requestChange: account locked userId=${userId}`)
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+    }
+
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
+      await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`requestChange: current password rejected userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
+
+    await this.bruteForce.resetFailures(bfIdentifier)
 
     await this.assertAddressIsFree(user, newEmail)
 

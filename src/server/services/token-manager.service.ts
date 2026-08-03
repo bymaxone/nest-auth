@@ -6,6 +6,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from '../constants/recent-auth'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -252,6 +253,19 @@ export class TokenManagerService {
     // prefix is implied. It carries the refresh TTL so it ages out with what it tracks.
     await this.redis.sadd(`fam:${familyId}`, tokenHash)
     await this.redis.expire(`fam:${familyId}`, ttl)
+
+    // Record that a REAL authentication just completed, for the flows that need to know how
+    // recently rather than merely whether. Written here and nowhere else: this method is the
+    // single point where a dashboard session is born — password login, OAuth callback, MFA
+    // challenge completion, invitation acceptance and email verification all reach it — while
+    // `reissueTokens` deliberately does not, because a refresh proves possession of a token,
+    // not of a credential. That asymmetry is the whole value of the marker: an attacker holding
+    // a stolen session can rotate it forever and never make this mark fresh again.
+    await this.redis.set(
+      recentAuthKey('dashboard', user.id, this.options.hmacKey),
+      '1',
+      RECENT_AUTH_TTL_SECONDS
+    )
 
     return { user, accessToken, rawRefreshToken }
   }

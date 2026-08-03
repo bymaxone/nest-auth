@@ -388,31 +388,33 @@ describe('resolveOptions — cookies.sameSite', () => {
   })
 
   /**
-   * The inverse: an allowlist that can never be consulted, because with a single host under
-   * `lax` or `strict` the browser does not send the cookie cross-origin at all. Refusing it
-   * stops a deployment from believing it authorized an origin that will never be asked about.
+   * The inverse USED to be refused: an allowlist under `lax`, on the reasoning that with a
+   * single host the browser never sends the cookie cross-origin, so the list could not be
+   * consulted. That reasoning covered only the requests that RIDE a cookie. `POST /auth/login`
+   * carries its credentials in its own body and answers with a session, so a cross-site login
+   * needs no cookie to succeed — and the allowlist is precisely what refuses it. Refusing the
+   * configuration left a `lax` deployment with nothing it could set to close that, so the rule
+   * is gone and the list is accepted under every posture.
    */
-  it('should reject trustedOrigins under a SameSite posture that never uses it', () => {
-    const resolve = () =>
-      resolveOptions({
-        ...MINIMAL_OPTIONS,
-        cookies: { trustedOrigins: ['https://app.example.com'] }
-      })
+  it('should accept trustedOrigins under lax, which is what refuses a cross-site login', () => {
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      cookies: { trustedOrigins: ['https://app.example.com'] }
+    })
 
-    expect(resolve).toThrow(/cookies\.trustedOrigins is set but cookies\.sameSite is 'lax'/)
-    expect(resolve).toThrow('no cookies.resolveDomains is configured')
-    expect(resolve).toThrow('the allowlist is never consulted')
-    expect(resolve).toThrow("Use cookies.sameSite: 'none' (with secureCookies: true)")
+    expect(resolved.cookies.sameSite).toBe('lax')
+    expect(resolved.cookies.trustedOrigins).toEqual(['https://app.example.com'])
   })
 
   /**
-   * …and the case that rule used to make unreachable. `lax` withholds the cookie CROSS-SITE,
-   * not cross-ORIGIN: a deployment serving `app.example.com` and `api.example.com` from one
-   * `.example.com` cookie is same-site, so the browser sends it on a POST between them — and
-   * `Sec-Fetch-Site: same-site` is not one of the values `TrustedOriginGuard` treats as proof
-   * the request came from the app itself, so it falls through to the origin check. Refusing
-   * the list left that deployment with no configuration at all: the cookie arrives, the
-   * request is refused 403, and the only setting that would have allowed it threw at startup.
+   * The subdomain deployment, which the removed rule made unreachable first. `lax` withholds
+   * the cookie CROSS-SITE, not cross-ORIGIN: a deployment serving `app.example.com` and
+   * `api.example.com` from one `.example.com` cookie is same-site, so the browser sends it on a
+   * POST between them — and `Sec-Fetch-Site: same-site` is not one of the values
+   * `TrustedOriginGuard` treats as proof the request came from the app itself, so it falls
+   * through to the origin check. Kept as its own case because it is the shape where the cookie
+   * genuinely arrives cross-origin, which is a stronger reason to allow the list than the
+   * login-CSRF one above.
    */
   it('should accept trustedOrigins under lax when a cookie domain is shared', () => {
     expect(() =>

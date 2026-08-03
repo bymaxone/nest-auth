@@ -37,8 +37,10 @@ import { AUTH_DASHBOARD_ROUTES, AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/s
 
 import { assertValidApiBase, assertValidUpstreamPath } from './helpers/buildRefreshUrl'
 import {
+  assertSafeCookieDomain,
   assertSafeCookieName,
   assertSafeCookiePath,
+  isCrossSiteRequest,
   isSafeSameOriginPath,
   serializeClearCookie,
   trimTrailingSlash
@@ -75,6 +77,17 @@ interface LogoutCookieConfig {
    * cookie outlives the logout (the session itself is revoked server-side either way).
    */
   readonly refreshCookiePath?: string
+
+  /**
+   * The cookie `Domain` the NestJS server planted the session with, when
+   * `cookies.resolveDomains` is configured there. Leave unset for the
+   * host-only default.
+   *
+   * A browser matches a deletion on **name, domain AND path** (RFC 6265 §5.3),
+   * so a clear that omits `Domain` cannot remove a cookie that carries one — it
+   * plants a new host-only cookie and the originals survive.
+   */
+  readonly cookieDomain?: string
 }
 
 /**
@@ -130,6 +143,15 @@ export function createLogoutHandler(config: LogoutHandlerConfig): LogoutHandler 
       })
     }
 
+    // A cross-site caller gets nothing, and gets it before any cookie is written. The verb
+    // check alone did not cover this: a form POST from an attacker's page IS a POST, sends no
+    // session cookie under `Lax` so the upstream revocation no-ops, and used to be answered
+    // with the three `Max-Age=0` cookies anyway — applied first-party, because a form POST is a
+    // top-level navigation. Any page on the internet could sign a visitor out, repeatably.
+    if (isCrossSiteRequest(request)) {
+      return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache' } })
+    }
+
     // Best-effort upstream logout. We intentionally ignore the
     // response: whether the upstream succeeds or fails, the browser
     // cookies MUST be cleared so the user is locally logged out.
@@ -178,6 +200,11 @@ function validateLogoutConfig(config: LogoutHandlerConfig): string {
   )
   const refreshCookiePath = config.refreshCookiePath ?? DEFAULT_REFRESH_COOKIE_PATH
   assertSafeCookiePath(refreshCookiePath, 'createLogoutHandler', 'refreshCookiePath')
+  // Optional, so only validated when supplied — but validated for the same reason the name
+  // and the path are: it is interpolated into a `Set-Cookie` header verbatim.
+  if (config.cookieDomain !== undefined) {
+    assertSafeCookieDomain(config.cookieDomain, 'createLogoutHandler', 'cookieDomain')
+  }
 
   if (config.mode === 'redirect' && !isSafeSameOriginPath(config.loginPath)) {
     throw new Error(
@@ -229,9 +256,9 @@ function attachClearCookies(
   refreshCookiePath: string
 ): void {
   const clearCookies = [
-    serializeClearCookie(config.cookieNames.access, '/'),
-    serializeClearCookie(config.cookieNames.refresh, refreshCookiePath),
-    serializeClearCookie(config.cookieNames.hasSession, '/')
+    serializeClearCookie(config.cookieNames.access, '/', config.cookieDomain),
+    serializeClearCookie(config.cookieNames.refresh, refreshCookiePath, config.cookieDomain),
+    serializeClearCookie(config.cookieNames.hasSession, '/', config.cookieDomain)
   ]
   for (const cookie of clearCookies) {
     response.headers.append('set-cookie', cookie)

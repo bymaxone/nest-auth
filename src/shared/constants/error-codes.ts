@@ -86,6 +86,12 @@ export const AUTH_ERROR_CODES = {
    */
   UNTRUSTED_ORIGIN: 'auth.untrusted_origin',
 
+  /**
+   * A change to how the account authenticates was attempted without a recent authentication.
+   * The client should send the user back through sign-in and retry.
+   */
+  REAUTHENTICATION_REQUIRED: 'auth.reauthentication_required',
+
   // Invitations
   INVALID_INVITATION_TOKEN: 'auth.invalid_invitation_token',
 

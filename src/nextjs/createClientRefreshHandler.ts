@@ -47,6 +47,7 @@ import { AUTH_PROXY_ROUTES } from '@bymax-one/nest-auth/shared'
 
 import { assertValidApiBase, buildRefreshUrl } from './helpers/buildRefreshUrl'
 import { dedupeSetCookieHeaders, getSetCookieHeaders } from './helpers/dedupeSetCookieHeaders'
+import { isCrossSiteRequest } from './helpers/routeHandlerUtils'
 
 /**
  * Configuration contract for {@link createClientRefreshHandler}.
@@ -110,6 +111,13 @@ export function createClientRefreshHandler(
         status: 405,
         headers: { Allow: 'POST', 'Cache-Control': 'no-store, no-cache' }
       })
+    }
+
+    // The 405 above exists to stop a cross-origin `<img src>` GET from forwarding the session
+    // cookie upstream. It only ever covered the GET half: a cross-site form POST is a POST, and
+    // reached the upstream and the cookie writes below. Same reasoning, the case it missed.
+    if (isCrossSiteRequest(request)) {
+      return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache' } })
     }
 
     let upstream: Response

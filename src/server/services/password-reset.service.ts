@@ -7,6 +7,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
@@ -131,7 +132,8 @@ export class PasswordResetService {
     private readonly otpService: OtpService,
     private readonly passwordService: PasswordService,
     private readonly redis: AuthRedisService,
-    private readonly sessionService: SessionService
+    private readonly sessionService: SessionService,
+    private readonly bruteForce: BruteForceService
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -559,11 +561,26 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
+    // Counted like a login, and for the same reason. This door asks for the account password
+    // and used to refuse nothing, so a caller holding a stolen access token but not the
+    // password could guess it here without limit — and winning replaces the credential, which
+    // locks the owner out of their own account. The per-route IP limit is not that control: a
+    // distributed caller sidesteps it, and it is not keyed to the account being attacked. The
+    // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
+    const bfIdentifier = hmacSha256(`reauth:change-password:${userId}`, this.options.hmacKey)
+    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+      this.logger.warn(`changePassword: account locked userId=${userId}`)
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
+    }
+
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
+      await this.bruteForce.recordFailure(bfIdentifier)
       this.logger.warn(`changePassword: current password rejected userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
+
+    await this.bruteForce.resetFailures(bfIdentifier)
 
     await this.passwordService.assertNotCompromised(dto.newPassword)
     const passwordHash = await this.passwordService.hash(dto.newPassword)

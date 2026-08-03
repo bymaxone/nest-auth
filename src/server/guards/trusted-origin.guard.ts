@@ -43,30 +43,41 @@ const SAFE_FETCH_SITES = new Set(['same-origin', 'none'])
  * The decision uses only headers a page cannot forge:
  *
  * 1. A safe method changes nothing — allowed.
- * 2. An empty `cookies.trustedOrigins` means no origin has been authorized and none needs to be:
- *    startup refuses that combination wherever the list would be consulted, so an empty one is
- *    a posture where the browser never delivers the cookie cross-origin — allowed.
- * 3. `Sec-Fetch-Site: same-origin` / `none` proves the request is not cross-site — allowed.
- * 4. An `Origin` present must be in `cookies.trustedOrigins` — allowed only then.
- * 5. `Sec-Fetch-Site` present and cross-site, with no `Origin`: a browser that sends one header
- *    sends the other on a state-changing request, so this shape is refused.
- * 6. Neither header at all — a non-browser client (curl, a server-to-server call). Allowed:
+ * 2. `Sec-Fetch-Site: same-origin` / `none` proves the request is not cross-site — allowed.
+ * 3. `Sec-Fetch-Site` present with any other value (`cross-site`, `same-site`) is the browser
+ *    stating the request came from somewhere else. Allowed only if `Origin` is listed in
+ *    `cookies.trustedOrigins`; refused otherwise, **including when the list is empty** — an
+ *    empty list means no other origin is authorized, not that every one is.
+ * 4. `Sec-Fetch-Site` absent and `Origin` present: allowed if listed. Otherwise refused when a
+ *    list is configured, and allowed when it is empty — see the ambiguity below.
+ * 5. Neither header at all — a non-browser client (curl, a server-to-server call). Allowed:
  *    an attacker's page cannot make a browser *omit* `Origin` on a cross-site request, so the
  *    absence is evidence there is no browser involved, not a way around the check.
  *
  * **The check does not depend on the request already being authenticated.** It used to: a
  * request carrying none of the module's cookies skipped straight to allowed, on the reasoning
  * that there was no ambient credential to abuse. The reasoning missed the requests that MINT
- * one. `POST /auth/login` and `/auth/register` carry no cookie and answer with a session, so
- * under `SameSite=None` an attacker's page could log a victim's browser into the ATTACKER's
- * account and then read whatever the victim did there believing it was theirs. Three separate
- * bugs had already been found in "which requests may skip the origin check" — renamed cookies,
- * an unreadable cookie jar, the MFA challenge cookie — and each was a new way to be on the
- * wrong side of that skip. There is no skip now, so the class is gone rather than narrowed.
+ * one. `POST /auth/login` and `/auth/register` carry no cookie and answer with a session, so an
+ * attacker's page could log a victim's browser into the ATTACKER's account and then read
+ * whatever the victim did there believing it was theirs.
  *
- * The request's own origin is never reconstructed from `Host` or `X-Forwarded-Proto` — both are
- * client-controlled, and a check that trusts them is not a check. Same-origin requests are
- * recognised by `Sec-Fetch-Site` alone.
+ * **Nor does it depend on the allowlist being populated.** It did, and that was the same bug
+ * one level up. An empty list short-circuited to allowed on the reasoning that `SameSite`
+ * withholds the cookie cross-site anyway — true, and irrelevant to a login CSRF, where the
+ * credentials are in the attacker's own request body and no cookie needs to be sent at all. The
+ * response's `Set-Cookie` lands first-party because a form POST is a top-level navigation, so
+ * third-party cookie policy does not help either. Since the default configuration ships an
+ * empty list, that short-circuit meant the guard was inert in the deployment shape most
+ * consumers run, while its own documentation claimed the class was closed.
+ *
+ * **The one case that stays permissive, and why.** A same-origin POST from a browser that sends
+ * `Origin` and omits `Sec-Fetch-Site` is indistinguishable from a cross-site one: this module
+ * never learns its own origin (reconstructing it from `Host` or `X-Forwarded-Proto` would trust
+ * a client-controlled header, and a check that trusts them is not a check). `Sec-Fetch-Site`
+ * resolves that ambiguity whenever it is present — Chrome 76, Firefox 90 and Safari 16.4 all
+ * send it — so the residual gap is a browser old enough to send `Origin` without it. A
+ * deployment that wants that gap closed too lists its own origin in `cookies.trustedOrigins`,
+ * which is accepted under every `sameSite` value for exactly this reason.
  *
  * @example
  * ```typescript
@@ -89,25 +100,28 @@ export class TrustedOriginGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>()
 
     if (SAFE_METHODS.has(request.method)) return true
-    // Nothing authorized means nothing to authorize against. Startup rejects an empty list under
-    // `SameSite=None`, and rejects a NON-empty one under 'lax'/'strict' with no shared cookie
-    // domain — so an empty list here is exactly the posture where the browser withholds the
-    // cookie cross-site on its own. Enforcing anyway would refuse legitimate SAME-origin POSTs
-    // from browsers that send `Origin` and omit `Sec-Fetch-Site`, which the checks below cannot
-    // tell apart from a cross-site one.
-    if (this.options.cookies.trustedOrigins.length === 0) return true
 
     const fetchSite = request.headers['sec-fetch-site']
-    if (typeof fetchSite === 'string' && SAFE_FETCH_SITES.has(fetchSite)) return true
+    const sawFetchSite = typeof fetchSite === 'string'
+    if (sawFetchSite && SAFE_FETCH_SITES.has(fetchSite)) return true
 
     const origin = request.headers['origin']
     if (typeof origin === 'string') {
       if (this.options.cookies.trustedOrigins.includes(origin)) return true
-      throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN, 403)
+      // Refused whenever the browser has told us the request is not our own — `Sec-Fetch-Site`
+      // present and not safe — and whenever a list exists to be checked against. The remaining
+      // combination (no `Sec-Fetch-Site`, empty list) is the one this guard cannot decide: it
+      // has no way to know whether `origin` is its own. Allowing it is the deliberate choice
+      // documented on the class; the alternative refuses every same-origin POST from those
+      // browsers, which is a broken deployment rather than a hardened one.
+      if (sawFetchSite || this.options.cookies.trustedOrigins.length > 0) {
+        throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN, 403)
+      }
+      return true
     }
 
     // A browser that sent `Sec-Fetch-Site` would also have sent `Origin` here.
-    if (typeof fetchSite === 'string') {
+    if (sawFetchSite) {
       throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN, 403)
     }
 
