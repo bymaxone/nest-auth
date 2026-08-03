@@ -16,10 +16,14 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Added
 
-- **`pnpm check:exports`** runs `attw --pack . --profile strict` against the packed
-  tarball. Its absence is why both resolution defects above went unnoticed: a
-  source-level typecheck compiles `src` and never resolves through the `exports`
-  map.
+- **`pnpm check:exports`** runs `attw --profile strict` against the tarball this
+  package would publish. Its absence is why both resolution defects above went
+  unnoticed: a source-level typecheck compiles `src` and never resolves through the
+  `exports` map. The gate packs the tarball itself rather than letting `attw --pack`
+  do it, because `npm publish --dry-run` exports `npm_config_dry_run`, a nested pack
+  inherits it, and a dry pack writes no file — so the gate could not otherwise run
+  from inside `prepublishOnly`, which is the one place standing between a manual
+  `npm publish` and the registry.
 - **`pnpm check:runtime`** packs the tarball, lays it out the way npm would, and
   loads every subpath from it in ESM _and_ CommonJS. `./nextjs` is excluded by
   design — it reaches `next/server`, which Next ships without an `exports` map, so
