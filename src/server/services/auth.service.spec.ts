@@ -2686,6 +2686,22 @@ describe('AuthService', () => {
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(USER.id, 'scrypt:131072:8:1:aa:bb')
     })
 
+    // The re-read is TENANT-SCOPED. `IUserRepository.findById` takes the argument precisely so
+    // a store whose ids are not globally unique cannot answer with another tenant's row, and
+    // this is a read on behalf of one account rather than an admin flow. An unscoped answer
+    // would have the guard comparing the verified hash against a DIFFERENT row — dropping a
+    // legitimate upgrade, or admitting the write it exists to refuse.
+    it('should scope the re-read to the account tenant', async () => {
+      mockPasswordService.needsRehash.mockReturnValue(true)
+      mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
+      mockUserRepo.findById.mockClear()
+
+      await service.login(dto, mockReq)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.findById).toHaveBeenCalledWith(USER.id, USER.tenantId)
+    })
+
     // Scenario: the account's password changed between the login that scheduled the upgrade and
     // the moment the upgrade tried to write. Expected: nothing written.
     //

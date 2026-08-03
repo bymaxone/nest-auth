@@ -110,13 +110,25 @@ export class AuthService {
    * lose an upgrade, never a password — the next login reschedules it.
    *
    * @param userId - The account whose stored hash is being upgraded.
+   * @param tenantId - The tenant that account belongs to, so the re-read cannot answer with a
+   *   different tenant's row in a store whose ids are not globally unique.
    * @param plain - The plaintext just verified against `verifiedHash`.
    * @param verifiedHash - The stored hash this upgrade is allowed to replace.
    */
-  private async rehashPassword(userId: string, plain: string, verifiedHash: string): Promise<void> {
+  private async rehashPassword(
+    userId: string,
+    tenantId: string,
+    plain: string,
+    verifiedHash: string
+  ): Promise<void> {
     try {
       const upgraded = await this.passwordService.hash(plain)
-      const current = await this.userRepo.findById(userId)
+      // Tenant-scoped, because `IUserRepository.findById` takes the argument precisely so a
+      // store whose ids are not globally unique cannot answer with another tenant's row. This
+      // is not an admin flow — it is a read on behalf of one account — and an unscoped answer
+      // would have the guard comparing the verified hash against a DIFFERENT row, which either
+      // drops a legitimate upgrade or admits a write the guard exists to refuse.
+      const current = await this.userRepo.findById(userId, tenantId)
       if (current?.passwordHash !== verifiedHash) {
         this.logger.log(`rehash on verify skipped — the stored hash changed userId=${userId}`)
         return
@@ -398,7 +410,7 @@ export class AuthService {
     // parameters would be to invalidate every stored hash. Fire-and-forget, so a slow or
     // failing write never delays or breaks a login that has already succeeded.
     if (this.passwordService.needsRehash(user.passwordHash)) {
-      void this.rehashPassword(user.id, dto.password, user.passwordHash)
+      void this.rehashPassword(user.id, user.tenantId, dto.password, user.passwordHash)
     }
 
     // MFA challenge path.
