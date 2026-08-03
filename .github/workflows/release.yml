@@ -78,12 +78,34 @@ jobs:
       - name: Verify (typecheck · lint · test · build)
         run: pnpm prepublishOnly
 
+      - name: Verify published type resolution
+        # attw packs the tarball and resolves every entry point the way each
+        # resolution mode does. A step rather than a prepublishOnly entry: the
+        # publish below passes --ignore-scripts, so prepublishOnly does not run
+        # on that path.
+        run: pnpm check:exports
+
+      - name: Consumer load
+        # attw proves the declarations resolve; it never runs the JavaScript.
+        run: pnpm check:runtime
+
       - name: Publish to npm with provenance
-        # OIDC trusted publishing — pnpm delegates to npm CLI, which exchanges
-        # the GitHub OIDC token (`id-token: write` above) for a short-lived
-        # publish credential. `--no-git-checks` is required because the CI
-        # runner checks out a detached HEAD at the tag SHA.
-        run: pnpm publish --provenance --no-git-checks
+        # `npm publish`, not `pnpm publish`. The registry's `readme` field is
+        # populated from the publish request, and pnpm 11 does not send it — every
+        # package in this family published under pnpm 11 carries an empty `readme`,
+        # which renders the npm page with no documentation at all. It already cost
+        # this family two corrective patch releases.
+        #
+        # Authentication is OIDC trusted publishing: the npm CLI exchanges the
+        # GitHub OIDC token (`id-token: write` above) for a short-lived publish
+        # credential, so no token secret is involved. `--access public` replaces
+        # pnpm's `--no-git-checks`; npm performs no git check on publish, and the
+        # scope needs an explicit public access flag.
+        #
+        # `--ignore-scripts`: npm runs `prepublishOnly` on publish, and this job
+        # already ran it as its own step. Without the flag it runs twice, and the
+        # second run rebuilds the `dist/` the gates just validated.
+        run: npm publish --provenance --access public --ignore-scripts
 
       - name: Extract release notes from CHANGELOG
         # Pulls the section for the current tag out of CHANGELOG.md so the
