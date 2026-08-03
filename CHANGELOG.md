@@ -262,7 +262,13 @@ against `better-auth`. Every change here has a matching change on the Rust side,
   it as _Masquerading as ESM_ on all five subpaths of the published `1.0.11`.
 - **`node10` type resolution failed outright**, the manifest carrying no `main`,
   `module`, `types` or `typesVersions`. A resolver that does not read the
-  `exports` map found nothing at all.
+  `exports` map found nothing at all. Each `typesVersions` entry lists the
+  CommonJS declaration first and the ESM one as a fallback: a resolver old enough
+  to ignore the `exports` map may also be old enough not to load a `.d.cts`, and
+  would then find no declarations at all — the state `typesVersions` exists to
+  prevent. TypeScript takes the first path that resolves, so nothing changes for a
+  toolchain that understands `.d.cts`. `@types/react` 19 ships the same shape for
+  TypeScript 5.0 and below.
 - **Four README examples did not compile against the package they document.** The
   module-registration example omitted `rateLimit`, which is a required option group;
   the client example omitted `baseUrl` and a comment claimed it was needed only
