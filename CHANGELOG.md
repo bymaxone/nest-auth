@@ -16,6 +16,21 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Added
 
+- **`pnpm check:exports`** runs `attw --profile strict` against the tarball this
+  package would publish. Its absence is why both resolution defects above went
+  unnoticed: a source-level typecheck compiles `src` and never resolves through the
+  `exports` map. The gate packs the tarball itself rather than letting `attw --pack`
+  do it, because `npm publish --dry-run` exports `npm_config_dry_run`, a nested pack
+  inherits it, and a dry pack writes no file — so the gate could not otherwise run
+  from inside `prepublishOnly`, which is the one place standing between a manual
+  `npm publish` and the registry.
+- **`pnpm check:runtime`** packs the tarball, lays it out the way npm would, and
+  loads every subpath from it in ESM _and_ CommonJS. `./nextjs` is excluded by
+  design — it reaches `next/server`, which Next ships without an `exports` map, so
+  a bare ESM specifier cannot resolve it outside a bundler, and under CommonJS it
+  trips Next's own Server-Component guard. Both are Next's behaviour, not this
+  package's.
+
 - **Refresh-token reuse detection by family lineage** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts), [`src/server/services/token-manager.service.ts`](src/server/services/token-manager.service.ts)). A login opens a family; every rotation inherits it; replaying a consumed token past its grace window revokes that lineage — and only that lineage. Previously a theft signed the user out of every device they owned. Platform rotation gains the same detection, which it never had.
 - **Bulk access-token revocation by epoch** ([`src/server/redis/auth-redis.service.ts`](src/server/redis/auth-redis.service.ts)). A per-user generation counter replaces the `utc:` cutoff timestamp. The counter has no clock semantics — a token issued in the same second as a password reset was previously indistinguishable from one issued just before it — and does not depend on the token carrying a well-formed `iat`.
 - **Cross-site request refusal** ([`src/server/guards/trusted-origin.guard.ts`](src/server/guards/trusted-origin.guard.ts)). `Origin` / `Sec-Fetch-Site` verification on cookie-authenticated writes. `SameSite` covers this for `lax`/`strict`; it does not for `SameSite=None`, which this library allows and which sends the session cookie cross-site. On by default; `cookies.trustedOrigins` is required as soon as `cookies.sameSite: 'none'` is set.
@@ -192,6 +207,14 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Changed
 
+- **The release publishes with `npm publish` rather than `pnpm publish`.** pnpm 11
+  does not send the registry's `readme` field; every package in this family
+  published under it carries an empty one, which renders the npm page with no
+  documentation. It already cost this family two corrective patch releases.
+- **Dependabot groups the `github/codeql-action/*` bumps.** Split one per
+  sub-action, merging any single one leaves the default branch with mismatched
+  versions — `init` writes a config that `analyze` refuses to read back.
+
 - **The stored password hash records the parameters it was written under** ([`src/server/services/password.service.ts`](src/server/services/password.service.ts)). The format is now `scrypt:{N}:{r}:{p}:{salt}:{derived}`. Without this a verify can only assume the cost configured today, which made `password.costFactor` unchangeable: raise it and every stored hash becomes unreproducible — every user locked out, irreversibly, because the value they were derived under is gone. No test could see it, because a suite that writes and reads inside one configuration never represents "written yesterday, read today under a new setting". `rust-auth` has always carried its parameters (PHC strings); this is the same guarantee.
 - **Rehash on verify** ([`src/server/services/auth.service.ts`](src/server/services/auth.service.ts)). A hash written under weaker parameters is re-derived at the current cost after a successful login and stored, fire-and-forget. This is what makes raising the cost factor a migration rather than a mass invalidation — `rust-auth` had it, this side did not.
 - **`mfaEnabled` is required on a stored session record.** It used to default to `false` when absent, which turns a truncated or corrupt record into a silent second-factor bypass: the gate refuses only a token whose claims say `mfaEnabled && !mfaVerified`, so a missing field reads as "no second factor here" and the rotated token clears every MFA-gated route. Refusing the record costs the holder a login; defaulting it costs the account. Same change on both sides.
@@ -232,6 +255,29 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 - **The unreachable platform branches in the dashboard MFA controller** ([`src/server/controllers/mfa.controller.ts`](src/server/controllers/mfa.controller.ts)). `JwtAuthGuard` runs `assertTokenType(payload, 'dashboard')`, so a platform token never reaches it — the platform surface has its own controller. The tests that covered the arm were feeding the methods a payload the guard would have refused, which is how a branch stays at 100% while being unreachable.
 
 ### Fixed
+
+- **CommonJS consumers resolved ESM type declarations, on every subpath.** The
+  `exports` map declared a single `types` condition, so `require()` landed on
+  `.d.ts` instead of the `.d.cts` that was being built all along — `attw` reports
+  it as _Masquerading as ESM_ on all five subpaths of the published `1.0.11`.
+- **`node10` type resolution failed outright**, the manifest carrying no `main`,
+  `module`, `types` or `typesVersions`. A resolver that does not read the
+  `exports` map found nothing at all.
+- **Four README examples did not compile against the package they document.** The
+  module-registration example omitted `rateLimit`, which is a required option group;
+  the client example omitted `baseUrl` and a comment claimed it was needed only
+  cross-origin, when `AuthClientConfig` requires it (a relative `'/api'` is what
+  routes through the Next.js proxy); a component read `user.name` after checking
+  `status`, which does not narrow the separate `user` field away from `null`; and the
+  proxy example passed `process.env.JWT_SECRET` into an optional property, which
+  `exactOptionalPropertyTypes` refuses. Every one of them is a type error the moment
+  a reader pastes it. `pnpm check:published` compiles the README's snippets against
+  `dist/`, and it was not run before.
+- **`check:published` collected links from inside fenced code blocks.** An
+  `<a href="${url}">` in an example email template is a string the example builds at
+  runtime, not a link a reader can click, and the checker tried to resolve the
+  placeholder as a repository path. It now reads the prose, as the anchor check
+  already did.
 
 - **The platform guard never read the token epoch back** ([`src/server/guards/jwt-platform.guard.ts`](src/server/guards/jwt-platform.guard.ts)). Platform access tokens have carried an `epoch` stamp since they were introduced — issuing reads `pep:{sub}` — but the guard never consulted it, so a platform epoch bump revoked nothing: the mechanism existed on the wire and was dead on the door. `rust-auth`'s verify has always enforced the admin epoch; the guard now mirrors `JwtAuthGuard` with the platform key.
 - **An auth-state change now revokes the outstanding access tokens too** ([`src/server/services/mfa.service.ts`](src/server/services/mfa.service.ts), [`src/server/services/platform-auth.service.ts`](src/server/services/platform-auth.service.ts)). Enabling or disabling MFA, and the platform "log out everywhere", invalidated the refresh sessions but left every access token working to expiry. For MFA enable that is the worst possible window: every pre-enable token is stamped `mfaEnabled: false`, and the MFA gate refuses only `mfaEnabled && !mfaVerified` — so a stolen token kept clearing every MFA-gated route at the exact moment the user enabled a second factor because they suspected that theft. All three flows now advance the plane-scoped token epoch alongside the session sweep, the same rule the password-reset flow already applied. ASVS requires stateless tokens relied on for access control to be revocable on an auth-state change; same change on both sides.
@@ -594,7 +640,12 @@ The full e2e count goes from **9 suites / 59 tests** to **14 suites / 89 tests**
 - React subpath specs cover the `loading → authenticated / unauthenticated` state machine, revalidation loop, `onSessionExpired` firing policy (transition-only, not on mount or explicit logout), MFA challenge short-circuit, and the three hook selectors
 - Existing `error-codes.spec.ts` drift guard between `server` and `shared` `AUTH_ERROR_CODES`
 
-## [1.0.0] - 2026-04-16
+## Pre-release development — 2026-04-16
+
+This section predates the first publish. `1.0.0` reached npm on 2026-05-25 and is
+the section above; what follows is the scaffold-and-foundation work that led to it,
+kept for history and deliberately not labelled as a release — no such version was
+ever installable.
 
 ### Added
 
@@ -934,3 +985,17 @@ The full e2e count goes from **9 suites / 59 tests** to **14 suites / 89 tests**
 - Phase 4 session tests cover: `createSession` FIFO eviction, `listSessions` `isCurrent` marking, `revokeSession` ownership check, `revokeAllExceptCurrent` current-session preservation, `rotateSession` atomic rename, and stale member cleanup
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
+
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...HEAD
+[1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
+[1.0.10]: https://github.com/bymaxone/nest-auth/compare/v1.0.9...v1.0.10
+[1.0.9]: https://github.com/bymaxone/nest-auth/compare/v1.0.8...v1.0.9
+[1.0.8]: https://github.com/bymaxone/nest-auth/compare/v1.0.7...v1.0.8
+[1.0.7]: https://github.com/bymaxone/nest-auth/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/bymaxone/nest-auth/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/bymaxone/nest-auth/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/bymaxone/nest-auth/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/bymaxone/nest-auth/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/bymaxone/nest-auth/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/bymaxone/nest-auth/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/bymaxone/nest-auth/releases/tag/v1.0.0

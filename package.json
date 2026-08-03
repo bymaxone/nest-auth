@@ -22,34 +22,62 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/server/index.d.ts",
-      "import": "./dist/server/index.mjs",
-      "require": "./dist/server/index.cjs"
+      "import": {
+        "types": "./dist/server/index.d.ts",
+        "default": "./dist/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/server/index.d.cts",
+        "default": "./dist/server/index.cjs"
+      }
     },
     "./shared": {
-      "types": "./dist/shared/index.d.ts",
-      "import": "./dist/shared/index.mjs",
-      "require": "./dist/shared/index.cjs"
+      "import": {
+        "types": "./dist/shared/index.d.ts",
+        "default": "./dist/shared/index.mjs"
+      },
+      "require": {
+        "types": "./dist/shared/index.d.cts",
+        "default": "./dist/shared/index.cjs"
+      }
     },
     "./client": {
-      "types": "./dist/client/index.d.ts",
-      "import": "./dist/client/index.mjs",
-      "require": "./dist/client/index.cjs"
+      "import": {
+        "types": "./dist/client/index.d.ts",
+        "default": "./dist/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/client/index.d.cts",
+        "default": "./dist/client/index.cjs"
+      }
     },
     "./react": {
-      "types": "./dist/react/index.d.ts",
-      "import": "./dist/react/index.mjs",
-      "require": "./dist/react/index.cjs"
+      "import": {
+        "types": "./dist/react/index.d.ts",
+        "default": "./dist/react/index.mjs"
+      },
+      "require": {
+        "types": "./dist/react/index.d.cts",
+        "default": "./dist/react/index.cjs"
+      }
     },
     "./nextjs": {
-      "types": "./dist/nextjs/index.d.ts",
-      "import": "./dist/nextjs/index.mjs",
-      "require": "./dist/nextjs/index.cjs"
-    }
+      "import": {
+        "types": "./dist/nextjs/index.d.ts",
+        "default": "./dist/nextjs/index.mjs"
+      },
+      "require": {
+        "types": "./dist/nextjs/index.d.cts",
+        "default": "./dist/nextjs/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "pnpm clean && tsup",
+    "check:exports": "node scripts/check-exports.mjs",
     "check:published": "node scripts/check-published-surface.mjs",
+    "check:runtime": "node scripts/check-consumer-runtime.mjs",
     "clean": "rm -rf dist coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -59,8 +87,8 @@
     "mutation:dry-run": "stryker run --dryRunOnly",
     "mutation:incremental": "stryker run --incremental",
     "prepare": "husky",
-    "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build",
-    "release": "pnpm publish --provenance",
+    "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build && pnpm size && pnpm check:exports && pnpm check:published && pnpm check:runtime",
+    "release": "npm publish --provenance --access public",
     "size": "node scripts/check-size.mjs",
     "test": "jest",
     "test:all": "pnpm test && pnpm test:e2e",
@@ -140,6 +168,7 @@
     }
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@eslint/js": "^9.39.4",
@@ -214,6 +243,7 @@
   },
   "publishConfig": {
     "access": "public",
+    "provenance": true,
     "registry": "https://registry.npmjs.org/"
   },
   "pnpm": {
@@ -225,6 +255,25 @@
       "sharp@<0.35.0": ">=0.35.0",
       "tmp@<0.2.6": ">=0.2.6",
       "ws@<8.20.1": ">=8.20.1"
+    }
+  },
+  "main": "./dist/server/index.cjs",
+  "module": "./dist/server/index.mjs",
+  "types": "./dist/server/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "shared": [
+        "./dist/shared/index.d.cts"
+      ],
+      "client": [
+        "./dist/client/index.d.cts"
+      ],
+      "react": [
+        "./dist/react/index.d.cts"
+      ],
+      "nextjs": [
+        "./dist/nextjs/index.d.cts"
+      ]
     }
   }
 }

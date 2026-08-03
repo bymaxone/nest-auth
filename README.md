@@ -232,6 +232,10 @@ export class PrismaUserRepository implements IUserRepository {
     await this.prisma.user.update({ where: { id }, data: { emailVerified: verified } })
   }
 
+  async updateEmail(id: string, email: string): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { email: email.toLowerCase() } })
+  }
+
   async findByOAuthId(
     provider: string,
     providerId: string,
@@ -410,6 +414,10 @@ import {
           refreshExpiresInDays: 7
         },
         tokenDelivery: 'cookie', // 'cookie' | 'bearer' | 'both'
+        // Required while the limiter is on, and neither value can be a default:
+        // 'peer' behind a proxy reads the proxy's address for every request, and
+        // 'trusted-proxy' without one trusts a header the client can forge.
+        rateLimit: { clientIpSource: 'trusted-proxy' }, // 'peer' | 'trusted-proxy'
         roles: {
           hierarchy: {
             admin: ['manager', 'user'],
@@ -441,13 +449,11 @@ export class AppModule {}
 ```typescript
 // users.controller.ts
 import { Controller, Get, UseGuards } from '@nestjs/common'
-import {
-  JwtAuthGuard,
-  RolesGuard,
-  Roles,
-  CurrentUser,
-  DashboardJwtPayload
-} from '@bymax-one/nest-auth'
+import { JwtAuthGuard, RolesGuard, Roles, CurrentUser } from '@bymax-one/nest-auth'
+// `import type` is required for a type used in a decorated signature: with
+// `emitDecoratorMetadata` and `isolatedModules`, a value import would be emitted
+// into the metadata and fail to erase (TS1272).
+import type { DashboardJwtPayload } from '@bymax-one/nest-auth'
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -478,8 +484,10 @@ import { AuthProvider } from '@bymax-one/nest-auth/react'
 import { createAuthClient } from '@bymax-one/nest-auth/client'
 
 const authClient = createAuthClient({
-  // Same-origin calls go through the Next.js proxy routes under
-  // `/api/auth/*`. Set `baseUrl` only when calling a cross-origin API.
+  // Same-origin: a relative base sends every call through the Next.js
+  // proxy routes — `'/api'` plus the default `routePrefix` composes
+  // `/api/auth/*`. Use an absolute origin for a cross-origin API.
+  baseUrl: '/api'
 })
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -501,7 +509,9 @@ export function Profile() {
   const { logout } = useAuth()
 
   if (status === 'loading') return <div>Loading…</div>
-  if (status === 'unauthenticated') return <div>Please log in</div>
+  // `status` and `user` are separate fields, so the status check alone does
+  // not narrow `user` away from null — test the one you are about to read.
+  if (!user) return <div>Please log in</div>
 
   return (
     <div>
@@ -534,7 +544,7 @@ export const { proxy } = createAuthProxy({
   loginPath: '/auth/login',
   getDefaultDashboard: (role) => (role === 'admin' ? '/dashboard/admin' : '/dashboard'),
   apiBase: process.env.API_BASE_URL!,
-  jwtSecret: process.env.JWT_SECRET,
+  jwtSecret: process.env.JWT_SECRET!,
   cookieNames: {
     access: 'access_token',
     refresh: 'refresh_token',

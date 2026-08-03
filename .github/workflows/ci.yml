@@ -38,7 +38,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Full history: the published-surface gate cross-checks every `v*.*.*` tag
+      # against a CHANGELOG section, and a shallow clone has no tags to find —
+      # the check would pass by having nothing to compare.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
       - name: Build all subpaths
         run: pnpm build
@@ -55,6 +60,12 @@ jobs:
           echo "All 5 subpaths produced ESM + CJS + .d.ts + .d.cts"
       - name: Bundle size budget
         run: pnpm size
+      - name: Type resolution across module systems
+        run: pnpm check:exports
+      - name: Load every subpath from the tarball (ESM + CJS)
+        run: pnpm check:runtime
+      - name: Documentation matches the built package
+        run: pnpm check:published
 
   security:
     if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
