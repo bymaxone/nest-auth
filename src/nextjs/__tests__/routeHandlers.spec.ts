@@ -1103,3 +1103,66 @@ describe('cross-site callers are refused before any cookie is written', () => {
     expect(response.status).toBe(200)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The cookie Domain is validated at construction
+// ---------------------------------------------------------------------------
+
+/**
+ * `serializeClearCookie` interpolates the domain straight into a `Set-Cookie` header, and its
+ * JSDoc states the same pre-condition the name and the path carry: the value must have been
+ * validated at factory-construction time, because the helper performs no sanitisation of its
+ * own. The field was added without that check.
+ *
+ * `cookieDomain` is consumer configuration rather than request input, so reaching it needs a
+ * mistake in the host app rather than an attacker — but a `;` closes the `Domain` attribute and
+ * appends another, and a CR/LF ends the header and starts a new one. Validating at construction
+ * turns both into a startup error the developer sees immediately instead of a header the
+ * browser reads.
+ */
+describe('cookieDomain is rejected at factory construction, not at request time', () => {
+  const cookieNames = {
+    access: 'access_token',
+    refresh: 'refresh_token',
+    hasSession: 'has_session'
+  }
+
+  // Spread rather than passed as `cookieDomain: undefined` — `exactOptionalPropertyTypes` is
+  // on, so an explicit `undefined` is not the same type as an absent key, and "absent" is the
+  // case the last assertion below is about.
+  const factories = {
+    logout: (cookieDomain?: string) =>
+      createLogoutHandler({
+        apiBase: 'https://api.example.com',
+        mode: 'status',
+        cookieNames,
+        ...(cookieDomain === undefined ? {} : { cookieDomain })
+      }),
+    silentRefresh: (cookieDomain?: string) =>
+      createSilentRefreshHandler({
+        apiBase: 'https://api.example.com',
+        loginPath: '/login',
+        cookieNames,
+        ...(cookieDomain === undefined ? {} : { cookieDomain })
+      })
+  }
+
+  const cases = (['logout', 'silentRefresh'] as const).flatMap((name) =>
+    (['example.com; Path=/', 'example.com\r\nSet-Cookie: a=b', 'example .com', ''] as const).map(
+      (domain) => [name, domain] as const
+    )
+  )
+
+  it.each(cases)('%s refuses the domain %j', (name, domain) => {
+    expect(() => factories[name](domain)).toThrow(/invalid cookie domain/)
+  })
+
+  it.each(['logout', 'silentRefresh'] as const)('%s accepts a real shared-domain value', (name) => {
+    expect(() => factories[name]('.example.com')).not.toThrow()
+  })
+
+  // Optional means optional: omitting it must not trip the check.
+  it.each(['logout', 'silentRefresh'] as const)('%s accepts an absent domain', (name) => {
+    expect(() => factories[name]()).not.toThrow()
+  })
+})
