@@ -177,6 +177,21 @@ export function AuthProvider({
   // cycle to flush. A plain `useEffect` sync lags by one tick and
   // masked a race where `onSessionExpired` could fire spuriously.
   const statusRef = useRef<AuthStatus>(INITIAL_STATE.status)
+  // Bumped by every DELIBERATE session transition — logout, login, register. `revalidate`
+  // reads it before its request and drops its own result if it moved while the request was in
+  // flight.
+  //
+  // Without it, a `getMe()` started before a logout and answered after it resurrected the
+  // session: `logout()` dispatched `CLEAR_SESSION`, the UI showed signed-out, and then the
+  // in-flight response — a legitimate 200, issued before the server revoked anything —
+  // dispatched `SET_USER` unconditionally. `status` went back to `authenticated`, the profile
+  // returned to context, and `useAuthStatus().isAuthenticated`, which this library's own
+  // JSDoc calls safe to gate protected routes on, answered `true` again. On a shared or kiosk
+  // machine that renders the previous person's account to the next one.
+  //
+  // The window is one round trip, and the five-minute interval tick and any focus-triggered
+  // `refresh()` both open it without the user doing anything unusual.
+  const sessionGenerationRef = useRef(0)
 
   useEffect(() => {
     onSessionExpiredRef.current = onSessionExpired
@@ -223,10 +238,17 @@ export function AuthProvider({
    */
   const revalidate = useCallback(
     async (isInitial: boolean): Promise<void> => {
+      // Captured before the request; compared after it. A deliberate transition that lands in
+      // between makes this result stale, and a stale result must not be applied in either
+      // direction — not the user on success, and not `onSessionExpired` on a 401 for a
+      // session the caller already ended.
+      const generation = sessionGenerationRef.current
       try {
         const user = await clientRef.current.getMe()
+        if (sessionGenerationRef.current !== generation) return
         syncedDispatch({ type: 'SET_USER', payload: { user, timestamp: new Date() } })
       } catch (error) {
+        if (sessionGenerationRef.current !== generation) return
         const wasAuthenticated = statusRef.current === 'authenticated'
         if (isSessionExpiredError(error)) {
           if (!isInitial && wasAuthenticated) {
@@ -287,6 +309,9 @@ export function AuthProvider({
           syncedDispatch({ type: 'CLEAR_SESSION' })
           return result
         }
+        // Same reason as logout: a `getMe()` issued before this call answers for the PREVIOUS
+        // session, and applying it would overwrite the identity just established.
+        sessionGenerationRef.current += 1
         syncedDispatch({ type: 'SET_USER', payload: { user: result.user, timestamp: new Date() } })
         return result
       } catch (error) {
@@ -307,6 +332,9 @@ export function AuthProvider({
       syncedDispatch({ type: 'SET_LOADING' })
       try {
         const result = await clientRef.current.register(data)
+        // Same reason as logout: a `getMe()` issued before this call answers for the PREVIOUS
+        // session, and applying it would overwrite the identity just established.
+        sessionGenerationRef.current += 1
         syncedDispatch({ type: 'SET_USER', payload: { user: result.user, timestamp: new Date() } })
         return result
       } catch (error) {
@@ -331,6 +359,10 @@ export function AuthProvider({
       // after this `finally` runs so the caller learns the server
       // call did not complete. See `AuthContextValue.logout` JSDoc
       // for the documented throw contract.
+      //
+      // Bumped BEFORE the dispatch: a `getMe()` already in flight must be discarded when it
+      // lands, or it re-authenticates a session the user just ended.
+      sessionGenerationRef.current += 1
       syncedDispatch({ type: 'CLEAR_SESSION' })
     }
   }, [syncedDispatch])
