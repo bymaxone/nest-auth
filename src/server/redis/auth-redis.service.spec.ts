@@ -371,6 +371,65 @@ describe('AuthRedisService', () => {
     })
   })
 
+  describe('pruneExpiredGraceMembers', () => {
+    // Scenario: the sweep that keeps the per-user index from growing without bound. Expected:
+    // it inspects only grace members, and only removes the ones whose key is already gone.
+    // Why: a rotation adds `rp:{old}` as a member and only a full revoke-all ever removed it,
+    // while the `rp:` KEY dies with the 30-second grace window — so the index gained one
+    // permanent entry per refresh, with its own TTL re-armed each time. Every reader of the
+    // index is linear in its size, so this is a growth defect with an amplifier attached.
+    it('removes only the grace members whose pointer has expired', async () => {
+      mockRedis.eval.mockResolvedValue(2)
+
+      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(2)
+
+      const [script, numKeys, key, namespace, prefix] = mockRedis.eval.mock.calls[0] as unknown as [
+        string,
+        number,
+        string,
+        string,
+        string
+      ]
+      expect(numKeys).toBe(1)
+      expect(key).toBe(prefixed('sess:u1'))
+      expect(namespace).toBe('auth')
+      expect(prefix).toBe('rp:')
+      // Only members carrying the grace prefix are considered — a live `rt:` member must
+      // survive a sweep whose whole job is tidying pointers.
+      expect(script).toContain('string.sub(member, 1, string.len(grace)) == grace')
+      // And among those, only the ones whose key is gone. A pointer still inside its window is
+      // what lets a revoke-all also kill a token rotated away moments earlier.
+      expect(script).toContain("redis.call('EXISTS', ns .. ':' .. member) == 0")
+      expect(script).toContain("redis.call('SREM', KEYS[1], member)")
+    })
+
+    // The platform plane sweeps its own index under its own prefix: the two id spaces come
+    // from different repositories and may collide.
+    it('sweeps the platform index under the platform prefix', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await service.pruneExpiredGraceMembers('psess:a1', 'prp:')
+
+      const call = mockRedis.eval.mock.calls[0] as unknown[]
+      expect(call).toContain(prefixed('psess:a1'))
+      expect(call).toContain('prp:')
+    })
+
+    // `eval` answers `unknown`, and a client that surfaced the Lua integer as a string would
+    // make a numeric read `NaN` — which is not a count, and would misreport the sweep in any
+    // log or metric built on it.
+    it.each([
+      ['an integer reply', 3, 3],
+      ['the string "3"', '3', 3],
+      ['a nil reply', null, 0],
+      ['an unexpected shape', {}, 0]
+    ])('reads %s as a count', async (_label, reply, expected) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(expected)
+    })
+  })
+
   describe('rotateRefreshSession', () => {
     const BUNDLE = {
       kind: 'dashboard' as const,

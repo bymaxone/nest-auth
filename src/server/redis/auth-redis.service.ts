@@ -807,6 +807,60 @@ export class AuthRedisService {
   }
 
   /**
+   * Drops the grace-pointer members whose keys have already expired.
+   *
+   * A rotation removes `rt:{old}` from the index and adds two members: `rt:{new}` and
+   * `rp:{old}`. The `rp:` KEY dies with the grace window — 30 seconds by default — but the
+   * MEMBER was only ever removed by a full revoke-all, so the index gained one permanent
+   * ~68-byte entry per rotation, and the rotation re-arms the set's own TTL each time. The set
+   * never aged out while the account was in use.
+   *
+   * That is not merely untidy. Every reader of the index is linear in its size:
+   * `listSessions` ships the whole set over the wire, `revokeAllExceptCurrent` issues two
+   * sequential round trips per grace member, and `invalidateUserSessions` iterates it inside a
+   * Lua script, which blocks the whole single-threaded store. An attacker holding one stolen
+   * refresh token and rotating at the route limit adds ~14k members a day to their own index,
+   * with no ceiling; a merely active user accrues thousands a year.
+   *
+   * Called from the two paths that already walk the index — a login enforcing the session cap
+   * and a session listing — so the growth is bounded by how long an account can go between
+   * them, and any legitimate interaction heals it. The rotation path deliberately does NOT
+   * call this: it is the hot path, and an O(n) sweep there would trade a slow leak for a slow
+   * refresh.
+   *
+   * Grace members whose key is still live are left alone. They are what lets a revoke-all also
+   * kill a token that was rotated away moments earlier but can still be recovered.
+   *
+   * @param setKey - The un-namespaced index key (`sess:{id}` or `psess:{id}`).
+   * @param gracePrefix - Member prefix for rotation grace pointers (`rp:` or `prp:`).
+   * @returns How many dead members were dropped.
+   */
+  async pruneExpiredGraceMembers(setKey: string, gracePrefix: string): Promise<number> {
+    const removed = await this.eval(
+      `local members = redis.call('SMEMBERS', KEYS[1])
+       local ns, grace = ARGV[1], ARGV[2]
+       local removed = 0
+       for _, member in ipairs(members) do
+         if string.sub(member, 1, string.len(grace)) == grace then
+           -- The member IS the key suffix, so its own liveness is one EXISTS away. A pointer
+           -- still inside its window is left in place; only the expired ones go.
+           if redis.call('EXISTS', ns .. ':' .. member) == 0 then
+             redis.call('SREM', KEYS[1], member)
+             removed = removed + 1
+           end
+         end
+       end
+       return removed`,
+      [setKey],
+      [this.namespace, gracePrefix]
+    )
+    // Narrowed rather than cast: `eval` answers `unknown`, and a client that surfaced the Lua
+    // integer reply as a string would make a numeric read `NaN`.
+    if (typeof removed === 'number') return removed
+    return typeof removed === 'string' ? Number(removed) : 0
+  }
+
+  /**
    * Atomically deletes every refresh session belonging to one identity plane.
    *
    * The set members are full key suffixes — `rt:{hash}`/`rp:{hash}` on the dashboard plane,

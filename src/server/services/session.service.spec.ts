@@ -66,6 +66,7 @@ const mockRedis = {
   srem: jest.fn<Promise<number>, [string, string]>(),
   smembers: jest.fn<Promise<string[]>, [string]>(),
   eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
+  pruneExpiredGraceMembers: jest.fn<Promise<number>, [string, string]>().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn()
 }
 
@@ -1922,6 +1923,57 @@ describe('SessionService', () => {
       const stored = JSON.parse(storedJson) as { createdAt: number }
       expect(stored.createdAt).toBeGreaterThanOrEqual(before)
       expect(stored.createdAt).toBeLessThanOrEqual(after)
+    })
+  })
+  // ---------------------------------------------------------------------------
+  // Grace-pointer accumulation in the session index
+  // ---------------------------------------------------------------------------
+
+  describe('grace-pointer pruning', () => {
+    // Scenario: the index a login and a listing walk. Expected: both ask for the dead grace
+    // members to be dropped first. Why: a rotation removes `rt:{old}` and adds TWO members —
+    // `rt:{new}` and `rp:{old}` — and only a full revoke-all ever removed the second. The
+    // `rp:` KEY expires with the 30-second grace window; the MEMBER did not, and the rotation
+    // re-arms the set's own TTL each time, so the index grew by one permanent entry per
+    // refresh and never aged out while the account was in use.
+    //
+    // It is a growth defect with an amplifier attached: every reader is linear in the set's
+    // size. `listSessions` ships the whole thing, `revokeAllExceptCurrent` issues two
+    // sequential round trips per grace member, and `invalidateUserSessions` iterates it inside
+    // a Lua script that blocks the single-threaded store. One stolen refresh token rotated at
+    // the route limit adds ~14k members a day, with no ceiling.
+    it('prunes dead grace members before enforcing the session limit', async () => {
+      mockRedis.smembers.mockResolvedValue([])
+      mockUserRepo.findById.mockResolvedValue({ id: 'user-1' })
+
+      await service.createSession('user-1', 'raw-token', '1.2.3.4', 'Chrome')
+
+      expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith('sess:user-1', 'rp:')
+    })
+
+    it('prunes dead grace members when listing sessions', async () => {
+      mockRedis.smembers.mockResolvedValue([])
+
+      await service.listSessions('user-1')
+
+      expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith('sess:user-1', 'rp:')
+    })
+
+    // A prune that throws is a tidy-up that did not happen, not a listing that should fail —
+    // the caller asked for their sessions, and the index is still readable.
+    it('still lists sessions when the prune fails', async () => {
+      mockRedis.pruneExpiredGraceMembers.mockRejectedValueOnce(new Error('redis down'))
+      mockRedis.smembers.mockResolvedValue([])
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+      try {
+        await expect(service.listSessions('user-1')).resolves.toEqual([])
+        // Let the fire-and-forget rejection settle before asserting on the log.
+        await Promise.resolve()
+        expect(warn).toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 })
