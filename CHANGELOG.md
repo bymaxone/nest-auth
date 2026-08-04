@@ -371,19 +371,6 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Security
 
-- **Secrets are no longer disclosed when an injected provider is serialized.** The signing
-  secret, its rotation predecessors, the HMAC keys derived from them and each configured
-  OAuth `clientSecret` were plain fields on the resolved options, and `AuthRedisService`
-  held its ioredis client — which carries `options.password` — in a TypeScript `private`
-  property, which is erased at runtime. The resolved options are injected into roughly a
-  dozen guards, controllers and services, so `JSON.stringify`, object spread and
-  `util.inspect` on any of them emitted key material in plaintext. That is what a
-  structured logger does when it renders its arguments, and what an error reporter does
-  when it captures the scope of a throw. Every one of those fields is now a
-  non-enumerable accessor or an ECMAScript private field, withheld from `showHidden` as
-  well. Reads are unchanged, no public type moved, and the consumer's own options object
-  is never rewritten — the OAuth provider configs are copied before being adjusted.
-
 - **`tmp` forced to `>=0.2.6` via pnpm `overrides`** ([`package.json`](package.json)). The vulnerable `tmp` (`<0.2.6`) shipped transitively through `ioredis-mock` → `fengari` (dev-only). Dependabot cannot bump a sub-dependency, so its security update reported `security_update_not_possible`. The override resolves `tmp` to `0.2.7`, clearing the advisory. Dev-only — not present in the published bundle.
 
 ## [1.0.10] - 2026-05-26
@@ -592,19 +579,6 @@ The full e2e count goes from **9 suites / 59 tests** to **14 suites / 89 tests**
 
 ### Security
 
-- **Secrets are no longer disclosed when an injected provider is serialized.** The signing
-  secret, its rotation predecessors, the HMAC keys derived from them and each configured
-  OAuth `clientSecret` were plain fields on the resolved options, and `AuthRedisService`
-  held its ioredis client — which carries `options.password` — in a TypeScript `private`
-  property, which is erased at runtime. The resolved options are injected into roughly a
-  dozen guards, controllers and services, so `JSON.stringify`, object spread and
-  `util.inspect` on any of them emitted key material in plaintext. That is what a
-  structured logger does when it renders its arguments, and what an error reporter does
-  when it captures the scope of a throw. Every one of those fields is now a
-  non-enumerable accessor or an ECMAScript private field, withheld from `showHidden` as
-  well. Reads are unchanged, no public type moved, and the consumer's own options object
-  is never rewritten — the OAuth provider configs are copied before being adjusted.
-
 - **Forced patched versions of four transitive dependencies via `pnpm.overrides`** to close GitHub Security Advisories surfaced by OpenSSF Scorecard's `Vulnerabilities` check. None of these affect runtime behavior of the published package — they live exclusively in the build/test dependency graph — but pinning them tightens our supply-chain posture and removes the warnings from any consumer running `npm audit` against a clone of the repo:
   - `brace-expansion@>=5.0.6` ([GHSA-jxxr-4gwj-5jf2](https://github.com/advisories/GHSA-jxxr-4gwj-5jf2) — DoS via large numeric range bypassing `max` protection)
   - `postcss@>=8.5.10` ([GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) — XSS via unescaped `</style>` in CSS stringify output)
@@ -674,19 +648,6 @@ The full e2e count goes from **9 suites / 59 tests** to **14 suites / 89 tests**
 - `onSessionExpired` callback errors are now surfaced via `console.warn` instead of being silently swallowed, aiding consumer debugging without breaking the fetch contract
 
 ### Security
-
-- **Secrets are no longer disclosed when an injected provider is serialized.** The signing
-  secret, its rotation predecessors, the HMAC keys derived from them and each configured
-  OAuth `clientSecret` were plain fields on the resolved options, and `AuthRedisService`
-  held its ioredis client — which carries `options.password` — in a TypeScript `private`
-  property, which is erased at runtime. The resolved options are injected into roughly a
-  dozen guards, controllers and services, so `JSON.stringify`, object spread and
-  `util.inspect` on any of them emitted key material in plaintext. That is what a
-  structured logger does when it renders its arguments, and what an error reporter does
-  when it captures the scope of a throw. Every one of those fields is now a
-  non-enumerable accessor or an ECMAScript private field, withheld from `showHidden` as
-  well. Reads are unchanged, no public type moved, and the consumer's own options object
-  is never rewritten — the OAuth provider configs are copied before being adjusted.
 
 - Split `tsconfig.json` into a root config (used for editors, client, react, nextjs) and a dedicated `tsconfig.server.json` (lib `ES2022` only, no `DOM`) so server-side code cannot silently typecheck against browser globals like `window`, `document`, or `localStorage`; `pnpm typecheck` now runs both configs
 - **JWT algorithm pinning** in `verifyJwtToken` (HS256 only) blocks `alg: none`, RS256→HS256 confusion, `alg: 'HS256 '` whitespace bypass, and the `HS384`/`HS512` downgrade attempts before any key material is imported. Empty-string secrets fail closed instead of silently degrading to decode-only mode
@@ -1016,19 +977,6 @@ ever installable.
 ---
 
 ### Security
-
-- **Secrets are no longer disclosed when an injected provider is serialized.** The signing
-  secret, its rotation predecessors, the HMAC keys derived from them and each configured
-  OAuth `clientSecret` were plain fields on the resolved options, and `AuthRedisService`
-  held its ioredis client — which carries `options.password` — in a TypeScript `private`
-  property, which is erased at runtime. The resolved options are injected into roughly a
-  dozen guards, controllers and services, so `JSON.stringify`, object spread and
-  `util.inspect` on any of them emitted key material in plaintext. That is what a
-  structured logger does when it renders its arguments, and what an error reporter does
-  when it captures the scope of a throw. Every one of those fields is now a
-  non-enumerable accessor or an ECMAScript private field, withheld from `showHidden` as
-  well. Reads are unchanged, no public type moved, and the consumer's own options object
-  is never rewritten — the OAuth provider configs are copied before being adjusted.
 
 - **Grace pointer survivorship fix** — `rotateFromPrimary` and `rotateFromGrace` now add grace pointer keys (`rp:{hash}`) to the `sess:{userId}` Redis SET so that `invalidateUserSessions` (called on MFA enable/disable) deletes them atomically, preventing stale refresh tokens from surviving MFA state changes
 - **Brute-force counter namespacing** — MFA challenge and disable endpoints use HMAC identifiers prefixed with `challenge:` and `disable:` respectively, preventing a pre-auth attacker from exhausting the disable counter via the public challenge endpoint

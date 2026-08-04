@@ -2770,7 +2770,9 @@ describe('resolveOptions — secret containment', () => {
 
     expect(resolved.jwt.secret).toBe(VALID_SECRET)
     expect(resolved.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
-    expect(resolved.hmacKey).toBeTruthy()
+    // Shape rather than truthiness: the key is a SHA-256 digest rendered as hex,
+    // so a mutation that truncated or re-encoded it would survive `toBeTruthy`.
+    expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
     expect(resolved.previousHmacKeys).toEqual([])
   })
 

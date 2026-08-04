@@ -4,16 +4,15 @@
  * string, set, counter, expiry, Lua eval, and atomic compound operations.
  */
 
-import { inspect } from 'node:util'
 import { createHash } from 'node:crypto'
+import { inspect } from 'node:util'
 
 import { Test } from '@nestjs/testing'
-
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { Redis } from 'ioredis'
 
-import { AuthRedisService } from './auth-redis.service'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { AuthRedisService } from './auth-redis.service'
 
 // ---------------------------------------------------------------------------
 // Test doubles
