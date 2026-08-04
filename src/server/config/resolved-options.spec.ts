@@ -2722,14 +2722,22 @@ describe('resolveOptions — password KDF memory ceiling', () => {
 describe('resolveOptions — secret containment', () => {
   const OAUTH_SECRET = 'google-client-secret-canary'
 
-  /** Minimal options plus a configured Google provider, so both secret kinds are present. */
-  const WITH_OAUTH: BymaxAuthModuleOptions = {
-    ...MINIMAL_OPTIONS,
-    oauth: {
-      google: {
-        clientId: 'client-id',
-        clientSecret: OAUTH_SECRET,
-        callbackUrl: 'https://app.example.com/auth/google/callback'
+  /**
+   * Minimal options plus a configured Google provider, so both secret kinds are present.
+   *
+   * Built per call rather than shared as a module constant: two of these tests
+   * assert that resolving does not rewrite the caller's object, which only means
+   * anything when each call gets its own.
+   */
+  function withOAuth(): BymaxAuthModuleOptions {
+    return {
+      ...MINIMAL_OPTIONS,
+      oauth: {
+        google: {
+          clientId: 'client-id',
+          clientSecret: OAUTH_SECRET,
+          callbackUrl: 'https://app.example.com/auth/google/callback'
+        }
       }
     }
   }
@@ -2741,7 +2749,7 @@ describe('resolveOptions — secret containment', () => {
     // scope of a throw, an object spread. `showHidden` is asserted because it is
     // what defeats a merely non-enumerable property — the HMAC keys derived from
     // the signing secret are key material in their own right.
-    const resolved = resolveOptions(WITH_OAUTH)
+    const resolved = resolveOptions(withOAuth())
 
     for (const rendered of [
       JSON.stringify(resolved),
@@ -2758,7 +2766,7 @@ describe('resolveOptions — secret containment', () => {
   it('still exposes every secret to the code that has to use it', () => {
     // Containment must cost nothing at the supported surface: the signer, the
     // verifier and the OAuth token exchange all read these fields.
-    const resolved = resolveOptions(WITH_OAUTH)
+    const resolved = resolveOptions(withOAuth())
 
     expect(resolved.jwt.secret).toBe(VALID_SECRET)
     expect(resolved.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
@@ -2770,10 +2778,11 @@ describe('resolveOptions — secret containment', () => {
     // The OAuth provider config arrives by reference through the spread of the
     // consumer's options. Rewriting a property there would mutate an object this
     // library does not own and make a second resolve on the same input throw.
-    const first = resolveOptions(WITH_OAUTH)
-    const second = resolveOptions(WITH_OAUTH)
+    const shared = withOAuth()
+    const first = resolveOptions(shared)
+    const second = resolveOptions(shared)
 
-    expect(Object.keys(WITH_OAUTH.oauth?.google ?? {})).toContain('clientSecret')
+    expect(Object.keys(shared.oauth?.google ?? {})).toContain('clientSecret')
     expect(first.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
     expect(second.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
   })
