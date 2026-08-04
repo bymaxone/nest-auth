@@ -5,10 +5,13 @@
  */
 
 import { createHash } from 'node:crypto'
+import { inspect } from 'node:util'
 
 import { Test } from '@nestjs/testing'
+import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
 import { AuthRedisService } from './auth-redis.service'
 
 // ---------------------------------------------------------------------------
@@ -1003,5 +1006,17 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
       await expect(service.redeemWsTicket('raw')).resolves.toStrictEqual(snapshot)
     })
+  })
+  it('keeps the Redis client out of every serialization path', () => {
+    // An ioredis instance carries `options.password` as a plain field, and this
+    // service is injected into roughly a dozen guards and services, so exposing
+    // the client puts the Redis credentials one render away from any of them.
+    const password = 'r3d1s-canary'
+    const client = { options: { password } } as unknown as Redis
+    const service = new AuthRedisService(client, { redisNamespace: 'auth' } as ResolvedOptions)
+
+    expect(JSON.stringify(service)).not.toContain(password)
+    expect(JSON.stringify({ ...service })).not.toContain(password)
+    expect(inspect(service, { depth: null, showHidden: true })).not.toContain(password)
   })
 })

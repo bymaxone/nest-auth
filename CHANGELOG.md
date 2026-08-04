@@ -335,6 +335,19 @@ against `better-auth`. Every change here has a matching change on the Rust side,
 
 ### Security
 
+- **Secrets are no longer disclosed when an injected provider is serialized.** The signing
+  secret, its rotation predecessors, the HMAC keys derived from them and each configured
+  OAuth `clientSecret` were plain fields on the resolved options, and `AuthRedisService`
+  held its ioredis client — which carries `options.password` — in a TypeScript `private`
+  property, which is erased at runtime. The resolved options are injected into roughly a
+  dozen guards, controllers and services, so `JSON.stringify`, object spread and
+  `util.inspect` on any of them emitted key material in plaintext. That is what a
+  structured logger does when it renders its arguments, and what an error reporter does
+  when it captures the scope of a throw. Every one of those fields is now a
+  non-enumerable accessor or an ECMAScript private field, withheld from `showHidden` as
+  well. Reads are unchanged, no public type moved, and the consumer's own options object
+  is never rewritten — the OAuth provider configs are copied before being adjusted.
+
 - **Peer floors raised to exclude known-vulnerable versions.** Three declared
   ranges admitted versions carrying published advisories:
 

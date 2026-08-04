@@ -308,7 +308,77 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
     })
   }
 
+  withholdSecrets(resolved)
+
   return resolved
+}
+
+/**
+ * Re-attaches a property as a non-enumerable accessor, hiding it from
+ * serialization while leaving reads untouched.
+ *
+ * A TypeScript `private` marker cannot help here: the resolved options are a
+ * plain object injected into roughly a dozen guards, controllers and services,
+ * so every one of them exposes whatever the object enumerates. `JSON.stringify`,
+ * object spread and `util.inspect` all walk enumerable own properties, which is
+ * exactly what a structured logger does when it renders its arguments and what
+ * an error reporter does when it captures the scope of a throw.
+ *
+ * An accessor rather than a non-enumerable value because
+ * `util.inspect({ showHidden: true })` — what a diagnostic dump uses — still
+ * prints a hidden data property, but not the result of a getter.
+ *
+ * @param target - The object owning the property.
+ * @param key - The property to withhold from serialization.
+ */
+function withholdFromSerialization(target: object, key: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key)
+  if (descriptor === undefined) return
+  // Read through the descriptor rather than by bracket index: the value is the
+  // same, and the property name never becomes a dynamic lookup key.
+  const value: unknown = descriptor.value
+  Object.defineProperty(target, key, {
+    get: (): unknown => value,
+    enumerable: false,
+    configurable: false
+  })
+}
+
+/**
+ * Withholds every field carrying key material from the resolved options.
+ *
+ * The signing secret and its rotation predecessors, the HMAC keys derived from
+ * them, and each configured OAuth client secret are all reachable by walking an
+ * injected provider. Hiding them at the single point where the options are built
+ * covers every present and future holder, and a consumer that logs the options
+ * object directly.
+ *
+ * @param resolved - The fully-built resolved options, mutated in place.
+ */
+function withholdSecrets(resolved: ResolvedOptions): void {
+  // `jwt` and the resolved root are objects this function's caller just built,
+  // so redefining a property on them is safe. The OAuth provider configs are
+  // not: they arrive by reference through the spread of the consumer's options,
+  // and rewriting a property there would mutate the caller's own object and
+  // make a second `resolveOptions` call on the same input throw. Each provider
+  // config is copied first, so only objects this library owns are changed.
+  withholdFromSerialization(resolved.jwt, 'secret')
+  withholdFromSerialization(resolved.jwt, 'previousSecrets')
+  withholdFromSerialization(resolved, 'hmacKey')
+  withholdFromSerialization(resolved, 'previousHmacKeys')
+
+  if (resolved.oauth === undefined) return
+  // Rebuilt through entries rather than by assigning at a computed key, so no
+  // provider name is ever used as a dynamic property sink.
+  const oauth = Object.fromEntries(
+    Object.entries(resolved.oauth).map(([provider, config]): [string, unknown] => {
+      if (typeof config !== 'object' || config === null) return [provider, config]
+      const copy: Record<string, unknown> = { ...(config as Record<string, unknown>) }
+      withholdFromSerialization(copy, 'clientSecret')
+      return [provider, copy]
+    })
+  )
+  resolved.oauth = oauth as NonNullable<ResolvedOptions['oauth']>
 }
 
 // ---------------------------------------------------------------------------
