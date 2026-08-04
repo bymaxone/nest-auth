@@ -24,6 +24,7 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { logSafe } from '../utils/log-safe'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
@@ -445,10 +446,26 @@ export class TokenManagerService {
       return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
     }
     if (outcome.kind === 'reused') {
+      // Named, on both lines. This is the strongest compromise signal the library produces —
+      // a token that was already exchanged has been presented again — and it used to be
+      // logged as bare prose, with the account it concerns reaching only a consumer who had
+      // configured `onRefreshTokenReuseDetected`. The default hooks are no-ops, so on a
+      // default deployment the one unambiguous theft signal was anonymous in the log and
+      // nowhere else. An operator reading it could tell that something happened and not to
+      // whom (ASVS 16.2.1).
+      //
+      // Two lines rather than one: the detection is the finding and the revocation is the
+      // response to it, and a `revokeFamily` that throws must not take the finding down with
+      // it. The owner is only knowable after the revocation, which reads a member record.
       this.logger.warn(
-        'reissueTokens: reuse of a consumed refresh token detected — revoking the token family'
+        `reissueTokens: reuse of a consumed refresh token detected — revoking the token family ` +
+          `familyId=${logSafe(outcome.familyId)}`
       )
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
+      this.logger.warn(
+        `reissueTokens: token family revoked after reuse detection ` +
+          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+      )
       // The one moment the library can say "this is not a guess about risk": a token that was
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
@@ -838,9 +855,16 @@ export class TokenManagerService {
       // #38 deferred platform reuse detection entirely; the family design closes that gap on
       // both planes at once.
       this.logger.warn(
-        'reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the token family'
+        `reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the ` +
+          `token family familyId=${logSafe(outcome.familyId)}`
       )
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
+      // Named for the same reason as the dashboard plane, and more so: this is the
+      // highest-privilege identity in the system.
+      this.logger.warn(
+        `reissuePlatformTokens: token family revoked after reuse detection ` +
+          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+      )
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
       this.emitReuseDetected(ownerId, outcome.familyId)

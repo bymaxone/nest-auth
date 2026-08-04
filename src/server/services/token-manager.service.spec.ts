@@ -2249,4 +2249,76 @@ describe('TokenManagerService', () => {
     // value reaches this service it is either a real binding or absent, and re-testing the
     // normalization here would pin it in a second place that could disagree with the first.
   })
+
+  // ---------------------------------------------------------------------------
+  // Reuse detection carries an identity into the log
+  // ---------------------------------------------------------------------------
+
+  describe('reuse-detection logging', () => {
+    // Scenario: a consumed refresh token presented again. Expected: the log names the account
+    // and the lineage, on both planes. Why: this is the strongest compromise signal the
+    // library produces — a token that was already exchanged has been presented a second time,
+    // so one of its two holders is not the owner — and it used to be logged as bare prose.
+    // The account reached only a consumer who had wired `onRefreshTokenReuseDetected`, and the
+    // shipped hooks are no-ops, so on a default deployment the one unambiguous theft signal
+    // was anonymous in the log and absent everywhere else. An operator could tell that
+    // something happened and not to whom (ASVS 16.2.1).
+    it.each([
+      ['dashboard', 'rt', 'reissueTokens'],
+      ['platform', 'prt', 'reissuePlatformTokens']
+    ])('names the owner and the family on the %s plane', async (plane, prefix, method) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: 'fam-stolen'
+      })
+      mockRedis.revokeFamily.mockResolvedValue({ ownerId: 'user-compromised', count: 3 })
+
+      try {
+        const call =
+          plane === 'dashboard'
+            ? service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+            : service.reissuePlatformTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+        await expect(call).rejects.toThrow(AuthException)
+
+        const lines = warn.mock.calls.map((args) => String(args[0]))
+        const named = lines.filter(
+          (line) => line.includes('user-compromised') && line.includes('fam-stolen')
+        )
+        expect(named.length).toBeGreaterThan(0)
+        expect(named.join(' ')).toContain(method)
+
+        // The detection is logged BEFORE the revocation and the owner AFTER it, so a
+        // `revokeFamily` that throws cannot take the finding down with it.
+        expect(lines.filter((line) => line.includes('fam-stolen')).length).toBe(2)
+      } finally {
+        warn.mockRestore()
+        expect(prefix).toBeTruthy()
+      }
+    })
+
+    // The finding survives a failed response. Losing the log because the revocation could not
+    // complete would leave an operator with no record of the one event they most need.
+    it('still records the detection when the family revocation fails', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: 'fam-stolen'
+      })
+      mockRedis.revokeFamily.mockRejectedValue(new Error('redis down'))
+
+      try {
+        await expect(
+          service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+        ).rejects.toThrow('redis down')
+
+        const lines = warn.mock.calls.map((args) => String(args[0]))
+        expect(lines.some((line) => line.includes('fam-stolen'))).toBe(true)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+  })
 })
