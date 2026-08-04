@@ -255,7 +255,12 @@ export const LEET_MAP: ReadonlyMap<string, string> = new Map([
  * @returns `true` when the character is decoration.
  */
 function isDecoration(char: string): boolean {
-  return /[\d\W_]/.test(char)
+  // "Not a letter", in the Unicode sense. This used to be `/[\d\W_]/`, whose `\W` is
+  // `[^A-Za-z0-9_]` — so every Cyrillic, Greek, Han, Kana, Arabic, Hebrew and Thai character
+  // counted as decoration and was stripped. A password written in any of those scripts was
+  // eaten from the end until nothing remained. rust-auth's `!c.is_alphabetic()` was already
+  // Unicode-aware here; this is the side that diverged.
+  return !/\p{L}/u.test(char)
 }
 
 /**
@@ -300,7 +305,15 @@ export function reduceToBaseWord(password: string): string {
   let reduced = ''
   for (const char of undecorated) {
     const mapped = LEET_MAP.get(char) ?? char
-    if (/[a-z0-9]/.test(mapped)) reduced += mapped
+    // Letters and numbers in any script, not just ASCII. Filtering to `[a-z0-9]` discarded
+    // every non-Latin character, so a password written in one reduced to the empty string —
+    // and an empty base is shorter than the floor below, which reads as "breached". A user
+    // signing up with a strong Russian or Japanese passphrase was told their password was
+    // commonly used, on registration, reset AND change, and pushed toward the strictly
+    // smaller ASCII keyspace. Keeping the characters also makes a consumer's non-Latin
+    // `extraBlocked` entry reachable: those are reduced through this same function, so under
+    // the old filter they all collapsed to '' and could never match anything.
+    if (/[\p{L}\p{N}]/u.test(mapped)) reduced += mapped
   }
   return reduced
 }
@@ -365,7 +378,9 @@ export class CommonPasswordChecker implements IPasswordBreachChecker {
     // be one, and none of them can be caught by a list — there is no entry to write. Four is
     // the floor because below it every string is a substring of some alphabet, which would
     // make the sequence check below meaningless rather than selective.
-    if (base.length < 4) return true
+    // Counted in CODE POINTS, not UTF-16 units: an astral character is one character to a
+    // reader and to rust-auth's `chars().count()`, and `.length` would score it as two.
+    if ([...base].length < 4) return true
 
     if (this.blocked.has(base)) return true
 

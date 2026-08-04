@@ -431,7 +431,14 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
   const authFetch: AuthFetch =
     config.authFetch ??
     createAuthFetch({
-      baseUrl,
+      // Deliberately NO `baseUrl`. This client composes the full URL itself in `url()` below,
+      // and `createAuthFetch` prepends its own `baseUrl` to any input that is not absolute —
+      // so passing it here applied the base TWICE. With the documented same-origin setting
+      // (`baseUrl: '/api'`, used by the README and by AuthProvider's own example) every call
+      // went to `/api/api/auth/*` and 404'd: login, register, logout, refresh and getMe, all
+      // of them. An absolute base hid it, because the second prepend is skipped for anything
+      // matching `^https?://` — which is why every test in this file, all of which use an
+      // absolute base AND inject a stub `authFetch`, stayed green.
       routePrefix,
       // Stryker disable next-line ConditionalExpression: spreading `{ key: undefined }` vs omitting the key is identical — createAuthFetch coalesces each option with `??`/falsy checks downstream
       ...(config.refreshEndpoint !== undefined ? { refreshEndpoint: config.refreshEndpoint } : {}),
@@ -447,11 +454,10 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
       ...(config.timeout !== undefined ? { timeout: config.timeout } : {})
     })
 
-  // When the caller supplies a custom `authFetch`, that wrapper is
-  // expected to know its own base URL — so the per-method calls
-  // pass relative paths and let the wrapper resolve them. When the
-  // wrapper was built here, it also has the base URL configured, so
-  // relative paths work in both branches.
+  // Every request URL is composed here, base included, and handed to the wrapper whole. A
+  // caller-supplied `authFetch` may still carry its own `baseUrl` for its own callers; what it
+  // receives from this client is already absolute-or-fully-composed, and `createAuthFetch`
+  // leaves such an input alone.
   const url = (path: string): string => buildUrl(baseUrl, routePrefix, path)
 
   async function post<T>(path: string, body: unknown): Promise<T> {
