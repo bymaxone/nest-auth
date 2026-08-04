@@ -1,7 +1,7 @@
 {
   "name": "@bymax-one/nest-auth",
   "version": "1.1.0",
-  "description": "Full-stack authentication and authorization package for NestJS, React and Next.js \u2014 JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
+  "description": "Full-stack authentication and authorization package for NestJS, React and Next.js — JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
   "author": "Bymax One <support@bymax.one>",
   "license": "MIT",
   "homepage": "https://github.com/bymaxone/nest-auth#readme",
