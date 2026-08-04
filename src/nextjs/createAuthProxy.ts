@@ -11,7 +11,7 @@
  * // proxy.ts
  * import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
  *
- * export const { proxy } = createAuthProxy({
+ * const authProxy = createAuthProxy({
  *   publicRoutes: ['/', '/auth/login'],
  *   publicRoutesRedirectIfAuthenticated: ['/auth/login'],
  *   protectedRoutes: [
@@ -25,6 +25,10 @@
  *   userHeaders: { userId: 'x-user-id', role: 'x-user-role', tenantId: 'x-tenant-id', tenantDomain: 'x-tenant-domain' },
  *   blockedUserStatuses: ['BANNED', 'INACTIVE', 'EXPIRED']
  * })
+ *
+ * // Bound first, then exported: Next 16 scans this file for a function exported as `proxy`
+ * // and does not recognise `export const { proxy } = ...`, which fails the build.
+ * export const proxy = authProxy.proxy
  *
  * export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] }
  * ```
@@ -181,11 +185,19 @@ export interface AuthProxyConfig {
  */
 export interface AuthProxyInstance {
   /**
-   * The Next.js 16 proxy function. Destructure and re-export:
+   * The Next.js 16 proxy function. Bind the instance, then re-export this property:
    *
    * ```ts
-   * export const { proxy } = createAuthProxy({ ... })
+   * const authProxy = createAuthProxy({ ... })
+   * export const proxy = authProxy.proxy
    * ```
+   *
+   * NOT `export const { proxy } = createAuthProxy({ ... })`. Next 16 statically scans
+   * `proxy.ts` for a function exported under that name and does not recognise a destructuring
+   * pattern, so the destructured form fails the production build outright: "The file
+   * ./proxy.ts must export a function, either as a default export or as a named 'proxy'
+   * export." It was the documented form here and in the README until a real Next build was
+   * run against the published artifact.
    */
   readonly proxy: (request: NextRequest) => Promise<NextResponse>
 
