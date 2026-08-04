@@ -346,7 +346,16 @@ function isSequential(value: string): boolean {
  * runs, and any decorated form of those — but it is not the full top-3000, and it knows
  * nothing about breach corpora. A deployment that wants that should either extend it through
  * `password.blocklist` or supply {@link HibpBreachChecker}, which checks a real breach corpus
- * over the network. This checker being the default is what makes the *baseline* honest; the
+ * over the network.
+ *
+ * **The shipped base words are ASCII.** The reduction preserves letters and numbers in any
+ * script — a strong Cyrillic, Han, Kana, Hangul, Greek, Arabic, Hebrew or Thai passphrase is
+ * admitted, and used to be refused outright with the "commonly used" error, which pushed those
+ * users onto the smaller ASCII keyspace. But the list itself has no entries in those scripts,
+ * so the equivalent of `password` in one of them passes this screen. A deployment serving
+ * those users should add the common ones for its locale to `password.blocklist`; entries are
+ * normalized through the same reduction, so a non-Latin entry matches a decorated form of
+ * itself the way an ASCII one does. This checker being the default is what makes the *baseline* honest; the
  * network check remains opt-in, because a library should not start talking to a third party
  * because it was upgraded.
  *

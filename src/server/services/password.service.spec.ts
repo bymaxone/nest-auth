@@ -470,6 +470,217 @@ describe('PasswordService', () => {
       30_000
     )
 
+    // -----------------------------------------------------------------------
+    // Cases where a WRONG parser would still answer "no" — so the assertion has
+    // to be built so the wrong parser answers "yes"
+    // -----------------------------------------------------------------------
+    //
+    // Mutation testing found these. Every case below was already "covered" by a malformed-hash
+    // test asserting `compare(...) === false` — and passed under the mutant too, because a
+    // parser that wrongly ACCEPTS a corrupt record still derives the wrong key and still
+    // answers false. An assertion that both branches satisfy pins nothing.
+    //
+    // The fix is to construct each case so the broken parser produces a hash that VERIFIES:
+    // same salt, same cost, same derived key, reached through the shape the guard exists to
+    // refuse. Then a surviving guard is the only thing standing between the input and a true.
+
+    // The canonical-encoding rule. A 16-byte salt is 22 B64 characters, of which the last
+    // carries 4 bits nothing decodes — so sixteen different strings decode to the SAME bytes.
+    // Only one of them is what an encoder writes. Without the round-trip check the sibling
+    // implementation and this one could store, and compare, different spellings of one value.
+    it('refuses a salt that is a non-canonical spelling of the right bytes', async () => {
+      const service = await serviceAt(16_384)
+      const written = await service.hash('correct-horse')
+      const [, , params, salt, key] = written.split('$')
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+      const last = salt?.slice(-1) ?? ''
+      // Flip a bit the decoder throws away: same bytes out, different string in.
+      const twin = alphabet[alphabet.indexOf(last) ^ 1] ?? ''
+      const restated = `${salt?.slice(0, -1) ?? ''}${twin}`
+
+      // The premise: the two spellings really are the same value.
+      expect(Buffer.from(restated, 'base64').equals(Buffer.from(salt ?? '', 'base64'))).toBe(true)
+      expect(restated).not.toBe(salt)
+
+      // …and the non-canonical one is refused anyway, with the right password.
+      const nonCanonical = `$scrypt$${params ?? ''}$${restated}$${key ?? ''}`
+      expect(await service.compare('correct-horse', nonCanonical)).toBe(false)
+    }, 30_000)
+
+    // A parameter with an empty name, beside three valid ones. A parser that accepts it reads
+    // `ln`, `r` and `p` normally and verifies; only refusing the malformed pair stops it.
+    it('refuses a parameter with an empty name even when the real ones are all present', async () => {
+      const service = await serviceAt(16_384)
+      const written = await service.hash('correct-horse')
+      const [, , , salt, key] = written.split('$')
+
+      const withEmptyName = `$scrypt$ln=14,r=8,p=1,=9$${salt ?? ''}$${key ?? ''}`
+      expect(await service.compare('correct-horse', withEmptyName)).toBe(false)
+    }, 30_000)
+
+    // A repeated parameter whose two values AGREE. A parser that lets the second overwrite the
+    // first reads exactly the right cost and verifies — so the refusal has to come from the
+    // repetition itself, not from the value being wrong.
+    it('refuses a repeated parameter even when both values agree', async () => {
+      const service = await serviceAt(16_384)
+      const written = await service.hash('correct-horse')
+      const [, , , salt, key] = written.split('$')
+
+      const repeated = `$scrypt$ln=14,ln=14,r=8,p=1$${salt ?? ''}$${key ?? ''}`
+      expect(await service.compare('correct-horse', repeated)).toBe(false)
+    }, 30_000)
+
+    // A value whose digits are at the END. Unanchored, the numeric check matches the tail and
+    // lets `Number()` produce NaN, which slips past both bounds below (every comparison with
+    // NaN is false) and reaches the KDF as a nonsense cost.
+    it('refuses a parameter whose digits are not the whole value', async () => {
+      const service = await serviceAt(16_384)
+      const written = await service.hash('correct-horse')
+      const [, , , salt, key] = written.split('$')
+
+      const trailingDigits = `$scrypt$ln=x14,r=8,p=1$${salt ?? ''}$${key ?? ''}`
+      expect(await service.compare('correct-horse', trailingDigits)).toBe(false)
+    }, 30_000)
+
+    // The cost bounds are inclusive at both ends, and `r`/`p` accept 1. Asserted through
+    // `needsRehash` rather than `compare`, because a bound that wrongly REJECTS is
+    // indistinguishable from one that accepts-and-fails when the only signal is `false`:
+    // an unreadable hash and a strong-enough one both report "nothing to do". Pairing each
+    // boundary with a cost BELOW the configured one makes the two answers differ.
+    it.each([
+      ['the lowest ln', 'ln=1,r=8,p=1'],
+      ['the highest ln', 'ln=31,r=1,p=1'],
+      ['r of exactly 1', 'ln=14,r=1,p=1'],
+      ['p of exactly 1', 'ln=14,r=1,p=1']
+    ])('parses %s and reports it against the configured cost', async (_label, params) => {
+      const service = await serviceAt(32_768)
+      const salt = Buffer.alloc(16, 0xa1).toString('base64').replace(/=+$/, '')
+      const key = Buffer.alloc(64, 0xb2).toString('base64').replace(/=+$/, '')
+
+      // Every one of these records a cost weaker than the configured 2^15/r=8, so a parser
+      // that accepts it says "stale" and a parser that refuses it says "nothing to do".
+      expect(service.needsRehash(`$scrypt$${params}$${salt}$${key}`)).toBe(true)
+    })
+
+    // -----------------------------------------------------------------------
+    // Unreadable must be distinguishable from wrong
+    // -----------------------------------------------------------------------
+    //
+    // `compare` answers `false` for BOTH a hash it cannot parse and a hash it parsed and
+    // disagreed with, so a malformed-input test written against it cannot tell a working guard
+    // from a missing one: drop the guard, and the corrupt record parses, derives a different
+    // key, and still answers false. Mutation testing found every guard in the PHC parser this
+    // way — each was "covered" and none was pinned.
+    //
+    // `needsRehash` separates them. It answers `false` for an unparseable value (nothing to
+    // rewrite) and, for a value it parsed, reports staleness against the configured cost. So a
+    // malformed hash recording a cost BELOW the configuration gives `false` while the guard
+    // holds and `true` the moment it stops holding.
+    it.each([
+      ['a sixth field', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}$extra`],
+      ['no leading $', `scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a non-scrypt algorithm tag', `$argon2id$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['an empty salt field', `$scrypt$ln=14,r=8,p=1$$${B64_KEY}`],
+      ['an empty derived-key field', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$`],
+      ['a derived key one byte below the floor', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${b64(9)}`],
+      ['a derived key one byte above the ceiling', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${b64(65)}`],
+      ['a legacy record with a zero cost', `scrypt:0:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`],
+      [
+        'a legacy record with a zero block size',
+        `scrypt:16384:0:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
+      ],
+      [
+        'a legacy record with zero parallelism',
+        `scrypt:16384:8:0:${'a'.repeat(32)}:${'b'.repeat(128)}`
+      ]
+    ])('reads %s as unreadable rather than as a weak hash', async (_label, malformed) => {
+      // Configured well ABOVE what each malformed value records, so a parser that wrongly
+      // accepted one would call it stale — which is the answer this asserts it does not give.
+      const service = await serviceAt(32_768)
+
+      expect(service.needsRehash(malformed)).toBe(false)
+      // And still refused outright, which is the property that matters at the login path.
+      expect(await service.compare('anything', malformed)).toBe(false)
+    })
+
+    // Each of these keeps every OTHER field valid, so only the guard named in the label can
+    // be what refuses it. A case that trips two guards at once pins neither.
+    it.each([
+      // Leading field non-empty while the algorithm tag is still `scrypt`, so the tag check
+      // cannot be what rejects it.
+      ['a non-empty leading field', `x$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      // Legacy: seven fields, so the arity check is the only thing wrong.
+      [
+        'a legacy record with a seventh field',
+        `scrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}:x`
+      ],
+      // Legacy: a different algorithm tag with an otherwise perfect record.
+      ['a legacy record tagged bcrypt', `bcrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`],
+      // Legacy: empty salt, everything else valid.
+      ['a legacy record with an empty salt', `scrypt:16384:8:1::${'b'.repeat(128)}`],
+      // Legacy: a cost that is a number but not an integer.
+      [
+        'a legacy record with a fractional cost',
+        `scrypt:16384.5:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
+      ],
+      [
+        'a legacy record with a fractional block size',
+        `scrypt:16384:8.5:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
+      ],
+      [
+        'a legacy record with fractional parallelism',
+        `scrypt:16384:8:1.5:${'a'.repeat(32)}:${'b'.repeat(128)}`
+      ],
+      // Five fields — the short shape the presence checks are what refuse.
+      ['a legacy record missing its derived key', `scrypt:16384:8:1:${'a'.repeat(32)}`],
+      // A derived key of the wrong LENGTH, everything else valid. This is the one guard
+      // standing between a corrupt record and `timingSafeEqual`, which throws on unequal
+      // buffers rather than answering false.
+      [
+        'a legacy record with a 32-byte derived key',
+        `scrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(64)}`
+      ],
+      ['a legacy record with an empty derived key', `scrypt:16384:8:1:${'a'.repeat(32)}:`]
+    ])('reads %s as unreadable', async (_label, malformed) => {
+      const service = await serviceAt(32_768)
+
+      expect(service.needsRehash(malformed)).toBe(false)
+      expect(await service.compare('anything', malformed)).toBe(false)
+    })
+
+    // `parallelization` is 1 in every other test, and 1 is the parser's floor — so
+    // `parsed.p < this.p` is unreachable there and the clause cannot be pinned. Raising the
+    // configured value is the only way to make a stored `p` weaker than it.
+    it('reports a hash whose parallelism alone is below the configured one', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          PasswordService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { password: { costFactor: 16_384, blockSize: 8, parallelization: 2 } }
+          },
+          { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: { isBreached: async () => false } }
+        ]
+      }).compile()
+      const service = module.get<PasswordService>(PasswordService)
+
+      // Cost and block size match the configuration exactly; only `p` is lower.
+      expect(service.needsRehash(`$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
+      // …and a hash matching on all three is not stale, so the clause is not simply always-true.
+      expect(service.needsRehash(`$scrypt$ln=14,r=8,p=2$${B64_SALT}$${B64_KEY}`)).toBe(false)
+    })
+
+    // The control: the same shapes, well-formed, DO read as stale. Without this the assertions
+    // above would pass for a parser that refuses everything.
+    it.each([
+      ['a PHC hash below the configured cost', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a legacy hash at any cost', `scrypt:65536:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`]
+    ])('reads %s as stale', async (_label, stored) => {
+      const service = await serviceAt(32_768)
+
+      expect(service.needsRehash(stored)).toBe(true)
+    })
+
     // Scenario: malformed parameter segments. Expected: refused, not verified under a guessed
     // cost. Why: a non-numeric or zero N reaching `scrypt` is either a throw or a derivation
     // nobody chose.

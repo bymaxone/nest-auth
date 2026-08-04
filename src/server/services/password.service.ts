@@ -44,6 +44,9 @@ const SALT_BYTES = 16
  * verify and the timing oracle it exists to close would reopen. Deriving under the CONFIGURED
  * parameters is what keeps the two paths equal.
  */
+// Stryker disable next-line StringLiteral: the decoy salt's VALUE is meaningless — the branch
+// exists to spend one derivation at the configured cost, and any salt (including an empty one)
+// costs the same and still compares unequal
 const DUMMY_SALT = Buffer.from('d6732149f98b3938274691d8c2f3ee63', 'hex')
 
 /**
@@ -84,6 +87,8 @@ type ParsedHash = {
  * @returns The unpadded standard-base64 rendering.
  */
 function toPhcB64(value: Buffer): string {
+  // Stryker disable next-line Regex: dropping the `$` anchor is equivalent — base64 padding is
+  // only ever trailing, so `/=+/` and `/=+$/` strip the same characters from any encoder output
   return value.toString('base64').replace(/=+$/, '')
 }
 
@@ -99,7 +104,12 @@ function toPhcB64(value: Buffer): string {
  * @returns The decoded bytes, or `null` when the field is not canonical B64.
  */
 function fromPhcB64(value: string): Buffer | null {
-  if (!/^[A-Za-z0-9+/]+$/.test(value)) return null
+  // Only the empty case needs its own guard: it decodes to zero bytes and re-encodes to `''`,
+  // so the round-trip below would accept it. An alphabet check is NOT needed — a character
+  // outside base64 is skipped by the decoder, and re-encoding what survived cannot reproduce
+  // the input, so the round-trip already rejects it. (Mutation testing found that guard: every
+  // mutant of it lived, because nothing it rejected reached a different outcome.)
+  if (value === '') return null
   const decoded = Buffer.from(value, 'base64')
   return toPhcB64(decoded) === value ? decoded : null
 }
@@ -178,12 +188,25 @@ function parsePhcHash(hash: string): ParsedHash | null {
  */
 function parseLegacyHash(hash: string): ParsedHash | null {
   const parts = hash.split(':')
+  // Arity and tag together, unlike `parsePhcHash` which checks them through the destructured
+  // names. Here `length` is the better guard: the legacy shape has no optional field, so a
+  // wrong count is a single fact, and splitting it into five per-field presence checks traded
+  // four mutants for seven — every one of them on a state `length === 6` already excludes.
   if (parts.length !== 6 || parts[0] !== 'scrypt') return null
 
   const [, nRaw, rRaw, pRaw, saltHex, derivedHex] = parts
-  if (saltHex === undefined || derivedHex === undefined || saltHex === '' || derivedHex === '') {
-    return null
-  }
+  // The two `undefined` operands are unreachable — `length === 6` guarantees all six are
+  // present — and exist only to narrow `string | undefined` for the compiler. They share the
+  // statement with the empty-salt check rather than getting one of their own, so the `return`
+  // is still reachable and the line still covered; an unreachable statement is a hole in the
+  // coverage gate, not a guard.
+  //
+  // An empty DERIVED key needs no clause here: it decodes to zero bytes, which the length
+  // check below rejects.
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: the two `undefined` clauses
+  // cannot be reached with a six-field input, so no test can hold them in place; the empty-salt
+  // clause beside them is pinned by its own case
+  if (saltHex === undefined || derivedHex === undefined || saltHex === '') return null
 
   const derived = Buffer.from(derivedHex, 'hex')
   // Guard the length before `timingSafeEqual`, which throws on a mismatch.
@@ -324,6 +347,9 @@ export class PasswordService {
     try {
       breached = await this.breachChecker.isBreached(plain)
     } catch (err: unknown) {
+      // Stryker disable next-line StringLiteral: diagnostic-only log text; the behaviour under
+      // test is that the password is ADMITTED and a line is emitted, neither of which the
+      // wording changes
       this.logger.error('breach check threw; admitting the password (the checker fails open)', err)
       return
     }
@@ -417,6 +443,10 @@ export class PasswordService {
       r,
       p,
       // Sized for the parameters actually being used, which may exceed the configured ones.
+      // Stryker disable next-line ArithmeticOperator,MethodExpression: `maxmem` is a CEILING, and
+      // only its being too LOW is observable (scrypt throws). Every mutant here lowers it while
+      // leaving it above what any hash these tests verify actually needs, so the derivation and
+      // its result are identical — the same reason the constructor's copy carries a disable
       maxmem: Math.max(N * r * 128 * 2, this.maxmem)
     })
 
@@ -442,6 +472,11 @@ export class PasswordService {
    * password request already costs; pair it with route-level rate limiting.
    */
   async compareDummy(plain: string): Promise<boolean> {
+    // Stryker disable next-line ObjectLiteral: emptying the options makes scrypt fall back to
+    // its own defaults, which still derives a key and still compares unequal — so the RESULT is
+    // identical and no assertion can separate them. What the mutant actually breaks is the
+    // property this method exists for: that the decoy costs the same as a real verify, which is
+    // a timing equivalence and not a value any test can read without measuring the clock
     const candidate = await scrypt(plain, DUMMY_SALT, SCRYPT_KEY_LEN, {
       N: this.N,
       r: this.r,
