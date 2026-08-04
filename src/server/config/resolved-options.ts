@@ -348,24 +348,42 @@ function withholdFromSerialization(target: object, key: string): void {
  * Withholds every field carrying key material from the resolved options.
  *
  * The signing secret and its rotation predecessors, the HMAC keys derived from
- * them, and each configured OAuth client secret are all reachable by walking an
- * injected provider. Hiding them at the single point where the options are built
- * covers every present and future holder, and a consumer that logs the options
- * object directly.
+ * them, the MFA encryption keys, and each configured OAuth client secret are all
+ * reachable by walking an injected provider. Hiding them at the single point
+ * where the options are built covers every present and future holder, and a
+ * consumer that logs the options object directly.
+ *
+ * **Every field carrying key material belongs here.** The MFA keys were missed
+ * when this function was introduced, and the gap outlived the release because the
+ * spec that asserts the property builds its fixture without an `mfa` group — so
+ * the claim was tested against an object the key was never in. A field added to
+ * {@link ResolvedOptions} that holds a secret needs a line here *and* a fixture
+ * that carries it, or the test passes without exercising anything.
  *
  * @param resolved - The fully-built resolved options, mutated in place.
  */
 function withholdSecrets(resolved: ResolvedOptions): void {
-  // `jwt` and the resolved root are objects this function's caller just built,
-  // so redefining a property on them is safe. The OAuth provider configs are
-  // not: they arrive by reference through the spread of the consumer's options,
-  // and rewriting a property there would mutate the caller's own object and
-  // make a second `resolveOptions` call on the same input throw. Each provider
-  // config is copied first, so only objects this library owns are changed.
+  // `jwt`, `mfa` and the resolved root are objects this function's caller just
+  // built, so redefining a property on them is safe. The OAuth provider configs
+  // are not: they arrive by reference through the spread of the consumer's
+  // options, and rewriting a property there would mutate the caller's own object
+  // and make a second `resolveOptions` call on the same input throw. Each
+  // provider config is copied first, so only objects this library owns are
+  // changed.
   withholdFromSerialization(resolved.jwt, 'secret')
   withholdFromSerialization(resolved.jwt, 'previousSecrets')
   withholdFromSerialization(resolved, 'hmacKey')
   withholdFromSerialization(resolved, 'previousHmacKeys')
+
+  // The AES-256-GCM key protecting every enrolled user's TOTP secret and their
+  // recovery-code set, plus the retired keys still able to decrypt records that
+  // have not been re-encrypted. Losing it is worse than losing the signing
+  // secret: a leaked `jwt.secret` is fixed by a redeploy, while this one can only
+  // be rotated by re-encrypting every stored factor.
+  if (resolved.mfa !== undefined) {
+    withholdFromSerialization(resolved.mfa, 'encryptionKey')
+    withholdFromSerialization(resolved.mfa, 'previousEncryptionKeys')
+  }
 
   if (resolved.oauth === undefined) return
   // Rebuilt through entries rather than by assigning at a computed key, so no

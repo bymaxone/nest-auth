@@ -71,6 +71,11 @@ interface WireContract {
     }
   >
   credentialFormats: Record<string, string>
+  passwordHashFormat: {
+    encoding: string
+    legacyEncoding: string
+    vectors: { password: string; hash: string; writtenBy: string; needsRehash: boolean }[]
+  }
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
   errorCatalog: { codes: string[]; internalOnly: string[] }
@@ -636,20 +641,66 @@ describe('cross-implementation conformance', () => {
       expect(contract.credentialFormats['totpSecretAtRest']).toContain('BASE32')
     })
 
-    // Scenario: a stored password hash. Expected: it carries the parameters it was written
+    // Scenario: a stored password hash. Expected: PHC, carrying the parameters it was written
     // under. Why: a hash that records nothing can only be verified by assuming the cost
     // configured today, which makes that cost unchangeable — raise it and every stored hash
     // becomes unreproducible, every user locked out, irreversibly.
-    it('records the parameters in the stored password hash', async () => {
-      expect(contract.credentialFormats['passwordHash']).toContain('self-describing')
-
+    it('writes the stored password hash as a PHC string', async () => {
       const service = new PasswordService(
         { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
         { isBreached: async () => false } as never
       )
       const stored = await service.hash('a-password')
 
-      expect(stored.split(':').slice(0, 4)).toEqual(['scrypt', '16384', '8', '1'])
+      expect(stored).toMatch(/^\$scrypt\$ln=14,r=8,p=1\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/)
+      // Its own output must round-trip and must not immediately want rewriting.
+      expect(await service.compare('a-password', stored)).toBe(true)
+      expect(service.needsRehash(stored)).toBe(false)
+    }, 30_000)
+
+    // Scenario: the three hashes the contract pins, one written by each backend plus one in
+    // nest-auth's pre-PHC encoding. Expected: every one verifies here, and reports the
+    // staleness the contract declares.
+    //
+    // Why this test rather than a prose assertion: the entry this replaces read
+    // `toContain('self-describing')`, and it was green for the entire period during which the
+    // two libraries could not read each other's hashes at all. Both encodings ARE
+    // self-describing — that is exactly why the description could not catch the divergence.
+    // A hash the sibling cannot verify does not surface as a parse error either, because
+    // verification is total: it becomes `invalid_credentials`, and five of those trip the
+    // brute-force counter the two backends SHARE, locking the owner out of both with their
+    // own correct password.
+    //
+    // The vectors are real emitted output, so this fails the moment either side's encoder,
+    // parser, B64 alphabet or parameter ordering drifts from the other's.
+    it.each(
+      contract.passwordHashFormat.vectors.map((vector) => [vector.writtenBy, vector] as const)
+    )(
+      'verifies the contract password-hash vector written by %s',
+      async (_who, vector) => {
+        const service = new PasswordService(
+          { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
+          { isBreached: async () => false } as never
+        )
+
+        expect(await service.compare(vector.password, vector.hash)).toBe(true)
+        expect(await service.compare(`${vector.password}-wrong`, vector.hash)).toBe(false)
+        expect(service.needsRehash(vector.hash)).toBe(vector.needsRehash)
+      },
+      30_000
+    )
+
+    // Scenario: the legacy encoding is read but never minted. Expected: nothing this library
+    // writes is in it. Why: it is a migration path, and a migration that keeps producing the
+    // shape it is migrating away from never ends.
+    it('never mints the legacy password-hash encoding', async () => {
+      const service = new PasswordService(
+        { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
+        { isBreached: async () => false } as never
+      )
+
+      expect(await service.hash('a-password')).not.toMatch(/^scrypt:/)
+      expect(contract.passwordHashFormat.legacyEncoding).toContain('READ-ONLY')
     }, 30_000)
 
     // Scenario: the token this library actually mints. Expected: 64 lowercase hex characters.

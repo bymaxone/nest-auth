@@ -5,6 +5,8 @@
  * defensive branches for malformed hash strings.
  */
 
+import { scryptSync } from 'node:crypto'
+
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
@@ -12,6 +14,16 @@ import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.con
 import { PasswordService } from './password.service'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+
+/** PHC "B64": the standard alphabet with padding stripped. */
+const b64 = (bytes: number, fill = 0xb2): string =>
+  Buffer.alloc(bytes, fill).toString('base64').replace(/=+$/, '')
+
+/** A well-formed 16-byte salt field, so a malformed-hash case varies only the part it names. */
+const B64_SALT = b64(16, 0xa1)
+
+/** A well-formed 64-byte derived-key field, for the same reason. */
+const B64_KEY = b64(64)
 
 /** Approves every password unless a test says otherwise. */
 const mockBreachChecker = { isBreached: jest.fn().mockResolvedValue(false) }
@@ -118,18 +130,24 @@ describe('PasswordService', () => {
     // to travel with it: without that, a verify can only assume today's configuration, and
     // raising `costFactor` makes every stored hash unreproducible — every user locked out,
     // irreversibly, because the value they were derived under is gone.
-    it('should produce a string in scrypt:{N}:{r}:{p}:{salt_hex}:{derived_hex} format', async () => {
+    it('should produce a PHC string in $scrypt$ln={log2 N},r={r},p={p}${salt}${derived} form', async () => {
       const hash = await service.hash('password123')
-      const parts = hash.split(':')
-      expect(parts).toHaveLength(6)
-      expect(parts[0]).toBe('scrypt')
-      expect(Number(parts[1])).toBe(32_768)
-      expect(Number(parts[2])).toBe(8)
-      expect(Number(parts[3])).toBe(1)
-      // 16-byte salt → 32 hex chars
-      expect(parts[4]).toMatch(/^[0-9a-f]{32}$/)
-      // 64-byte derived key → 128 hex chars
-      expect(parts[5]).toMatch(/^[0-9a-f]{128}$/)
+      const parts = hash.split('$')
+      // A PHC string opens with `$`, so the split yields a leading empty field.
+      expect(parts).toHaveLength(5)
+      expect(parts[0]).toBe('')
+      expect(parts[1]).toBe('scrypt')
+      // `ln` is log2(N): 32768 → 15.
+      expect(parts[2]).toBe('ln=15,r=8,p=1')
+      // PHC "B64" is the standard alphabet with padding stripped, NOT base64url — a `-` or
+      // `_` here is a hash rust-auth's parser rejects. 16-byte salt → 22 chars,
+      // 64-byte derived key → 86.
+      expect(parts[3]).toMatch(/^[A-Za-z0-9+/]{22}$/)
+      expect(parts[4]).toMatch(/^[A-Za-z0-9+/]{86}$/)
+      // Scoped to the encoded fields: `=` is legal in the parameter segment (`ln=15`), and
+      // only these two carry base64. Padding or a base64url alphabet here is what the sibling
+      // parser rejects.
+      expect(`${parts[3] ?? ''}${parts[4] ?? ''}`).not.toMatch(/[-_=]/)
     })
 
     // Verifies that two hashes of the same password are different due to the random salt.
@@ -191,16 +209,16 @@ describe('PasswordService', () => {
       expect(await service.compare('correct-password', valid + ':extra')).toBe(false)
     })
 
-    // Scenario: a hash whose salt/derived are valid for the password but whose prefix is NOT
-    // 'scrypt'; expected: compare returns false. Why: only the parts[0] === 'scrypt' clause
-    // rejects it — replacing that clause with false would accept a non-scrypt algorithm tag and
-    // return true, silently honouring an unsupported (potentially weaker) hash format.
-    it('should return false for a 3-part hash whose payload is valid but prefix is not scrypt', async () => {
+    // Scenario: a hash whose salt/derived are valid for the password but whose algorithm tag
+    // is NOT 'scrypt'; expected: compare returns false. Why: only the `parts[1] === 'scrypt'`
+    // clause rejects it — dropping that clause would honour an unsupported (potentially much
+    // weaker) algorithm tag while deriving with scrypt, and answer true.
+    it('should return false for a PHC string whose algorithm tag is not scrypt', async () => {
       const valid = await service.hash('correct-password')
-      const wrongPrefix = valid.replace(/^scrypt:/, 'sha256:')
-      // Sanity: still three parts, valid salt + derived, only the algorithm tag differs.
-      expect(wrongPrefix.split(':')).toHaveLength(6)
-      expect(await service.compare('correct-password', wrongPrefix)).toBe(false)
+      const wrongAlgorithm = valid.replace(/^\$scrypt\$/, '$md5$')
+      // Sanity: still a well-formed PHC shape, same salt and derived key — only the tag moved.
+      expect(wrongAlgorithm.split('$')).toHaveLength(5)
+      expect(await service.compare('correct-password', wrongAlgorithm)).toBe(false)
     })
   })
 
@@ -234,7 +252,7 @@ describe('PasswordService', () => {
       const highCostService = module.get(PasswordService)
 
       await expect(highCostService.hash('memory-bound-password')).resolves.toMatch(
-        /^scrypt:\d+:\d+:\d+:[0-9a-f]{32}:[0-9a-f]{128}$/
+        /^\$scrypt\$ln=\d+,r=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/
       )
     }, 30_000)
   })
@@ -324,31 +342,133 @@ describe('PasswordService', () => {
       expect(await strong.compare('wrong-horse', written)).toBe(false)
     }, 30_000)
 
-    // Scenario: hashes weaker than, equal to, and stronger than the configuration, plus a
-    // value this library never writes. Expected: only the weaker ones and the unreadable one
-    // are stale. Why: this is the signal that drives the transparent upgrade, and a false
-    // positive here rewrites every user's hash on every login — a write on the hot path for
-    // nothing.
+    // Scenario: PHC hashes weaker than, equal to, and stronger than the configuration, plus
+    // values this library never writes. Expected: only the weaker ones are stale. Why: this is
+    // the signal that drives the transparent upgrade, and a false positive here rewrites every
+    // user's hash on every login — a write, and a full KDF, on the hot path for nothing.
     it('should report staleness only for weaker recorded parameters', async () => {
       const service = await serviceAt(32_768)
+      const salt = Buffer.alloc(16, 0xa1).toString('base64').replace(/=+$/, '')
+      const key = Buffer.alloc(64, 0xb2).toString('base64').replace(/=+$/, '')
       const at = (n: number, r = 8, p = 1) =>
-        `scrypt:${n}:${r}:${p}:${'a'.repeat(32)}:${'b'.repeat(128)}`
+        `$scrypt$ln=${Math.log2(n)},r=${r},p=${p}$${salt}$${key}`
 
       expect(service.needsRehash(at(16_384))).toBe(true)
       expect(service.needsRehash(at(32_768))).toBe(false)
       expect(service.needsRehash(at(65_536))).toBe(false)
       expect(service.needsRehash(at(32_768, 4))).toBe(true)
-      // The parameterless form this library used to write is not "stale", it is unreadable —
-      // and with no deployments carrying one, there is nothing to keep a reader for.
-      expect(service.needsRehash(`scrypt:${'a'.repeat(32)}:${'b'.repeat(128)}`)).toBe(false)
       // A malformed record is not stale, it is unreadable: it cannot be verified, and a
       // rewrite would require having verified it first. Refusing both is the consistent
       // answer — `compare` says false, `needsRehash` says nothing to do.
       expect(service.needsRehash(at(32_768, 8, 0))).toBe(false)
       // A value this library never wrote is not "stale" — it is not ours to rewrite.
       expect(service.needsRehash('not-a-hash')).toBe(false)
-      expect(service.needsRehash(`bcrypt:1:1:1:${'a'.repeat(32)}:${'b'.repeat(128)}`)).toBe(false)
+      expect(service.needsRehash(`$md5$ln=15,r=8,p=1$${salt}$${key}`)).toBe(false)
     })
+
+    // Scenario: a hash in the pre-PHC encoding, recording a cost at or above the configured
+    // one. Expected: stale anyway. Why: staleness is not only about cost. rust-auth cannot
+    // parse this encoding, and the two libraries share a user table — so leaving a readable
+    // legacy hash in place keeps that account signing in here and failing there, where the
+    // failure is `invalid_credentials` and five of them trip the SHARED lockout. The login
+    // that reaches this has just proven the password, which is the only moment the value can
+    // be rewritten at all: skip it and the account never migrates.
+    it('should report a legacy-encoded hash as stale whatever cost it records', async () => {
+      const service = await serviceAt(32_768)
+      const legacy = (n: number) => `scrypt:${n}:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
+
+      expect(service.needsRehash(legacy(16_384))).toBe(true)
+      expect(service.needsRehash(legacy(32_768))).toBe(true)
+      // The one that matters: a STRONGER cost, which the cost comparison alone would clear.
+      expect(service.needsRehash(legacy(65_536))).toBe(true)
+    })
+
+    // Scenario: hashes carrying the two derived-key lengths the pair writes — 64 bytes here,
+    // 32 in rust-auth. Expected: neither is stale on account of its length. Why: both libraries
+    // read the same user table, and treating the sibling's length as stale would rehash every
+    // hash on every crossing — one full KDF each way, forever, converging on nothing.
+    it("should not treat the sibling implementation's derived-key length as stale", async () => {
+      const service = await serviceAt(32_768)
+      const salt = Buffer.alloc(16, 0xa1).toString('base64').replace(/=+$/, '')
+      const short = Buffer.alloc(32, 0xb2).toString('base64').replace(/=+$/, '')
+      const long = Buffer.alloc(64, 0xb2).toString('base64').replace(/=+$/, '')
+
+      expect(service.needsRehash(`$scrypt$ln=15,r=8,p=1$${salt}$${short}`)).toBe(false)
+      expect(service.needsRehash(`$scrypt$ln=15,r=8,p=1$${salt}$${long}`)).toBe(false)
+    })
+
+    // Scenario: every way a PHC string can be malformed. Expected: refused, never verified
+    // under a guessed cost or a mis-read parameter. Why: this parser is what stands between a
+    // stored record and the KDF, and each rejection below is a distinct shape a corrupt or
+    // hostile value can take. The `b64` cases matter most for the sibling implementation: PHC
+    // uses the STANDARD base64 alphabet, so a hash carrying `-` or `_` is not ours, and a
+    // non-canonical encoding is two strings that decode to the same bytes — an equality the
+    // stored record must not have.
+    it.each([
+      // Field arity: fewer than five, and more than five.
+      ['a missing derived-key field', `$scrypt$ln=15,r=8,p=1$${B64_SALT}`],
+      ['a sixth field', `$scrypt$ln=15,r=8,p=1$${B64_SALT}$${B64_KEY}$extra`],
+      // The leading empty field and the algorithm tag.
+      ['no leading $', `scrypt$ln=15,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a non-scrypt algorithm tag', `$argon2id$ln=15,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      // Parameter segment.
+      ['a parameter with no =', `$scrypt$ln,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a parameter with an empty name', `$scrypt$=15,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a repeated parameter', `$scrypt$ln=15,ln=16,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a non-numeric parameter', `$scrypt$ln=1a,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a zero-padded parameter', `$scrypt$ln=015,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a negative parameter', `$scrypt$ln=-15,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a missing ln', `$scrypt$r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a missing r', `$scrypt$ln=15,p=1$${B64_SALT}$${B64_KEY}`],
+      ['a missing p', `$scrypt$ln=15,r=8$${B64_SALT}$${B64_KEY}`],
+      ['ln below the range', `$scrypt$ln=0,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['ln above the range', `$scrypt$ln=32,r=8,p=1$${B64_SALT}$${B64_KEY}`],
+      ['r of zero', `$scrypt$ln=15,r=0,p=1$${B64_SALT}$${B64_KEY}`],
+      ['p of zero', `$scrypt$ln=15,r=8,p=0$${B64_SALT}$${B64_KEY}`],
+      // B64 fields.
+      ['a base64url salt', `$scrypt$ln=15,r=8,p=1$${B64_SALT.slice(0, -1)}_$${B64_KEY}`],
+      ['a padded derived key', `$scrypt$ln=15,r=8,p=1$${B64_SALT}$${B64_KEY}=`],
+      ['an empty salt', `$scrypt$ln=15,r=8,p=1$$${B64_KEY}`],
+      // 'AB' decodes to one 0x00 byte and re-encodes to 'AA': two strings, same bytes.
+      ['a non-canonical b64 salt', `$scrypt$ln=15,r=8,p=1$AB$${B64_KEY}`],
+      // Derived-key length outside the bounds `password_hash::Output` can represent.
+      ['a derived key below 10 bytes', `$scrypt$ln=15,r=8,p=1$${B64_SALT}$${b64(9)}`],
+      ['a derived key above 64 bytes', `$scrypt$ln=15,r=8,p=1$${B64_SALT}$${b64(65)}`]
+    ])('should refuse a PHC hash with %s', async (_label, malformed) => {
+      const service = await serviceAt(16_384)
+      expect(await service.compare('anything', malformed)).toBe(false)
+      // Unreadable is not stale: a rewrite would require having verified it first.
+      expect(service.needsRehash(malformed)).toBe(false)
+    })
+
+    // The two lengths the pair actually writes sit just inside the bounds rejected above, so
+    // the guard cannot be widened or narrowed without one of these turning red.
+    it.each([
+      ['the 10-byte floor', 10],
+      ["rust-auth's 32 bytes", 32],
+      ["this library's 64-byte ceiling", 64]
+    ])(
+      'should accept a derived key at %s',
+      async (_label, bytes) => {
+        const service = await serviceAt(16_384)
+        // A real derivation, so the value verifies rather than merely parsing.
+        const written = await service.hash('correct-horse')
+        const [, , , salt] = written.split('$')
+        const derived = scryptSync('correct-horse', Buffer.from(salt ?? '', 'base64'), bytes, {
+          N: 16_384,
+          r: 8,
+          p: 1,
+          maxmem: 128 * 1024 * 1024
+        })
+        const rebuilt = `$scrypt$ln=14,r=8,p=1$${salt ?? ''}$${derived
+          .toString('base64')
+          .replace(/=+$/, '')}`
+
+        expect(await service.compare('correct-horse', rebuilt)).toBe(true)
+        expect(await service.compare('wrong-horse', rebuilt)).toBe(false)
+      },
+      30_000
+    )
 
     // Scenario: malformed parameter segments. Expected: refused, not verified under a guessed
     // cost. Why: a non-numeric or zero N reaching `scrypt` is either a throw or a derivation

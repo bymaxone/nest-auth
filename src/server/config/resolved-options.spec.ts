@@ -2721,15 +2721,25 @@ describe('resolveOptions — password KDF memory ceiling', () => {
 
 describe('resolveOptions — secret containment', () => {
   const OAUTH_SECRET = 'google-client-secret-canary'
+  const MFA_KEY = Buffer.alloc(32, 7).toString('base64')
+  const RETIRED_MFA_KEY = Buffer.alloc(32, 9).toString('base64')
 
   /**
-   * Minimal options plus a configured Google provider, so both secret kinds are present.
+   * Minimal options carrying **every kind of secret the module accepts**, so a test
+   * that asserts containment asserts it against an object the secrets are in.
+   *
+   * The `mfa` group is here because leaving it out is how the AES encryption keys
+   * shipped enumerable through a release whose spec claimed to cover "every
+   * secret": the assertions were right, the fixture had no key for them to find,
+   * and neither line coverage nor mutation testing can see a property that is
+   * absent from the object under test. A new secret-bearing option group belongs
+   * in this fixture at the same time it is added to `withholdSecrets`.
    *
    * Built per call rather than shared as a module constant: two of these tests
    * assert that resolving does not rewrite the caller's object, which only means
    * anything when each call gets its own.
    */
-  function withOAuth(): BymaxAuthModuleOptions {
+  function withEverySecretKind(): BymaxAuthModuleOptions {
     return {
       ...MINIMAL_OPTIONS,
       oauth: {
@@ -2738,6 +2748,11 @@ describe('resolveOptions — secret containment', () => {
           clientSecret: OAUTH_SECRET,
           callbackUrl: 'https://app.example.com/auth/google/callback'
         }
+      },
+      mfa: {
+        encryptionKey: MFA_KEY,
+        previousEncryptionKeys: [RETIRED_MFA_KEY],
+        issuer: 'Bymax'
       }
     }
   }
@@ -2749,7 +2764,7 @@ describe('resolveOptions — secret containment', () => {
     // scope of a throw, an object spread. `showHidden` is asserted because it is
     // what defeats a merely non-enumerable property — the HMAC keys derived from
     // the signing secret are key material in their own right.
-    const resolved = resolveOptions(withOAuth())
+    const resolved = resolveOptions(withEverySecretKind())
 
     for (const rendered of [
       JSON.stringify(resolved),
@@ -2760,16 +2775,34 @@ describe('resolveOptions — secret containment', () => {
       expect(rendered).not.toContain(VALID_SECRET)
       expect(rendered).not.toContain(OAUTH_SECRET)
       expect(rendered).not.toContain(resolved.hmacKey)
+      expect(rendered).not.toContain(MFA_KEY)
+      expect(rendered).not.toContain(RETIRED_MFA_KEY)
     }
+  })
+
+  it('withholds the MFA keys through structuredClone, which copies by enumeration', () => {
+    // `structuredClone` is the one path that is neither a serializer nor a spread:
+    // it walks own enumerable properties and produces a NEW object, so a value that
+    // survives it lands somewhere the accessor no longer protects. Asserted on the
+    // MFA keys specifically because they are the pair this function missed — a
+    // non-enumerable accessor is skipped by the algorithm, a plain value is not.
+    const resolved = resolveOptions(withEverySecretKind())
+    const cloned = structuredClone(resolved)
+
+    expect(JSON.stringify(cloned)).not.toContain(MFA_KEY)
+    expect(JSON.stringify(cloned)).not.toContain(RETIRED_MFA_KEY)
+    expect(JSON.stringify(cloned)).not.toContain(VALID_SECRET)
   })
 
   it('still exposes every secret to the code that has to use it', () => {
     // Containment must cost nothing at the supported surface: the signer, the
-    // verifier and the OAuth token exchange all read these fields.
-    const resolved = resolveOptions(withOAuth())
+    // verifier, the OAuth token exchange and the MFA cipher all read these fields.
+    const resolved = resolveOptions(withEverySecretKind())
 
     expect(resolved.jwt.secret).toBe(VALID_SECRET)
     expect(resolved.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
+    expect(resolved.mfa?.encryptionKey).toBe(MFA_KEY)
+    expect(resolved.mfa?.previousEncryptionKeys).toEqual([RETIRED_MFA_KEY])
     // Shape rather than truthiness: the key is a SHA-256 digest rendered as hex,
     // so a mutation that truncated or re-encoded it would survive `toBeTruthy`.
     expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
@@ -2780,7 +2813,7 @@ describe('resolveOptions — secret containment', () => {
     // The OAuth provider config arrives by reference through the spread of the
     // consumer's options. Rewriting a property there would mutate an object this
     // library does not own and make a second resolve on the same input throw.
-    const shared = withOAuth()
+    const shared = withEverySecretKind()
     const first = resolveOptions(shared)
     const second = resolveOptions(shared)
 
