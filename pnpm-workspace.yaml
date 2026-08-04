@@ -1,0 +1,21 @@
+# Build scripts are denied by default; an unlisted package counts as unreviewed.
+# `allowBuilds` is the only spelling pnpm 11 reads: onlyBuiltDependencies,
+# neverBuiltDependencies and their siblings were removed in v11 and replaced by
+# this map. Without an entry, `pnpm install` exits with ERR_PNPM_IGNORED_BUILDS
+# rather than warning.
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  unrs-resolver: true
+
+# Forced versions for vulnerable transitive dev dependencies. These live here and
+# NOT in package.json: pnpm 11 no longer reads the `pnpm` field of package.json, so
+# an override placed there does nothing — it warns, but it does nothing.
+overrides:
+  'brace-expansion@<5.0.6': '>=5.0.6'
+  'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
+  'postcss@<8.5.10': '>=8.5.10'
+  'qs@>=6.11.1 <=6.15.1': '>=6.15.2'
+  'sharp@<0.35.0': '>=0.35.0'
+  'tmp@<0.2.6': '>=0.2.6'
+  'ws@<8.20.1': '>=8.20.1'

@@ -1,7 +1,7 @@
 {
   "name": "@bymax-one/nest-auth",
   "version": "1.1.0",
-  "description": "Full-stack authentication and authorization package for NestJS, React and Next.js — JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
+  "description": "Full-stack authentication and authorization package for NestJS, React and Next.js \u2014 JWT, MFA, OAuth, sessions, multi-tenant SaaS ready",
   "author": "Bymax One <support@bymax.one>",
   "license": "MIT",
   "homepage": "https://github.com/bymaxone/nest-auth#readme",
@@ -237,7 +237,7 @@
     "password-reset",
     "refresh-token"
   ],
-  "packageManager": "pnpm@10.8.1",
+  "packageManager": "pnpm@11.20.0",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -245,17 +245,6 @@
     "access": "public",
     "provenance": true,
     "registry": "https://registry.npmjs.org/"
-  },
-  "pnpm": {
-    "overrides": {
-      "brace-expansion@<5.0.6": ">=5.0.6",
-      "esbuild@>=0.27.3 <0.28.1": ">=0.28.1",
-      "postcss@<8.5.10": ">=8.5.10",
-      "qs@>=6.11.1 <=6.15.1": ">=6.15.2",
-      "sharp@<0.35.0": ">=0.35.0",
-      "tmp@<0.2.6": ">=0.2.6",
-      "ws@<8.20.1": ">=8.20.1"
-    }
   },
   "main": "./dist/server/index.cjs",
   "module": "./dist/server/index.mjs",
