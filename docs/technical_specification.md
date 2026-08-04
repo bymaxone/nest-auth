@@ -932,7 +932,7 @@ import { RedisService } from './redis/redis.service'
         },
         mfa: {
           encryptionKey: config.getOrThrow<string>('MFA_ENCRYPTION_KEY'),
-          issuer: 'Bymax Finance'
+          issuer: 'Example App'
         },
         sessions: {
           enabled: true,
@@ -3824,7 +3824,7 @@ Peer dependencies: `react ^19`
 
 Complete integration with Next.js 16 including a proxy factory, route handlers, JWT helpers, and cookie utilities. It encapsulates all the logic for route protection, session refresh, and redirect loop prevention.
 
-> **Based on the battle-tested implementation from bymax-fitness-ai**, where an infinite redirect loop bug was identified and fixed. All edge cases are documented and resolved in the factories below.
+> **Based on a battle-tested production implementation**, where an infinite redirect loop bug was identified and fixed. All edge cases are documented and resolved in the factories below.
 
 #### 21.4.1 `createAuthProxy(config)`
 

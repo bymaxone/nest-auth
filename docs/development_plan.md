@@ -1547,7 +1547,7 @@ Add to `index.ts`:
 
 **Duration:** 1-2 weeks (Week 7-8)
 **Dependency:** Phase 7 complete (shared + client subpaths)
-**Objective:** Implement Next.js utilities for authentication in the proxy (`proxy.ts`), refresh route handlers, and JWT/cookie helpers. This is the most critical frontend phase — all the patterns come from the bymax-fitness-ai project, where a redirect loop bug was found and fixed. Document ALL edge cases.
+**Objective:** Implement Next.js utilities for authentication in the proxy (`proxy.ts`), refresh route handlers, and JWT/cookie helpers. This is the most critical frontend phase — the patterns come from a production deployment where a redirect loop bug was found and fixed. Document ALL edge cases.
 
 ### 10.1 Files to create
 
