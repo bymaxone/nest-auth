@@ -230,7 +230,6 @@ export class TokenManagerService {
 
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    const sessionKey = `rt:${tokenHash}`
     // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
     // whole lineage can be revoked together the moment one of its tokens is replayed.
     const familyId = randomUUID()
@@ -245,14 +244,19 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
-    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
-    await this.redis.sadd(`sess:${user.id}`, `rt:${tokenHash}`)
-    await this.redis.expire(`sess:${user.id}`, ttl)
-    // The family index holds bare hashes: it only ever tracks live `rt:` sessions, so the
-    // prefix is implied. It carries the refresh TTL so it ages out with what it tracks.
-    await this.redis.sadd(`fam:${familyId}`, tokenHash)
-    await this.redis.expire(`fam:${familyId}`, ttl)
+    // One atomic step, not five. Loose, this left two windows: a `revoke_all` arriving between
+    // the record write and the index `SADD` swept an index the new session was not in yet — so
+    // it survived a revocation the user was told had happened — and a dropped connection
+    // between the `SADD` and the `EXPIRE` left the index with no TTL at all, permanently.
+    // rust-auth has always written this in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
+    await this.redis.writeNewSession({
+      kind: 'dashboard',
+      tokenHash,
+      sessionJson: this.serializeSession(session),
+      familyId,
+      userId: user.id,
+      refreshTtl: ttl
+    })
 
     // Record that a REAL authentication just completed, for the flows that need to know how
     // recently rather than merely whether. Written here and nowhere else: this method is the
@@ -304,7 +308,6 @@ export class TokenManagerService {
 
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    const sessionKey = `prt:${tokenHash}`
     // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
     const familyId = randomUUID()
     const session = this.buildSession(
@@ -318,15 +321,18 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
-    // Track the session in the platform-only index so MFA enable/disable and logout-all can
-    // invalidate every platform session atomically. The platform plane has its own `psess:`
-    // keyspace because the two id spaces come from different repositories and may collide:
-    // sharing one index let revoking a dashboard user log out the admin with the same id.
-    await this.redis.sadd(`psess:${admin.id}`, `prt:${tokenHash}`)
-    await this.redis.expire(`psess:${admin.id}`, ttl)
-    await this.redis.sadd(`pfam:${familyId}`, tokenHash)
-    await this.redis.expire(`pfam:${familyId}`, ttl)
+    // Atomic for the same two reasons as the dashboard plane above. The platform plane has its
+    // own `psess:` keyspace because the two id spaces come from different repositories and may
+    // collide: sharing one index let revoking a dashboard user log out the admin with the
+    // same id.
+    await this.redis.writeNewSession({
+      kind: 'platform',
+      tokenHash,
+      sessionJson: this.serializeSession(session),
+      familyId,
+      userId: admin.id,
+      refreshTtl: ttl
+    })
     await this.writePlatformSessionDetail(tokenHash, ip, userAgent, ttl)
 
     return { admin, accessToken, rawRefreshToken }

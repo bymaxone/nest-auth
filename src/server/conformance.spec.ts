@@ -430,13 +430,45 @@ describe('cross-implementation conformance', () => {
       }
     )
 
-    // Verifies the source actually SADDs the prefixed form. The contract is only worth
+    // Verifies the code actually indexes the prefixed form. The contract is only worth
     // anything if the code writes what it declares.
-    it('adds prefixed members to the index', () => {
-      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
+    //
+    // Asserted through the real service rather than by grepping the source for a template
+    // literal: the member is composed inside the session-creation script now, and a text
+    // search would have gone red for a refactor that changed nothing about the wire — or
+    // stayed green for one that changed everything. Here the plane prefix and the hash are
+    // read off the arguments the script is invoked with, and the concatenation is pinned
+    // against the script itself.
+    it.each([
+      ['dashboard', 'rt', 'sess'],
+      ['platform', 'prt', 'psess']
+    ])('indexes a new %s session under its prefixed member', async (kind, prefix, index) => {
+      const redis = { eval: jest.fn() }
+      const service = new AuthRedisService(
+        redis as unknown as Redis,
+        { redisNamespace: 'auth' } as unknown as ResolvedOptions
+      )
 
-      expect(source).toContain('`rt:${tokenHash}`')
-      expect(source).toContain('`prt:${tokenHash}`')
+      await service.writeNewSession({
+        kind: kind as 'dashboard' | 'platform',
+        tokenHash: 'a'.repeat(64),
+        sessionJson: '{}',
+        familyId: 'fam-1',
+        userId: 'u1',
+        refreshTtl: 60
+      })
+
+      const call = redis.eval.mock.calls[0] as unknown[]
+      const script = call[0] as string
+      // KEYS follow the arity: [script, numkeys, ...keys, ...argv].
+      expect(call).toContain(`auth:${index}:u1`)
+      // The member is `{prefix}:{hash}`, built in the script from these two arguments.
+      expect(call).toContain(prefix)
+      expect(call).toContain('a'.repeat(64))
+      expect(script).toContain("SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5]")
+      // The index TTL is re-armed in the SAME step, which is the half a dropped connection
+      // used to skip — leaving the set with no expiry at all.
+      expect(script).toContain("EXPIRE', KEYS[2], ARGV[2]")
     })
   })
 
