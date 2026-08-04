@@ -53,7 +53,8 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
   readonly name = 'google'
 
   private readonly clientId: string
-  private readonly clientSecret: string
+  /** The Google client secret, withheld from serialization. */
+  readonly #clientSecret: string
   private readonly callbackUrl: string
   private readonly scope: string[]
 
@@ -65,7 +66,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
     scope?: string[]
   }) {
     this.clientId = config.clientId
-    this.clientSecret = config.clientSecret
+    this.#clientSecret = config.clientSecret
     this.callbackUrl = config.callbackUrl
     this.scope = config.scope ?? ['openid', 'email', 'profile']
   }
@@ -124,7 +125,7 @@ export class GoogleOAuthPlugin implements OAuthProviderPlugin {
     const body = new URLSearchParams({
       code,
       client_id: this.clientId,
-      client_secret: this.clientSecret,
+      client_secret: this.#clientSecret,
       redirect_uri: this.callbackUrl,
       grant_type: 'authorization_code'
     })

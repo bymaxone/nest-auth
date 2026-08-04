@@ -308,10 +308,22 @@ export type RefreshRotationOutcome =
 export class AuthRedisService {
   private readonly namespace: string
 
+  /**
+   * The Redis client.
+   *
+   * An ECMAScript private field rather than a TypeScript `private` one, which is
+   * erased at runtime: an ioredis instance carries `options.password` as a plain
+   * field, and this service is injected into roughly a dozen guards and services,
+   * so leaving it enumerable puts the Redis credentials one `JSON.stringify`
+   * away from any of them.
+   */
+  readonly #redis: Redis
+
   constructor(
-    @Inject(BYMAX_AUTH_REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(BYMAX_AUTH_REDIS_CLIENT) redis: Redis,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {
+    this.#redis = redis
     this.namespace = options.redisNamespace
   }
 
@@ -335,7 +347,7 @@ export class AuthRedisService {
    * @returns The stored string, or `null` if the key does not exist.
    */
   async get(key: string): Promise<string | null> {
-    return this.redis.get(this.prefix(key))
+    return this.#redis.get(this.prefix(key))
   }
 
   /**
@@ -347,9 +359,9 @@ export class AuthRedisService {
    */
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl !== undefined) {
-      await this.redis.set(this.prefix(key), value, 'EX', ttl)
+      await this.#redis.set(this.prefix(key), value, 'EX', ttl)
     } else {
-      await this.redis.set(this.prefix(key), value)
+      await this.#redis.set(this.prefix(key), value)
     }
   }
 
@@ -362,7 +374,7 @@ export class AuthRedisService {
     // Redis answers `DEL` with the number of keys it removed. Returning it lets a caller that
     // needs exactly-once semantics — consuming an MFA temp token, say — tell "I removed it"
     // from "someone else already had". Callers that only want the key gone can ignore it.
-    const removed = await this.redis.del(this.prefix(key))
+    const removed = await this.#redis.del(this.prefix(key))
     return typeof removed === 'number' && removed > 0
   }
 
@@ -380,7 +392,7 @@ export class AuthRedisService {
    * @returns `true` if the key was newly set, `false` if it already existed.
    */
   async setnx(key: string, ttl: number): Promise<boolean> {
-    const result = await this.redis.set(this.prefix(key), '1', 'EX', ttl, 'NX')
+    const result = await this.#redis.set(this.prefix(key), '1', 'EX', ttl, 'NX')
     return result === 'OK'
   }
 
@@ -395,7 +407,7 @@ export class AuthRedisService {
    * @returns The value of the key after the increment.
    */
   async incr(key: string): Promise<number> {
-    return this.redis.incr(this.prefix(key))
+    return this.#redis.incr(this.prefix(key))
   }
 
   /**
@@ -405,7 +417,7 @@ export class AuthRedisService {
    * @param ttl - New time-to-live in seconds.
    */
   async expire(key: string, ttl: number): Promise<void> {
-    await this.redis.expire(this.prefix(key), ttl)
+    await this.#redis.expire(this.prefix(key), ttl)
   }
 
   /**
@@ -416,7 +428,7 @@ export class AuthRedisService {
    *   does not exist.
    */
   async ttl(key: string): Promise<number> {
-    return this.redis.ttl(this.prefix(key))
+    return this.#redis.ttl(this.prefix(key))
   }
 
   // ---------------------------------------------------------------------------
@@ -431,7 +443,7 @@ export class AuthRedisService {
    * @returns `1` if the member was added, `0` if it already existed.
    */
   async sadd(setKey: string, member: string): Promise<number> {
-    return this.redis.sadd(this.prefix(setKey), member)
+    return this.#redis.sadd(this.prefix(setKey), member)
   }
 
   /**
@@ -442,7 +454,7 @@ export class AuthRedisService {
    * @returns `1` if the member was removed, `0` if it did not exist.
    */
   async srem(setKey: string, member: string): Promise<number> {
-    return this.redis.srem(this.prefix(setKey), member)
+    return this.#redis.srem(this.prefix(setKey), member)
   }
 
   /**
@@ -452,7 +464,7 @@ export class AuthRedisService {
    * @returns Array of member strings (empty array if the key does not exist).
    */
   async smembers(setKey: string): Promise<string[]> {
-    return this.redis.smembers(this.prefix(setKey))
+    return this.#redis.smembers(this.prefix(setKey))
   }
 
   /**
@@ -463,7 +475,7 @@ export class AuthRedisService {
    * @returns `true` if the member is in the set, `false` otherwise.
    */
   async sismember(setKey: string, member: string): Promise<boolean> {
-    const result = await this.redis.sismember(this.prefix(setKey), member)
+    const result = await this.#redis.sismember(this.prefix(setKey), member)
     return result === 1
   }
 
@@ -487,7 +499,7 @@ export class AuthRedisService {
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const prefixedKeys = keys.map((k) => this.prefix(k))
-    return this.redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args)
+    return this.#redis.eval(script, prefixedKeys.length, ...prefixedKeys, ...args)
   }
 
   // ---------------------------------------------------------------------------
@@ -615,7 +627,7 @@ export class AuthRedisService {
       // Reporting it as a dead family here would be a misleading theft signal.
     }
     if (typeof familyId !== 'string' || familyId === '') return true
-    const present = await this.redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
+    const present = await this.#redis.exists(this.prefix(`${familyPrefix}:${familyId}`))
     return present === 1
   }
 
@@ -721,7 +733,7 @@ export class AuthRedisService {
    * @returns `true` if the key was newly set, `false` if it already existed.
    */
   async setIfAbsent(key: string, value: string, ttl: number): Promise<boolean> {
-    const result = await this.redis.set(this.prefix(key), value, 'EX', ttl, 'NX')
+    const result = await this.#redis.set(this.prefix(key), value, 'EX', ttl, 'NX')
     return result === 'OK'
   }
 

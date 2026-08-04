@@ -5,6 +5,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { inspect } from 'node:util'
 
 import type { Request } from 'express'
 
@@ -2711,5 +2712,69 @@ describe('resolveOptions — password KDF memory ceiling', () => {
     expect(() =>
       resolveOptions({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 17, blockSize: 64 } })
     ).toThrow(/per derivation/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Secret containment
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — secret containment', () => {
+  const OAUTH_SECRET = 'google-client-secret-canary'
+
+  /** Minimal options plus a configured Google provider, so both secret kinds are present. */
+  const WITH_OAUTH: BymaxAuthModuleOptions = {
+    ...MINIMAL_OPTIONS,
+    oauth: {
+      google: {
+        clientId: 'client-id',
+        clientSecret: OAUTH_SECRET,
+        callbackUrl: 'https://app.example.com/auth/google/callback'
+      }
+    }
+  }
+
+  it('keeps every secret out of the paths that serialize the resolved options', () => {
+    // The resolved options are injected into roughly a dozen guards, controllers
+    // and services, so whatever serializes one of them reaches this object: a
+    // structured logger rendering its arguments, an error reporter capturing the
+    // scope of a throw, an object spread. `showHidden` is asserted because it is
+    // what defeats a merely non-enumerable property — the HMAC keys derived from
+    // the signing secret are key material in their own right.
+    const resolved = resolveOptions(WITH_OAUTH)
+
+    for (const rendered of [
+      JSON.stringify(resolved),
+      JSON.stringify({ ...resolved }),
+      inspect(resolved, { depth: null }),
+      inspect(resolved, { depth: null, showHidden: true })
+    ]) {
+      expect(rendered).not.toContain(VALID_SECRET)
+      expect(rendered).not.toContain(OAUTH_SECRET)
+      expect(rendered).not.toContain(resolved.hmacKey)
+    }
+  })
+
+  it('still exposes every secret to the code that has to use it', () => {
+    // Containment must cost nothing at the supported surface: the signer, the
+    // verifier and the OAuth token exchange all read these fields.
+    const resolved = resolveOptions(WITH_OAUTH)
+
+    expect(resolved.jwt.secret).toBe(VALID_SECRET)
+    expect(resolved.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
+    expect(resolved.hmacKey).toBeTruthy()
+    expect(resolved.previousHmacKeys).toEqual([])
+  })
+
+  it("never rewrites the caller's own options object", () => {
+    // The OAuth provider config arrives by reference through the spread of the
+    // consumer's options. Rewriting a property there would mutate an object this
+    // library does not own and make a second resolve on the same input throw.
+    const first = resolveOptions(WITH_OAUTH)
+    const second = resolveOptions(WITH_OAUTH)
+
+    expect(Object.keys(WITH_OAUTH.oauth?.google ?? {})).toContain('clientSecret')
+    expect(first.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
+    expect(second.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
   })
 })
