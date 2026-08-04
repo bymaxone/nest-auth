@@ -572,7 +572,7 @@ export interface DashboardJwtPayload {
 {
   "sub": "clx1abc2def3ghi4jkl",
   "jti": "550e8400-e29b-41d4-a716-446655440000",
-  "tenantId": "tenant_bymax_finance",
+  "tenantId": "tenant_example",
   "role": "OWNER",
   "type": "dashboard",
   "status": "ACTIVE",

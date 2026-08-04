@@ -4344,7 +4344,7 @@
 - **Dependencies:** NEST-173
 - **Agent:** security-reviewer
 - **Estimate:** ~40min
-- **Description:** Implement public route logic in the proxy, including protection against infinite redirect loops. The two guards (`_r` counter and `reason=expired`) were discovered and validated in bymax-fitness-ai.
+- **Description:** Implement public route logic in the proxy, including protection against infinite redirect loops. The two guards (`_r` counter and `reason=expired`) were discovered and validated in production.
 
 **Prompt for the agent:**
 
@@ -4355,7 +4355,7 @@
 > 3. If `reason=expired` → show the page as-is (break the redirect loop). This is CRITICAL: it prevents infinite redirect when the backend confirms the session is truly expired.
 > 4. If `_r` >= `maxRefreshAttempts` → show the page as-is (break the redirect loop). This is the second safety net: even without `reason=expired`, the counter prevents infinite redirects.
 > 5. The `_r` param is incremented on each silent-refresh redirect attempt.
->    CRITICAL: These two guards (steps 3 and 4) are defense-in-depth against the infinite redirect loop discovered in bymax-fitness-ai. Both must be present. Add inline comments explaining the loop prevention logic. Verify with `pnpm build`.
+>    CRITICAL: These two guards (steps 3 and 4) are defense-in-depth against the infinite redirect loop discovered in production. Both must be present. Add inline comments explaining the loop prevention logic. Verify with `pnpm build`.
 
 ---
 
@@ -4502,7 +4502,7 @@
 - **Dependencies:** NEST-180
 - **Agent:** security-reviewer
 - **Estimate:** ~45min
-- **Description:** Critical tests to validate that the infinite redirect loop prevention mechanism works correctly. These scenarios were discovered in production in bymax-fitness-ai.
+- **Description:** Critical tests to validate that the infinite redirect loop prevention mechanism works correctly. These scenarios were discovered in production.
 
 **Prompt for the agent:**
 
@@ -4515,7 +4515,7 @@
 > 4. Combination: `_r` at max AND `reason=expired` — both guards work as defense-in-depth.
 > 5. `_r` param is cleaned up from the URL after successful authentication.
 > 6. `_r` counter resets when navigating to a different route.
->    Mock `NextRequest` and `NextResponse` appropriately. Use `jest.fn()` or equivalent for URL manipulation. These tests are CRITICAL — they validate the fix for the infinite redirect loop discovered in bymax-fitness-ai. Verify with `pnpm test`.
+>    Mock `NextRequest` and `NextResponse` appropriately. Use `jest.fn()` or equivalent for URL manipulation. These tests are CRITICAL — they validate the fix for the infinite redirect loop discovered in production. Verify with `pnpm test`.
 
 ---
 

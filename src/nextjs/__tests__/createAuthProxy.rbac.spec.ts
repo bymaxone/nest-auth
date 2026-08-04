@@ -42,7 +42,7 @@ describe('createAuthProxy — background requests, RBAC, status blocking', () =>
     // RSC header: when the user is NOT authenticated the proxy must
     // short-circuit with 401 instead of issuing a redirect. A redirect
     // in a client-router-initiated RSC fetch is what produced the
-    // bymax-fitness-ai regression.
+    // Production regression.
     it('returns 401 for an RSC background request without authentication', async () => {
       const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
       const request = makeMockRequest({

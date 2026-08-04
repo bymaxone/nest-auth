@@ -2,7 +2,7 @@
  * Redirect-loop-prevention tests for `createAuthProxy`.
  *
  * These scenarios validate the anti-redirect-loop defence-in-depth
- * discovered in production on bymax-fitness-ai: the proxy must NEVER
+ * discovered in production: the proxy must NEVER
  * issue an infinite chain of silent-refresh redirects. Two guards
  * stop the loop:
  *
