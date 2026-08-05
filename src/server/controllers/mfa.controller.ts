@@ -125,8 +125,8 @@ function isTokenInvalidException(err: unknown): boolean {
 @UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class MfaController {
   constructor(
-    private readonly mfaService: MfaService,
-    private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(MfaService) private readonly mfaService: MfaService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

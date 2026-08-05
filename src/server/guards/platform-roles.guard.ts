@@ -45,7 +45,7 @@ import { hasRole } from '../utils/roles.util'
 @Injectable()
 export class PlatformRolesGuard implements CanActivate {
   constructor(
-    private readonly reflector: Reflector,
+    @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

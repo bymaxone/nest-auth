@@ -47,10 +47,10 @@ import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 @Injectable()
 export class JwtPlatformGuard implements CanActivate {
   constructor(
-    private readonly jwtService: JwtService,
-    private readonly tokenDelivery: TokenDeliveryService,
-    private readonly redis: AuthRedisService,
-    private readonly reflector: Reflector,
+    @Inject(JwtService) private readonly jwtService: JwtService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

@@ -105,10 +105,10 @@ export class InvitationService {
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks,
-    private readonly redis: AuthRedisService,
-    private readonly passwordService: PasswordService,
-    private readonly sessionService: SessionService,
-    private readonly tokenManager: TokenManagerService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(SessionService) private readonly sessionService: SessionService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

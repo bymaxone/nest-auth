@@ -167,8 +167,8 @@ export class OAuthController {
   private readonly logger = new Logger(OAuthController.name)
 
   constructor(
-    private readonly oauthService: OAuthService,
-    private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(OAuthService) private readonly oauthService: OAuthService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

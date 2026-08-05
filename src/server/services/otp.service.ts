@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 
-import { Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 
 import { timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -114,7 +114,7 @@ function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', stri
  */
 @Injectable()
 export class OtpService {
-  constructor(private readonly redis: AuthRedisService) {}
+  constructor(@Inject(AuthRedisService) private readonly redis: AuthRedisService) {}
 
   // ---------------------------------------------------------------------------
   // Generate

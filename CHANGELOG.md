@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-05
+
+### Fixed
+
+- **Dependency injection no longer depends on a transitive dev dependency.** Seventy-one
+  constructor parameters across thirty classes were resolved from `design:paramtypes`,
+  the metadata TypeScript emits — and this package emitted it only because `@swc/core`
+  happened to be in the tree via `ts-node`. tsup enables its SWC transform when that
+  package is present and prints `You have emitDecoratorMetadata enabled but @swc/core was
+not installed, skipping swc plugin` when it is not; nine sibling packages get the second
+  path and none of their bundles carry the metadata. Had the transitive dependency moved,
+  every one of those parameters would have stopped resolving at once — silently wherever
+  `@Optional()` is present. They now carry explicit `@Inject`, which writes
+  `self:paramtypes` and is independent of any build transform.
+- `@swc/core` is a declared devDependency. The metadata is still needed — `ValidationPipe`
+  finds a DTO class through the reflected parameter type, and thirty-one controller
+  parameters here are typed by DTO — so the emission stays. It is now deliberate rather
+  than inherited.
+
 ## [1.1.0] - 2026-08-03
 
 The API changes marked **Breaking** below are breaking against `1.0.11`. They are
@@ -1015,6 +1034,7 @@ ever installable.
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
 [Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...HEAD
+[1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/bymaxone/nest-auth/compare/v1.0.9...v1.0.10

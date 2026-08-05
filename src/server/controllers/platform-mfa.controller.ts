@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   HttpCode,
@@ -64,7 +65,7 @@ import { MfaService } from '../services/mfa.service'
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe({ forbidUnknownValues: true }))
 export class PlatformMfaController {
-  constructor(private readonly mfaService: MfaService) {}
+  constructor(@Inject(MfaService) private readonly mfaService: MfaService) {}
 
   /**
    * Initiates the MFA setup flow for the authenticated platform administrator.

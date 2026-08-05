@@ -129,11 +129,11 @@ export class PasswordResetService {
     @Optional()
     private readonly emailProvider: IEmailProvider | null,
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
-    private readonly otpService: OtpService,
-    private readonly passwordService: PasswordService,
-    private readonly redis: AuthRedisService,
-    private readonly sessionService: SessionService,
-    private readonly bruteForce: BruteForceService
+    @Inject(OtpService) private readonly otpService: OtpService,
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(SessionService) private readonly sessionService: SessionService,
+    @Inject(BruteForceService) private readonly bruteForce: BruteForceService
   ) {}
 
   // ---------------------------------------------------------------------------

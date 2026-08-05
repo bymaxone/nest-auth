@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   HttpCode,
@@ -52,7 +53,9 @@ import { EmailChangeService } from '../services/email-change.service'
 @UseGuards(TrustedOriginGuard, AuthRateLimitGuard)
 @UsePipes(createAuthValidationPipe())
 export class EmailChangeController {
-  constructor(private readonly emailChangeService: EmailChangeService) {}
+  constructor(
+    @Inject(EmailChangeService) private readonly emailChangeService: EmailChangeService
+  ) {}
 
   // ---------------------------------------------------------------------------
   // POST /email/change

@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   HttpCode,
@@ -64,8 +65,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @UsePipes(createAuthValidationPipe())
 export class InvitationController {
   constructor(
-    private readonly invitationService: InvitationService,
-    private readonly tokenDelivery: TokenDeliveryService
+    @Inject(InvitationService) private readonly invitationService: InvitationService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   // ---------------------------------------------------------------------------

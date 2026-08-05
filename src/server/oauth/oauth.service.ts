@@ -123,9 +123,9 @@ export class OAuthService {
     // (e.g. in standalone testing). The service treats a null hooks object the same as
     // a hooks object with no onOAuthLogin method — both result in OAUTH_FAILED.
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
-    private readonly redis: AuthRedisService,
-    private readonly tokenManager: TokenManagerService,
-    private readonly sessionService: SessionService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
+    @Inject(SessionService) private readonly sessionService: SessionService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

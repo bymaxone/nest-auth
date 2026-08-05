@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common'
+import { Inject, HttpStatus, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import type { Request } from 'express'
@@ -51,7 +51,7 @@ import type { DashboardJwtPayload, PlatformJwtPayload } from '../interfaces/jwt-
  */
 @Injectable()
 export class MfaRequiredGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
     // Check whether the handler or controller is decorated with @SkipMfa().

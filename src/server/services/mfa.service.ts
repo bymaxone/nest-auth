@@ -216,11 +216,11 @@ export class MfaService {
     @Optional()
     @Inject(BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
     private readonly platformUserRepo: IPlatformUserRepository | null,
-    private readonly redis: AuthRedisService,
-    private readonly tokenManager: TokenManagerService,
-    private readonly bruteForce: BruteForceService,
-    private readonly passwordService: PasswordService,
-    private readonly sessionService: SessionService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
+    @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(SessionService) private readonly sessionService: SessionService,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
     @Inject(BYMAX_AUTH_HOOKS) private readonly hooks: IAuthHooks
   ) {}
