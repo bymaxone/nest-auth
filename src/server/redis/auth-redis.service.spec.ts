@@ -141,6 +141,25 @@ describe('AuthRedisService', () => {
       await service.del('mykey')
       expect(mockRedis.del).toHaveBeenCalledWith(prefixed('mykey'))
     })
+
+    // Scenario: what `del` REPORTS, not just what it calls. Expected: `true` only when a key
+    // was actually removed. Why: callers that need exactly-once semantics — consuming an MFA
+    // temp token, claiming a recovery code — decide on this boolean, and "I removed it" has to
+    // be distinguishable from "someone else already had". A reply this method cannot read as a
+    // count must read as "no", not as "yes".
+    it.each([
+      ['one key removed', 1, true],
+      ['several keys removed', 3, true],
+      ['nothing to remove', 0, false],
+      ['a negative count', -1, false],
+      ['a string reply', '1', false],
+      ['a nil reply', null, false],
+      ['an unexpected shape', {}, false]
+    ])('reports %s as %s', async (_label, reply, expected) => {
+      mockRedis.del.mockResolvedValue(reply)
+
+      await expect(service.del('mykey')).resolves.toBe(expected)
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -1045,6 +1064,17 @@ describe('AuthRedisService', () => {
       [
         'a record whose tenantId is a number',
         '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"tenantId":1}'
+      ],
+      // The three identity fields. A snapshot authorizes a socket for its whole lifetime with
+      // no per-message gate behind it, so a missing `sub` is a socket bound to nobody, and a
+      // missing `role` or `status` is one whose authorization fields read as `undefined` at
+      // every check the consumer makes.
+      ['a record missing sub', '{"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'],
+      ['a record missing role', '{"sub":"u","status":"s","mfaEnabled":true,"mfaVerified":true}'],
+      ['a record missing status', '{"sub":"u","role":"r","mfaEnabled":true,"mfaVerified":true}'],
+      [
+        'a record whose sub is a number',
+        '{"sub":1,"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'
       ]
     ])('should refuse %s', async (_label, stored) => {
       mockRedis.eval.mockResolvedValue(stored)

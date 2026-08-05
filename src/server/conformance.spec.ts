@@ -440,36 +440,44 @@ describe('cross-implementation conformance', () => {
     // read off the arguments the script is invoked with, and the concatenation is pinned
     // against the script itself.
     it.each([
-      ['dashboard', 'rt', 'sess'],
-      ['platform', 'prt', 'psess']
-    ])('indexes a new %s session under its prefixed member', async (kind, prefix, index) => {
-      const redis = { eval: jest.fn() }
-      const service = new AuthRedisService(
-        redis as unknown as Redis,
-        { redisNamespace: 'auth' } as unknown as ResolvedOptions
-      )
+      ['dashboard', 'rt', 'sess', 'fam'],
+      ['platform', 'prt', 'psess', 'pfam']
+    ])(
+      'indexes a new %s session under its prefixed member',
+      async (kind, prefix, index, family) => {
+        const redis = { eval: jest.fn() }
+        const service = new AuthRedisService(
+          redis as unknown as Redis,
+          { redisNamespace: 'auth' } as unknown as ResolvedOptions
+        )
 
-      await service.writeNewSession({
-        kind: kind as 'dashboard' | 'platform',
-        tokenHash: 'a'.repeat(64),
-        sessionJson: '{}',
-        familyId: 'fam-1',
-        userId: 'u1',
-        refreshTtl: 60
-      })
+        await service.writeNewSession({
+          kind: kind as 'dashboard' | 'platform',
+          tokenHash: 'a'.repeat(64),
+          sessionJson: '{}',
+          familyId: 'fam-1',
+          userId: 'u1',
+          refreshTtl: 60
+        })
 
-      const call = redis.eval.mock.calls[0] as unknown[]
-      const script = call[0] as string
-      // KEYS follow the arity: [script, numkeys, ...keys, ...argv].
-      expect(call).toContain(`auth:${index}:u1`)
-      // The member is `{prefix}:{hash}`, built in the script from these two arguments.
-      expect(call).toContain(prefix)
-      expect(call).toContain('a'.repeat(64))
-      expect(script).toContain("SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5]")
-      // The index TTL is re-armed in the SAME step, which is the half a dropped connection
-      // used to skip — leaving the set with no expiry at all.
-      expect(script).toContain("EXPIRE', KEYS[2], ARGV[2]")
-    })
+        const call = redis.eval.mock.calls[0] as unknown[]
+        const script = call[0] as string
+        // All three keys, in the arity the script declares: [script, numkeys, ...keys, ...argv].
+        // The record and the family index are asserted alongside the session index because the
+        // script writes all three under one TTL, and a key that arrived empty would silently
+        // write the whole session under the namespace root.
+        expect(call).toContain(`auth:${prefix}:${'a'.repeat(64)}`)
+        expect(call).toContain(`auth:${index}:u1`)
+        expect(call).toContain(`auth:${family}:fam-1`)
+        // The member is `{prefix}:{hash}`, built in the script from these two arguments.
+        expect(call).toContain(prefix)
+        expect(call).toContain('a'.repeat(64))
+        expect(script).toContain("SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5]")
+        // The index TTL is re-armed in the SAME step, which is the half a dropped connection
+        // used to skip — leaving the set with no expiry at all.
+        expect(script).toContain("EXPIRE', KEYS[2], ARGV[2]")
+      }
+    )
   })
 
   // -------------------------------------------------------------------------

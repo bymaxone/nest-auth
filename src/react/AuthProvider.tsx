@@ -181,6 +181,11 @@ export function AuthProvider({
   // reads it before its request and drops its own result if it moved while the request was in
   // flight.
   //
+  // A fresh OBJECT rather than a counter: the value's whole meaning is its identity, and
+  // nothing reads it as a number. An incrementing counter invites the question of what a
+  // decrement or a wrap would mean — questions with no answer here, and which no test can
+  // settle, because any change to the value works equally well.
+  //
   // Without it, a `getMe()` started before a logout and answered after it resurrected the
   // session: `logout()` dispatched `CLEAR_SESSION`, the UI showed signed-out, and then the
   // in-flight response — a legitimate 200, issued before the server revoked anything —
@@ -191,7 +196,7 @@ export function AuthProvider({
   //
   // The window is one round trip, and the five-minute interval tick and any focus-triggered
   // `refresh()` both open it without the user doing anything unusual.
-  const sessionGenerationRef = useRef(0)
+  const sessionGenerationRef = useRef<object>({})
 
   useEffect(() => {
     onSessionExpiredRef.current = onSessionExpired
@@ -311,7 +316,7 @@ export function AuthProvider({
         }
         // Same reason as logout: a `getMe()` issued before this call answers for the PREVIOUS
         // session, and applying it would overwrite the identity just established.
-        sessionGenerationRef.current += 1
+        sessionGenerationRef.current = {}
         syncedDispatch({ type: 'SET_USER', payload: { user: result.user, timestamp: new Date() } })
         return result
       } catch (error) {
@@ -334,7 +339,7 @@ export function AuthProvider({
         const result = await clientRef.current.register(data)
         // Same reason as logout: a `getMe()` issued before this call answers for the PREVIOUS
         // session, and applying it would overwrite the identity just established.
-        sessionGenerationRef.current += 1
+        sessionGenerationRef.current = {}
         syncedDispatch({ type: 'SET_USER', payload: { user: result.user, timestamp: new Date() } })
         return result
       } catch (error) {
@@ -362,7 +367,7 @@ export function AuthProvider({
       //
       // Bumped BEFORE the dispatch: a `getMe()` already in flight must be discarded when it
       // lands, or it re-authenticates a session the user just ended.
-      sessionGenerationRef.current += 1
+      sessionGenerationRef.current = {}
       syncedDispatch({ type: 'CLEAR_SESSION' })
     }
   }, [syncedDispatch])

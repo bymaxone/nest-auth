@@ -994,6 +994,51 @@ describe('session generation', () => {
     expect(result.current?.status).toBe('unauthenticated')
   })
 
+  // Scenario: a revalidation is in flight, the user LOGS IN, and the earlier `getMe()` then
+  // answers 401 — because the session it was issued against is the one the login replaced.
+  //
+  // Expected: nothing happens. Why: this is where the stale-result check in the failure arm
+  // actually decides something. After a logout, `statusRef` is already `unauthenticated`, so
+  // `wasAuthenticated` is false and the callback would be skipped anyway — the logout case
+  // cannot pin the guard. After a LOGIN the status is `authenticated`, so without the check the
+  // 401 for the PREVIOUS session fires `onSessionExpired` and dispatches `CLEAR_SESSION`,
+  // signing the user out of the session they just established and sending the app through a
+  // "you were signed out" flow one round trip after signing in.
+  it('ignores a 401 from the previous session when a login has landed', async () => {
+    const client = createMockClient()
+    client.login.mockResolvedValue(MOCK_AUTH_RESULT)
+    const onSessionExpired = jest.fn()
+    let rejectGetMe: ((error: unknown) => void) | undefined
+    client.getMe.mockResolvedValueOnce(MOCK_USER).mockImplementationOnce(
+      async () =>
+        new Promise((_resolve, reject) => {
+          rejectGetMe = reject
+        })
+    )
+
+    const { result } = renderContext(client, { revalidateInterval: 0, onSessionExpired })
+    await act(async () => {})
+
+    let refreshing: Promise<void> | undefined
+    await act(async () => {
+      refreshing = result.current?.refresh()
+    })
+
+    await act(async () => {
+      await result.current?.login('new@example.com', '__test_only_password')
+    })
+    expect(result.current?.status).toBe('authenticated')
+
+    await act(async () => {
+      rejectGetMe?.(new AuthClientError('Unauthorized', 401))
+      await refreshing
+    })
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(result.current?.status).toBe('authenticated')
+    expect(result.current?.user?.id).toBe(MOCK_AUTH_RESULT.user.id)
+  })
+
   // A login also supersedes an in-flight revalidation: the earlier `getMe()` answers for the
   // PREVIOUS session, and applying it would overwrite the identity just established.
   it('discards a getMe that resolves after a login', async () => {

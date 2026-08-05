@@ -1010,6 +1010,10 @@ export class AuthRedisService {
     if (raw === null) return ''
     try {
       const parsed: unknown = JSON.parse(raw)
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
+      // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
+      // string test, and `null` throws on the index and is caught below. Every mutant of it
+      // returns the same empty string through a different path
       if (typeof parsed !== 'object' || parsed === null) return ''
       const userId = (parsed as Record<string, unknown>)['userId']
       return typeof userId === 'string' ? userId : ''
@@ -1119,6 +1123,10 @@ export class AuthRedisService {
  * @returns `true` when every required field is present and correctly typed.
  */
 function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
+  // masked by the field checks below — a scalar reads every field as `undefined` and fails the
+  // first `typeof`, and the only caller parses JSON inside a try/catch, so the `null` deref
+  // this would otherwise allow surfaces as the same refusal
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   return (
