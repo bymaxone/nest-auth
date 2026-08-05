@@ -366,23 +366,6 @@ describe('PasswordService', () => {
       expect(service.needsRehash(`$md5$ln=15,r=8,p=1$${salt}$${key}`)).toBe(false)
     })
 
-    // Scenario: a hash in the pre-PHC encoding, recording a cost at or above the configured
-    // one. Expected: stale anyway. Why: staleness is not only about cost. rust-auth cannot
-    // parse this encoding, and the two libraries share a user table — so leaving a readable
-    // legacy hash in place keeps that account signing in here and failing there, where the
-    // failure is `invalid_credentials` and five of them trip the SHARED lockout. The login
-    // that reaches this has just proven the password, which is the only moment the value can
-    // be rewritten at all: skip it and the account never migrates.
-    it('should report a legacy-encoded hash as stale whatever cost it records', async () => {
-      const service = await serviceAt(32_768)
-      const legacy = (n: number) => `scrypt:${n}:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
-
-      expect(service.needsRehash(legacy(16_384))).toBe(true)
-      expect(service.needsRehash(legacy(32_768))).toBe(true)
-      // The one that matters: a STRONGER cost, which the cost comparison alone would clear.
-      expect(service.needsRehash(legacy(65_536))).toBe(true)
-    })
-
     // Scenario: hashes carrying the two derived-key lengths the pair writes — 64 bytes here,
     // 32 in rust-auth. Expected: neither is stale on account of its length. Why: both libraries
     // read the same user table, and treating the sibling's length as stale would rehash every
@@ -584,15 +567,9 @@ describe('PasswordService', () => {
       ['an empty derived-key field', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$`],
       ['a derived key one byte below the floor', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${b64(9)}`],
       ['a derived key one byte above the ceiling', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${b64(65)}`],
-      ['a legacy record with a zero cost', `scrypt:0:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`],
-      [
-        'a legacy record with a zero block size',
-        `scrypt:16384:0:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
-      ],
-      [
-        'a legacy record with zero parallelism',
-        `scrypt:16384:8:0:${'a'.repeat(32)}:${'b'.repeat(128)}`
-      ]
+      // A shape this library once wrote and no longer reads at all. It is here as an
+      // unreadable value like any other, not as a migration path.
+      ['the pre-PHC colon encoding', `scrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`]
     ])('reads %s as unreadable rather than as a weak hash', async (_label, malformed) => {
       // Configured well ABOVE what each malformed value records, so a parser that wrongly
       // accepted one would call it stale — which is the answer this asserts it does not give.
@@ -603,47 +580,13 @@ describe('PasswordService', () => {
       expect(await service.compare('anything', malformed)).toBe(false)
     })
 
-    // Each of these keeps every OTHER field valid, so only the guard named in the label can
-    // be what refuses it. A case that trips two guards at once pins neither.
-    it.each([
-      // Leading field non-empty while the algorithm tag is still `scrypt`, so the tag check
-      // cannot be what rejects it.
-      ['a non-empty leading field', `x$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
-      // Legacy: seven fields, so the arity check is the only thing wrong.
-      [
-        'a legacy record with a seventh field',
-        `scrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}:x`
-      ],
-      // Legacy: a different algorithm tag with an otherwise perfect record.
-      ['a legacy record tagged bcrypt', `bcrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`],
-      // Legacy: empty salt, everything else valid.
-      ['a legacy record with an empty salt', `scrypt:16384:8:1::${'b'.repeat(128)}`],
-      // Legacy: a cost that is a number but not an integer.
-      [
-        'a legacy record with a fractional cost',
-        `scrypt:16384.5:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
-      ],
-      [
-        'a legacy record with a fractional block size',
-        `scrypt:16384:8.5:1:${'a'.repeat(32)}:${'b'.repeat(128)}`
-      ],
-      [
-        'a legacy record with fractional parallelism',
-        `scrypt:16384:8:1.5:${'a'.repeat(32)}:${'b'.repeat(128)}`
-      ],
-      // Five fields — the short shape the presence checks are what refuse.
-      ['a legacy record missing its derived key', `scrypt:16384:8:1:${'a'.repeat(32)}`],
-      // A derived key of the wrong LENGTH, everything else valid. This is the one guard
-      // standing between a corrupt record and `timingSafeEqual`, which throws on unequal
-      // buffers rather than answering false.
-      [
-        'a legacy record with a 32-byte derived key',
-        `scrypt:16384:8:1:${'a'.repeat(32)}:${'b'.repeat(64)}`
-      ],
-      ['a legacy record with an empty derived key', `scrypt:16384:8:1:${'a'.repeat(32)}:`]
-    ])('reads %s as unreadable', async (_label, malformed) => {
+    // Each of these keeps every OTHER field valid, so only the guard named in the label can be
+    // what refuses it. A case that trips two guards at once pins neither.
+    it('refuses a non-empty leading field while the algorithm tag is still scrypt', async () => {
       const service = await serviceAt(32_768)
 
+      // The tag check cannot be what rejects this — it reads `scrypt`, as it should.
+      const malformed = `x$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`
       expect(service.needsRehash(malformed)).toBe(false)
       expect(await service.compare('anything', malformed)).toBe(false)
     })
@@ -670,15 +613,12 @@ describe('PasswordService', () => {
       expect(service.needsRehash(`$scrypt$ln=14,r=8,p=2$${B64_SALT}$${B64_KEY}`)).toBe(false)
     })
 
-    // The control: the same shapes, well-formed, DO read as stale. Without this the assertions
-    // above would pass for a parser that refuses everything.
-    it.each([
-      ['a PHC hash below the configured cost', `$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`],
-      ['a legacy hash at any cost', `scrypt:65536:8:1:${'a'.repeat(32)}:${'b'.repeat(128)}`]
-    ])('reads %s as stale', async (_label, stored) => {
+    // The control: a well-formed hash below the configured cost DOES read as stale. Without
+    // this the assertions above would pass for a parser that refuses everything.
+    it('reads a PHC hash below the configured cost as stale', async () => {
       const service = await serviceAt(32_768)
 
-      expect(service.needsRehash(stored)).toBe(true)
+      expect(service.needsRehash(`$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
     })
 
     // Scenario: malformed parameter segments. Expected: refused, not verified under a guessed

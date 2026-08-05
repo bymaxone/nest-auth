@@ -698,9 +698,8 @@ describe('cross-implementation conformance', () => {
       expect(service.needsRehash(stored)).toBe(false)
     }, 30_000)
 
-    // Scenario: the three hashes the contract pins, one written by each backend plus one in
-    // nest-auth's pre-PHC encoding. Expected: every one verifies here, and reports the
-    // staleness the contract declares.
+    // Scenario: the two hashes the contract pins, one written by each implementation.
+    // Expected: both verify here, and report the staleness the contract declares.
     //
     // Why this test rather than a prose assertion: the entry this replaces read
     // `toContain('self-describing')`, and it was green for the entire period during which the
@@ -729,19 +728,6 @@ describe('cross-implementation conformance', () => {
       },
       30_000
     )
-
-    // Scenario: the legacy encoding is read but never minted. Expected: nothing this library
-    // writes is in it. Why: it is a migration path, and a migration that keeps producing the
-    // shape it is migrating away from never ends.
-    it('never mints the legacy password-hash encoding', async () => {
-      const service = new PasswordService(
-        { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
-        { isBreached: async () => false } as never
-      )
-
-      expect(await service.hash('a-password')).not.toMatch(/^scrypt:/)
-      expect(contract.passwordHashFormat.legacyEncoding).toContain('READ-ONLY')
-    }, 30_000)
 
     // Scenario: the token this library actually mints. Expected: 64 lowercase hex characters.
     // Why: the two assertions above read the contract's prose, which proves only that the

@@ -73,8 +73,6 @@ type ParsedHash = {
   p: number
   salt: Buffer
   derived: Buffer
-  /** `true` when the value came from the pre-PHC `scrypt:N:r:p:salt:derived` encoding. */
-  legacy: boolean
 }
 
 /**
@@ -172,70 +170,24 @@ function parsePhcHash(hash: string): ParsedHash | null {
   if (salt === null || derived === null) return null
   if (derived.length < MIN_KEY_LEN || derived.length > MAX_KEY_LEN) return null
 
-  return { N: 2 ** params.ln, r: params.r, p: params.p, salt, derived, legacy: false }
-}
-
-/**
- * Decompose the pre-PHC encoding — `scrypt:N:r:p:{saltHex}:{derivedHex}`.
- *
- * Kept as a **read** path only. Every hash this library wrote before the two implementations
- * agreed on PHC is in this shape, and a stored corpus cannot be rewritten without the
- * plaintext — so it is verified here and marked stale, which migrates it on the owner's next
- * successful sign-in. Nothing mints it any more.
- *
- * @param hash - The stored hash string.
- * @returns The decomposition, or `null` when the value is not in the legacy encoding.
- */
-function parseLegacyHash(hash: string): ParsedHash | null {
-  const parts = hash.split(':')
-  // Arity and tag together, unlike `parsePhcHash` which checks them through the destructured
-  // names. Here `length` is the better guard: the legacy shape has no optional field, so a
-  // wrong count is a single fact, and splitting it into five per-field presence checks traded
-  // four mutants for seven — every one of them on a state `length === 6` already excludes.
-  if (parts.length !== 6 || parts[0] !== 'scrypt') return null
-
-  const [, nRaw, rRaw, pRaw, saltHex, derivedHex] = parts
-  // The two `undefined` operands are unreachable — `length === 6` guarantees all six are
-  // present — and exist only to narrow `string | undefined` for the compiler. They share the
-  // statement with the empty-salt check rather than getting one of their own, so the `return`
-  // is still reachable and the line still covered; an unreachable statement is a hole in the
-  // coverage gate, not a guard.
-  //
-  // An empty DERIVED key needs no clause here: it decodes to zero bytes, which the length
-  // check below rejects.
-  // Stryker disable next-line ConditionalExpression,LogicalOperator: the two `undefined` clauses
-  // cannot be reached with a six-field input, so no test can hold them in place; the empty-salt
-  // clause beside them is pinned by its own case
-  if (saltHex === undefined || derivedHex === undefined || saltHex === '') return null
-
-  const derived = Buffer.from(derivedHex, 'hex')
-  // Guard the length before `timingSafeEqual`, which throws on a mismatch.
-  if (derived.length !== SCRYPT_KEY_LEN) return null
-
-  const [N, r, p] = [Number(nRaw), Number(rRaw), Number(pRaw)]
-  if (!(Number.isInteger(N) && Number.isInteger(r) && Number.isInteger(p))) return null
-  if (N <= 0 || r <= 0 || p <= 0) return null
-
-  return { N, r, p, salt: Buffer.from(saltHex, 'hex'), derived, legacy: true }
+  return { N: 2 ** params.ln, r: params.r, p: params.p, salt, derived }
 }
 
 /**
  * Decompose a stored hash into its parameters, salt and derived key.
  *
- * Both encodings are accepted, and which one a value is in is not a detail the caller sees:
+ * PHC (`$scrypt$ln=…,r=…,p=…$salt$hash`) is the only encoding this library reads, and the only
+ * one it writes. rust-auth writes the same, so a hash from either backend verifies under the
+ * other with nothing in the credential path branching on which one wrote it. The format is
+ * pinned by `conformance/wire-contract.json` (`passwordHashFormat`) with a known-answer vector
+ * from each implementation.
  *
- * - **PHC** (`$scrypt$ln=…,r=…,p=…$salt$hash`) — what this library writes, and what rust-auth
- *   has always written. Pinned by `conformance/wire-contract.json` with a known-answer vector
- *   each side verifies against the other's output.
- * - **Legacy** (`scrypt:N:r:p:salt:derived`) — read-only, and reported as needing a rehash.
+ * There is deliberately no compatibility reader for an older shape. Both libraries are new and
+ * have never backed a deployment, so such a reader would be an unused branch sitting in the
+ * credential-verification core — which is where an unused branch is most expensive.
  *
- * Accepting both is not politeness. The two libraries share one user table and one brute-force
- * counter, so a hash one side cannot read is not a failed parse — it is `invalid_credentials`,
- * indistinguishable from a wrong password, five of which lock the account out of **both**
- * backends. A format the sibling cannot verify is an outage for every account it touches.
- *
- * The cost travels with the hash either way, so a value can be verified years later regardless
- * of what the deployment is configured to write today. That is what makes `password.costFactor`
+ * The cost travels with the hash, so a value can be verified years later regardless of what
+ * the deployment is configured to write today. That is what makes `password.costFactor`
  * changeable at all — a hash that did not record its cost can only be verified by guessing it,
  * and guessing wrong is every password on the system becoming unverifiable at once.
  *
@@ -243,13 +195,10 @@ function parseLegacyHash(hash: string): ParsedHash | null {
  * without a branch whose timing distinguishes a corrupt record from a wrong one.
  *
  * @param hash - The stored hash string.
- * @returns The decomposition, or `null` when the value is in neither encoding.
+ * @returns The decomposition, or `null` when the value is not a scrypt PHC string.
  */
 function parseStoredHash(hash: string): ParsedHash | null {
-  // PHC first: it is what every new hash is written in, so the common path is one branch deep.
-  // The two shapes are unambiguous — a PHC string starts with `$`, which the legacy encoding
-  // never contains — so the order is a matter of cost, not of correctness.
-  return parsePhcHash(hash) ?? parseLegacyHash(hash)
+  return parsePhcHash(hash)
 }
 
 /**
@@ -263,9 +212,8 @@ function parseStoredHash(hash: string): ParsedHash | null {
  *  - `saltB64` — 16 random bytes in PHC "B64" (standard base64, no padding)
  *  - `derivedB64` — 64 derived bytes in the same encoding
  *
- * The pre-PHC `scrypt:N:r:p:{salt_hex}:{derived_hex}` encoding is still **read**, and reported
- * as needing a rehash so a stored corpus migrates on each owner's next successful sign-in.
- * Both encodings are held byte-compatible with rust-auth, which shares the user table.
+ * The only encoding, read and written. rust-auth writes the same, and the format is pinned by
+ * `conformance/wire-contract.json` with a known-answer vector from each implementation.
  *
  * @remarks
  * **Cost parameters:** Taken from `options.password` at construction time.
@@ -371,13 +319,13 @@ export class PasswordService {
     // stored hash becomes unreproducible — every user locked out, irreversibly, because the
     // value they were derived under is gone.
     //
-    // Written as a PHC string, which is what rust-auth has always written. This library used to
-    // write `scrypt:N:r:p:salt:derived` instead, and the two shapes are mutually unreadable: a
-    // hash from one backend verified as `invalid_credentials` on the other, and because the
-    // brute-force counter is keyed identically on both, five legitimate attempts locked the
-    // account out of the pair. The contract called the format "self-describing", which both
-    // encodings are — and which is why the divergence survived: prose neither side could test
-    // against. It is pinned by a known-answer vector now.
+    // Written as a PHC string, which is what rust-auth writes. This library used to write
+    // `scrypt:N:r:p:salt:derived`, and the two shapes are mutually unreadable: a hash from one
+    // backend verified as `invalid_credentials` on the other, and because the brute-force
+    // counter is keyed identically on both, five legitimate attempts locked the account out of
+    // the pair. The contract called the format "self-describing", which both encodings are —
+    // and which is why the divergence survived: prose neither side could test against. It is
+    // pinned by a known-answer vector now.
     //
     // `ln` is log2(N). The cost factor is validated as a power of two at startup, so the
     // exponent is exact rather than rounded.
@@ -398,12 +346,6 @@ export class PasswordService {
   needsRehash(hash: string): boolean {
     const parsed = parseStoredHash(hash)
     if (parsed === null) return false
-    // A legacy-encoded hash is stale whatever its cost: rust-auth cannot read it, so leaving it
-    // in place keeps that account unable to sign in on the other backend. The login that
-    // reaches this has just proven the password, which is the only moment the value can be
-    // rewritten at all — so this is the migration, and skipping it means the account never
-    // migrates.
-    if (parsed.legacy) return true
     // Deliberately NOT a comparison of derived-key length. The two libraries write different
     // lengths (64 here, 32 there) and both are recorded in the hash and verified under what
     // they record, so treating a shorter one as stale would make every hash written by the
@@ -416,7 +358,7 @@ export class PasswordService {
    * Verifies a plaintext password against a stored scrypt hash.
    *
    * @param plain - Plaintext password supplied by the user.
-   * @param hash - Stored hash, in either the PHC or the legacy encoding.
+   * @param hash - Stored hash, as a PHC string.
    * @returns `true` if the password matches, `false` otherwise.
    *
    * @remarks
