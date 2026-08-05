@@ -15,12 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructor parameters across thirty classes were resolved from `design:paramtypes`,
   the metadata TypeScript emits — and this package emitted it only because `@swc/core`
   happened to be in the tree via `ts-node`. tsup enables its SWC transform when that
-  package is present and prints `You have emitDecoratorMetadata enabled but @swc/core was
-not installed, skipping swc plugin` when it is not; nine sibling packages get the second
-  path and none of their bundles carry the metadata. Had the transitive dependency moved,
+  package is present and prints a warning when it is not:
+
+  ```
+  You have emitDecoratorMetadata enabled but @swc/core was not installed, skipping swc plugin
+  ```
+
+  Nine sibling packages get that second path and none of their bundles carry the metadata. Had the transitive dependency moved,
   every one of those parameters would have stopped resolving at once — silently wherever
   `@Optional()` is present. They now carry explicit `@Inject`, which writes
   `self:paramtypes` and is independent of any build transform.
+
 - `@swc/core` is a declared devDependency. The metadata is still needed — `ValidationPipe`
   finds a DTO class through the reflected parameter type, and thirty-one controller
   parameters here are typed by DTO — so the emission stays. It is now deliberate rather
