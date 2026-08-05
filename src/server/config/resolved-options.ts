@@ -293,6 +293,9 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
     rateLimit: {
       ...DEFAULT_OPTIONS.rateLimit,
       ...userOptions.rateLimit,
+      // Stryker disable next-line OptionalChaining: unreachable — `validateClientIpSource` has
+      // already run, and it only returns without throwing when `rateLimit` is an object (either
+      // naming a source or disabling limiting), so `rateLimit` is never undefined here
       clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
     },
 
@@ -390,6 +393,10 @@ function withholdSecrets(resolved: ResolvedOptions): void {
   // provider name is ever used as a dynamic property sink.
   const oauth = Object.fromEntries(
     Object.entries(resolved.oauth).map(([provider, config]): [string, unknown] => {
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
+      // with nothing to distinguish its arms — a non-object provider config is spread into an
+      // empty record, whose `clientSecret` descriptor is absent, so `withholdFromSerialization`
+      // returns without touching it and the entry is rebuilt unchanged either way
       if (typeof config !== 'object' || config === null) return [provider, config]
       const copy: Record<string, unknown> = { ...(config as Record<string, unknown>) }
       withholdFromSerialization(copy, 'clientSecret')
