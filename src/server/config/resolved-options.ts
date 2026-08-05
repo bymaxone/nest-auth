@@ -797,7 +797,7 @@ const MAX_BRUTE_FORCE_ATTEMPTS = 100
  * recommendation). A value above it is a misconfiguration rather than a stronger setting: see
  * `validatePasswordMemoryParameters` for the arithmetic an operator needs to raise it knowingly.
  */
-const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
+export const MAX_KDF_BYTES_PER_DERIVATION = 512 * 1024 * 1024
 
 /**
  * Bounds the scrypt parameters that carry its memory hardness.

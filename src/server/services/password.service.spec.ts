@@ -532,7 +532,10 @@ describe('PasswordService', () => {
     // boundary with a cost BELOW the configured one makes the two answers differ.
     it.each([
       ['the lowest ln', 'ln=1,r=8,p=1'],
-      ['the highest ln', 'ln=31,r=1,p=1'],
+      // The highest ln the WORKING-SET ceiling admits at r=1, not the highest the 1..31
+      // arithmetic bound admits — 128 * 2^22 * 1 is exactly 512 MiB. Above it the record asks
+      // for more memory than any configuration could have been validated with.
+      ['the highest usable ln', 'ln=22,r=1,p=1'],
       ['r of exactly 1', 'ln=14,r=1,p=1'],
       ['p of exactly 1', 'ln=14,r=1,p=1']
     ])('parses %s and reports it against the configured cost', async (_label, params) => {
@@ -611,6 +614,82 @@ describe('PasswordService', () => {
       expect(service.needsRehash(`$scrypt$ln=14,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
       // …and a hash matching on all three is not stale, so the clause is not simply always-true.
       expect(service.needsRehash(`$scrypt$ln=14,r=8,p=2$${B64_SALT}$${B64_KEY}`)).toBe(false)
+    })
+
+    // Scenario: `r` or `p` far above anything either implementation writes. Expected: refused,
+    // and refused by RETURNING, not by throwing. Why: both are handed straight to `scrypt` and
+    // feed `maxmem: N * r * 128 * 2` in `compare`, where Node answers `Invalid scrypt params`
+    // for a large value and `maxmem is out of range` for a huge one. An exception out of this
+    // function breaks its whole contract — a malformed record must answer like a wrong
+    // password, with no branch whose timing or shape tells the two apart, and here it would
+    // instead surface as a 500 from every credential path.
+    it.each([
+      ['an r above the ceiling', 'ln=14,r=256,p=1'],
+      ['an r that overflows maxmem', 'ln=14,r=4294967295,p=1'],
+      ['a p above the ceiling', 'ln=14,r=8,p=256'],
+      ['a p large enough to reject the params', 'ln=14,r=8,p=999999999']
+    ])('refuses %s without throwing', async (_label, params) => {
+      const service = await serviceAt(16_384)
+      const malformed = `$scrypt$${params}$${B64_SALT}$${B64_KEY}`
+
+      await expect(service.compare('anything', malformed)).resolves.toBe(false)
+      expect(service.needsRehash(malformed)).toBe(false)
+    })
+
+    // Scenario: a record whose recorded cost is arithmetically valid but asks for more memory
+    // than any deployment could have configured. Expected: refused, and refused WITHOUT
+    // deriving. Why: `ln = 31` sits inside the 1..31 bound — that bound is about `2 ** ln`
+    // staying a number, not about what the number costs — and with the shipped `r = 8` it asks
+    // for 2 TiB. `compare` computes `maxmem` FROM the record, so it widens the limit to fit
+    // rather than refusing, and the derivation is attempted: the process is OOM-killed, taking
+    // every in-flight connection with it, not just the request that carried the record.
+    //
+    // These assertions must return promptly. If one ever hangs or the runner dies, the bound
+    // is gone and the derivation is being attempted for real.
+    it.each([
+      ['the largest representable cost', 'ln=31,r=8,p=1'],
+      ['a cost just above the ceiling', 'ln=20,r=8,p=1'],
+      ['a modest cost with a large block size', 'ln=14,r=255,p=1']
+    ])(
+      'refuses %s without attempting the derivation',
+      async (_label, params) => {
+        const service = await serviceAt(16_384)
+        const malformed = `$scrypt$${params}$${B64_SALT}$${B64_KEY}`
+
+        await expect(service.compare('anything', malformed)).resolves.toBe(false)
+        expect(service.needsRehash(malformed)).toBe(false)
+      },
+      10_000
+    )
+
+    // The ceiling is the same one the configured cost is held to at startup, so a record at
+    // exactly that working set still reads — otherwise this bound would refuse hashes a valid
+    // configuration produced.
+    it('still reads a record at exactly the configured-cost ceiling', async () => {
+      const service = await serviceAt(16_384)
+
+      // 128 * 2^19 * 8 is exactly 512 MiB, which `validatePasswordMemoryParameters` accepts.
+      expect(service.needsRehash(`$scrypt$ln=19,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(false)
+      // …and one step past it is refused, so the bound is where it says it is.
+      expect(service.needsRehash(`$scrypt$ln=20,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(false)
+      // The distinguishing read: at the ceiling it PARSES (stale against a higher config),
+      // above it does not parse at all.
+      const strict = await serviceAt(2 ** 19)
+      expect(strict.needsRehash(`$scrypt$ln=18,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
+    })
+
+    // The boundary itself: 255 is inside, so the ceiling cannot be tightened without a test
+    // turning red, and a hash at the values both implementations actually write still reads.
+    it.each([
+      ['r at the ceiling', 'ln=14,r=255,p=1'],
+      ['p at the ceiling', 'ln=14,r=8,p=255'],
+      ['the values both implementations write', 'ln=14,r=8,p=1']
+    ])('still reads %s', async (_label, params) => {
+      const service = await serviceAt(32_768)
+
+      // Parsed, and reported stale against the higher configured cost — which an unreadable
+      // value would not be.
+      expect(service.needsRehash(`$scrypt$${params}$${B64_SALT}$${B64_KEY}`)).toBe(true)
     })
 
     // The control: a well-formed hash below the configured cost DOES read as stale. Without

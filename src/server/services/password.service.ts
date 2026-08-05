@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
 
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { MAX_KDF_BYTES_PER_DERIVATION } from '../config/resolved-options'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -63,6 +64,16 @@ const DUMMY_EXPECTED = Buffer.alloc(SCRYPT_KEY_LEN, 0x5a)
  * here would mean minting hashes the sibling implementation refuses to parse, which is the
  * failure this whole format exists to prevent.
  */
+/**
+ * Ceiling for the `r` and `p` cost parameters read out of a stored hash.
+ *
+ * Not a policy limit — a bound on what the KDF can be handed at all. Both are passed straight
+ * to `scrypt` and into the `maxmem` arithmetic, where a large value throws rather than
+ * refusing, which would break this module's contract that a malformed record returns `null`.
+ * Both implementations write 8 and 1.
+ */
+const MAX_SCRYPT_PARAMETER = 255
+
 const MIN_KEY_LEN = 10
 const MAX_KEY_LEN = 64
 
@@ -139,7 +150,28 @@ function parsePhcParams(text: string): { ln: number; r: number; p: number } | nu
   if (ln === undefined || r === undefined || p === undefined) return null
   // `ln` is log2(N) and N must fit the KDF: 1..=31 covers every value either library will
   // accept, and bounding it here keeps `2 ** ln` from overflowing into a nonsense cost.
-  if (ln < 1 || ln > 31 || r < 1 || p < 1) return null
+  //
+  // `r` and `p` need a CEILING for the same reason, which the first version of this parser
+  // missed. They reach `scrypt` directly and also feed `maxmem: N * r * 128 * 2` in `compare`,
+  // so a stored value of `999999999` makes Node throw `Invalid scrypt params` and one of
+  // `4294967295` makes it throw `maxmem is out of range` — an exception out of a function
+  // whose whole contract is that a malformed record returns `null` and the caller answers
+  // "wrong password" with no branch whose timing distinguishes the two. 255 is far above any
+  // parameter either implementation writes (8 and 1) and far below where the arithmetic
+  // stops being representable.
+  if (ln < 1 || ln > 31) return null
+  if (r < 1 || r > MAX_SCRYPT_PARAMETER || p < 1 || p > MAX_SCRYPT_PARAMETER) return null
+  // The working set the record ASKS FOR, held to the same ceiling the configured cost is held
+  // to at startup. Without this the bounds above are only about arithmetic: `ln = 31` with the
+  // shipped `r = 8` is inside them and asks for 2 TiB, and `compare` does not refuse it — it
+  // computes `maxmem` FROM the record and widens the limit to fit, so the derivation is
+  // attempted and the process is OOM-killed. That takes down every in-flight connection, not
+  // just the request carrying the record.
+  //
+  // A hash written under a validated configuration is always inside this, because the same
+  // ceiling is what let that configuration boot. So nothing legitimate is refused — this only
+  // rejects a record no deployment of either implementation could have produced.
+  if (128 * 2 ** ln * r > MAX_KDF_BYTES_PER_DERIVATION) return null
   return { ln, r, p }
 }
 
@@ -384,7 +416,10 @@ export class PasswordService {
       N,
       r,
       p,
-      // Sized for the parameters actually being used, which may exceed the configured ones.
+      // Sized for the parameters actually being used, which may exceed the configured ones —
+      // but never without bound: `parsePhcParams` has already refused any record whose working
+      // set is above `MAX_KDF_BYTES_PER_DERIVATION`, so this cannot be widened past 2x that
+      // ceiling by what the record claims.
       // Stryker disable next-line ArithmeticOperator,MethodExpression: `maxmem` is a CEILING, and
       // only its being too LOW is observable (scrypt throws). Every mutant here lowers it while
       // leaving it above what any hash these tests verify actually needs, so the derivation and

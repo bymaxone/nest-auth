@@ -311,6 +311,14 @@ export function AuthProvider({
           // not intercepted here — that call is on the `AuthClient`
           // directly and is expected to route through the caller's
           // component-local error state.
+          //
+          // The generation moves here for the same reason it moves on logout: this IS a
+          // deliberate transition, and a `getMe()` issued before it answers for the session
+          // that was live beforehand. Applying that answer while the challenge is pending puts
+          // the PREVIOUS user back into context and flips `isAuthenticated` to `true` — which
+          // this library's own JSDoc calls safe to gate protected routes on — so the route
+          // guards reopen on the session the second factor was supposed to stand in front of.
+          sessionGenerationRef.current = {}
           syncedDispatch({ type: 'CLEAR_SESSION' })
           return result
         }

@@ -1039,6 +1039,52 @@ describe('session generation', () => {
     expect(result.current?.user?.id).toBe(MOCK_AUTH_RESULT.user.id)
   })
 
+  // Scenario: a revalidation is in flight, the user submits credentials, and the server answers
+  // with an MFA challenge rather than a session. Expected: the earlier `getMe()` is discarded.
+  //
+  // Why this branch specifically: it is the one transition that clears the session WITHOUT
+  // establishing a new one, so the "a login replaced the identity" reasoning does not cover it
+  // — and it was the one path the generation token was not moved on. A stale `getMe()` landing
+  // here puts the PREVIOUS user back into context while the app is blocking on an OTP prompt,
+  // and `useAuthStatus().isAuthenticated` — documented as safe to gate protected routes on —
+  // answers `true` again. The route guards reopen on the very session the second factor was
+  // meant to stand in front of.
+  it('discards a getMe that resolves after a login answered with an MFA challenge', async () => {
+    const client = createMockClient()
+    client.login.mockResolvedValue(MOCK_MFA_RESULT)
+    let resolveGetMe: ((user: typeof MOCK_USER) => void) | undefined
+    client.getMe.mockResolvedValueOnce(MOCK_USER).mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveGetMe = resolve
+        })
+    )
+
+    const { result } = renderContext(client, { revalidateInterval: 0 })
+    await act(async () => {})
+    expect(result.current?.status).toBe('authenticated')
+
+    let refreshing: Promise<void> | undefined
+    await act(async () => {
+      refreshing = result.current?.refresh()
+    })
+
+    await act(async () => {
+      await result.current?.login('user@example.com', '__test_only_password')
+    })
+    // The MFA gate: no session, and the guards must deny.
+    expect(result.current?.status).toBe('unauthenticated')
+    expect(result.current?.user).toBeNull()
+
+    await act(async () => {
+      resolveGetMe?.(MOCK_USER)
+      await refreshing
+    })
+
+    expect(result.current?.status).toBe('unauthenticated')
+    expect(result.current?.user).toBeNull()
+  })
+
   // A login also supersedes an in-flight revalidation: the earlier `getMe()` answers for the
   // PREVIOUS session, and applying it would overwrite the identity just established.
   it('discards a getMe that resolves after a login', async () => {
