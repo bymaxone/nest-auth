@@ -1373,46 +1373,6 @@ describe('TokenManagerService', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // decodeToken
-  // ---------------------------------------------------------------------------
-
-  describe('decodeToken', () => {
-    // Verifies that decodeToken returns the full decoded payload when the jti claim is present.
-    it('should return the decoded payload when jti is present', () => {
-      const payload = { jti: 'some-uuid', sub: 'user-1', type: 'dashboard' }
-      mockJwtService.decode.mockReturnValue(payload)
-
-      const result = service.decodeToken('some.jwt.token')
-
-      expect(result).toEqual(payload)
-      expect(mockJwtService.decode).toHaveBeenCalledWith('some.jwt.token')
-    })
-
-    // Verifies that TOKEN_INVALID is thrown when the decoded payload lacks a jti claim.
-    it('should throw TOKEN_INVALID when jti is missing', () => {
-      mockJwtService.decode.mockReturnValue({ sub: 'user-1' }) // no jti
-
-      expect(() => service.decodeToken('some.jwt.token')).toThrow(AuthException)
-    })
-
-    // Verifies that TOKEN_INVALID is thrown when JwtService.decode returns null (malformed token).
-    it('should throw TOKEN_INVALID when decode returns null', () => {
-      mockJwtService.decode.mockReturnValue(null)
-
-      expect(() => service.decodeToken('malformed-token')).toThrow(AuthException)
-    })
-
-    // Scenario: a decoded payload with jti present but sub missing must be rejected.
-    // Expected: throws AuthException. Why: kills the `typeof raw['sub'] !== 'string'` → false mutant
-    // on line 657 — without the sub guard a jti-only payload would be wrongly accepted.
-    it('should throw TOKEN_INVALID when sub is missing', () => {
-      mockJwtService.decode.mockReturnValue({ jti: 'some-uuid' }) // no sub
-
-      expect(() => service.decodeToken('some.jwt.token')).toThrow(AuthException)
-    })
-  })
-
-  // ---------------------------------------------------------------------------
   // issueMfaTempToken
   // ---------------------------------------------------------------------------
 

@@ -107,7 +107,6 @@ const mockTokenManager = {
   issueTokens: jest.fn(),
   issueMfaTempToken: jest.fn(),
   reissueTokens: jest.fn(),
-  decodeToken: jest.fn(),
   verifyIgnoringExpiry: jest.fn(),
   issueAccess: jest.fn()
 }

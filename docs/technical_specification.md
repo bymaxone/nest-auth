@@ -3250,10 +3250,38 @@ This section documents technical and architectural limitations of the package th
 
 | Limitation                                     | Impact                                                                           | Alternative                                                      |
 | ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Redis is a single point of failure**         | If Redis goes down, refresh, logout, brute-force, MFA, and sessions fail         | Use Redis with replication (Sentinel/Cluster)                    |
-| **Single-region**                              | No discussion of multi-region Redis replication or JWT validation across regions | The host application must configure a multi-region Redis Cluster |
+| **Redis is a single point of failure**         | If Redis goes down, refresh, logout, brute-force, MFA, and sessions fail         | Replication with Sentinel. **Not Cluster** — see below           |
+| **Single-region**                              | No discussion of multi-region Redis replication or JWT validation across regions | A multi-region **Sentinel** topology; Cluster is unsupported     |
 | **No key rotation for the JWT secret**         | If the secret is compromised, all tokens are compromised                         | Resetting the secret invalidates all tokens; no dual-key support |
 | **No key rotation for the MFA encryption key** | If the AES key is compromised, all TOTP secrets are exposed                      | No automatic re-encryption mechanism                             |
+
+#### Redis Cluster is not supported
+
+Sentinel and plain replication are. Cluster is not, and the reason is structural
+rather than a missing feature.
+
+The session keyspaces are keyed by different things on purpose. A rotation touches
+`rt:{oldHash}`, `rt:{newHash}`, `rp:{oldHash}`, `cf:{oldHash}`, `fam:{familyId}`
+and `sess:{userId}` in one atomic step — six keys derived from four unrelated
+identifiers, with no hash tag among them. Cluster assigns slots by key, so those
+six land on up to six nodes and the script is refused with `CROSSSLOT Keys in
+request don't hash to the same slot`. Family revocation and the revoke-all sweep
+additionally rebuild keys from set members _inside_ the script, which Cluster
+rejects as `Script attempted to access a non-local key` however the slots fall.
+
+The failure mode is what makes this worth stating rather than leaving to be
+discovered. Login works — those are single-key writes that the client routes
+individually — so a Cluster deployment comes up healthy and stays healthy until
+the first access token expires, about fifteen minutes in, at which point every
+refresh in the deployment fails at once. "Log out everywhere" is worse: it errors
+where nobody is looking, so a password reset reports success while the sessions it
+promised to end are still alive.
+
+Making Cluster work would mean a `{userId}` hash tag across `rt:`, `rp:`, `cf:`,
+`fam:`, `sess:` and `sd:`. That is a change to the shared keyspace, so it has to
+land in `conformance/wire-contract.json` and in rust-auth in the same breath, with
+a migration for data already written — not something to reach for without a
+deployment that needs it.
 
 ### 20.4 Multi-tenancy
 

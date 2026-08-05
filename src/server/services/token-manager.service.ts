@@ -480,23 +480,6 @@ export class TokenManagerService {
   }
 
   /**
-   * Refuses a rotation once the login it descends from has outlived the absolute cap.
-   *
-   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
-   * every fifteen minutes renews that lifetime forever, so without this a session established
-   * once never has to be established again. The cap measures from the **family's** birth, which
-   * is carried unchanged through the lineage.
-   *
-   * A session with no birth time predates the field and is not capped — it ages out under the
-   * refresh lifetime like any other. A cap of `0` disables the check entirely.
-   *
-   * @param session - The presented session, or the placeholder when the token is not live.
-   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
-   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
-   *   remedy is the same (sign in again) and the difference would only tell a holder of a
-   *   stolen token how old the account's session is.
-   */
-  /**
    * Emits {@link IAuthHooks.onRefreshTokenReuseDetected}, fire-and-forget.
    *
    * The owner is read from the stored session where it can be — a replay of a token whose live
@@ -516,6 +499,23 @@ export class TokenManagerService {
     }
   }
 
+  /**
+   * Refuses a rotation once the login it descends from has outlived the absolute cap.
+   *
+   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
+   * every fifteen minutes renews that lifetime forever, so without this a session established
+   * once never has to be established again. The cap measures from the **family's** birth, which
+   * is carried unchanged through the lineage.
+   *
+   * A session with no birth time predates the field and is not capped — it ages out under the
+   * refresh lifetime like any other. A cap of `0` disables the check entirely.
+   *
+   * @param session - The presented session, or the placeholder when the token is not live.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
+   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
+   *   remedy is the same (sign in again) and the difference would only tell a holder of a
+   *   stolen token how old the account's session is.
+   */
   private assertWithinAbsoluteLifetime(session: RefreshSession): void {
     const capDays = this.options.jwt.absoluteSessionLifetimeDays
     if (capDays <= 0) return
@@ -1030,23 +1030,9 @@ export class TokenManagerService {
   }
 
   // ---------------------------------------------------------------------------
-  // Token decoding (no expiry check)
+  // Verification that ignores expiry (logout only)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Decodes a JWT without validating its expiration or signature.
-   *
-   * @internal
-   * **WARNING:** This method does NOT verify the token signature or expiry.
-   * It must only be used for internal diagnostic purposes (e.g. reading the
-   * `sub` claim from an expired token to look up a session for revocation).
-   * Never use it to authorize requests — use `JwtService.verify()` in guards.
-   *
-   * @param token - Raw JWT string.
-   * @returns Decoded payload.
-   * @throws {@link AuthException} with `TOKEN_INVALID` if the payload is not an
-   *   object or lacks required `jti` (string) and `sub` (string) claims.
-   */
   /**
    * Verifies an access token's signature under the pinned algorithm while **ignoring its
    * expiry**, returning the payload.
@@ -1083,22 +1069,6 @@ export class TokenManagerService {
     return verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token, {
       ignoreExpiration: true
     })
-  }
-
-  decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload {
-    const raw = this.jwtService.decode(token)
-
-    if (
-      // Stryker disable next-line ConditionalExpression: the object-type clause is redundant: every reachable non-object value also fails the sibling field checks, so dropping it changes nothing
-      typeof raw !== 'object' ||
-      raw === null ||
-      typeof (raw as Record<string, unknown>)['jti'] !== 'string' ||
-      typeof (raw as Record<string, unknown>)['sub'] !== 'string'
-    ) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    return raw as DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload
   }
 
   // ---------------------------------------------------------------------------
