@@ -841,7 +841,11 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 - `@MaxLength(128)` on password DTOs prevents algorithmic-DoS via oversized scrypt inputs
 - JWT algorithm pinning to HS256 prevents algorithm-confusion attacks
 - Constant-time comparisons via `crypto.timingSafeEqual` for all secret comparisons
-- HttpOnly cookies; `Secure` enforced in production; `SameSite=Strict` for refresh tokens
+- HttpOnly cookies; `Secure` enforced in production; `SameSite=Lax` by default on every auth
+  cookie, so the OAuth provider's cross-site redirect back to your app still carries them.
+  Deployments that do not need that redirect can take the stricter posture with
+  `cookies.sameSite: 'strict'`. CSRF does not rest on this setting — `TrustedOriginGuard` is
+  applied to every controller and runs before authentication.
 
 ---
 
@@ -855,7 +859,7 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 | Token Generation   | `crypto.randomBytes(32)` — 256 bits of entropy                                                         |
 | Secret Comparison  | `crypto.timingSafeEqual` (constant-time)                                                               |
 | JWT                | HS256 via `@nestjs/jwt`, JTI blacklist via Redis                                                       |
-| Cookies            | HttpOnly, Secure, SameSite=Strict, path-scoped                                                         |
+| Cookies            | HttpOnly, Secure, SameSite=Lax (override to `strict`), path-scoped                                     |
 | Brute-Force        | Redis atomic counters per HMAC(email, jwt.secret)                                                      |
 | CSRF (OAuth)       | 64-char hex state nonce, single-use via `getdel()`                                                     |
 | Refresh Rotation   | Single-use tokens with a grace window; a replay past it revokes that login's whole family lineage      |

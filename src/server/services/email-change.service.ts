@@ -75,7 +75,9 @@ function isEmailChangeContext(value: unknown): value is EmailChangeContext {
  *
  * **The current password is re-proved.** A stolen access token alone cannot move the recovery
  * address — the thief has to already hold the credential that would let them take the account
- * anyway.
+ * anyway. It is also why no session is revoked here: anyone who can complete this flow could
+ * already sign in, so ending the caller's other sessions would cost the user their devices and
+ * buy nothing. A password *change* does revoke, because there the factor itself moved.
  *
  * **The new address is proved before it is adopted.** A token goes to it and nowhere else, so
  * a typo cannot lock the owner out of their own account and an attacker cannot point the
