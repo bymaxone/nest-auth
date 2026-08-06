@@ -489,6 +489,11 @@ export async function bootstrapTestApp(
     emailVerification: { required: false },
     sessions: { enabled: true },
     mfa: { encryptionKey: MFA_ENCRYPTION_KEY, issuer: 'TestApp' },
+    // Declared, because the library no longer sniffs NODE_ENV and defaults to production: the
+    // scenarios here serve over plain HTTP and configure `http://` OAuth callbacks, both of
+    // which production rightly refuses. Saying so is the point — the escape hatch is a
+    // statement the host makes, not an inference the library draws.
+    environment: 'test',
     secureCookies: false,
     // The per-IP limiter is off for the shared bootstrap: every scenario here drives many
     // requests from one address on purpose, and a 429 would mask what the scenario is

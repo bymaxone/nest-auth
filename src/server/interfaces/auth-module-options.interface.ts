@@ -276,18 +276,38 @@ export interface BymaxAuthModuleOptions {
   tokenDelivery?: 'cookie' | 'bearer' | 'both'
 
   /**
+   * The deployment environment, supplied explicitly.
+   *
+   * This is the ONLY input that answers "is this production". The library never reads the
+   * ambient `process.env`, and it is secure by default: an unset value is `'production'`, so
+   * `secureCookies` resolves to `true` and the production-gated OAuth-redirect checks apply
+   * unless the host opts into `'development'` or `'test'`.
+   *
+   * Default: `'production'`.
+   *
+   * @remarks
+   * This replaces reading `process.env['NODE_ENV'] === 'production'`. That test decided cookie
+   * `Secure`, OAuth callback HTTPS enforcement and three redirect validations, and it failed
+   * open on every near miss — unset, `'staging'`, `'prod'`, or `'production '` with a trailing
+   * space each silently took the insecure branch. Whether a deployment is production is
+   * something the deployer knows and the process environment only hints at, so it is now passed
+   * in rather than sniffed. Matches `Environment` in rust-auth.
+   */
+  environment?: 'production' | 'development' | 'test'
+
+  /**
    * Whether to set the `Secure` flag on auth cookies.
    *
    * When `true`, cookies are only sent over HTTPS. When `false`, cookies are
    * sent over HTTP as well (useful for local development).
    *
-   * Default: `process.env['NODE_ENV'] === 'production'` (evaluated once at module
-   * startup via `resolveOptions()` — not re-evaluated per request).
+   * Default: `true`, unless {@link BymaxAuthModuleOptions.environment} is
+   * `'development'` or `'test'`. Evaluated once at module startup via
+   * `resolveOptions()` — not re-evaluated per request.
    *
    * @remarks
-   * Override this explicitly in staging environments that do not set
-   * `NODE_ENV=production` but are served over HTTPS, to ensure cookies are
-   * marked Secure regardless of the environment variable.
+   * Set this explicitly to `true` in a non-production environment that is nonetheless served
+   * over HTTPS, so the cookies are marked `Secure` there too.
    */
   secureCookies?: boolean
 

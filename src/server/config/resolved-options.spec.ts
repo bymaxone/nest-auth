@@ -260,12 +260,12 @@ describe('resolveOptions — success', () => {
 })
 
 // ---------------------------------------------------------------------------
-// secureCookies default — NODE_ENV-driven
+// secureCookies default — driven by the declared environment, never by NODE_ENV
 // ---------------------------------------------------------------------------
 
 describe('resolveOptions — secureCookies default', () => {
-  // Helper: run resolveOptions with NODE_ENV temporarily forced to a value, then
-  // restore the original so other suites are not contaminated.
+  // Helper: run `fn` with NODE_ENV forced to a value, then restore it. Used here to prove the
+  // variable is IGNORED, which is the whole point of the change.
   function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
     const original = process.env['NODE_ENV']
     if (value === undefined) {
@@ -284,43 +284,55 @@ describe('resolveOptions — secureCookies default', () => {
     }
   }
 
-  // Scenario: NODE_ENV is 'production' and the consumer did not set secureCookies.
-  // Expected: secureCookies resolves to true. Why: the default is computed as
-  // `NODE_ENV === 'production'`; this pins the production branch and kills the
-  // `?? false`, env-key, and env-value string mutants which would force false.
-  it('should default secureCookies to true when NODE_ENV is production', () => {
-    const resolved = withNodeEnv('production', () => resolveOptions(MINIMAL_OPTIONS))
-    expect(resolved.secureCookies).toBe(true)
+  // Scenario: no `environment` declared. Expected: secure. Why: a host that has not thought
+  // about it must get the strict behaviour. This is the branch that used to fail open.
+  it('defaults secureCookies to true when no environment is declared', () => {
+    expect(resolveOptions(MINIMAL_OPTIONS).secureCookies).toBe(true)
   })
 
-  // Scenario: NODE_ENV is a non-production value ('development') with no consumer override.
-  // Expected: secureCookies resolves to false. Why: pins the non-production branch and
-  // kills the `?? true` mutant (which would force true) and the `===`→`!==` equality mutant
-  // (which would flip the result to true for non-production).
-  it('should default secureCookies to false when NODE_ENV is not production', () => {
-    const resolved = withNodeEnv('development', () => resolveOptions(MINIMAL_OPTIONS))
-    expect(resolved.secureCookies).toBe(false)
+  // The escape hatch must be DECLARED, not inferred.
+  it('defaults secureCookies to false only when the host declares a non-production environment', () => {
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development' }).secureCookies).toBe(
+      false
+    )
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'test' }).secureCookies).toBe(false)
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'production' }).secureCookies).toBe(
+      true
+    )
   })
 
-  // Scenario: consumer explicitly sets secureCookies: false while NODE_ENV is production.
-  // Expected: the explicit false wins over the production default. Why: confirms the
-  // `userOptions.secureCookies ??` short-circuit — distinguishes the user-value branch from
-  // the NODE_ENV fallback branch.
-  it('should let an explicit secureCookies: false override the production default', () => {
+  // Scenario: NODE_ENV says one thing, the declared environment says another. Expected: the
+  // declaration wins, every time. Why: the old default was `NODE_ENV === 'production'`, so every
+  // one of these values took the insecure branch — unset, a near-miss spelling, and the exact
+  // string with a trailing space. Reading the ambient environment at all is the defect; this
+  // pins that it is no longer read.
+  it.each([[undefined], ['development'], ['staging'], ['prod'], ['production ']])(
+    'ignores NODE_ENV=%p and stays secure',
+    (nodeEnv) => {
+      const resolved = withNodeEnv(nodeEnv, () => resolveOptions(MINIMAL_OPTIONS))
+
+      expect(resolved.secureCookies).toBe(true)
+      expect(resolved.environment).toBe('production')
+    }
+  )
+
+  // And the converse: a declared development environment is not overridden by NODE_ENV either.
+  it('ignores NODE_ENV=production when the host declared development', () => {
     const resolved = withNodeEnv('production', () =>
-      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false })
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development' })
     )
+
     expect(resolved.secureCookies).toBe(false)
   })
 
-  // Scenario: consumer explicitly sets secureCookies: true while NODE_ENV is development.
-  // Expected: the explicit true wins over the non-production default of false. Why: pins the
-  // other side of the `??` user-value branch so neither fallback constant can satisfy both cases.
-  it('should let an explicit secureCookies: true override the non-production default', () => {
-    const resolved = withNodeEnv('development', () =>
-      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: true })
-    )
-    expect(resolved.secureCookies).toBe(true)
+  // An explicit secureCookies wins over whatever the environment implies, in both directions,
+  // so neither fallback constant can satisfy both cases.
+  it('lets an explicit secureCookies override the environment default in both directions', () => {
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false }).secureCookies).toBe(false)
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development', secureCookies: true })
+        .secureCookies
+    ).toBe(true)
   })
 })
 
@@ -491,31 +503,22 @@ describe('resolveOptions — cookies.sameSite', () => {
    * Verifies the startup gate: `'none'` without `Secure` is a misconfiguration
    * browsers silently drop. The validator catches it before the app boots so
    * the broken state is surfaced loud instead of as "auth doesn't work".
-   * Forces the non-production NODE_ENV branch where `secureCookies` defaults
-   * to `false`, so the consumer's missing override is what trips the check.
+   * Declares a development environment, where `secureCookies` defaults to
+   * `false`, so the consumer's missing override is what trips the check.
    */
   it('should throw when cookies.sameSite: "none" is set without secureCookies: true', () => {
-    const original = process.env['NODE_ENV']
-    process.env['NODE_ENV'] = 'development'
-    try {
-      const resolve = () =>
-        resolveOptions({
-          ...MINIMAL_OPTIONS,
-          cookies: { sameSite: 'none' }
-        })
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { sameSite: 'none' }
+      })
 
-      expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
-      expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
-      expect(resolve).toThrow('the auth cookies would never be stored')
-      expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
-      expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
-    } finally {
-      if (original === undefined) {
-        delete process.env['NODE_ENV']
-      } else {
-        process.env['NODE_ENV'] = original
-      }
-    }
+    expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+    expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
+    expect(resolve).toThrow('the auth cookies would never be stored')
+    expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
+    expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
   })
 
   /**
@@ -1546,15 +1549,18 @@ describe('resolveOptions — oauth provider validation', () => {
     })
   })
 
-  // Scenario: HTTP callbackUrl in a NON-production environment. Expected: accepted (no throw). Why:
-  // the production gate `process.env['NODE_ENV'] === 'production'` is false outside production. Kills
-  // the ConditionalExpression mutant replacing that gate with `true` (would throw everywhere) and the
-  // LogicalOperator mutant `&&`→`||` (which would throw on any HTTP URL regardless of environment).
+  // Scenario: HTTP callbackUrl with a DECLARED development environment, while NODE_ENV says
+  // production. Expected: accepted (no throw). Why: the gate reads the host's declaration and
+  // nothing else, so the ambient variable cannot re-enable the strict branch any more than it
+  // could disable it. Kills the ConditionalExpression mutant replacing the gate with `true`
+  // (would throw everywhere) and the LogicalOperator mutant `&&`→`||` (would throw on any HTTP
+  // URL regardless of environment).
   it('should accept an HTTP callbackUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             google: {
               clientId: 'id',
@@ -1706,10 +1712,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * remain valid — production gating is the only place HTTP is rejected.
    */
   it('should accept an HTTP successRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             successRedirectUrl: 'http://localhost:3000/dashboard',
             google: {
@@ -1910,10 +1917,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * remain valid.
    */
   it('should accept an HTTP mfaRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             mfaRedirectUrl: 'http://localhost:3000/auth/mfa',
             google: {
@@ -2072,10 +2080,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * Verifies HTTP outside production is allowed for `errorRedirectUrl`.
    */
   it('should accept an HTTP errorRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             errorRedirectUrl: 'http://localhost:3000/auth/error',
             google: {

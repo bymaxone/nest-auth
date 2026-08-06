@@ -58,6 +58,7 @@ export type ResolvedOptions = Omit<
   | 'redisNamespace'
   | 'routePrefix'
   | 'userStatusCacheTtlSeconds'
+  | 'environment'
   | 'secureCookies'
   | 'mfa'
   | 'rateLimit'
@@ -92,6 +93,12 @@ export type ResolvedOptions = Omit<
   redisNamespace: string
   routePrefix: string
   userStatusCacheTtlSeconds: number
+  /**
+   * The deployment environment as the host declared it. The only input that answers "is this
+   * production"; the library never reads `process.env`. See
+   * {@link BymaxAuthModuleOptions.environment}.
+   */
+  environment: 'production' | 'development' | 'test'
   /** `true` if auth cookies should carry the `Secure` flag. */
   secureCookies: boolean
   /**
@@ -135,6 +142,24 @@ function deriveHmacKey(jwtSecret: string): string {
   return createHash('sha256')
     .update(`${HMAC_KEY_DERIVATION_LABEL}:${jwtSecret}`, 'utf8')
     .digest('hex')
+}
+
+/**
+ * Answers "is this a production deployment" from the host's own declaration.
+ *
+ * The single place that question is decided. It used to be
+ * `process.env['NODE_ENV'] === 'production'`, evaluated independently at six sites that
+ * together decided cookie `Secure`, OAuth callback HTTPS enforcement, and three redirect
+ * validations — so every near miss failed open at all six at once: `NODE_ENV` unset, `staging`,
+ * `prod`, or `production ` with a trailing space each took the insecure branch silently.
+ *
+ * Whether a deployment is production is something the deployer knows; the process environment
+ * only hints at it, and a hint is the wrong thing to hang a trust boundary on. So the value is
+ * passed in, and an absent one means production — the safe reading, since a host that has not
+ * thought about it should get the strict behaviour rather than the lax one.
+ */
+function isProductionDeployment(userOptions: BymaxAuthModuleOptions): boolean {
+  return (userOptions.environment ?? 'production') === 'production'
 }
 
 /**
@@ -186,7 +211,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validatePasswordMemoryParameters(userOptions.password)
   validateMfaVerificationParameters(userOptions.mfa)
   validateBruteForce(userOptions.bruteForce)
-  validateOAuthProviders(userOptions.oauth)
+  validateOAuthProviders(userOptions.oauth, isProductionDeployment(userOptions))
   validateClientIpSource(userOptions.rateLimit)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
@@ -299,7 +324,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
     },
 
-    secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
+    environment: userOptions.environment ?? 'production',
+    secureCookies: userOptions.secureCookies ?? isProductionDeployment(userOptions),
 
     hmacKey: deriveHmacKey(userOptions.jwt.secret),
     previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
@@ -911,7 +937,10 @@ function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): 
 /** Fields required on every configured OAuth provider. */
 const REQUIRED_OAUTH_FIELDS = ['clientId', 'clientSecret', 'callbackUrl'] as const
 
-function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
+function validateOAuthProviders(
+  oauth: BymaxAuthModuleOptions['oauth'],
+  isProduction: boolean
+): void {
   if (!oauth) return
 
   for (const [providerOrField, rawConfig] of Object.entries(oauth)) {
@@ -944,11 +973,7 @@ function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
     // An HTTP callback URL causes the authorization code to transit over an unencrypted
     // connection, making it vulnerable to interception.
     const callbackUrl = config['callbackUrl']
-    if (
-      typeof callbackUrl === 'string' &&
-      !callbackUrl.startsWith('https://') &&
-      process.env['NODE_ENV'] === 'production'
-    ) {
+    if (typeof callbackUrl === 'string' && !callbackUrl.startsWith('https://') && isProduction) {
       throw new Error(
         `[BymaxAuthModule] oauth.${provider}.callbackUrl must use HTTPS in production ` +
           `(got: '${callbackUrl}'). Use an HTTPS URL to prevent authorization code interception.`
@@ -980,7 +1005,7 @@ function validateOAuthSuccessRedirectUrl(userOptions: BymaxAuthModuleOptions): v
     )
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1021,7 +1046,7 @@ function validateOAuthMfaRedirectUrl(userOptions: BymaxAuthModuleOptions): void 
     throw new Error(`[BymaxAuthModule] oauth.mfaRedirectUrl must be a non-empty string when set.`)
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1046,7 +1071,7 @@ function validateOAuthErrorRedirectUrl(userOptions: BymaxAuthModuleOptions): voi
     throw new Error(`[BymaxAuthModule] oauth.errorRedirectUrl must be a non-empty string when set.`)
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1079,14 +1104,15 @@ function validateRefreshCookiePath(
  * runtime failure (browser drops the cookie, user can't log in) into a loud
  * configuration error.
  *
- * `secureCookies` defaults to `true` in production and `false` otherwise. The
- * `'none'` posture is only meaningful with a TLS-served origin, so requiring
- * `secureCookies: true` regardless of `NODE_ENV` is the safe rule.
+ * `secureCookies` defaults to `true` unless the host declared a non-production
+ * `environment`. The `'none'` posture is only meaningful with a TLS-served
+ * origin, so requiring `secureCookies: true` in every environment is the safe
+ * rule.
  */
 function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions): void {
   const sameSite = userOptions.cookies?.sameSite
   if (sameSite !== 'none') return
-  const secureCookies = userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production'
+  const secureCookies = userOptions.secureCookies ?? isProductionDeployment(userOptions)
   if (!secureCookies) {
     throw new Error(
       `[BymaxAuthModule] cookies.sameSite is 'none' but secureCookies is false. ` +
