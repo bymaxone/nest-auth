@@ -57,14 +57,6 @@ const DUMMY_SALT = Buffer.from('d6732149f98b3938274691d8c2f3ee63', 'hex')
 const DUMMY_EXPECTED = Buffer.alloc(SCRYPT_KEY_LEN, 0x5a)
 
 /**
- * Smallest and largest derived-key length this library will verify, in bytes.
- *
- * The bounds are `password_hash::Output`'s, not ours: rust-auth stores its hashes through that
- * type, and a length outside 10..=64 is a string it cannot represent. Accepting a wider range
- * here would mean minting hashes the sibling implementation refuses to parse, which is the
- * failure this whole format exists to prevent.
- */
-/**
  * Ceiling for the `r` and `p` cost parameters read out of a stored hash.
  *
  * Not a policy limit — a bound on what the KDF can be handed at all. Both are passed straight
@@ -74,6 +66,14 @@ const DUMMY_EXPECTED = Buffer.alloc(SCRYPT_KEY_LEN, 0x5a)
  */
 const MAX_SCRYPT_PARAMETER = 255
 
+/**
+ * Smallest and largest derived-key length this library will verify, in bytes.
+ *
+ * The bounds are `password_hash::Output`'s, not ours: rust-auth stores its hashes through that
+ * type, and a length outside 10..=64 is a string it cannot represent. Accepting a wider range
+ * here would mean minting hashes the sibling implementation refuses to parse, which is the
+ * failure this whole format exists to prevent.
+ */
 const MIN_KEY_LEN = 10
 const MAX_KEY_LEN = 64
 
