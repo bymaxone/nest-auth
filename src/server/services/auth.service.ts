@@ -939,6 +939,24 @@ export class AuthService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Derives the OTP-record identifier for a `tenantId + email` pair.
+   *
+   * HMAC rather than a bare digest because an address is low-entropy: a bare SHA-256 of one is
+   * reversible by dictionary, and these identifiers are the Redis key an operator can read.
+   * The preimage is pinned by `conformance/wire-contract.json` and shared byte-for-byte with
+   * rust-auth, which keys the same records in the same Redis.
+   *
+   * Deliberately distinct from {@link lockoutIdentifier}: that one namespaces the login
+   * keyspace with a `dashboard:` prefix, and the two must never collide.
+   *
+   * @param tenantId - Tenant scope.
+   * @param email - The canonicalized address.
+   * @returns Hex HMAC-SHA-256 identifier.
+   */
+  private otpIdentifier(tenantId: string, email: string): string {
+    return hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
+  }
+  /**
    * The brute-force counter key for a dashboard account.
    *
    * The identity PLANE is part of the preimage, not just the tenant. Without it a tenant whose
@@ -958,24 +976,6 @@ export class AuthService {
    * @param email - The address, already normalized by the caller.
    * @returns The HMAC identifier, opaque and non-reversible.
    */
-  /**
-   * Derives the OTP-record identifier for a `tenantId + email` pair.
-   *
-   * HMAC rather than a bare digest because an address is low-entropy: a bare SHA-256 of one is
-   * reversible by dictionary, and these identifiers are the Redis key an operator can read.
-   * The preimage is pinned by `conformance/wire-contract.json` and shared byte-for-byte with
-   * rust-auth, which keys the same records in the same Redis.
-   *
-   * Deliberately distinct from {@link lockoutIdentifier}: that one namespaces the login
-   * keyspace with a `dashboard:` prefix, and the two must never collide.
-   *
-   * @param tenantId - Tenant scope.
-   * @param email - The canonicalized address.
-   * @returns Hex HMAC-SHA-256 identifier.
-   */
-  private otpIdentifier(tenantId: string, email: string): string {
-    return hmacSha256(`${tenantId}:${email}`, this.options.hmacKey)
-  }
 
   private lockoutIdentifier(tenantId: string, email: string): string {
     return hmacSha256(`dashboard:${tenantId}:${email}`, this.options.hmacKey)

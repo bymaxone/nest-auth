@@ -312,6 +312,15 @@ export class SessionService {
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
   async listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]> {
+    // Drop the grace members whose pointers have already expired, before reading the index.
+    // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
+    // that refreshes and never signs out again accumulates them without bound — and this
+    // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
+    // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
+    void this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:').catch((err: unknown) => {
+      this.logger.warn('listSessions: grace-pointer prune failed', err)
+    })
+
     const members = await this.redis.smembers(`sess:${userId}`)
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
@@ -673,6 +682,10 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<void> {
+    // Awaited here, unlike in `listSessions`: this runs on every login, which makes it the
+    // path that actually bounds the index, and the eviction below walks the set it prunes.
+    await this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:')
+
     const members = await this.redis.smembers(`sess:${userId}`)
 
     // Only count active refresh token entries — exclude grace pointers (rp:).

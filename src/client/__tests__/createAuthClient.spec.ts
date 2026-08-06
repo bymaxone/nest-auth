@@ -3,11 +3,21 @@
  * that composes the fetch wrapper with method-shaped helpers for
  * every standard auth flow.
  *
- * Strategy: every test injects a custom `authFetch` mock instead of
+ * Strategy: most tests inject a custom `authFetch` mock instead of
  * letting the factory build one with `createAuthFetch`. This keeps
  * the assertions focused on URL/body/method composition (the client's
  * actual responsibility) and avoids re-testing the wrapper's 401 +
  * refresh logic, which is already covered by `createAuthFetch.spec.ts`.
+ *
+ * The exception is the "composed wrapper" block at the bottom, which
+ * deliberately does NOT inject one. Injecting it bypasses the wrapper
+ * the factory builds, and that gap hid a real defect: the client
+ * composed the full URL *and* handed `baseUrl` to the wrapper, which
+ * prepended it a second time, so the documented same-origin setting
+ * (`baseUrl: '/api'`) sent every request to `/api/api/auth/*`. Every
+ * test here used an absolute base — where the second prepend is
+ * skipped — and a stub wrapper, so nothing could see it. A factory
+ * needs at least one test that exercises what it actually builds.
  *
  * All credential-shaped strings (passwords, tokens) are intentionally
  * scoped with `__test_only_*` / `mock-*` prefixes so secret-scanning
@@ -1263,5 +1273,75 @@ describe('createAuthClient — built-in authFetch fallback', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  // -------------------------------------------------------------------------
+  // The wrapper the factory actually builds
+  // -------------------------------------------------------------------------
+
+  describe('composed wrapper (no injected authFetch)', () => {
+    let originalFetch: typeof globalThis.fetch
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch
+    })
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch
+    })
+
+    /** Record every URL the real `fetch` is called with, answering 200 `{}` each time. */
+    function recordUrls(): string[] {
+      const seen: string[] = []
+      globalThis.fetch = jest.fn((input: RequestInfo | URL) => {
+        seen.push(String(input))
+        return Promise.resolve(
+          new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+        )
+      }) as unknown as typeof globalThis.fetch
+      return seen
+    }
+
+    // Scenario: the four base shapes a consumer can configure, driven through the wrapper the
+    // factory builds. Expected: the base appears exactly once. Why: `'/api'` is the value the
+    // README and `AuthProvider`'s own example document for the same-origin/Next-proxy setup,
+    // and it was producing `/api/api/auth/login` — a 404 on every credential call. It fails
+    // closed, so it is a correctness defect rather than a bypass, but it is the documented
+    // configuration and no test reached it.
+    it.each([
+      ['a root-relative base', '/api', '/api/auth/login'],
+      ['a root-relative base with a trailing slash', '/api/', '/api/auth/login'],
+      ['an absolute base', 'https://api.example.com', 'https://api.example.com/auth/login'],
+      ['an empty base', '', '/auth/login']
+    ])('applies %s exactly once', async (_label, baseUrl, expected) => {
+      const seen = recordUrls()
+
+      await createAuthClient({ baseUrl }).login({
+        email: 'user@example.com',
+        password: '__test_only_password',
+        tenantId: 'tenant-1'
+      })
+
+      expect(seen).toEqual([expected])
+    })
+
+    // The same property on a GET, so it is the composition that is pinned and not one verb's
+    // code path.
+    it('applies a root-relative base exactly once on a GET', async () => {
+      const seen = recordUrls()
+
+      await createAuthClient({ baseUrl: '/api' }).getMe()
+
+      expect(seen).toEqual(['/api/auth/me'])
+    })
+
+    // A custom `routePrefix` composes into the same single application of the base.
+    it('composes a custom route prefix without re-applying the base', async () => {
+      const seen = recordUrls()
+
+      await createAuthClient({ baseUrl: '/api', routePrefix: 'identity' }).getMe()
+
+      expect(seen).toEqual(['/api/identity/me'])
+    })
   })
 })

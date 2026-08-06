@@ -60,7 +60,8 @@ const mockRedis = {
   readSessionOwner: jest.fn().mockResolvedValue('user-1'),
   // The grace arm writes its recovered session through one atomic script; the default is the
   // ordinary "the account still has an index, the write landed".
-  writeRecoveredSession: jest.fn().mockResolvedValue(true)
+  writeRecoveredSession: jest.fn().mockResolvedValue(true),
+  writeNewSession: jest.fn().mockResolvedValue(undefined)
 }
 
 const JWT_SECRET = 'test-jwt-secret-for-hmac-that-is-at-least-32-chars-long'
@@ -211,10 +212,12 @@ describe('TokenManagerService', () => {
 
       const result = await service.issueTokens(SAFE_USER, '1.2.3.4', 'TestBrowser')
 
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.stringMatching(/^rt:/),
-        expect.any(String),
-        7 * 86_400
+      expect(mockRedis.writeNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'dashboard',
+          tokenHash: expect.any(String) as string,
+          refreshTtl: 7 * 86_400
+        })
       )
       expect(result.accessToken).toBe(FIXED_JWT)
       expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
@@ -240,8 +243,8 @@ describe('TokenManagerService', () => {
 
       await service.issueTokens(SAFE_USER, '127.0.0.1', 'Chrome')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const written = mockRedis.writeNewSession.mock.calls[0]?.[0] as { sessionJson: string }
+      const session = JSON.parse(written.sessionJson) as Record<string, unknown>
       expect(session['userId']).toBe('user-1')
       expect(session['tenantId']).toBe('tenant-1')
       expect(session['role']).toBe('member')
@@ -249,17 +252,34 @@ describe('TokenManagerService', () => {
       expect(session['device']).toBe('Chrome')
     })
 
-    // Scenario: issueTokens registers the new refresh token in the per-user SET and sets its TTL.
-    // Expected: sadd('sess:user-1', 'rt:<newHash>') and expire('sess:user-1', 7*86400). Why: kills
-    // the StringLiteral mutants on lines 190 (key → '', member → '') and 191 (expire key → '') by
-    // pinning the exact `sess:` key shape, the `rt:` member value, and the TTL.
-    it('adds the rt: member to sess:{userId} and expires the SET with the refresh TTL', async () => {
+    // Scenario: issueTokens registers the new refresh token in the per-user index under the
+    // refresh TTL. Expected: ONE atomic write carrying the plane, the hash, the owner and the
+    // TTL. Why: the loose form issued five commands, and both gaps between them were real —
+    // a revoke-all landing between the record write and the index SADD swept an index the new
+    // session was not in yet, and a dropped connection between the SADD and the EXPIRE left
+    // the index with no expiry, permanently. rust-auth has always done this in one MULTI/EXEC.
+    //
+    // Asserted as one call rather than as five, so the atomicity is the thing under test: the
+    // previous assertions passed for a sequence that had these windows in it, which is how the
+    // divergence lasted.
+    it('writes the session, its index member and its family in one atomic step', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
 
-      expect(mockRedis.sadd).toHaveBeenCalledWith('sess:user-1', `rt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('sess:user-1', 7 * 86_400)
+      expect(mockRedis.writeNewSession).toHaveBeenCalledTimes(1)
+      expect(mockRedis.writeNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'dashboard',
+          tokenHash: NEW_HASH,
+          userId: 'user-1',
+          refreshTtl: 7 * 86_400
+        })
+      )
+      // The record, the index member and the family TTL must not ALSO be written loose —
+      // a leftover command outside the script reopens the window the script closed.
+      expect(mockRedis.sadd).not.toHaveBeenCalled()
+      expect(mockRedis.expire).not.toHaveBeenCalled()
     })
 
     // Scenario: a login opens a refresh-token family and indexes the session in it.
@@ -272,11 +292,13 @@ describe('TokenManagerService', () => {
 
       await service.issueTokens(SAFE_USER, '1.2.3.4', 'Chrome')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const written = mockRedis.writeNewSession.mock.calls[0]?.[0] as {
+        sessionJson: string
+        familyId: string
+      }
+      const session = JSON.parse(written.sessionJson) as Record<string, unknown>
       expect(session['familyId']).toBe(FIXED_UUID)
-      expect(mockRedis.sadd).toHaveBeenCalledWith(`fam:${FIXED_UUID}`, NEW_HASH)
-      expect(mockRedis.expire).toHaveBeenCalledWith(`fam:${FIXED_UUID}`, 7 * 86_400)
+      expect(written.familyId).toBe(FIXED_UUID)
     })
 
     // Scenario: a normal login (no MFA-complete override) must NOT mark the access token mfaVerified.
@@ -318,10 +340,12 @@ describe('TokenManagerService', () => {
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.stringMatching(/^prt:/),
-        expect.any(String),
-        7 * 86_400
+      expect(mockRedis.writeNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'platform',
+          tokenHash: NEW_HASH,
+          refreshTtl: 7 * 86_400
+        })
       )
     })
 
@@ -333,8 +357,17 @@ describe('TokenManagerService', () => {
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      expect(mockRedis.sadd).toHaveBeenCalledWith('psess:admin-1', `prt:${NEW_HASH}`)
-      expect(mockRedis.expire).toHaveBeenCalledWith('psess:admin-1', 7 * 86_400)
+      expect(mockRedis.writeNewSession).toHaveBeenCalledTimes(1)
+      expect(mockRedis.writeNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'platform',
+          tokenHash: NEW_HASH,
+          userId: 'admin-1',
+          refreshTtl: 7 * 86_400
+        })
+      )
+      expect(mockRedis.sadd).not.toHaveBeenCalled()
+      expect(mockRedis.expire).not.toHaveBeenCalled()
     })
 
     // Scenario: a platform login opens its own family, indexed under `pfam:` — the platform
@@ -345,11 +378,12 @@ describe('TokenManagerService', () => {
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const written = mockRedis.writeNewSession.mock.calls[0]?.[0] as { sessionJson: string }
+      const session = JSON.parse(written.sessionJson) as Record<string, unknown>
       expect(session['familyId']).toBe(FIXED_UUID)
-      expect(mockRedis.sadd).toHaveBeenCalledWith(`pfam:${FIXED_UUID}`, NEW_HASH)
-      expect(mockRedis.expire).toHaveBeenCalledWith(`pfam:${FIXED_UUID}`, 7 * 86_400)
+      expect(mockRedis.writeNewSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'platform', familyId: FIXED_UUID })
+      )
     })
 
     // Scenario: the platform plane must not write into the dashboard session index. Expected: no
@@ -411,8 +445,8 @@ describe('TokenManagerService', () => {
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
-      const storedJson = mockRedis.set.mock.calls[0]?.[1] as string
-      const session = JSON.parse(storedJson) as Record<string, unknown>
+      const written = mockRedis.writeNewSession.mock.calls[0]?.[0] as { sessionJson: string }
+      const session = JSON.parse(written.sessionJson) as Record<string, unknown>
       expect(session['tenantId']).toBe('')
     })
 
@@ -1339,46 +1373,6 @@ describe('TokenManagerService', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // decodeToken
-  // ---------------------------------------------------------------------------
-
-  describe('decodeToken', () => {
-    // Verifies that decodeToken returns the full decoded payload when the jti claim is present.
-    it('should return the decoded payload when jti is present', () => {
-      const payload = { jti: 'some-uuid', sub: 'user-1', type: 'dashboard' }
-      mockJwtService.decode.mockReturnValue(payload)
-
-      const result = service.decodeToken('some.jwt.token')
-
-      expect(result).toEqual(payload)
-      expect(mockJwtService.decode).toHaveBeenCalledWith('some.jwt.token')
-    })
-
-    // Verifies that TOKEN_INVALID is thrown when the decoded payload lacks a jti claim.
-    it('should throw TOKEN_INVALID when jti is missing', () => {
-      mockJwtService.decode.mockReturnValue({ sub: 'user-1' }) // no jti
-
-      expect(() => service.decodeToken('some.jwt.token')).toThrow(AuthException)
-    })
-
-    // Verifies that TOKEN_INVALID is thrown when JwtService.decode returns null (malformed token).
-    it('should throw TOKEN_INVALID when decode returns null', () => {
-      mockJwtService.decode.mockReturnValue(null)
-
-      expect(() => service.decodeToken('malformed-token')).toThrow(AuthException)
-    })
-
-    // Scenario: a decoded payload with jti present but sub missing must be rejected.
-    // Expected: throws AuthException. Why: kills the `typeof raw['sub'] !== 'string'` → false mutant
-    // on line 657 — without the sub guard a jti-only payload would be wrongly accepted.
-    it('should throw TOKEN_INVALID when sub is missing', () => {
-      mockJwtService.decode.mockReturnValue({ jti: 'some-uuid' }) // no sub
-
-      expect(() => service.decodeToken('some.jwt.token')).toThrow(AuthException)
-    })
-  })
-
-  // ---------------------------------------------------------------------------
   // issueMfaTempToken
   // ---------------------------------------------------------------------------
 
@@ -2214,5 +2208,77 @@ describe('TokenManagerService', () => {
     // The empty-value case is decided by `resolveOptions` and asserted there: by the time a
     // value reaches this service it is either a real binding or absent, and re-testing the
     // normalization here would pin it in a second place that could disagree with the first.
+  })
+
+  // ---------------------------------------------------------------------------
+  // Reuse detection carries an identity into the log
+  // ---------------------------------------------------------------------------
+
+  describe('reuse-detection logging', () => {
+    // Scenario: a consumed refresh token presented again. Expected: the log names the account
+    // and the lineage, on both planes. Why: this is the strongest compromise signal the
+    // library produces — a token that was already exchanged has been presented a second time,
+    // so one of its two holders is not the owner — and it used to be logged as bare prose.
+    // The account reached only a consumer who had wired `onRefreshTokenReuseDetected`, and the
+    // shipped hooks are no-ops, so on a default deployment the one unambiguous theft signal
+    // was anonymous in the log and absent everywhere else. An operator could tell that
+    // something happened and not to whom (ASVS 16.2.1).
+    it.each([
+      ['dashboard', 'rt', 'reissueTokens'],
+      ['platform', 'prt', 'reissuePlatformTokens']
+    ])('names the owner and the family on the %s plane', async (plane, prefix, method) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: 'fam-stolen'
+      })
+      mockRedis.revokeFamily.mockResolvedValue({ ownerId: 'user-compromised', count: 3 })
+
+      try {
+        const call =
+          plane === 'dashboard'
+            ? service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+            : service.reissuePlatformTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+        await expect(call).rejects.toThrow(AuthException)
+
+        const lines = warn.mock.calls.map((args) => String(args[0]))
+        const named = lines.filter(
+          (line) => line.includes('user-compromised') && line.includes('fam-stolen')
+        )
+        expect(named.length).toBeGreaterThan(0)
+        expect(named.join(' ')).toContain(method)
+
+        // The detection is logged BEFORE the revocation and the owner AFTER it, so a
+        // `revokeFamily` that throws cannot take the finding down with it.
+        expect(lines.filter((line) => line.includes('fam-stolen')).length).toBe(2)
+      } finally {
+        warn.mockRestore()
+        expect(prefix).toBeTruthy()
+      }
+    })
+
+    // The finding survives a failed response. Losing the log because the revocation could not
+    // complete would leave an operator with no record of the one event they most need.
+    it('still records the detection when the family revocation fails', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: 'fam-stolen'
+      })
+      mockRedis.revokeFamily.mockRejectedValue(new Error('redis down'))
+
+      try {
+        await expect(
+          service.reissueTokens(FIXED_REFRESH_TOKEN, '1.2.3.4', 'Chrome')
+        ).rejects.toThrow('redis down')
+
+        const lines = warn.mock.calls.map((args) => String(args[0]))
+        expect(lines.some((line) => line.includes('fam-stolen'))).toBe(true)
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 })

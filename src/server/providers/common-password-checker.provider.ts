@@ -255,7 +255,12 @@ export const LEET_MAP: ReadonlyMap<string, string> = new Map([
  * @returns `true` when the character is decoration.
  */
 function isDecoration(char: string): boolean {
-  return /[\d\W_]/.test(char)
+  // "Not a letter", in the Unicode sense. This used to be `/[\d\W_]/`, whose `\W` is
+  // `[^A-Za-z0-9_]` — so every Cyrillic, Greek, Han, Kana, Arabic, Hebrew and Thai character
+  // counted as decoration and was stripped. A password written in any of those scripts was
+  // eaten from the end until nothing remained. rust-auth's `!c.is_alphabetic()` was already
+  // Unicode-aware here; this is the side that diverged.
+  return !/\p{L}/u.test(char)
 }
 
 /**
@@ -300,7 +305,15 @@ export function reduceToBaseWord(password: string): string {
   let reduced = ''
   for (const char of undecorated) {
     const mapped = LEET_MAP.get(char) ?? char
-    if (/[a-z0-9]/.test(mapped)) reduced += mapped
+    // Letters and numbers in any script, not just ASCII. Filtering to `[a-z0-9]` discarded
+    // every non-Latin character, so a password written in one reduced to the empty string —
+    // and an empty base is shorter than the floor below, which reads as "breached". A user
+    // signing up with a strong Russian or Japanese passphrase was told their password was
+    // commonly used, on registration, reset AND change, and pushed toward the strictly
+    // smaller ASCII keyspace. Keeping the characters also makes a consumer's non-Latin
+    // `extraBlocked` entry reachable: those are reduced through this same function, so under
+    // the old filter they all collapsed to '' and could never match anything.
+    if (/[\p{L}\p{N}]/u.test(mapped)) reduced += mapped
   }
   return reduced
 }
@@ -333,7 +346,16 @@ function isSequential(value: string): boolean {
  * runs, and any decorated form of those — but it is not the full top-3000, and it knows
  * nothing about breach corpora. A deployment that wants that should either extend it through
  * `password.blocklist` or supply {@link HibpBreachChecker}, which checks a real breach corpus
- * over the network. This checker being the default is what makes the *baseline* honest; the
+ * over the network.
+ *
+ * **The shipped base words are ASCII.** The reduction preserves letters and numbers in any
+ * script — a strong Cyrillic, Han, Kana, Hangul, Greek, Arabic, Hebrew or Thai passphrase is
+ * admitted, and used to be refused outright with the "commonly used" error, which pushed those
+ * users onto the smaller ASCII keyspace. But the list itself has no entries in those scripts,
+ * so the equivalent of `password` in one of them passes this screen. A deployment serving
+ * those users should add the common ones for its locale to `password.blocklist`; entries are
+ * normalized through the same reduction, so a non-Latin entry matches a decorated form of
+ * itself the way an ASCII one does. This checker being the default is what makes the *baseline* honest; the
  * network check remains opt-in, because a library should not start talking to a third party
  * because it was upgraded.
  *
@@ -365,7 +387,9 @@ export class CommonPasswordChecker implements IPasswordBreachChecker {
     // be one, and none of them can be caught by a list — there is no entry to write. Four is
     // the floor because below it every string is a substring of some alphabet, which would
     // make the sequence check below meaningless rather than selective.
-    if (base.length < 4) return true
+    // Counted in CODE POINTS, not UTF-16 units: an astral character is one character to a
+    // reader and to rust-auth's `chars().count()`, and `.length` would score it as two.
+    if ([...base].length < 4) return true
 
     if (this.blocked.has(base)) return true
 

@@ -147,6 +147,45 @@ end
 return 1
 `
 
+/**
+ * Writes a freshly-issued refresh session: the record, the `rt:` member in the owner's session
+ * index, and the family membership — each with the refresh TTL, in ONE step.
+ *
+ * Held equivalent to rust-auth's `create_session_inner`, which does the same work in a
+ * `MULTI/EXEC` transaction. This side issued the five commands loose, and the gap is the exact
+ * window the rest of this file was written to close:
+ *
+ * - Between the `SET rt:` and the `SADD sess:` there existed a live session that no index named.
+ *   `invalidateUserSessions` — run by a password reset, a ban, or an MFA enable — walks only the
+ *   index, so a login landing in that window survived a revocation the user was told had
+ *   happened, and the `SADD` then rebuilt the index around it. The surviving session keeps
+ *   rotating, and `buildRotatedResult` re-reads the CURRENT epoch, so its next refresh mints a
+ *   fully valid access token under the post-bump epoch. An attacker who knows the password —
+ *   the reason the victim is resetting — can keep logins in flight to aim at it.
+ * - Between the `SADD` and the `EXPIRE` a dropped connection or a failover left
+ *   `sess:{userId}` with **no expiry at all**. Its members die with the refresh lifetime; the
+ *   set does not. For an account that never signs in again, the key is permanent.
+ *
+ * ```text
+ * KEYS[1] = rt:{hash}   KEYS[2] = sess:{userId}   KEYS[3] = fam:{familyId}
+ * ARGV[1] = session JSON   ARGV[2] = refresh TTL
+ * ARGV[3] = family id, or '' for a session belonging to no lineage
+ * ARGV[4] = live prefix   ARGV[5] = token hash
+ * ```
+ */
+const CREATE_SESSION_LUA = `
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+-- The family index holds bare hashes: it only ever tracks live sessions, so the prefix is
+-- implied. A session with no lineage skips it rather than writing an unkeyed member.
+if ARGV[3] ~= '' then
+  redis.call('SADD', KEYS[3], ARGV[5])
+  redis.call('EXPIRE', KEYS[3], ARGV[2])
+end
+return 1
+`
+
 const ROTATE_LUA = `
 local old = redis.call('GET', KEYS[1])
 if old then
@@ -565,6 +604,36 @@ export class AuthRedisService {
   }
 
   /**
+   * Writes a freshly-issued refresh session atomically — record, session-index member and
+   * family membership, each carrying the refresh TTL.
+   *
+   * See {@link CREATE_SESSION_LUA} for the two windows the loose form left open.
+   *
+   * @param params - The session to store and the keys it belongs under.
+   */
+  async writeNewSession(params: {
+    kind: 'dashboard' | 'platform'
+    tokenHash: string
+    sessionJson: string
+    familyId: string
+    userId: string
+    refreshTtl: number
+  }): Promise<void> {
+    const p = prefixesFor(params.kind)
+    await this.eval(
+      CREATE_SESSION_LUA,
+      [
+        `${p.live}:${params.tokenHash}`,
+        `${p.index}:${params.userId}`,
+        // Always passed, even with no family: a Lua script's key list is fixed at the call
+        // site, and the script skips the key rather than the caller skipping the argument.
+        `${p.family}:${params.familyId}`
+      ],
+      [params.sessionJson, String(params.refreshTtl), params.familyId, p.live, params.tokenHash]
+    )
+  }
+
+  /**
    * Writes the session a grace recovery produced, atomically with the check that the account
    * has not been swept out from under it.
    *
@@ -738,6 +807,60 @@ export class AuthRedisService {
   }
 
   /**
+   * Drops the grace-pointer members whose keys have already expired.
+   *
+   * A rotation removes `rt:{old}` from the index and adds two members: `rt:{new}` and
+   * `rp:{old}`. The `rp:` KEY dies with the grace window — 30 seconds by default — but the
+   * MEMBER was only ever removed by a full revoke-all, so the index gained one permanent
+   * ~68-byte entry per rotation, and the rotation re-arms the set's own TTL each time. The set
+   * never aged out while the account was in use.
+   *
+   * That is not merely untidy. Every reader of the index is linear in its size:
+   * `listSessions` ships the whole set over the wire, `revokeAllExceptCurrent` issues two
+   * sequential round trips per grace member, and `invalidateUserSessions` iterates it inside a
+   * Lua script, which blocks the whole single-threaded store. An attacker holding one stolen
+   * refresh token and rotating at the route limit adds ~14k members a day to their own index,
+   * with no ceiling; a merely active user accrues thousands a year.
+   *
+   * Called from the two paths that already walk the index — a login enforcing the session cap
+   * and a session listing — so the growth is bounded by how long an account can go between
+   * them, and any legitimate interaction heals it. The rotation path deliberately does NOT
+   * call this: it is the hot path, and an O(n) sweep there would trade a slow leak for a slow
+   * refresh.
+   *
+   * Grace members whose key is still live are left alone. They are what lets a revoke-all also
+   * kill a token that was rotated away moments earlier but can still be recovered.
+   *
+   * @param setKey - The un-namespaced index key (`sess:{id}` or `psess:{id}`).
+   * @param gracePrefix - Member prefix for rotation grace pointers (`rp:` or `prp:`).
+   * @returns How many dead members were dropped.
+   */
+  async pruneExpiredGraceMembers(setKey: string, gracePrefix: string): Promise<number> {
+    const removed = await this.eval(
+      `local members = redis.call('SMEMBERS', KEYS[1])
+       local ns, grace = ARGV[1], ARGV[2]
+       local removed = 0
+       for _, member in ipairs(members) do
+         if string.sub(member, 1, string.len(grace)) == grace then
+           -- The member IS the key suffix, so its own liveness is one EXISTS away. A pointer
+           -- still inside its window is left in place; only the expired ones go.
+           if redis.call('EXISTS', ns .. ':' .. member) == 0 then
+             redis.call('SREM', KEYS[1], member)
+             removed = removed + 1
+           end
+         end
+       end
+       return removed`,
+      [setKey],
+      [this.namespace, gracePrefix]
+    )
+    // Narrowed rather than cast: `eval` answers `unknown`, and a client that surfaced the Lua
+    // integer reply as a string would make a numeric read `NaN`.
+    if (typeof removed === 'number') return removed
+    return typeof removed === 'string' ? Number(removed) : 0
+  }
+
+  /**
    * Atomically deletes every refresh session belonging to one identity plane.
    *
    * The set members are full key suffixes — `rt:{hash}`/`rp:{hash}` on the dashboard plane,
@@ -887,6 +1010,10 @@ export class AuthRedisService {
     if (raw === null) return ''
     try {
       const parsed: unknown = JSON.parse(raw)
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
+      // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
+      // string test, and `null` throws on the index and is caught below. Every mutant of it
+      // returns the same empty string through a different path
       if (typeof parsed !== 'object' || parsed === null) return ''
       const userId = (parsed as Record<string, unknown>)['userId']
       return typeof userId === 'string' ? userId : ''
@@ -996,6 +1123,10 @@ export class AuthRedisService {
  * @returns `true` when every required field is present and correctly typed.
  */
 function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
+  // masked by the field checks below — a scalar reads every field as `undefined` and fails the
+  // first `typeof`, and the only caller parses JSON inside a try/catch, so the `null` deref
+  // this would otherwise allow surfaces as the same refusal
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   return (

@@ -261,4 +261,68 @@ describe('CommonPasswordChecker', () => {
     reduceToBaseWord('a' + '!'.repeat(200_000))
     expect(Date.now() - started).toBeLessThan(1_000)
   })
+
+  // -------------------------------------------------------------------------
+  // Non-ASCII scripts
+  // -------------------------------------------------------------------------
+
+  // Scenario: a strong passphrase written in a script that is not Latin. Expected: admitted.
+  // Why: this was a live defect in both libraries. The reduction filtered to `[a-z0-9]` and
+  // `isDecoration` treated every non-ASCII character as decoration, so a Russian, Japanese,
+  // Chinese, Korean, Greek, Arabic, Hebrew or Thai password reduced to the EMPTY string — and
+  // an empty base is below the length floor, which the checker reads as "breached". Every such
+  // user was refused on registration, on reset and on change, and told their password was
+  // commonly used. The effect was to push a whole class of users onto the strictly smaller
+  // ASCII keyspace, which is the opposite of what a breach screen is for. Neither suite caught
+  // it because both tested ASCII only.
+  it.each([
+    ['Russian', 'пароль-очень-длинный'],
+    ['Japanese', '日本語のパスワードです'],
+    ['Greek', 'κωδικόςπρόσβασης'],
+    ['Korean', '비밀번호가아주깁니다'],
+    ['Hebrew', 'סיסמאארוכהמאוד'],
+    ['Arabic', 'كلمةالمرورطويلةجدا'],
+    ['mixed script with digits', 'ЖЫрафЖираф77'],
+    ['Latin with a diacritic', 'Ünterwegs-2024']
+  ])('admits a strong %s password', async (_script, password) => {
+    expect(await defaultChecker().isBreached(password)).toBe(false)
+  })
+
+  // The characters survive the reduction rather than merely being tolerated, which is what
+  // makes a consumer's non-Latin blocklist entry reachable: `extraBlocked` values go through
+  // this same function, so under the old filter every one of them collapsed to '' and could
+  // never match anything a user typed.
+  it('keeps non-ASCII letters in the reduced base', () => {
+    expect(reduceToBaseWord('Пароль')).toBe('пароль')
+    expect(reduceToBaseWord('日本語')).toBe('日本語')
+    expect(reduceToBaseWord('Ünterwegs-2024')).toBe('ünterwegs')
+  })
+
+  it('matches a non-Latin entry a consumer added to the blocklist', async () => {
+    const checker = checkerWith(['пароль'])
+
+    expect(await checker.isBreached('Пароль123')).toBe(true)
+    // A different Cyrillic word is still admitted — the entry blocks itself, not the script.
+    expect(await checker.isBreached('черепаха')).toBe(false)
+  })
+
+  // Scenario: the weak ASCII shapes the length floor exists for. Expected: still refused.
+  // Why: the fix widens what reduces to a non-empty base, and it must not widen what gets
+  // through. Each of these is decoration wrapped around a fragment too short to be a word.
+  it.each([
+    ['punctuation only', '!!!!!!!!'],
+    ['digits only', '12345678'],
+    ['one letter and padding', 'a1234567'],
+    ['a three-letter fragment', 'abc12345']
+  ])('still refuses %s', async (_label, password) => {
+    expect(await defaultChecker().isBreached(password)).toBe(true)
+  })
+
+  // A repeated single character in a non-Latin script is now caught by the repeated-unit rule
+  // rather than by collapsing to the empty string. Same answer, reached for the right reason —
+  // and the reason is what keeps holding when the script changes again.
+  it('refuses a repeated non-ASCII character by the repetition rule', async () => {
+    expect(await defaultChecker().isBreached('аааааааа')).toBe(true)
+    expect(await defaultChecker().isBreached('東東東東東東東東')).toBe(true)
+  })
 })
