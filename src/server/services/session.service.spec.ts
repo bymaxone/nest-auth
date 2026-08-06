@@ -66,6 +66,7 @@ const mockRedis = {
   srem: jest.fn<Promise<number>, [string, string]>(),
   smembers: jest.fn<Promise<string[]>, [string]>(),
   eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
+  pruneExpiredGraceMembers: jest.fn<Promise<number>, [string, string]>().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn()
 }
 
@@ -466,8 +467,50 @@ describe('SessionService', () => {
       // Two over the default of five, so the default's eviction actually runs. Under the
       // unvalidated resolver `NaN` evicted nothing and reported success.
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
+      // The whole message, not just its first fragment: an operator who sees this needs to
+      // know what the resolver returned, that the default took over, and why a cap that stops
+      // applying is the worse failure — the three things the three fragments carry.
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('maxSessionsResolver'))
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('falling back to defaultMaxSessions')
+      )
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('stops applying is worse than one that is merely wrong')
+      )
       errorSpy.mockRestore()
+    })
+
+    // Scenario: a resolver returning a valid cap, including the smallest one it can. Expected:
+    // that cap is what applies. Why: the two tests above only prove the fallback fires for bad
+    // values — a validator that rejected EVERYTHING would satisfy them both, and the cap would
+    // silently become `defaultMaxSessions` for every deployment that configured a resolver.
+    // One is the boundary specifically: it is a legitimate policy ("one device at a time") and
+    // sits exactly on the edge the check tests against.
+    it.each([
+      ['the smallest valid cap', 1],
+      ['a cap below the default', 3]
+    ])('applies %s that the resolver returns', async (_label, cap) => {
+      mockOptions.sessions.maxSessionsResolver = jest
+        .fn<Promise<number>, [unknown]>()
+        .mockResolvedValue(cap)
+      service = await buildModule()
+      // Seven live sessions against the resolver's cap. Under the default of five, a different
+      // number would be evicted — so the count pins WHICH limit applied.
+      const hashes = Array.from({ length: 7 }, (_, i) => sha256(`good-resolver-${cap}-${i}`))
+      mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
+      mockRedis.get.mockImplementation(async (key: string) => {
+        const index = hashes.findIndex((h) => key === `sd:${h}`)
+        return makeDetailJson(Date.now() - (7 - index) * 1000)
+      })
+
+      await service.createSession(userId, rawToken, ip, userAgent)
+
+      // The seven live members are evicted down to the cap, so the count of deletions names
+      // WHICH limit applied: the resolver's, or the default of five.
+      const evicted = mockRedis.del.mock.calls
+        .map((args) => args[0])
+        .filter((key) => key.startsWith('rt:'))
+      expect(evicted).toHaveLength(7 - cap)
     })
 
     // Verifies that falls back to defaultMaxSessions when maxSessionsResolver throws.
@@ -1535,6 +1578,35 @@ describe('SessionService', () => {
       expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
     })
 
+    // Scenario: the index holds the caller's own live session beside a grace pointer.
+    // Expected: only the pointer is deleted. Why: this loop exists to kill grace pointers, and
+    // the members it walks are the whole index — `rt:` entries included. Without the prefix
+    // filter it deletes the CURRENT session's refresh key, so "sign out my other devices"
+    // signs out the device that asked, which is the one thing the method promises not to do.
+    it('deletes the grace pointers and leaves the current session alone', async () => {
+      const currentHash = sha256('rae-keeps-current')
+      const otherHash = sha256('rae-other-session')
+      mockRedis.smembers.mockResolvedValue([
+        `rt:${currentHash}`,
+        `rt:${otherHash}`,
+        `rp:${otherHash}`
+      ])
+      mockUserRepo.findById.mockResolvedValue({ id: userId })
+      // Set explicitly: another case in this file leaves `srem` rejecting, and a shared mock
+      // that carries a rejection across tests turns an unrelated assertion into a failure.
+      mockRedis.srem.mockResolvedValue(1)
+      mockRedis.del.mockResolvedValue(undefined)
+
+      await service.revokeAllExceptCurrent(userId, currentHash)
+
+      const deleted = mockRedis.del.mock.calls.map((args) => args[0])
+      expect(deleted).toContain(`rp:${otherHash}`)
+      expect(deleted).not.toContain(`rt:${currentHash}`)
+      // …and the member is dropped from the index too, or a revoke-all still has it to walk.
+      expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rp:${otherHash}`)
+      expect(mockRedis.srem).not.toHaveBeenCalledWith(`sess:${userId}`, `rt:${currentHash}`)
+    })
+
     // Scenario: revokeAllExceptCurrent reads the per-user SET via the exact `sess:{userId}` key.
     // Expected: smembers called with `sess:user-revoke-all`. Why: kills the StringLiteral mutant on
     // line 428 (`smembers(\`sess:${userId}\`)` → `smembers('')`).
@@ -1922,6 +1994,62 @@ describe('SessionService', () => {
       const stored = JSON.parse(storedJson) as { createdAt: number }
       expect(stored.createdAt).toBeGreaterThanOrEqual(before)
       expect(stored.createdAt).toBeLessThanOrEqual(after)
+    })
+  })
+  // ---------------------------------------------------------------------------
+  // Grace-pointer accumulation in the session index
+  // ---------------------------------------------------------------------------
+
+  describe('grace-pointer pruning', () => {
+    // Scenario: the index a login and a listing walk. Expected: both ask for the dead grace
+    // members to be dropped first. Why: a rotation removes `rt:{old}` and adds TWO members —
+    // `rt:{new}` and `rp:{old}` — and only a full revoke-all ever removed the second. The
+    // `rp:` KEY expires with the 30-second grace window; the MEMBER did not, and the rotation
+    // re-arms the set's own TTL each time, so the index grew by one permanent entry per
+    // refresh and never aged out while the account was in use.
+    //
+    // It is a growth defect with an amplifier attached: every reader is linear in the set's
+    // size. `listSessions` ships the whole thing, `revokeAllExceptCurrent` issues two
+    // sequential round trips per grace member, and `invalidateUserSessions` iterates it inside
+    // a Lua script that blocks the single-threaded store. One stolen refresh token rotated at
+    // the route limit adds ~14k members a day, with no ceiling.
+    it('prunes dead grace members before enforcing the session limit', async () => {
+      mockRedis.smembers.mockResolvedValue([])
+      mockUserRepo.findById.mockResolvedValue({ id: 'user-1' })
+
+      await service.createSession('user-1', 'raw-token', '1.2.3.4', 'Chrome')
+
+      expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith('sess:user-1', 'rp:')
+    })
+
+    it('prunes dead grace members when listing sessions', async () => {
+      mockRedis.smembers.mockResolvedValue([])
+
+      await service.listSessions('user-1')
+
+      expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith('sess:user-1', 'rp:')
+    })
+
+    // A prune that throws is a tidy-up that did not happen, not a listing that should fail —
+    // the caller asked for their sessions, and the index is still readable.
+    it('still lists sessions when the prune fails', async () => {
+      mockRedis.pruneExpiredGraceMembers.mockRejectedValueOnce(new Error('redis down'))
+      mockRedis.smembers.mockResolvedValue([])
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+      try {
+        await expect(service.listSessions('user-1')).resolves.toEqual([])
+        // Let the fire-and-forget rejection settle before asserting on the log.
+        await Promise.resolve()
+        // Named, not merely counted: an operator seeing a run of these needs to know the prune
+        // is what failed, not the listing — the two have different remedies.
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('grace-pointer prune failed'),
+          expect.anything()
+        )
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 })

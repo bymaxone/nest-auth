@@ -24,6 +24,7 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { logSafe } from '../utils/log-safe'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
@@ -230,7 +231,6 @@ export class TokenManagerService {
 
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    const sessionKey = `rt:${tokenHash}`
     // A fresh login opens a new refresh-token family; every rotation inherits this id, so the
     // whole lineage can be revoked together the moment one of its tokens is replayed.
     const familyId = randomUUID()
@@ -245,14 +245,19 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
-    // Track session in the per-user SET so MFA enable/disable can invalidate all sessions atomically.
-    await this.redis.sadd(`sess:${user.id}`, `rt:${tokenHash}`)
-    await this.redis.expire(`sess:${user.id}`, ttl)
-    // The family index holds bare hashes: it only ever tracks live `rt:` sessions, so the
-    // prefix is implied. It carries the refresh TTL so it ages out with what it tracks.
-    await this.redis.sadd(`fam:${familyId}`, tokenHash)
-    await this.redis.expire(`fam:${familyId}`, ttl)
+    // One atomic step, not five. Loose, this left two windows: a `revoke_all` arriving between
+    // the record write and the index `SADD` swept an index the new session was not in yet — so
+    // it survived a revocation the user was told had happened — and a dropped connection
+    // between the `SADD` and the `EXPIRE` left the index with no TTL at all, permanently.
+    // rust-auth has always written this in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
+    await this.redis.writeNewSession({
+      kind: 'dashboard',
+      tokenHash,
+      sessionJson: this.serializeSession(session),
+      familyId,
+      userId: user.id,
+      refreshTtl: ttl
+    })
 
     // Record that a REAL authentication just completed, for the flows that need to know how
     // recently rather than merely whether. Written here and nowhere else: this method is the
@@ -304,7 +309,6 @@ export class TokenManagerService {
 
     const rawRefreshToken = generateSecureToken()
     const tokenHash = sha256(rawRefreshToken)
-    const sessionKey = `prt:${tokenHash}`
     // A fresh platform login opens its own refresh-token family, indexed under `pfam:`.
     const familyId = randomUUID()
     const session = this.buildSession(
@@ -318,15 +322,18 @@ export class TokenManagerService {
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
-    await this.redis.set(sessionKey, this.serializeSession(session), ttl)
-    // Track the session in the platform-only index so MFA enable/disable and logout-all can
-    // invalidate every platform session atomically. The platform plane has its own `psess:`
-    // keyspace because the two id spaces come from different repositories and may collide:
-    // sharing one index let revoking a dashboard user log out the admin with the same id.
-    await this.redis.sadd(`psess:${admin.id}`, `prt:${tokenHash}`)
-    await this.redis.expire(`psess:${admin.id}`, ttl)
-    await this.redis.sadd(`pfam:${familyId}`, tokenHash)
-    await this.redis.expire(`pfam:${familyId}`, ttl)
+    // Atomic for the same two reasons as the dashboard plane above. The platform plane has its
+    // own `psess:` keyspace because the two id spaces come from different repositories and may
+    // collide: sharing one index let revoking a dashboard user log out the admin with the
+    // same id.
+    await this.redis.writeNewSession({
+      kind: 'platform',
+      tokenHash,
+      sessionJson: this.serializeSession(session),
+      familyId,
+      userId: admin.id,
+      refreshTtl: ttl
+    })
     await this.writePlatformSessionDetail(tokenHash, ip, userAgent, ttl)
 
     return { admin, accessToken, rawRefreshToken }
@@ -439,10 +446,26 @@ export class TokenManagerService {
       return this.rotateFromGrace(outcome.sessionJson, ip, userAgent, refreshTtl)
     }
     if (outcome.kind === 'reused') {
+      // Named, on both lines. This is the strongest compromise signal the library produces —
+      // a token that was already exchanged has been presented again — and it used to be
+      // logged as bare prose, with the account it concerns reaching only a consumer who had
+      // configured `onRefreshTokenReuseDetected`. The default hooks are no-ops, so on a
+      // default deployment the one unambiguous theft signal was anonymous in the log and
+      // nowhere else. An operator reading it could tell that something happened and not to
+      // whom (ASVS 16.2.1).
+      //
+      // Two lines rather than one: the detection is the finding and the revocation is the
+      // response to it, and a `revokeFamily` that throws must not take the finding down with
+      // it. The owner is only knowable after the revocation, which reads a member record.
       this.logger.warn(
-        'reissueTokens: reuse of a consumed refresh token detected — revoking the token family'
+        `reissueTokens: reuse of a consumed refresh token detected — revoking the token family ` +
+          `familyId=${logSafe(outcome.familyId)}`
       )
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
+      this.logger.warn(
+        `reissueTokens: token family revoked after reuse detection ` +
+          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+      )
       // The one moment the library can say "this is not a guess about risk": a token that was
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
@@ -456,23 +479,6 @@ export class TokenManagerService {
     throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   }
 
-  /**
-   * Refuses a rotation once the login it descends from has outlived the absolute cap.
-   *
-   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
-   * every fifteen minutes renews that lifetime forever, so without this a session established
-   * once never has to be established again. The cap measures from the **family's** birth, which
-   * is carried unchanged through the lineage.
-   *
-   * A session with no birth time predates the field and is not capped — it ages out under the
-   * refresh lifetime like any other. A cap of `0` disables the check entirely.
-   *
-   * @param session - The presented session, or the placeholder when the token is not live.
-   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
-   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
-   *   remedy is the same (sign in again) and the difference would only tell a holder of a
-   *   stolen token how old the account's session is.
-   */
   /**
    * Emits {@link IAuthHooks.onRefreshTokenReuseDetected}, fire-and-forget.
    *
@@ -493,6 +499,23 @@ export class TokenManagerService {
     }
   }
 
+  /**
+   * Refuses a rotation once the login it descends from has outlived the absolute cap.
+   *
+   * `refreshExpiresInDays` bounds a single refresh token, not a session: a client rotating
+   * every fifteen minutes renews that lifetime forever, so without this a session established
+   * once never has to be established again. The cap measures from the **family's** birth, which
+   * is carried unchanged through the lineage.
+   *
+   * A session with no birth time predates the field and is not capped — it ages out under the
+   * refresh lifetime like any other. A cap of `0` disables the check entirely.
+   *
+   * @param session - The presented session, or the placeholder when the token is not live.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID` once the cap is passed. The
+   *   caller cannot distinguish this from any other invalid refresh, which is deliberate: the
+   *   remedy is the same (sign in again) and the difference would only tell a holder of a
+   *   stolen token how old the account's session is.
+   */
   private assertWithinAbsoluteLifetime(session: RefreshSession): void {
     const capDays = this.options.jwt.absoluteSessionLifetimeDays
     if (capDays <= 0) return
@@ -832,9 +855,16 @@ export class TokenManagerService {
       // #38 deferred platform reuse detection entirely; the family design closes that gap on
       // both planes at once.
       this.logger.warn(
-        'reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the token family'
+        `reissuePlatformTokens: reuse of a consumed refresh token detected — revoking the ` +
+          `token family familyId=${logSafe(outcome.familyId)}`
       )
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId, 'platform')
+      // Named for the same reason as the dashboard plane, and more so: this is the
+      // highest-privilege identity in the system.
+      this.logger.warn(
+        `reissuePlatformTokens: token family revoked after reuse detection ` +
+          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+      )
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
       this.emitReuseDetected(ownerId, outcome.familyId)
@@ -1000,23 +1030,9 @@ export class TokenManagerService {
   }
 
   // ---------------------------------------------------------------------------
-  // Token decoding (no expiry check)
+  // Verification that ignores expiry (logout only)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Decodes a JWT without validating its expiration or signature.
-   *
-   * @internal
-   * **WARNING:** This method does NOT verify the token signature or expiry.
-   * It must only be used for internal diagnostic purposes (e.g. reading the
-   * `sub` claim from an expired token to look up a session for revocation).
-   * Never use it to authorize requests — use `JwtService.verify()` in guards.
-   *
-   * @param token - Raw JWT string.
-   * @returns Decoded payload.
-   * @throws {@link AuthException} with `TOKEN_INVALID` if the payload is not an
-   *   object or lacks required `jti` (string) and `sub` (string) claims.
-   */
   /**
    * Verifies an access token's signature under the pinned algorithm while **ignoring its
    * expiry**, returning the payload.
@@ -1053,22 +1069,6 @@ export class TokenManagerService {
     return verifyWithRotation<PlatformJwtPayload>(this.jwtService, this.options, token, {
       ignoreExpiration: true
     })
-  }
-
-  decodeToken(token: string): DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload {
-    const raw = this.jwtService.decode(token)
-
-    if (
-      // Stryker disable next-line ConditionalExpression: the object-type clause is redundant: every reachable non-object value also fails the sibling field checks, so dropping it changes nothing
-      typeof raw !== 'object' ||
-      raw === null ||
-      typeof (raw as Record<string, unknown>)['jti'] !== 'string' ||
-      typeof (raw as Record<string, unknown>)['sub'] !== 'string'
-    ) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    return raw as DashboardJwtPayload | PlatformJwtPayload | MfaTempPayload
   }
 
   // ---------------------------------------------------------------------------

@@ -71,6 +71,11 @@ interface WireContract {
     }
   >
   credentialFormats: Record<string, string>
+  passwordHashFormat: {
+    encoding: string
+    legacyEncoding: string
+    vectors: { password: string; hash: string; writtenBy: string; needsRehash: boolean }[]
+  }
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
   errorCatalog: { codes: string[]; internalOnly: string[] }
@@ -425,14 +430,54 @@ describe('cross-implementation conformance', () => {
       }
     )
 
-    // Verifies the source actually SADDs the prefixed form. The contract is only worth
+    // Verifies the code actually indexes the prefixed form. The contract is only worth
     // anything if the code writes what it declares.
-    it('adds prefixed members to the index', () => {
-      const source = readFileSync(join(__dirname, 'services/token-manager.service.ts'), 'utf8')
+    //
+    // Asserted through the real service rather than by grepping the source for a template
+    // literal: the member is composed inside the session-creation script now, and a text
+    // search would have gone red for a refactor that changed nothing about the wire — or
+    // stayed green for one that changed everything. Here the plane prefix and the hash are
+    // read off the arguments the script is invoked with, and the concatenation is pinned
+    // against the script itself.
+    it.each([
+      ['dashboard', 'rt', 'sess', 'fam'],
+      ['platform', 'prt', 'psess', 'pfam']
+    ])(
+      'indexes a new %s session under its prefixed member',
+      async (kind, prefix, index, family) => {
+        const redis = { eval: jest.fn() }
+        const service = new AuthRedisService(
+          redis as unknown as Redis,
+          { redisNamespace: 'auth' } as unknown as ResolvedOptions
+        )
 
-      expect(source).toContain('`rt:${tokenHash}`')
-      expect(source).toContain('`prt:${tokenHash}`')
-    })
+        await service.writeNewSession({
+          kind: kind as 'dashboard' | 'platform',
+          tokenHash: 'a'.repeat(64),
+          sessionJson: '{}',
+          familyId: 'fam-1',
+          userId: 'u1',
+          refreshTtl: 60
+        })
+
+        const call = redis.eval.mock.calls[0] as unknown[]
+        const script = call[0] as string
+        // All three keys, in the arity the script declares: [script, numkeys, ...keys, ...argv].
+        // The record and the family index are asserted alongside the session index because the
+        // script writes all three under one TTL, and a key that arrived empty would silently
+        // write the whole session under the namespace root.
+        expect(call).toContain(`auth:${prefix}:${'a'.repeat(64)}`)
+        expect(call).toContain(`auth:${index}:u1`)
+        expect(call).toContain(`auth:${family}:fam-1`)
+        // The member is `{prefix}:{hash}`, built in the script from these two arguments.
+        expect(call).toContain(prefix)
+        expect(call).toContain('a'.repeat(64))
+        expect(script).toContain("SADD', KEYS[2], ARGV[4] .. ':' .. ARGV[5]")
+        // The index TTL is re-armed in the SAME step, which is the half a dropped connection
+        // used to skip — leaving the set with no expiry at all.
+        expect(script).toContain("EXPIRE', KEYS[2], ARGV[2]")
+      }
+    )
   })
 
   // -------------------------------------------------------------------------
@@ -636,21 +681,53 @@ describe('cross-implementation conformance', () => {
       expect(contract.credentialFormats['totpSecretAtRest']).toContain('BASE32')
     })
 
-    // Scenario: a stored password hash. Expected: it carries the parameters it was written
+    // Scenario: a stored password hash. Expected: PHC, carrying the parameters it was written
     // under. Why: a hash that records nothing can only be verified by assuming the cost
     // configured today, which makes that cost unchangeable — raise it and every stored hash
     // becomes unreproducible, every user locked out, irreversibly.
-    it('records the parameters in the stored password hash', async () => {
-      expect(contract.credentialFormats['passwordHash']).toContain('self-describing')
-
+    it('writes the stored password hash as a PHC string', async () => {
       const service = new PasswordService(
         { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
         { isBreached: async () => false } as never
       )
       const stored = await service.hash('a-password')
 
-      expect(stored.split(':').slice(0, 4)).toEqual(['scrypt', '16384', '8', '1'])
+      expect(stored).toMatch(/^\$scrypt\$ln=14,r=8,p=1\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/)
+      // Its own output must round-trip and must not immediately want rewriting.
+      expect(await service.compare('a-password', stored)).toBe(true)
+      expect(service.needsRehash(stored)).toBe(false)
     }, 30_000)
+
+    // Scenario: the two hashes the contract pins, one written by each implementation.
+    // Expected: both verify here, and report the staleness the contract declares.
+    //
+    // Why this test rather than a prose assertion: the entry this replaces read
+    // `toContain('self-describing')`, and it was green for the entire period during which the
+    // two libraries could not read each other's hashes at all. Both encodings ARE
+    // self-describing — that is exactly why the description could not catch the divergence.
+    // A hash the sibling cannot verify does not surface as a parse error either, because
+    // verification is total: it becomes `invalid_credentials`, and five of those trip the
+    // brute-force counter the two backends SHARE, locking the owner out of both with their
+    // own correct password.
+    //
+    // The vectors are real emitted output, so this fails the moment either side's encoder,
+    // parser, B64 alphabet or parameter ordering drifts from the other's.
+    it.each(
+      contract.passwordHashFormat.vectors.map((vector) => [vector.writtenBy, vector] as const)
+    )(
+      'verifies the contract password-hash vector written by %s',
+      async (_who, vector) => {
+        const service = new PasswordService(
+          { password: { costFactor: 16_384, blockSize: 8, parallelization: 1 } } as never,
+          { isBreached: async () => false } as never
+        )
+
+        expect(await service.compare(vector.password, vector.hash)).toBe(true)
+        expect(await service.compare(`${vector.password}-wrong`, vector.hash)).toBe(false)
+        expect(service.needsRehash(vector.hash)).toBe(vector.needsRehash)
+      },
+      30_000
+    )
 
     // Scenario: the token this library actually mints. Expected: 64 lowercase hex characters.
     // Why: the two assertions above read the contract's prose, which proves only that the

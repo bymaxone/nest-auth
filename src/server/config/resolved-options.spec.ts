@@ -2721,15 +2721,25 @@ describe('resolveOptions — password KDF memory ceiling', () => {
 
 describe('resolveOptions — secret containment', () => {
   const OAUTH_SECRET = 'google-client-secret-canary'
+  const MFA_KEY = Buffer.alloc(32, 7).toString('base64')
+  const RETIRED_MFA_KEY = Buffer.alloc(32, 9).toString('base64')
 
   /**
-   * Minimal options plus a configured Google provider, so both secret kinds are present.
+   * Minimal options carrying **every kind of secret the module accepts**, so a test
+   * that asserts containment asserts it against an object the secrets are in.
+   *
+   * The `mfa` group is here because leaving it out is how the AES encryption keys
+   * shipped enumerable through a release whose spec claimed to cover "every
+   * secret": the assertions were right, the fixture had no key for them to find,
+   * and neither line coverage nor mutation testing can see a property that is
+   * absent from the object under test. A new secret-bearing option group belongs
+   * in this fixture at the same time it is added to `withholdSecrets`.
    *
    * Built per call rather than shared as a module constant: two of these tests
    * assert that resolving does not rewrite the caller's object, which only means
    * anything when each call gets its own.
    */
-  function withOAuth(): BymaxAuthModuleOptions {
+  function withEverySecretKind(): BymaxAuthModuleOptions {
     return {
       ...MINIMAL_OPTIONS,
       oauth: {
@@ -2738,6 +2748,11 @@ describe('resolveOptions — secret containment', () => {
           clientSecret: OAUTH_SECRET,
           callbackUrl: 'https://app.example.com/auth/google/callback'
         }
+      },
+      mfa: {
+        encryptionKey: MFA_KEY,
+        previousEncryptionKeys: [RETIRED_MFA_KEY],
+        issuer: 'Bymax'
       }
     }
   }
@@ -2749,7 +2764,7 @@ describe('resolveOptions — secret containment', () => {
     // scope of a throw, an object spread. `showHidden` is asserted because it is
     // what defeats a merely non-enumerable property — the HMAC keys derived from
     // the signing secret are key material in their own right.
-    const resolved = resolveOptions(withOAuth())
+    const resolved = resolveOptions(withEverySecretKind())
 
     for (const rendered of [
       JSON.stringify(resolved),
@@ -2760,16 +2775,34 @@ describe('resolveOptions — secret containment', () => {
       expect(rendered).not.toContain(VALID_SECRET)
       expect(rendered).not.toContain(OAUTH_SECRET)
       expect(rendered).not.toContain(resolved.hmacKey)
+      expect(rendered).not.toContain(MFA_KEY)
+      expect(rendered).not.toContain(RETIRED_MFA_KEY)
     }
+  })
+
+  it('withholds the MFA keys through structuredClone, which copies by enumeration', () => {
+    // `structuredClone` is the one path that is neither a serializer nor a spread:
+    // it walks own enumerable properties and produces a NEW object, so a value that
+    // survives it lands somewhere the accessor no longer protects. Asserted on the
+    // MFA keys specifically because they are the pair this function missed — a
+    // non-enumerable accessor is skipped by the algorithm, a plain value is not.
+    const resolved = resolveOptions(withEverySecretKind())
+    const cloned = structuredClone(resolved)
+
+    expect(JSON.stringify(cloned)).not.toContain(MFA_KEY)
+    expect(JSON.stringify(cloned)).not.toContain(RETIRED_MFA_KEY)
+    expect(JSON.stringify(cloned)).not.toContain(VALID_SECRET)
   })
 
   it('still exposes every secret to the code that has to use it', () => {
     // Containment must cost nothing at the supported surface: the signer, the
-    // verifier and the OAuth token exchange all read these fields.
-    const resolved = resolveOptions(withOAuth())
+    // verifier, the OAuth token exchange and the MFA cipher all read these fields.
+    const resolved = resolveOptions(withEverySecretKind())
 
     expect(resolved.jwt.secret).toBe(VALID_SECRET)
     expect(resolved.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
+    expect(resolved.mfa?.encryptionKey).toBe(MFA_KEY)
+    expect(resolved.mfa?.previousEncryptionKeys).toEqual([RETIRED_MFA_KEY])
     // Shape rather than truthiness: the key is a SHA-256 digest rendered as hex,
     // so a mutation that truncated or re-encoded it would survive `toBeTruthy`.
     expect(resolved.hmacKey).toMatch(/^[0-9a-f]{64}$/)
@@ -2780,12 +2813,230 @@ describe('resolveOptions — secret containment', () => {
     // The OAuth provider config arrives by reference through the spread of the
     // consumer's options. Rewriting a property there would mutate an object this
     // library does not own and make a second resolve on the same input throw.
-    const shared = withOAuth()
+    const shared = withEverySecretKind()
     const first = resolveOptions(shared)
     const second = resolveOptions(shared)
 
     expect(Object.keys(shared.oauth?.google ?? {})).toContain('clientSecret')
     expect(first.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
     expect(second.oauth?.google?.clientSecret).toBe(OAUTH_SECRET)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The refusals themselves
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — what a refusal tells the operator', () => {
+  /** Trigger a validation failure and return the message it threw. */
+  function refusalFor(options: unknown): string {
+    try {
+      resolveOptions(options as BymaxAuthModuleOptions)
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    return ''
+  }
+
+  const MFA_KEY_A = Buffer.alloc(32, 7).toString('base64')
+  const MFA_BASE = { encryptionKey: MFA_KEY_A, issuer: 'Bymax' }
+
+  // Scenario: every configuration this module refuses at startup. Expected: a message that
+  // still carries its whole explanation. Why: these are assembled from several concatenated
+  // fragments, and the existing assertions match only the first one — so every later fragment
+  // could be emptied without a test noticing. Each fragment is doing work: it names what the
+  // value does, what breaks if it stands, and what to do instead. A refusal that stops after
+  // "must be a positive integer" tells an operator what to type and not what they nearly
+  // shipped, which for several of these — a brute-force window that deletes its own counter,
+  // a TOTP window that widens the replay surface — is the whole point of refusing.
+  //
+  // The floor is the message's real length less a few characters, so rewording is free and
+  // dropping a fragment is not.
+  it.each([
+    ['rateLimit.clientIpSource is unset', { rateLimit: {} }, 670],
+    [
+      'a retired JWT secret repeats the current one',
+      { jwt: { previousSecrets: [VALID_SECRET] } },
+      250
+    ],
+    ['password.costFactor is not a whole number', { password: { costFactor: 16_384.5 } }, 220],
+    ['bruteForce.windowSeconds is zero', { bruteForce: { windowSeconds: 0, maxAttempts: 5 } }, 295],
+    ['bruteForce.maxAttempts is zero', { bruteForce: { windowSeconds: 60, maxAttempts: 0 } }, 190],
+    [
+      'bruteForce.maxAttempts is absurdly high',
+      { bruteForce: { windowSeconds: 60, maxAttempts: 9_999 } },
+      192
+    ],
+    ['password.blockSize is zero', { password: { blockSize: 0 } }, 200],
+    ['password.parallelization is zero', { password: { parallelization: 0 } }, 65],
+    ['the KDF working set exceeds the ceiling', { password: { costFactor: 2 ** 22 } }, 525],
+    ['mfa.totpWindow is too wide', { mfa: { ...MFA_BASE, totpWindow: 9 } }, 410],
+    ['mfa.recoveryCodeCount is zero', { mfa: { ...MFA_BASE, recoveryCodeCount: 0 } }, 146],
+    ['jwt.refreshGraceWindowSeconds is negative', { jwt: { refreshGraceWindowSeconds: -1 } }, 348]
+  ])('explains itself when %s', (_label, overrides, minimumLength) => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      ...overrides,
+      ...('jwt' in overrides
+        ? { jwt: { ...MINIMAL_OPTIONS.jwt, ...(overrides as { jwt: object }).jwt } }
+        : {})
+    }
+
+    const message = refusalFor(options)
+
+    expect(message).toContain('[BymaxAuthModule]')
+    expect(message.length).toBeGreaterThan(minimumLength)
+  })
+
+  // The remaining refusals, each with the same two properties: the message names the setting
+  // it is about, and it carries its whole explanation. A message that lost its label reads
+  // "[BymaxAuthModule]  must be at least 8", which sends an operator to grep the source for
+  // which of three scrypt parameters it meant.
+  it.each([
+    [
+      'a non-string among the retired JWT secrets',
+      { jwt: { previousSecrets: [42] } },
+      'jwt.previousSecrets[0] must be a string',
+      140
+    ],
+    [
+      'a retired MFA key that repeats the current one',
+      { mfa: { encryptionKey: MFA_KEY_A, previousEncryptionKeys: [MFA_KEY_A], issuer: 'Bymax' } },
+      'mfa.previousEncryptionKeys[0] repeats mfa.encryptionKey',
+      260
+    ],
+    [
+      'an MFA key that is not base64',
+      { mfa: { encryptionKey: 'not-base64-at-all', issuer: 'Bymax' } },
+      'mfa.encryptionKey must',
+      50
+    ],
+    [
+      'a non-integral cost factor',
+      { password: { costFactor: 16_384.5 } },
+      'password.costFactor must be an integer',
+      220
+    ],
+    [
+      'a non-integral block size',
+      { password: { blockSize: 8.5 } },
+      'password.blockSize must be an integer',
+      215
+    ],
+    [
+      'a non-integral parallelization',
+      { password: { parallelization: 1.5 } },
+      'password.parallelization must be an integer',
+      220
+    ],
+    [
+      'a block size below the floor',
+      { password: { blockSize: 4 } },
+      'password.blockSize must be at least 8',
+      200
+    ],
+    [
+      'parallelization below the floor',
+      { password: { parallelization: 0 } },
+      'password.parallelization must be at least 1',
+      65
+    ]
+  ])('names the setting and explains itself for %s', (_label, overrides, phrase, minimumLength) => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      ...overrides,
+      ...('jwt' in overrides
+        ? { jwt: { ...MINIMAL_OPTIONS.jwt, ...(overrides as { jwt: object }).jwt } }
+        : {})
+    }
+
+    const message = refusalFor(options)
+
+    expect(message).toContain(phrase)
+    expect(message.length).toBeGreaterThan(minimumLength)
+  })
+
+  // The numbers a refusal quotes are computed, and a wrong one sends the operator to the wrong
+  // setting. `4096` is `128 * N * r` at `N = 2^22, r = 8` rendered in MiB, and `512` is the
+  // ceiling constant in the same unit — an arithmetic slip in either turns the message into a
+  // confident lie about how much memory the configuration would take.
+  it('quotes the real working set and the real ceiling', () => {
+    const message = refusalFor({ ...MINIMAL_OPTIONS, password: { costFactor: 2 ** 22 } })
+
+    expect(message).toContain('needs 4096 MiB per derivation')
+    expect(message).toContain('above the 512 ')
+  })
+
+  // `2 * totpWindow + 1` is how many 30-second codes a window admits at once. It is the figure
+  // that makes the refusal persuasive, so it has to be the right one.
+  it('quotes how many codes the requested TOTP window would admit', () => {
+    const message = refusalFor({ ...MINIMAL_OPTIONS, mfa: { ...MFA_BASE, totpWindow: 9 } })
+
+    expect(message).toContain('19 codes would be valid')
+  })
+
+  // Scenario: the values sitting exactly ON each bound. Expected: accepted. Why: the cases
+  // above only prove the refusals fire for values outside the range. A bound off by one would
+  // satisfy every one of them while rejecting a legitimate configuration — a single-attempt
+  // lockout, a one-second window, the documented maximum — and the operator would read a
+  // message telling them a value the docs recommend is out of range.
+  it.each([
+    ['a one-second brute-force window', { bruteForce: { windowSeconds: 1, maxAttempts: 5 } }],
+    ['a single-attempt lockout', { bruteForce: { windowSeconds: 60, maxAttempts: 1 } }],
+    [
+      'the highest allowed attempt threshold',
+      { bruteForce: { windowSeconds: 60, maxAttempts: 100 } }
+    ],
+    ['a KDF working set exactly at the ceiling', { password: { costFactor: 2 ** 19 } }],
+    ['a zero grace window', { jwt: { refreshGraceWindowSeconds: 0 } }],
+    ['the longest allowed grace window', { jwt: { refreshGraceWindowSeconds: 300 } }]
+  ])('accepts %s', (_label, overrides) => {
+    const options = {
+      ...MINIMAL_OPTIONS,
+      ...overrides,
+      ...('jwt' in overrides
+        ? { jwt: { ...MINIMAL_OPTIONS.jwt, ...(overrides as { jwt: object }).jwt } }
+        : {})
+    }
+
+    expect(() => resolveOptions(options as BymaxAuthModuleOptions)).not.toThrow()
+  })
+
+  // A retired MFA key that is an empty string. The current key has its own emptiness check one
+  // step earlier, so this list is the only way into the shared assertion's empty-string arm.
+  it('refuses an empty string among the retired MFA keys', () => {
+    const message = refusalFor({
+      ...MINIMAL_OPTIONS,
+      mfa: { ...MFA_BASE, previousEncryptionKeys: [''] }
+    })
+
+    expect(message).toContain('must be a non-empty base64 string')
+  })
+
+  // The withheld secrets are non-configurable, so a consumer cannot put one back on a path
+  // that serializes. Without that, hiding them is advisory.
+  it('makes the withheld fields impossible to redefine or delete', () => {
+    // Every withheld field present, including the rotation lists: a field absent from the
+    // input has no descriptor to redefine, and the loop below would pass over it silently —
+    // which is exactly the fixture gap that let the MFA keys ship enumerable.
+    const resolved = resolveOptions({
+      ...MINIMAL_OPTIONS,
+      jwt: { ...MINIMAL_OPTIONS.jwt, previousSecrets: [makeTestableHighEntropyString(44)] },
+      mfa: { ...MFA_BASE, previousEncryptionKeys: [Buffer.alloc(32, 9).toString('base64')] }
+    } as BymaxAuthModuleOptions)
+
+    for (const [target, key] of [
+      [resolved.jwt, 'secret'],
+      [resolved.jwt, 'previousSecrets'],
+      [resolved, 'hmacKey'],
+      [resolved, 'previousHmacKeys'],
+      [resolved.mfa as object, 'encryptionKey'],
+      [resolved.mfa as object, 'previousEncryptionKeys']
+    ] as [object, string][]) {
+      expect(Object.getOwnPropertyDescriptor(target, key)?.configurable).toBe(false)
+      expect(() => {
+        Object.defineProperty(target, key, { value: 'leaked', enumerable: true })
+      }).toThrow(TypeError)
+    }
   })
 })

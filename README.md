@@ -534,7 +534,10 @@ backend.
 // proxy.ts — Next.js 16 Edge middleware
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 
-export const { proxy } = createAuthProxy({
+// Next 16 scans this file for a function exported as `proxy` (or as the default), and it
+// does not recognise a destructuring pattern: `export const { proxy } = ...` fails the build
+// with "The file ./proxy.ts must export a function". Bind first, then export.
+const authProxy = createAuthProxy({
   publicRoutes: ['/', '/auth/login', '/auth/register'],
   publicRoutesRedirectIfAuthenticated: ['/auth/login', '/auth/register'],
   protectedRoutes: [
@@ -558,6 +561,8 @@ export const { proxy } = createAuthProxy({
   },
   blockedUserStatuses: ['BANNED', 'INACTIVE', 'EXPIRED']
 })
+
+export const proxy = authProxy.proxy
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)']

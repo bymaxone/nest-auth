@@ -141,6 +141,25 @@ describe('AuthRedisService', () => {
       await service.del('mykey')
       expect(mockRedis.del).toHaveBeenCalledWith(prefixed('mykey'))
     })
+
+    // Scenario: what `del` REPORTS, not just what it calls. Expected: `true` only when a key
+    // was actually removed. Why: callers that need exactly-once semantics — consuming an MFA
+    // temp token, claiming a recovery code — decide on this boolean, and "I removed it" has to
+    // be distinguishable from "someone else already had". A reply this method cannot read as a
+    // count must read as "no", not as "yes".
+    it.each([
+      ['one key removed', 1, true],
+      ['several keys removed', 3, true],
+      ['nothing to remove', 0, false],
+      ['a negative count', -1, false],
+      ['a string reply', '1', false],
+      ['a nil reply', null, false],
+      ['an unexpected shape', {}, false]
+    ])('reports %s as %s', async (_label, reply, expected) => {
+      mockRedis.del.mockResolvedValue(reply)
+
+      await expect(service.del('mykey')).resolves.toBe(expected)
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -368,6 +387,65 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(reply)
 
       await expect(service.writeRecoveredSession(RECOVERED)).resolves.toBe(expected)
+    })
+  })
+
+  describe('pruneExpiredGraceMembers', () => {
+    // Scenario: the sweep that keeps the per-user index from growing without bound. Expected:
+    // it inspects only grace members, and only removes the ones whose key is already gone.
+    // Why: a rotation adds `rp:{old}` as a member and only a full revoke-all ever removed it,
+    // while the `rp:` KEY dies with the 30-second grace window — so the index gained one
+    // permanent entry per refresh, with its own TTL re-armed each time. Every reader of the
+    // index is linear in its size, so this is a growth defect with an amplifier attached.
+    it('removes only the grace members whose pointer has expired', async () => {
+      mockRedis.eval.mockResolvedValue(2)
+
+      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(2)
+
+      const [script, numKeys, key, namespace, prefix] = mockRedis.eval.mock.calls[0] as unknown as [
+        string,
+        number,
+        string,
+        string,
+        string
+      ]
+      expect(numKeys).toBe(1)
+      expect(key).toBe(prefixed('sess:u1'))
+      expect(namespace).toBe('auth')
+      expect(prefix).toBe('rp:')
+      // Only members carrying the grace prefix are considered — a live `rt:` member must
+      // survive a sweep whose whole job is tidying pointers.
+      expect(script).toContain('string.sub(member, 1, string.len(grace)) == grace')
+      // And among those, only the ones whose key is gone. A pointer still inside its window is
+      // what lets a revoke-all also kill a token rotated away moments earlier.
+      expect(script).toContain("redis.call('EXISTS', ns .. ':' .. member) == 0")
+      expect(script).toContain("redis.call('SREM', KEYS[1], member)")
+    })
+
+    // The platform plane sweeps its own index under its own prefix: the two id spaces come
+    // from different repositories and may collide.
+    it('sweeps the platform index under the platform prefix', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await service.pruneExpiredGraceMembers('psess:a1', 'prp:')
+
+      const call = mockRedis.eval.mock.calls[0] as unknown[]
+      expect(call).toContain(prefixed('psess:a1'))
+      expect(call).toContain('prp:')
+    })
+
+    // `eval` answers `unknown`, and a client that surfaced the Lua integer as a string would
+    // make a numeric read `NaN` — which is not a count, and would misreport the sweep in any
+    // log or metric built on it.
+    it.each([
+      ['an integer reply', 3, 3],
+      ['the string "3"', '3', 3],
+      ['a nil reply', null, 0],
+      ['an unexpected shape', {}, 0]
+    ])('reads %s as a count', async (_label, reply, expected) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(expected)
     })
   })
 
@@ -986,6 +1064,17 @@ describe('AuthRedisService', () => {
       [
         'a record whose tenantId is a number',
         '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"tenantId":1}'
+      ],
+      // The three identity fields. A snapshot authorizes a socket for its whole lifetime with
+      // no per-message gate behind it, so a missing `sub` is a socket bound to nobody, and a
+      // missing `role` or `status` is one whose authorization fields read as `undefined` at
+      // every check the consumer makes.
+      ['a record missing sub', '{"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'],
+      ['a record missing role', '{"sub":"u","status":"s","mfaEnabled":true,"mfaVerified":true}'],
+      ['a record missing status', '{"sub":"u","role":"r","mfaEnabled":true,"mfaVerified":true}'],
+      [
+        'a record whose sub is a number',
+        '{"sub":1,"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'
       ]
     ])('should refuse %s', async (_label, stored) => {
       mockRedis.eval.mockResolvedValue(stored)
