@@ -4,7 +4,7 @@
  * Covers startup validation errors, controller registration, and NoOp fallback providers.
  */
 
-import { Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
@@ -691,7 +691,7 @@ describe('BymaxAuthModule', () => {
     it('should export AuthService to importing host modules', async () => {
       @Injectable()
       class HostProbe {
-        constructor(readonly auth: AuthService) {}
+        constructor(@Inject(AuthService) readonly auth: AuthService) {}
       }
 
       const module = await Test.createTestingModule({
@@ -925,7 +925,7 @@ describe('BymaxAuthModule', () => {
     it('should export OAuthService to importing host modules when oauth is enabled', async () => {
       @Injectable()
       class OAuthProbe {
-        constructor(readonly oauth: OAuthService) {}
+        constructor(@Inject(OAuthService) readonly oauth: OAuthService) {}
       }
 
       const module = await Test.createTestingModule({

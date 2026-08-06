@@ -48,10 +48,10 @@ export class PlatformAuthService {
   constructor(
     @Inject(BYMAX_AUTH_PLATFORM_USER_REPOSITORY)
     private readonly platformUserRepo: IPlatformUserRepository,
-    private readonly passwordService: PasswordService,
-    private readonly tokenManager: TokenManagerService,
-    private readonly bruteForce: BruteForceService,
-    private readonly redis: AuthRedisService,
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
+    @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

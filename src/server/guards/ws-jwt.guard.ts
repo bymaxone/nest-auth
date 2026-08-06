@@ -78,9 +78,9 @@ type WsClient = {
 @Injectable()
 export class WsJwtGuard implements CanActivate, OnModuleInit {
   constructor(
-    private readonly jwtService: JwtService,
-    private readonly redis: AuthRedisService,
-    private readonly wsTickets: WsTicketService,
+    @Inject(JwtService) private readonly jwtService: JwtService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(WsTicketService) private readonly wsTickets: WsTicketService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
 

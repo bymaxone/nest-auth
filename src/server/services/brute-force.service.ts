@@ -49,7 +49,7 @@ export class BruteForceService {
   private readonly windowSeconds: number
 
   constructor(
-    private readonly redis: AuthRedisService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {
     this.maxAttempts = options.bruteForce.maxAttempts

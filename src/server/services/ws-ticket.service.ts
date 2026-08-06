@@ -33,7 +33,7 @@ export class WsTicketService {
   private readonly logger = new Logger(WsTicketService.name)
 
   constructor(
-    private readonly redis: AuthRedisService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository
   ) {}

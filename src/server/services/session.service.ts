@@ -204,7 +204,7 @@ export class SessionService {
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
-    private readonly redis: AuthRedisService
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService
   ) {}
 
   // ---------------------------------------------------------------------------

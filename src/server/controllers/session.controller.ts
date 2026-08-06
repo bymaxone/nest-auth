@@ -1,4 +1,5 @@
 import {
+  Inject,
   Controller,
   Delete,
   Get,
@@ -71,8 +72,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @UsePipes(createAuthValidationPipe())
 export class SessionController {
   constructor(
-    private readonly sessionService: SessionService,
-    private readonly tokenDelivery: TokenDeliveryService
+    @Inject(SessionService) private readonly sessionService: SessionService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   // ---------------------------------------------------------------------------

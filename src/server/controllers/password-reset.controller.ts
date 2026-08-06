@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   HttpCode,
@@ -65,8 +66,8 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 @UsePipes(createAuthValidationPipe())
 export class PasswordResetController {
   constructor(
-    private readonly passwordResetService: PasswordResetService,
-    private readonly tokenDelivery: TokenDeliveryService
+    @Inject(PasswordResetService) private readonly passwordResetService: PasswordResetService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   // ---------------------------------------------------------------------------

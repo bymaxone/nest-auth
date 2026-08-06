@@ -77,12 +77,12 @@ export class AuthService {
     @Optional()
     private readonly emailProvider: IEmailProvider | null,
     @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null,
-    private readonly passwordService: PasswordService,
-    private readonly tokenManager: TokenManagerService,
-    private readonly bruteForce: BruteForceService,
-    private readonly redis: AuthRedisService,
-    private readonly otpService: OtpService,
-    private readonly sessionService: SessionService
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
+    @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(OtpService) private readonly otpService: OtpService,
+    @Inject(SessionService) private readonly sessionService: SessionService
   ) {}
 
   /**

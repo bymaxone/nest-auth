@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   Get,
@@ -73,9 +74,9 @@ function isMfaChallenge(result: AuthResult | MfaChallengeResult): result is MfaC
 @UsePipes(createAuthValidationPipe())
 export class AuthController {
   constructor(
-    private readonly authService: AuthService,
-    private readonly tokenDelivery: TokenDeliveryService,
-    private readonly wsTicketService: WsTicketService
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService,
+    @Inject(WsTicketService) private readonly wsTicketService: WsTicketService
   ) {}
 
   /**

@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-05
+
+This release carries the second cross-implementation security audit as well as the dependency-injection fix below. Both landed as separate pull requests; the audit one carried no version of its own, so its account is here.
+
+### Security
+
+- **The AES key over every stored second factor was enumerable.** `1.1.0` hid `jwt.secret`, its
+  rotation predecessors and the derived HMAC keys, but not `mfa.encryptionKey` or
+  `mfa.previousEncryptionKeys` — the AES-256-GCM key protecting every enrolled user's TOTP secret
+  and their recovery-code set. `JSON.stringify`, object spread and `util.inspect` on the resolved
+  options all emitted it, which is what a structured logger does when handed a provider.
+- **Refresh-token reuse was logged anonymously.** The strongest compromise signal this library
+  produces reached only a consumer who had wired the hook, and the shipped hooks are no-ops.
+- **A `getMe()` in flight could resurrect a session after logout.** `status` returned to
+  `authenticated` and the profile returned to context, so `useAuthStatus().isAuthenticated` — which
+  this library's own JSDoc calls safe to gate protected routes on — answered `true` after sign-out.
+
+### Fixed
+
+- **The two libraries could not read each other's password hashes.** This library wrote
+  `scrypt:N:r:p:{saltHex}:{derivedHex}` while `rust-auth` writes PHC. Neither parser accepted the
+  other's output, and because verification is total the failure surfaced as `invalid_credentials`
+  rather than a parse error — so five correct attempts by the owner tripped the brute-force
+  counter the two backends key identically and locked the account out of both.
+- **Every non-Latin password was refused as compromised.** Two ASCII filters in the breach screen:
+  `isDecoration` used `\W`, so Cyrillic, Greek, Han, Kana, Arabic, Hebrew and Thai characters all
+  counted as decoration and were stripped, and what survived was filtered to `[a-z0-9]`.
+- **`baseUrl: '/api'` sent every request to `/api/api/auth/*`.** The client composed the full URL
+  and also handed `baseUrl` to the fetch wrapper it builds — the value the README and
+  `AuthProvider`'s own example document for the same-origin/Next-proxy setup.
+- **A new session was written with five loose Redis commands**, where `rust-auth` does the same
+  work in one `MULTI/EXEC`. A revoke-all landing between the record write and the index `SADD`
+  swept an index the session was not in yet, and a dropped connection between the `SADD` and the
+  `EXPIRE` left the index with no expiry at all, permanently.
+- **The session index grew one permanent member per refresh.** A rotation adds `rp:{old}`
+  alongside `rt:{new}`, only a full revoke-all ever removed it, and the rotation re-armed the
+  set's TTL each time. Every reader is linear in its size, including the script a password reset
+  runs, which blocks the whole single-threaded store.
+
+### Fixed
+
+- **Dependency injection no longer depends on a transitive dev dependency.** Seventy-one
+  constructor parameters across thirty classes were resolved from `design:paramtypes`,
+  the metadata TypeScript emits — and this package emitted it only because `@swc/core`
+  happened to be in the tree via `ts-node`. tsup enables its SWC transform when that
+  package is present and prints a warning when it is not:
+
+  ```
+  You have emitDecoratorMetadata enabled but @swc/core was not installed, skipping swc plugin
+  ```
+
+  Nine sibling packages get that second path and none of their bundles carry the metadata. Had the transitive dependency moved,
+  every one of those parameters would have stopped resolving at once — silently wherever
+  `@Optional()` is present. They now carry explicit `@Inject`, which writes
+  `self:paramtypes` and is independent of any build transform.
+
+- `@swc/core` is a declared devDependency. The metadata is still needed — `ValidationPipe`
+  finds a DTO class through the reflected parameter type, and thirty-one controller
+  parameters here are typed by DTO — so the emission stays. It is now deliberate rather
+  than inherited.
+
 ## [1.1.0] - 2026-08-03
 
 The API changes marked **Breaking** below are breaking against `1.0.11`. They are
@@ -1015,6 +1076,7 @@ ever installable.
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
 [Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...HEAD
+[1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/bymaxone/nest-auth/compare/v1.0.9...v1.0.10

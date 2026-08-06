@@ -96,9 +96,9 @@ export class EmailChangeService implements OnModuleInit {
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_EMAIL_PROVIDER) private readonly emailProvider: IEmailProvider,
-    private readonly passwordService: PasswordService,
-    private readonly redis: AuthRedisService,
-    private readonly bruteForce: BruteForceService
+    @Inject(PasswordService) private readonly passwordService: PasswordService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(BruteForceService) private readonly bruteForce: BruteForceService
   ) {}
 
   /**

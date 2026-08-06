@@ -1,4 +1,5 @@
 import {
+  Inject,
   Body,
   Controller,
   Delete,
@@ -109,9 +110,9 @@ function isMfaChallenge(
 @UsePipes(createAuthValidationPipe())
 export class PlatformAuthController {
   constructor(
-    private readonly platformAuthService: PlatformAuthService,
-    private readonly mfaService: MfaService,
-    private readonly tokenDelivery: TokenDeliveryService
+    @Inject(PlatformAuthService) private readonly platformAuthService: PlatformAuthService,
+    @Inject(MfaService) private readonly mfaService: MfaService,
+    @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
   // ---------------------------------------------------------------------------

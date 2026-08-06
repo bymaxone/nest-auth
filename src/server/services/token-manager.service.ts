@@ -109,9 +109,9 @@ export class TokenManagerService {
   private readonly logger = new Logger(TokenManagerService.name)
 
   constructor(
-    private readonly jwtService: JwtService,
+    @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    private readonly redis: AuthRedisService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     // Optional, and the only reason this otherwise dependency-light service knows about hooks:
     // reuse detection happens here and nowhere else, and it is the strongest evidence of
     // compromise the library produces. Routing it out through an exception would lose the

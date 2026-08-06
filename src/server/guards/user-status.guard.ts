@@ -41,7 +41,7 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 @Injectable()
 export class UserStatusGuard implements CanActivate {
   constructor(
-    private readonly redis: AuthRedisService,
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
