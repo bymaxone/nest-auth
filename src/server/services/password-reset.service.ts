@@ -628,6 +628,16 @@ export class PasswordResetService {
    */
   private async passwordFingerprintOf(userId: string): Promise<string> {
     const user = await this.userRepo.findById(userId)
+    // Stryker disable next-line StringLiteral: the sentinel's VALUE is unobservable today, because
+    // the only consumer that tests for it — `assertResetTokenStillBound` — reads an empty
+    // fingerprint as "this token predates the binding" and accepts it. So a passwordless account's
+    // token is accepted whatever this returns: as `''` via that early return, and as any other
+    // string by comparing equal to itself on the next line.
+    //
+    // Which also means the sentence above ("invalidated as soon as one is set") does not hold: the
+    // two readings of `''` — "no local password" here, "predates the binding" there — collide, and
+    // the accepting one wins. Reconciling them is a behaviour change to the stored record format
+    // shared with the sibling implementation, so it is recorded here rather than made silently
     return user?.passwordHash ? sha256(user.passwordHash) : ''
   }
 

@@ -41,7 +41,11 @@ function flattenValidationErrors(
       flattened.push({ field: path, message })
     }
 
-    if (error.children !== undefined && error.children.length > 0) {
+    // No emptiness check: recursing into an empty child list returns an empty list, so the guard
+    // that used to be here only ever saved a call whose result was already nothing. Presence is
+    // the condition that matters — `children` is optional, and reading `.length` off an absent
+    // one is what this arm exists to avoid.
+    if (error.children !== undefined) {
       flattened.push(...flattenValidationErrors(error.children, path))
     }
   }

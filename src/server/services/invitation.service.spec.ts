@@ -1303,9 +1303,15 @@ describe('InvitationService', () => {
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('the pending invitation kept changing under the rank check')
-      )
+      // The whole line, not just its tail: this refusal is answered with the same
+      // `insufficient_role` an ordinary rank failure gets, so an operator can only tell sustained
+      // contention on one invitee from a permissions mistake by the address and tenant being
+      // named here. Masked, because the line names a person.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('the pending invitation kept changing under the rank check')
+      expect(warned).toContain('email=i***@example.com')
+      expect(warned).not.toContain('invited@example.com')
+      expect(warned).toContain('tenantId=tenant-1')
       warnSpy.mockRestore()
     })
 
@@ -1342,6 +1348,166 @@ describe('InvitationService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // The rank check's own reads, and the compare-and-swap it feeds
+  // ---------------------------------------------------------------------------
+
+  describe('the rank check reads the record the index names', () => {
+    // The index stores a token HASH, and the invitation lives under `inv:<hash>`. Two things
+    // depend on that indirection being exact: the rank check compares against the invitation it
+    // is about to destroy, and the supersede deletes the same one. A lookup under the wrong key
+    // finds nothing, and "nothing pending" is the answer that lets the supersede proceed
+    // unchecked — the outranked caller is admitted rather than refused.
+    it('resolves the pending invitation under the inv: key the index points at', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('invidx:') ? 'c'.repeat(64) : null)
+      )
+      // Stated rather than inherited: `clearAllMocks` resets calls but keeps implementations, so
+      // an earlier test's losing claim would otherwise decide this one.
+      mockRedis.eval.mockResolvedValue(1)
+      mockRedis.set.mockResolvedValue('OK')
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+
+      expect(mockRedis.get).toHaveBeenCalledWith(`inv:${'c'.repeat(64)}`)
+    })
+
+    // An empty index means there is nothing to rank against, and the second read must not happen
+    // at all. Attempting it looks up `inv:null` — a key nothing writes, so the answer is the same
+    // by luck rather than by design, and any future record stored under a stringified null would
+    // be picked up as this invitee's pending invitation.
+    it('does not look up an invitation when the index is empty', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(1)
+      mockRedis.set.mockResolvedValue('OK')
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
+
+      const keysRead = mockRedis.get.mock.calls.map((call) => String(call[0]))
+      expect(keysRead.filter((key) => key.startsWith('inv:'))).toHaveLength(0)
+    })
+
+    // `expected` is the hash the rank check approved, and the empty string is what "there was
+    // nothing pending" has to serialize to — the Lua compares `(old or '') ~= ARGV[3]`, so an
+    // empty index reads as `''` on the Redis side. Any other placeholder never matches, and the
+    // very first invitation for an address could never claim its own index entry.
+    it('claims an empty index with an empty expected value', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue(1)
+      mockRedis.set.mockResolvedValue('OK')
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
+
+      const argv = (mockRedis.eval.mock.calls[0] as [string, string[], string[]])[2]
+      expect(argv[2]).toBe('')
+    })
+
+    // The claim is read back from an `unknown`, and a client that surfaces the Lua integer as a
+    // string has to be read the same way. Treating any string as success is the dangerous
+    // direction: a lost claim would be reported as won, and the invitation minted on an approval
+    // that no longer describes the index.
+    it('reads a lost claim reported as the string "0" as a loss', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue('c'.repeat(64))
+      mockRedis.eval.mockResolvedValue('0')
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+      })
+      expect(mockEmailProvider.sendInvitation).not.toHaveBeenCalled()
+    })
+
+    // …and the same reply as the string "1" is a win, so the narrowing is not just "refuse
+    // everything that is not a number".
+    it('reads a won claim reported as the string "1" as a win', async () => {
+      mockUserRepo.findById.mockResolvedValue(INVITER)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.eval.mockResolvedValue('1')
+      mockRedis.set.mockResolvedValue('OK')
+      mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
+
+      await expect(
+        service.invite('inviter-1', 'fresh@example.com', 'member', 'tenant-1')
+      ).resolves.not.toThrow()
+      expect(mockEmailProvider.sendInvitation).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Refusals the caller cannot see are recorded server-side
+  // ---------------------------------------------------------------------------
+
+  describe('an invisible refusal is still an audit record', () => {
+    /** `maskEmail`'s output for the fixture invitee. */
+    const MASKED = 'i***@example.com'
+
+    // Both paths below answer with something deliberately uninformative — `false`, or an
+    // `insufficient_role` indistinguishable from an honest mistake — precisely so the endpoint
+    // is not an oracle for a tenant's pending invitations. That makes the log line the ONLY
+    // record that the attempt happened, which is what an operator investigating a member
+    // probing an address list has to work from.
+    //
+    // Each assertion also pins the address as MASKED and the raw one as absent. The line names a
+    // person, and the mask is the only thing keeping a tenant's invitee list out of wherever
+    // logs are shipped.
+
+    it('records a supersede refused for rank, with the address masked', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key.startsWith('invidx:')
+            ? 'c'.repeat(64)
+            : JSON.stringify({ ...VALID_STORED_INVITATION, role: 'admin' })
+        )
+      )
+
+      await expect(
+        service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+      ).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain(`email=${MASKED}`)
+      expect(warned).not.toContain('invited@example.com')
+      expect(warned).toContain('tenantId=tenant-1')
+      expect(warned).toContain('inviterRole=member')
+      warnSpy.mockRestore()
+    })
+
+    // The revoke route's own refusal, which returns a bare `false` — indistinguishable from
+    // "nothing pending" by design, so the log line is the only record it happened.
+    it('records a revoke refused for rank, with the address masked', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...INVITER, role: 'member' })
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key.startsWith('invidx:')
+            ? 'b'.repeat(64)
+            : JSON.stringify({ ...VALID_STORED_INVITATION, role: 'admin' })
+        )
+      )
+
+      await expect(
+        service.revokeInvitation('inviter-1', 'invited@example.com', 'tenant-1')
+      ).resolves.toBe(false)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain(`email=${MASKED}`)
+      expect(warned).not.toContain('invited@example.com')
+      expect(warned).toContain('tenantId=tenant-1')
+      expect(warned).toContain('revokerUserId=inviter-1')
+      warnSpy.mockRestore()
     })
   })
 })

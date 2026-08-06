@@ -70,7 +70,10 @@ export class UserStatusGuard implements CanActivate {
       await this.redis.set(cacheKey, status, cacheTtl)
     }
 
-    const normalizedStatus = status.toLowerCase()
+    // Passed as stored, not normalized here: `assertNotBlocked` canonicalizes both sides itself,
+    // so a fold applied first was doing the same work twice and claiming the case rule lived in
+    // two places at once.
+    //
     // One definition, in `assertNotBlocked`. This guard used to carry its own copy of the
     // status → error-code table as a plain object literal, which the sibling implementation
     // deliberately does NOT use: the status is application-defined data, so an object lookup
@@ -80,7 +83,7 @@ export class UserStatusGuard implements CanActivate {
     // duplicated logic has whether or not the drift is reachable — here it needed a consumer to
     // configure one of those names as a blocked status, so the outcome was a malformed 403 body
     // rather than a bypass. Deleting the copy removes the question.
-    assertNotBlocked(normalizedStatus, this.options.blockedStatuses)
+    assertNotBlocked(status, this.options.blockedStatuses)
 
     return true
   }

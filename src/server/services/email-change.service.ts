@@ -302,6 +302,11 @@ export class EmailChangeService implements OnModuleInit {
     // as its own refusal rather than as a value that could never match: a placeholder here
     // would read as a comparison that might succeed.
     const current = user.passwordHash === null ? null : sha256(user.passwordHash)
+    // Stryker disable next-line ConditionalExpression: the `current === null` arm cannot be
+    // observed. `stored` is a non-empty string by the guard above, so when `current` is null the
+    // second arm (`stored !== current`) is already true and refuses on its own — which is exactly
+    // the "decided before it is made" the comment above describes. It is spelled out to say why,
+    // not to change the answer
     if (current === null || stored !== current) {
       this.logger.warn(
         `confirmChange: token no longer bound to the account password userId=${context.userId}`

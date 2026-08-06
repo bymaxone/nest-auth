@@ -11,6 +11,17 @@ jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefine
 
 const mockSleep = sleep as jest.MockedFunction<typeof sleep>
 
+/**
+ * The service's own timing floor, mirrored here because it is module-private there.
+ *
+ * Exporting it only for a test would make it look like configuration; the floor is a fixed
+ * property of the anti-enumeration contract, so it is restated with this note instead.
+ */
+const MIN_VERIFY_MS = 100
+
+/** How far the mocked Redis step advances the test clock — any non-zero value under the floor. */
+const REDIS_STEP_MS = 30
+
 // ---------------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------------
@@ -272,6 +283,28 @@ describe('OtpService', () => {
     // Timing normalization
     // ---------------------------------------------------------------------------
 
+    // An empty submitted code must never verify, whatever the store answered.
+    //
+    // This is the case that separates "refused on the EXPIRED tag" from "fell through to the
+    // comparison and happened to refuse there", because the comparison does NOT refuse it:
+    // `crypto.timingSafeEqual` returns true for two empty buffers, so an empty code matches an
+    // empty stored one. Every reply below therefore has to be refused by its own tag, before any
+    // comparison is reached — if the tag arm stops working, these are the inputs that walk
+    // straight through it into a successful verification.
+    it.each([
+      ['an expired record', ['EXPIRED', '']],
+      ['an exhausted record', ['MAX', '']],
+      ['a reply missing its second element', ['PRESENT']],
+      ['a record whose stored code is not a string', ['PRESENT', 42]],
+      ['a reply that is not an array at all', null]
+    ])('should refuse an empty code against %s', async (_label, reply) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      await expect(service.verify('email_verification', 'user-hash', '')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OTP_INVALID } }
+      })
+    })
+
     describe('timing normalization', () => {
       // Every outcome waits out the same floor, so response time cannot distinguish "no such
       // record" from "wrong code" from "exhausted" — the three answers an attacker probing for
@@ -281,14 +314,50 @@ describe('OtpService', () => {
         ['wrong code', ['PRESENT', CODE] as const, '999999'],
         ['expired', ['EXPIRED', ''] as const, CODE],
         ['max attempts', ['MAX', ''] as const, CODE]
-      ])('should sleep out the floor on the %s path', async (_label, reply, submitted) => {
-        mockRedis.eval.mockResolvedValue([...reply])
+      ])(
+        'should pad the %s path to exactly the remaining floor',
+        async (_label, reply, submitted) => {
+          // The pad is asserted to the millisecond, against a clock this test drives. Anything
+          // looser passes for a floor that does not hold: "some non-negative number" is equally
+          // true of no padding at all (0), of a pad that grows with the work instead of
+          // shrinking, and of one computed from a nonsense elapsed time.
+          //
+          // The elapsed time must be non-zero for the assertion to separate them — at elapsed 0,
+          // `floor - elapsed` and `floor + elapsed` are the same number — so the Redis step
+          // advances the clock by a known amount, which is also where the real time goes.
+          let now = 1_700_000_000_000
+          const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now)
+          mockRedis.eval.mockImplementation(async () => {
+            now += REDIS_STEP_MS
+            return [...reply]
+          })
 
-        await service.verify('email_verification', 'user-hash', submitted).catch(() => undefined)
+          await service.verify('email_verification', 'user-hash', submitted).catch(() => undefined)
 
-        expect(mockSleep).toHaveBeenCalledTimes(1)
-        expect(mockSleep).toHaveBeenCalledWith(expect.any(Number))
-        expect(mockSleep.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(0)
+          expect(mockSleep).toHaveBeenCalledTimes(1)
+          expect(mockSleep).toHaveBeenCalledWith(MIN_VERIFY_MS - REDIS_STEP_MS)
+          nowSpy.mockRestore()
+        }
+      )
+
+      // The other side of the clamp: work that already outran the floor is not padded further.
+      // Without this the floor could be a negative sleep, which `sleep` would clamp for it —
+      // masking the sign error until some other caller did not.
+      it.each([
+        ['success', ['PRESENT', CODE] as const, CODE],
+        ['expired', ['EXPIRED', ''] as const, CODE]
+      ])('should not pad the %s path when the work outran the floor', async (_l, reply, sent) => {
+        let now = 1_700_000_000_000
+        const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now)
+        mockRedis.eval.mockImplementation(async () => {
+          now += MIN_VERIFY_MS + 50
+          return [...reply]
+        })
+
+        await service.verify('email_verification', 'user-hash', sent).catch(() => undefined)
+
+        expect(mockSleep).toHaveBeenCalledWith(0)
+        nowSpy.mockRestore()
       })
     })
   })

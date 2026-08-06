@@ -159,7 +159,15 @@ function parsePhcParams(text: string): { ln: number; r: number; p: number } | nu
   // "wrong password" with no branch whose timing distinguishes the two. 255 is far above any
   // parameter either implementation writes (8 and 1) and far below where the arithmetic
   // stops being representable.
-  if (ln < 1 || ln > 31) return null
+  if (ln < 1) return null
+  // Split from the floor above so the suppression lands on this bound alone — the `ln < 1` mutants
+  // are killable (`ln = 0` means `N = 1`, which `scrypt` rejects) and must stay live.
+  //
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: subsumed by the working-set
+  // ceiling below, so no record distinguishes it. Passing that ceiling requires `2 ** ln * r <=
+  // 2 ** 22`, and with `r >= 1` every `ln` from 23 up already fails it — this bound is about
+  // `2 ** ln` staying a representable number, and it is stated for that reason
+  if (ln > 31) return null
   if (r < 1 || r > MAX_SCRYPT_PARAMETER || p < 1 || p > MAX_SCRYPT_PARAMETER) return null
   // The working set the record ASKS FOR, held to the same ceiling the configured cost is held
   // to at startup. Without this the bounds above are only about arithmetic: `ln = 31` with the
@@ -416,15 +424,27 @@ export class PasswordService {
       N,
       r,
       p,
-      // Sized for the parameters actually being used, which may exceed the configured ones —
-      // but never without bound: `parsePhcParams` has already refused any record whose working
-      // set is above `MAX_KDF_BYTES_PER_DERIVATION`, so this cannot be widened past 2x that
-      // ceiling by what the record claims.
-      // Stryker disable next-line ArithmeticOperator,MethodExpression: `maxmem` is a CEILING, and
-      // only its being too LOW is observable (scrypt throws). Every mutant here lowers it while
-      // leaving it above what any hash these tests verify actually needs, so the derivation and
-      // its result are identical — the same reason the constructor's copy carries a disable
-      maxmem: Math.max(N * r * 128 * 2, this.maxmem)
+      // A FIXED ceiling, deliberately not derived from the record.
+      //
+      // This used to be `Math.max(N * r * 128 * 2, this.maxmem)` — sized to the parameters
+      // actually being used, on the reasoning that `parsePhcParams` had already refused any
+      // record above `MAX_KDF_BYTES_PER_DERIVATION` so it could never widen far. That is true,
+      // and it made this line the second half of a single point of failure: the parser's ceiling
+      // was the ONLY thing between a crafted record and a `128 * N * r` allocation, because a
+      // ceiling computed FROM the record grows to fit whatever the record claims. Remove that one
+      // check and `ln = 31, r = 8` asks for 2 TiB, which does not fail the request — it OOM-kills
+      // the process and every in-flight connection with it.
+      //
+      // A constant cannot be widened by input. Nothing legitimate notices: the parser admits only
+      // records needing at most `MAX_KDF_BYTES_PER_DERIVATION`, and `this.maxmem` cannot exceed
+      // twice that ceiling either (startup holds the configured cost to the same limit), so this
+      // is at or above every value the old expression could produce for a reachable input.
+      // Above it, scrypt throws instead of allocating — a failed verification rather than a dead
+      // host.
+      // Stryker disable next-line ArithmeticOperator: `maxmem` is a CEILING and only its being too
+      // LOW is observable (scrypt throws). Halving it leaves it above what any hash these tests
+      // verify actually needs, so the derivation and its result are identical
+      maxmem: MAX_KDF_BYTES_PER_DERIVATION * 2
     })
 
     return cryptoTimingSafeEqual(candidate, parsed.derived)

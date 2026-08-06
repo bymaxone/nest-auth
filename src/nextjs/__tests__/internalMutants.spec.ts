@@ -29,6 +29,8 @@ import {
   normalizePath
 } from '../internal/routeClassifier'
 import { readTokenState } from '../internal/tokenState'
+import { REASON_EXPIRED, REASON_PARAM } from '../internal/constants'
+import { redirectToLogin } from '../internal/proxyHandlers'
 import {
   buildSanitizedRequestHeaders,
   sanitizeHeaderValue,
@@ -538,5 +540,51 @@ describe('configValidation — decode-only warning content', () => {
     } finally {
       ;(console as unknown as { warn: unknown }).warn = originalWarn
     }
+  })
+
+  // `redirectToLogin`'s reason guard, exercised directly because no assembled proxy path passes
+  // an empty reason — every internal caller passes either nothing or a non-empty constant. The
+  // three cases below are the only observable behaviours the guard has, and the empty one is
+  // what distinguishes `reason.length > 0` from `>= 0` and from an unconditional `true`.
+  describe('redirectToLogin reason parameter', () => {
+    // The proxy's `Location` is absolute (Next re-parses the header a middleware sets and throws
+    // on a relative one), so this base is only a fallback that never applies here.
+    const RELATIVE_BASE = 'https://placeholder.invalid'
+
+    /** The `reason` value carried by the redirect, or null when the key is absent. */
+    function reasonOf(response: { headers: { get(name: string): string | null } }): string | null {
+      const location = response.headers.get('location')
+      return new URL(location ?? '', RELATIVE_BASE).searchParams.get(REASON_PARAM)
+    }
+
+    // The ordinary case: a reason the login page can act on rides along as a query parameter.
+    it('carries a non-empty reason as a query parameter', () => {
+      const request = makeMockRequest({ url: 'https://app.example.com/dashboard' })
+
+      const response = redirectToLogin(request as never, RESOLVED, REASON_EXPIRED)
+
+      expect(reasonOf(response)).toBe(REASON_EXPIRED)
+    })
+
+    // An empty reason must add NO key. `?reason=` is worse than nothing: the login page decides
+    // whether to show a message from the key being present, so an empty value renders a blank
+    // notice where the user expected an explanation.
+    it('omits the parameter entirely for an empty reason', () => {
+      const request = makeMockRequest({ url: 'https://app.example.com/dashboard' })
+
+      const response = redirectToLogin(request as never, RESOLVED, '')
+
+      expect(reasonOf(response)).toBeNull()
+      expect(response.headers.get('location')).not.toContain(REASON_PARAM)
+    })
+
+    // No reason at all — the argument is optional, and its absence must not add a bare key.
+    it('omits the parameter when no reason is given', () => {
+      const request = makeMockRequest({ url: 'https://app.example.com/dashboard' })
+
+      const response = redirectToLogin(request as never, RESOLVED)
+
+      expect(reasonOf(response)).toBeNull()
+    })
   })
 })

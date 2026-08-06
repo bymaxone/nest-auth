@@ -84,10 +84,41 @@ return { 'PRESENT', code }
  * @returns The tag and, for `PRESENT`, the stored code.
  */
 function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', string] {
-  if (!Array.isArray(raw) || raw.length < 2) return ['EXPIRED', '']
+  if (!Array.isArray(raw)) return expired()
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: no reply distinguishes it. A
+  // shorter array has no second element, which the string check below refuses on its own, and a
+  // one-element `['MAX']` answers the same OTP_INVALID after the same padding as an expiry. The
+  // arity is asserted because the wire contract is two elements
+  if (raw.length < 2) return expired()
   const [tag, storedCode] = raw as [unknown, unknown]
-  if (tag !== 'MAX' && tag !== 'PRESENT') return ['EXPIRED', '']
-  return [tag, typeof storedCode === 'string' ? storedCode : '']
+  // Stryker disable next-line ConditionalExpression: MAX and EXPIRED are deliberately the same
+  // answer — same code, same padding, nothing in the response separating them — so admitting a
+  // MAX reply to the expiry arm, or the reverse, cannot be observed. It is kept distinct because
+  // the two are different facts in the log
+  if (tag !== 'MAX' && tag !== 'PRESENT') return expired()
+  // A code that is not a string is a record nobody wrote to spec, and it is refused as expiry
+  // like every other malformed shape rather than read.
+  //
+  // Substituting `''` for it, which this used to do, was not a neutral default: `timingSafeEqual`
+  // answers TRUE for two empty buffers, so a submitted code that was also empty compared EQUAL to
+  // the placeholder and the verification SUCCEEDED. Reachable only past the DTO's digit
+  // validation and only for a reply the Lua script does not produce — but the shape of it is a
+  // credential check passing on two absent values, which is not a thing to leave standing on the
+  // reasoning that today's callers cannot get there.
+  if (typeof storedCode !== 'string') return expired()
+  return [tag, storedCode]
+}
+
+/**
+ * The refusal every malformed or absent record shares.
+ *
+ * Its second element is never read: `verify` throws on the `EXPIRED` tag before reaching the
+ * comparison, which is why the value is a constant here rather than a decision at each site.
+ */
+function expired(): ['EXPIRED', string] {
+  // Stryker disable next-line StringLiteral: unreachable as a value — every branch returning this
+  // throws before the code is compared
+  return ['EXPIRED', '']
 }
 
 /**

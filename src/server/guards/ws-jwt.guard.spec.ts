@@ -465,6 +465,15 @@ describe('WsJwtGuard', () => {
     // lets a caller smuggle a second past whatever inspected the first.
     it.each([
       ['a repeated query parameter', { ticket: ['a', 'b'] }, undefined],
+      // The repeated parameter poisons the WHOLE request, not just the query. Falling through to
+      // the URL instead would hand the caller the smuggling route back: send two values where the
+      // parsed query is inspected and a single clean one in the raw URL, and whatever looked at
+      // the query is bypassed by the value the guard actually redeems.
+      [
+        'a repeated query parameter even when the URL carries a single good one',
+        { ticket: ['a', 'b'] },
+        '/socket?ticket=from-url'
+      ],
       ['a repeated URL parameter', {}, '/socket?ticket=a&ticket=b'],
       ['an empty query parameter', { ticket: '' }, undefined],
       ['an empty URL parameter', {}, '/socket?ticket='],
@@ -496,7 +505,11 @@ describe('WsJwtGuard', () => {
       ['a platform ticket, which carries no tenant', { ...snapshot, tenantId: undefined }],
       ['a record whose tenant decoded empty', { ...snapshot, tenantId: '' }],
       ['a record whose tenant is not a string', { ...snapshot, tenantId: 42 }],
-      ['a record that lost its subject', { ...snapshot, sub: '' }]
+      ['a record that lost its subject', { ...snapshot, sub: '' }],
+      // The type, not just the emptiness. A numeric `sub` is truthy and non-empty, so an
+      // emptiness-only check admits it — and the socket then carries a principal that every
+      // downstream `sub === userId` comparison silently fails to match, or matches by coercion.
+      ['a record whose subject is not a string', { ...snapshot, sub: 42 }]
     ])('should refuse %s rather than open the socket', async (_label, bad) => {
       mockWsTickets.redeem.mockResolvedValue(bad)
       const { client, context } = ticketContext({ ticket: 'raw-ticket' })

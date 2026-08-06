@@ -314,6 +314,83 @@ describe('PasswordResetService', () => {
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
     })
 
+    // An EMPTY token is "cannot be identified" too, not a token. Treated as one it would spare the
+    // session whose hash is `sha256('')` — a constant, so it names no real session but does send
+    // the request down the keep-one path, where the sweep is scoped to "all except this hash"
+    // rather than the unconditional invalidation this case calls for.
+    it('ends every session when the caller presents an empty token', async () => {
+      await service.changePassword('u1', dto, '')
+
+      expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+    })
+
+    // The re-proof budget is keyed to this account AND this flow. Dropping the account id gives
+    // the whole deployment one shared counter, so anyone's failures lock out everyone; dropping
+    // the flow prefix merges it with `login`'s, so guessing here locks the owner out of signing in
+    // — which is the outcome this control exists to prevent, arrived at from the other side.
+    it('keys the failure budget to the account and to this flow alone', async () => {
+      await service.changePassword('u1', dto, 'raw-refresh')
+
+      expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
+        hmacSha256('reauth:change-password:u1', HMAC_KEY)
+      )
+    })
+
+    // Both refusals below answer with a code that says nothing about which account or why, so
+    // these lines are the only record of a caller holding a token and guessing at the password
+    // behind it.
+    it('names the account whose re-proof budget ran out', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      // `Once`, because `clearAllMocks` resets calls but keeps implementations — a persistent
+      // lockout would decide every test after this one.
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('account locked')
+      expect(warned).toContain('userId=u1')
+      warnSpy.mockRestore()
+    })
+
+    // The wrong-password refusal, counted against the same budget: `invalid_credentials` says
+    // nothing about which account, so the log line carries it.
+    it('names the account whose current password was rejected', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockPasswordService.compare.mockResolvedValueOnce(false)
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('current password rejected')
+      expect(warned).toContain('userId=u1')
+      warnSpy.mockRestore()
+    })
+
+    // The notification is fire-and-forget by design — a delivery failure must not undo a password
+    // already written, nor change the answer. That makes the log line the only trace of it, and
+    // the notification is the control that turns "the victim finds out days later, at a failed
+    // login" into "the victim finds out now". Losing it silently loses that.
+    it('records a failed notification without failing the change', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockEmailProvider.sendPasswordChangedNotification.mockRejectedValueOnce(
+        new Error('smtp down')
+      )
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      // The rejection is handled on a later tick than the resolution of `changePassword`.
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+      expect(errorSpy).toHaveBeenCalledWith(
+        'notifyPasswordChanged: delivery failed',
+        expect.any(Error)
+      )
+      errorSpy.mockRestore()
+    })
+
     // A new password the breach checker refuses never reaches the repository.
     it('refuses a compromised new password before writing', async () => {
       mockPasswordService.assertNotCompromised.mockRejectedValue(
@@ -338,7 +415,9 @@ describe('PasswordResetService', () => {
     // The notice is fire-and-forget: a mail failure must not undo a password already written,
     // nor answer differently to the caller.
     it('succeeds even when the notification cannot be delivered', async () => {
-      mockEmailProvider.sendPasswordChangedNotification.mockRejectedValue(new Error('smtp down'))
+      mockEmailProvider.sendPasswordChangedNotification.mockRejectedValueOnce(
+        new Error('smtp down')
+      )
 
       await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
@@ -383,6 +462,31 @@ describe('PasswordResetService', () => {
       expect(mockEmailProvider.sendPasswordResetOtp).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendPasswordResetToken).not.toHaveBeenCalled()
       expect(mockOtpService.store).not.toHaveBeenCalled()
+    })
+
+    // Scenario: the cooldown is already claimed and the check itself took 100 ms. Expected: the
+    // pad is exactly the remainder (300 - 100). Why: this early return has its OWN sleep, on the
+    // shortest path through the method — it does no repository read and sends no mail, so it is
+    // the fastest exit and the one that most needs the floor. Left unpinned it is the exit that
+    // answers "you already asked recently", which is only true of an address that exists.
+    //
+    // The exact value is what separates the three mutants on that line: `Math.min` collapses it
+    // to 0, `300 + elapsed` gives 400, and `now + start` gives a large negative clamped to 0.
+    it('pads the cooldown exit to exactly the remaining budget', async () => {
+      mockRedis.setnx.mockResolvedValue(false)
+      let now = 1_700_000_000_000
+      const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now)
+      // `start` is read before the cooldown claim, so the claim is where the elapsed time goes.
+      mockRedis.setnx.mockImplementation(async () => {
+        now += 100
+        return false
+      })
+
+      await service.initiateReset(dto, mockReq)
+
+      expect(mockSleep).toHaveBeenCalledTimes(1)
+      expect(mockSleep).toHaveBeenCalledWith(200)
+      nowSpy.mockRestore()
     })
 
     // Both entry points must draw on ONE budget: a per-endpoint cooldown lets a caller
@@ -940,6 +1044,106 @@ describe('PasswordResetService', () => {
       // Assert
       const [key] = mockRedis.getdel.mock.calls[0] as [string]
       expect(key).toMatch(/^pw_reset:[0-9a-f]{64}$/)
+    })
+
+    // ---- the token's binding to the password it was issued against ----
+    //
+    // Several `pw_reset:` keys can be alive at once. Completing a reset with one used to leave the
+    // others valid, which is the wrong end state exactly when it matters: a victim resetting
+    // because an attacker read a reset link out of their mailbox had not closed the link the
+    // attacker read. The binding is what makes the first completed reset invalidate the rest.
+    //
+    // Reached only when the stored fingerprint is NON-EMPTY. Every other test here stores a record
+    // without one — which is the "predates the binding" case that returns early — so this check
+    // had no unit test at all, and the mutation run reported the whole comparison as uncovered.
+    // (The E2E suite does exercise it, but Stryker runs the unit config, so nothing there can kill
+    // a mutant in these lines.)
+
+    /** The stored record, bound to `hash`'s fingerprint. */
+    const boundContext = (hash: string): string =>
+      JSON.stringify({
+        userId: 'u1',
+        email: 'user@example.com',
+        tenantId: 'tenant1',
+        passwordFingerprint: sha256(hash)
+      })
+
+    // The control: a token whose binding still matches must go through, or the check would be
+    // refusing every reset rather than only superseded ones.
+    it('completes a reset whose token still matches the account password', async () => {
+      mockRedis.getdel.mockResolvedValue(boundContext('scrypt:current'))
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'user@example.com',
+        status: 'active',
+        passwordHash: 'scrypt:current'
+      })
+
+      await service.resetPassword({ ...baseDto, token: 'tok' }, mockReq)
+
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+    })
+
+    // The case the binding exists for: a link the victim's attacker still holds, after the
+    // victim has already reset. It must stop working the moment the first reset completes.
+    it('refuses a token issued against a password that has since changed', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      // The token was minted against the old hash; the row now holds a different one.
+      mockRedis.getdel.mockResolvedValue(boundContext('scrypt:old'))
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'user@example.com',
+        status: 'active',
+        passwordHash: 'scrypt:changed-since'
+      })
+
+      let caught: unknown
+      try {
+        await service.resetPassword({ ...baseDto, token: 'tok' }, mockReq)
+      } catch (err) {
+        caught = err
+      }
+
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+      // The caller gets the same `password_reset_token_invalid` an expired or unknown token gets,
+      // deliberately — so this line is the only place the distinction exists, and the distinction
+      // is the interesting one: a superseded link being presented is what an attacker holding a
+      // stolen link looks like after the victim has already reset.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('a password that has since changed')
+      expect(warned).toContain('userId=u1')
+      warnSpy.mockRestore()
+    })
+
+    // An account that has no local password at all yields the empty fingerprint, so a token minted
+    // then stops working the moment a password is set — the same rule, in the direction that
+    // matters for an account being taken over by whoever sets the first one.
+    it('refuses a token minted before the account had a password, once one is set', async () => {
+      mockRedis.getdel.mockResolvedValue(
+        JSON.stringify({
+          userId: 'u1',
+          email: 'user@example.com',
+          tenantId: 'tenant1',
+          passwordFingerprint: sha256('scrypt:some-hash')
+        })
+      )
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'user@example.com',
+        status: 'active',
+        passwordHash: null
+      })
+
+      let caught: unknown
+      try {
+        await service.resetPassword({ ...baseDto, token: 'tok' }, mockReq)
+      } catch (err) {
+        caught = err
+      }
+
+      expect(getErrorCode(caught)).toBe(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
     })
 
     // ---- parseResetContext clause isolation (defence against Redis tampering) ----
