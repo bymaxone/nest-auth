@@ -108,55 +108,29 @@ describe('createAuthProxy — validateConfig throw paths', () => {
   })
 })
 
-describe('createAuthProxy — decode-only mode warning', () => {
-  // When jwtSecret is absent the factory emits a console.warn so an
-  // accidental deploy of the proxy as the authorisation boundary
-  // without signature verification surfaces loudly in logs. The
-  // warning is best-effort — it must not throw when `console` is
-  // missing.
-  it('emits a decode-only mode warning when jwtSecret is absent', () => {
+describe('createAuthProxy — the jwtSecret requirement', () => {
+  // A missing secret is a hard refusal, not a logged warning. A warning is something a deploy
+  // scrolls past; the proxy would then be the authorisation boundary while verifying nothing.
+  it('refuses to construct when jwtSecret is absent, and does not merely warn', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
       void _secret
-      createAuthProxy(rest)
-      expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0]?.[0]).toMatch(/decode-only mode/)
-    } finally {
-      warnSpy.mockRestore()
-    }
-  })
 
-  // When jwtSecret IS configured, no warning fires.
-  it('does NOT emit the decode-only warning when jwtSecret is configured', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      createAuthProxy(DEFAULT_PROXY_CONFIG)
+      expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required/)
       expect(warnSpy).not.toHaveBeenCalled()
     } finally {
       warnSpy.mockRestore()
     }
   })
 
-  // Production hard-fail: the proxy must throw — not warn — when NODE_ENV=production
-  // and jwtSecret is absent. Silent decode-only mode in production is almost always
-  // an unintended deployment misconfiguration (missing env var) that would let
-  // crafted tokens impersonate any role, so the factory refuses to construct.
-  it('throws when NODE_ENV=production and jwtSecret is absent', () => {
-    const originalNodeEnv = process.env['NODE_ENV']
+  // A configured secret constructs silently.
+  it('constructs without complaint when jwtSecret is configured', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      process.env['NODE_ENV'] = 'production'
-      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-      void _secret
-      expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required in production/)
+      expect(() => createAuthProxy(DEFAULT_PROXY_CONFIG)).not.toThrow()
       expect(warnSpy).not.toHaveBeenCalled()
     } finally {
-      if (originalNodeEnv === undefined) {
-        delete process.env['NODE_ENV']
-      } else {
-        process.env['NODE_ENV'] = originalNodeEnv
-      }
       warnSpy.mockRestore()
     }
   })
@@ -524,39 +498,44 @@ describe('createAuthProxy — branch coverage edge cases', () => {
   })
 })
 
-describe('createAuthProxy — decode-only mode', () => {
-  // When jwtSecret is absent, readTokenState uses decodeJwtToken only.
-  // The handler still honours the isValid flag. This exercises the
-  // !hasSecret branch of readTokenState.
-  it('operates in decode-only mode when jwtSecret is absent', async () => {
-    // The factory emits an expected `console.warn` when jwtSecret is
-    // omitted (see `warnOnInsecureConfiguration`); silence it so the
-    // test output stays clean. The dedicated decode-only-warning
-    // suite above asserts this warning fires.
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      // Use a real token (shape is what matters in decode-only mode).
-      const token = await signHs256Token(
-        { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
-        TEST_SECRET
-      )
-      // Omit jwtSecret entirely — `exactOptionalPropertyTypes` forbids
-      // passing `undefined` for an optional string, so we destructure
-      // and rebuild without the field.
-      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-      void _secret
-      const { proxy } = createAuthProxy(rest)
-      const request = makeMockRequest({
-        url: 'https://app.example.com/dashboard',
-        cookies: { access_token: token }
-      })
+describe('createAuthProxy — a forged token end to end', () => {
+  // Scenario: an attacker mints their own admin token and presents it to a correctly configured
+  // proxy. Expected: it does not reach /dashboard. Why: this is the whole point of verifying,
+  // asserted through the proxy rather than through `readTokenState`. The claims are perfectly
+  // well-formed and unexpired — only the signature is wrong, so nothing but the HMAC check can
+  // tell the difference, and everything downstream (role gating, status blocking, the x-user-*
+  // headers handed to server components) would otherwise treat `role: 'admin'` as fact.
+  it('does not admit a token signed with an attacker-chosen secret', async () => {
+    const forged = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      'an-attackers-own-secret'
+    )
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({
+      url: 'https://app.example.com/dashboard',
+      cookies: { access_token: forged }
+    })
 
-      const response = await proxy(request as never)
-      // Decode-only mode: token is authenticated by exp alone. Admin
-      // role is allowed on /dashboard, so no redirect.
-      expect(response.headers.get('location')).toBeNull()
-    } finally {
-      warnSpy.mockRestore()
-    }
+    const response = await proxy(request as never)
+
+    expect(response.headers.get('location')).not.toBeNull()
+  })
+
+  // The counterpart, so "redirect everything" cannot pass: the same claims, signed with the
+  // secret the proxy was configured with, are admitted.
+  it('admits the same claims when they are genuinely signed', async () => {
+    const token = await signHs256Token(
+      { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
+      TEST_SECRET
+    )
+    const { proxy } = createAuthProxy(DEFAULT_PROXY_CONFIG)
+    const request = makeMockRequest({
+      url: 'https://app.example.com/dashboard',
+      cookies: { access_token: token }
+    })
+
+    const response = await proxy(request as never)
+
+    expect(response.headers.get('location')).toBeNull()
   })
 })

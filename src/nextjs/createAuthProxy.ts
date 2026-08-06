@@ -46,7 +46,7 @@ import { isBackgroundRequest } from './helpers/isBackgroundRequest'
 import {
   resolveConfig,
   validateConfig,
-  warnOnInsecureConfiguration
+  assertJwtSecretConfigured
 } from './internal/configValidation'
 import { NO_STORE_CACHE_CONTROL } from './internal/constants'
 import { handleProtectedRoute, handlePublicRoute } from './internal/proxyHandlers'
@@ -230,7 +230,7 @@ export interface ResolvedAuthProxyConfig extends AuthProxyConfig {
 export function createAuthProxy(config: AuthProxyConfig): AuthProxyInstance {
   validateConfig(config)
   const resolved = resolveConfig(config)
-  warnOnInsecureConfiguration(resolved)
+  assertJwtSecretConfigured(resolved)
   return { proxy: (request) => runProxy(request, resolved), config: resolved }
 }
 

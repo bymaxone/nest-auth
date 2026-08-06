@@ -6,9 +6,9 @@
  *   - {@link validateConfig}: throws on misconfigurations that would
  *     otherwise manifest as silent runtime behaviour.
  *   - {@link resolveConfig}: fills in defaults.
- *   - {@link warnOnInsecureConfiguration}: surfaces the decode-only
- *     trust-boundary decision via `console.warn` so an accidental
- *     deploy without a `jwtSecret` is visible at startup.
+ *   - {@link assertJwtSecretConfigured}: refuses to build a proxy
+ *     that has no `jwtSecret` and therefore cannot verify a
+ *     signature, in every environment.
  */
 
 import type { AuthProxyConfig, ResolvedAuthProxyConfig } from '../createAuthProxy'
@@ -95,60 +95,35 @@ export function resolveConfig(config: AuthProxyConfig): ResolvedAuthProxyConfig 
 }
 
 /**
- * Enforce the trust-boundary choice for the proxy's `jwtSecret`.
+ * Refuse to build a proxy that cannot verify a signature.
  *
- * When `jwtSecret` is absent, `readTokenState` falls back to
- * `decodeJwtToken`, which performs NO signature verification — the
- * JWT is trusted on expiry alone. Every RBAC and status-blocking
- * decision then trusts the raw token contents, and an attacker with
- * a crafted token carrying a future `exp` can impersonate any role.
+ * Without a `jwtSecret` there is no way to tell a token this system issued from one an
+ * attacker wrote. Every decision downstream — route gating, role checks, status blocking, and
+ * the `x-user-id`/`x-user-role`/`x-tenant-id` headers injected into every server component —
+ * reads the token's contents, so a crafted token carrying a future `exp` becomes whatever
+ * identity it claims. That is not a degraded mode; it is an open door with a proxy in front of
+ * it.
  *
- * **Production behaviour** (`NODE_ENV === 'production'`): absence of
- * `jwtSecret` is a hard error. Silent decode-only mode in production
- * is almost always unintended and an easy deployment mistake (e.g. a
- * missing env var), so the factory refuses to construct.
+ * This used to throw only when `NODE_ENV === 'production'` and merely warn elsewhere, which
+ * left preview and staging deployments accepting forged identities — environments that hold
+ * real data and are reachable from the internet at least as often as they are not. It also
+ * staked the whole trust boundary on one unvalidated string: `NODE_ENV` unset, `staging`,
+ * `prod`, or `production ` with a trailing space all took the warning branch. A secret is
+ * either configured or it is not, and that question does not depend on an environment
+ * variable, so the check no longer consults one.
  *
- * **Non-production behaviour**: warn via `console.warn` so local
- * development and preview environments continue to work while the
- * decision is still visible to the developer. The warning is a
- * best-effort side effect; we guard against environments that do not
- * expose `console` (some minimal Edge sandboxes) so the factory
- * never throws because of telemetry alone.
+ * Consumers that terminate signature verification at an upstream gateway still supply the
+ * secret here: it costs nothing, and it keeps the proxy's own decisions self-supporting rather
+ * than contingent on a component this code cannot see.
  */
-export function warnOnInsecureConfiguration(config: ResolvedAuthProxyConfig): void {
+export function assertJwtSecretConfigured(config: ResolvedAuthProxyConfig): void {
   if (config.jwtSecret !== undefined && config.jwtSecret.length > 0) return
 
-  if (isProductionEnv()) {
-    throw new Error(
-      'createAuthProxy: jwtSecret is required in production. ' +
-        'Without it the proxy runs in decode-only mode where RBAC and status-blocking ' +
-        'trust unverified tokens — a crafted token with a future `exp` can impersonate ' +
-        'any role. Provide `jwtSecret` or move signature verification to an upstream ' +
-        'gateway and explicitly opt out by running outside of a production environment.'
-    )
-  }
-
-  /* istanbul ignore next -- defensive guard for minimal Edge sandboxes without a `console`; unreachable under jsdom/node */
-  // Stryker disable next-line ConditionalExpression: `typeof console === 'undefined'` only differs when console itself is absent, which never happens under Node/jsdom/Edge
-  if (typeof console === 'undefined' || typeof console.warn !== 'function') return
-
-  console.warn(
-    '[@bymax-one/nest-auth] createAuthProxy: jwtSecret is not configured. ' +
-      'The proxy is running in decode-only mode — JWT signatures are NOT verified. ' +
-      'Every RBAC and status-blocking decision trusts the raw token contents, ' +
-      'and forged tokens with a future `exp` can impersonate any role. ' +
-      'Ensure an upstream gateway verifies signatures before requests reach downstream ' +
-      'server components that read the injected identity headers. ' +
-      'In production this condition throws instead of warning.'
+  throw new Error(
+    'createAuthProxy: jwtSecret is required. Without it no JWT signature can be verified, ' +
+      'so route gating, role checks, status blocking and the identity headers injected into ' +
+      'server components would all trust unverified token contents — a crafted token with a ' +
+      'future `exp` can impersonate any role. Provide `jwtSecret`; supply it even when an ' +
+      'upstream gateway also verifies signatures.'
   )
-}
-
-/**
- * Returns `true` when `NODE_ENV` equals `'production'`.
- *
- * Reads `process.env` on every call (rather than caching at module load time) so
- * that tests can override the environment variable without module re-evaluation.
- */
-function isProductionEnv(): boolean {
-  return process.env['NODE_ENV'] === 'production'
 }
