@@ -296,6 +296,7 @@ describe('OtpService', () => {
       ['an exhausted record', ['MAX', '']],
       ['a reply missing its second element', ['PRESENT']],
       ['a record whose stored code is not a string', ['PRESENT', 42]],
+      ['a record whose stored code is empty', ['PRESENT', '']],
       ['a reply that is not an array at all', null]
     ])('should refuse an empty code against %s', async (_label, reply) => {
       mockRedis.eval.mockResolvedValue(reply)

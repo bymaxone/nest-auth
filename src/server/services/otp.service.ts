@@ -96,16 +96,16 @@ function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', stri
   // MAX reply to the expiry arm, or the reverse, cannot be observed. It is kept distinct because
   // the two are different facts in the log
   if (tag !== 'MAX' && tag !== 'PRESENT') return expired()
-  // A code that is not a string is a record nobody wrote to spec, and it is refused as expiry
-  // like every other malformed shape rather than read.
+  // A code that is not a string, or is an empty one, is a record nobody wrote to spec — refused
+  // as expiry like every other malformed shape rather than read.
   //
-  // Substituting `''` for it, which this used to do, was not a neutral default: `timingSafeEqual`
-  // answers TRUE for two empty buffers, so a submitted code that was also empty compared EQUAL to
-  // the placeholder and the verification SUCCEEDED. Reachable only past the DTO's digit
-  // validation and only for a reply the Lua script does not produce — but the shape of it is a
-  // credential check passing on two absent values, which is not a thing to leave standing on the
-  // reasoning that today's callers cannot get there.
-  if (typeof storedCode !== 'string') return expired()
+  // Both halves matter, and for one reason: `timingSafeEqual` answers TRUE for two empty buffers.
+  // So an empty stored code compares EQUAL to an empty submitted one and the verification
+  // SUCCEEDS. This used to substitute `''` for a non-string, which manufactured exactly that
+  // record; refusing the non-string closed the manufactured case and left the stored-empty one,
+  // which is the same bug arriving by a different route. `store` only ever writes a generated
+  // code of the configured digit length, so nothing legitimate is refused here.
+  if (typeof storedCode !== 'string' || storedCode === '') return expired()
   return [tag, storedCode]
 }
 
