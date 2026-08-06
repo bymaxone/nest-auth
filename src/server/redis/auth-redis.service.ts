@@ -861,6 +861,51 @@ export class AuthRedisService {
   }
 
   /**
+   * Drops index members whose own key is gone, and leaves every other member in place.
+   *
+   * A reader that walks `sess:{userId}` learns a session is stale from something *about* the
+   * session — a detail record that is missing, unreadable or malformed. None of those facts is
+   * the session. The credential is the `rt:{hash}` key, and only its absence means the member
+   * names nothing: a live `rt:` with no `sd:` is a session that still opens the account.
+   *
+   * Removing such a member is not a tidy-up, it is a revocation bypass. `invalidateUserSessions`
+   * revokes what the index names, so a member dropped while its `rt:` key lives produces a
+   * session that survives "sign out everywhere" and keeps rotating, while the user is told every
+   * device was signed out — and the un-indexing is triggered by the user's own session listing.
+   *
+   * So the caller supplies candidates and this decides, with `EXISTS` as the only evidence
+   * admitted. The check and the `SREM` share one script because they must: a candidate whose
+   * `rt:` key is written between the two would otherwise be dropped anyway. A Redis fault makes
+   * the whole script fail rather than prune, which is the safe direction — an index that keeps a
+   * dead member costs a wasted read, an index that loses a live one costs the revocation.
+   *
+   * @param setKey - The un-namespaced index key (`sess:{id}` or `psess:{id}`).
+   * @param members - Candidate members, each a full key suffix (`rt:{hash}`).
+   * @returns How many candidates were actually dropped.
+   */
+  async pruneDeadMembers(setKey: string, members: string[]): Promise<number> {
+    if (members.length === 0) return 0
+
+    const removed = await this.eval(
+      `local ns = ARGV[1]
+       local removed = 0
+       for i = 2, #ARGV do
+         -- The member IS the key suffix, so its own liveness is one EXISTS away.
+         if redis.call('EXISTS', ns .. ':' .. ARGV[i]) == 0 then
+           redis.call('SREM', KEYS[1], ARGV[i])
+           removed = removed + 1
+         end
+       end
+       return removed`,
+      [setKey],
+      [this.namespace, ...members]
+    )
+    // Narrowed rather than cast, for the reason given on `pruneExpiredGraceMembers`.
+    if (typeof removed === 'number') return removed
+    return typeof removed === 'string' ? Number(removed) : 0
+  }
+
+  /**
    * Atomically deletes every refresh session belonging to one identity plane.
    *
    * The set members are full key suffixes — `rt:{hash}`/`rp:{hash}` on the dashboard plane,

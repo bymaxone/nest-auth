@@ -67,6 +67,7 @@ const mockRedis = {
   smembers: jest.fn<Promise<string[]>, [string]>(),
   eval: jest.fn<Promise<unknown>, [string, string[], string[]]>(),
   pruneExpiredGraceMembers: jest.fn<Promise<number>, [string, string]>().mockResolvedValue(0),
+  pruneDeadMembers: jest.fn<Promise<number>, [string, string[]]>().mockResolvedValue(0),
   bumpUserTokenEpoch: jest.fn()
 }
 
@@ -1120,19 +1121,37 @@ describe('SessionService', () => {
       expect(result.map((s) => s.sessionHash)).not.toContain(staleHash)
     })
 
-    // Verifies that triggers async SREM for stale members where get returns null.
-    it('triggers async SREM for stale members where get returns null', async () => {
+    // Scenario: the detail record is gone, so the member looks stale. Expected: it is offered to
+    // the guarded prune, never SREM'd outright. Why: a missing `sd:` is a fact about the detail
+    // record, not about the session — the `rt:` key may well be alive, and dropping the member
+    // while it is would hide a working session from `invalidateUserSessions`. Only
+    // `pruneDeadMembers` may decide, because only it checks the key.
+    it('offers a member with no detail record to the guarded prune, and never SREMs it', async () => {
       const staleHash = sha256('srem-trigger-token')
       mockRedis.smembers.mockResolvedValue([`rt:${staleHash}`])
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.srem.mockResolvedValue(1)
 
       await service.listSessions(userId)
 
-      // Flush microtasks for fire-and-forget srem
       await flushMicrotasks()
 
-      expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rt:${staleHash}`)
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(`sess:${userId}`, [`rt:${staleHash}`])
+      // The bypass this replaced: an unconditional SREM here un-indexed a session whose
+      // credential was still live, and the user's own session listing was what triggered it.
+      expect(mockRedis.srem).not.toHaveBeenCalled()
+    })
+
+    // A listing that found nothing stale must not ask for a prune at all — the common case on
+    // every healthy account.
+    it('asks for no prune when every member has its detail record', async () => {
+      mockRedis.smembers.mockResolvedValue([`rt:${sha256('healthy-token')}`])
+      mockRedis.get.mockResolvedValue(makeDetailJson(1000))
+
+      await service.listSessions(userId)
+
+      await flushMicrotasks()
+
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(`sess:${userId}`, [])
     })
 
     // Verifies that excludes stale member when JSON is valid but all required fields are absent.
@@ -1175,19 +1194,21 @@ describe('SessionService', () => {
       expect(result.map((s) => s.sessionHash)).not.toContain(throwHash)
     })
 
-    // Verifies that triggers async SREM for members where redis.get throws.
-    it('triggers async SREM for members where redis.get throws', async () => {
+    // The sharpest case for the guard: a transient Redis fault on the detail read says nothing
+    // at all about the session, yet it lands the member in the same candidate list. Before the
+    // guard, one failed GET during an outage un-indexed a live session permanently.
+    it('offers a member whose detail read threw to the guarded prune, and says the read failed', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const throwHash = sha256('throw-srem-token')
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`])
       mockRedis.get.mockRejectedValue(new Error('Redis connection lost'))
-      mockRedis.srem.mockResolvedValue(1)
 
       await service.listSessions(userId)
 
       await flushMicrotasks()
 
-      expect(mockRedis.srem).toHaveBeenCalledWith(`sess:${userId}`, `rt:${throwHash}`)
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(`sess:${userId}`, [`rt:${throwHash}`])
+      expect(mockRedis.srem).not.toHaveBeenCalled()
       // A failed read and a genuinely stale member are pruned alike — both leave the index —
       // so without this line a Redis outage reads as a tidy-up, and the sessions it silently
       // dropped never come back.
@@ -1200,18 +1221,24 @@ describe('SessionService', () => {
       warnSpy.mockRestore()
     })
 
-    // Verifies that logs error when fire-and-forget srem itself throws.
-    it('logs error when fire-and-forget srem itself throws', async () => {
+    // A prune that fails is a tidy-up that did not happen, not a listing that should fail — but
+    // it must be visible, because the index keeps growing until it succeeds.
+    it('logs when the guarded prune itself fails, and still returns the listing', async () => {
       const staleHash = sha256('srem-fail-token')
       mockRedis.smembers.mockResolvedValue([`rt:${staleHash}`])
       mockRedis.get.mockResolvedValue(null)
-      mockRedis.srem.mockRejectedValue(new Error('srem failed'))
+      mockRedis.pruneDeadMembers.mockRejectedValueOnce(new Error('prune failed'))
 
-      await service.listSessions(userId)
+      await expect(service.listSessions(userId)).resolves.toEqual([])
 
       await flushMicrotasks()
 
-      expect(Logger.prototype.error).toHaveBeenCalled()
+      // Counted, not named: an operator seeing a run of these needs the scale, and a log line is
+      // the wrong place for a session identifier.
+      expect(Logger.prototype.error).toHaveBeenCalledWith(
+        'listSessions: failed to prune 1 dead member(s)',
+        expect.any(Error)
+      )
     })
 
     // Verifies that sorts results newest-first (descending createdAt).
@@ -1328,26 +1355,6 @@ describe('SessionService', () => {
       const result = await service.listSessions(userId)
 
       expect(result).toHaveLength(0)
-    })
-
-    // Scenario: when the fire-and-forget SREM of a stale member rejects, the error log truncates the
-    // key to "rt:" + 8 hex chars (never the full hash).
-    // Expected: logger.error called with `listSessions: failed to remove stale key rt:<8hex>`. Why:
-    // kills the StringLiteral mutant on line 376 (message → '') and the MethodExpression on line
-    // 376:71 (`staleKey.slice(0, 11)` → `staleKey`, which would log the full member key).
-    it('logs the stale-key removal failure with a truncated key', async () => {
-      const staleHash = sha256('stale-trunc-token')
-      mockRedis.smembers.mockResolvedValue([`rt:${staleHash}`])
-      mockRedis.get.mockResolvedValue(null)
-      mockRedis.srem.mockRejectedValue(new Error('srem failed'))
-
-      await service.listSessions(userId)
-      await flushMicrotasks()
-
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        `listSessions: failed to remove stale key rt:${staleHash.slice(0, 8)}`,
-        expect.any(Error)
-      )
     })
   })
 
