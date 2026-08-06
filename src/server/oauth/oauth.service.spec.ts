@@ -84,9 +84,26 @@ const AUTH_RESULT = {
 }
 
 // Stored state payload JSON that would be stored in Redis.
-const STORED_STATE = JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 'verifier-xyz' })
+const STORED_STATE = JSON.stringify({
+  provider: 'google',
+  tenantId: 'tenant-1',
+  codeVerifier: 'verifier-xyz'
+})
 /** A state record with the PKCE verifier stripped — corrupt, or a downgrade attempt. */
-const STORED_STATE_NO_PKCE = JSON.stringify({ tenantId: 'tenant-1' })
+const STORED_STATE_NO_PKCE = JSON.stringify({ provider: 'google', tenantId: 'tenant-1' })
+
+/** A state record minted for a different provider — the RFC 9700 mix-up shape. */
+const STORED_STATE_OTHER_PROVIDER = JSON.stringify({
+  provider: 'hostile-idp',
+  tenantId: 'tenant-1',
+  codeVerifier: 'verifier-xyz'
+})
+
+/** A state record with no `provider` at all — pre-binding, corrupt, or forged. */
+const STORED_STATE_NO_PROVIDER = JSON.stringify({
+  tenantId: 'tenant-1',
+  codeVerifier: 'verifier-xyz'
+})
 
 // Mock plugin — implements the OAuthProviderPlugin interface.
 const mockPlugin = {
@@ -502,6 +519,35 @@ describe('OAuthService', () => {
       expect(mockRedis.getdel).not.toHaveBeenCalled()
     })
 
+    // Every refusal in this flow answers the same opaque OAUTH_FAILED, deliberately — the
+    // caller must not learn which check it failed. That makes the log line the only thing that
+    // tells an operator a browser-binding failure from a stale state or a corrupt record, so
+    // the line has to say which one it was.
+    it('should name the browser-binding failure in the log', async () => {
+      setupHappyPathCreate()
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      try {
+        await expect(
+          service.handleCallback(
+            'google',
+            'auth-code-xyz',
+            'csrf-state-abc',
+            'a-different-state',
+            '1.2.3.4',
+            'TestBrowser/1.0',
+            {}
+          )
+        ).rejects.toThrow(AuthException)
+
+        const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
+        expect(logged).toContain('OAuth state not bound to this browser')
+        expect(logged).toContain('provider=google')
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
     // An empty cookie value must not be treated as "no check needed" — it is a mismatch like
     // any other. Pinned separately because the falsy-vs-undefined distinction is exactly the
     // kind of guard a refactor rewrites into `if (stateCookie)`.
@@ -646,6 +692,20 @@ describe('OAuthService', () => {
       )
     })
 
+    // Scenario: the resolved account's address is unverified, and the deployment does NOT
+    // require verification. Expected: admitted. Why: the gate is a conjunction, and only this
+    // case separates it from the deployment setting alone. Without it, a rule that refused
+    // every unverified address — regardless of whether the deployment asked for verification —
+    // would pass the suite while locking out every OAuth user of a deployment that never
+    // wanted the requirement.
+    it('admits an unverified address when the deployment does not require verification', async () => {
+      setupHappyPathCreate()
+      mockUserRepo.createWithOAuth.mockResolvedValue({ ...AUTH_USER, emailVerified: false })
+
+      await expect(callCallback()).resolves.toBeDefined()
+      expect(mockTokenManager.issueTokens).toHaveBeenCalled()
+    })
+
     // Verifies that the 'create' action provisions a new user, strips credentials
     // before calling issueTokens, and returns the full AuthResult.
     it("should create a new user and issue tokens for hook action 'create'", async () => {
@@ -708,13 +768,64 @@ describe('OAuthService', () => {
       expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
     })
 
+    // Scenario: a state minted for one provider, presented at another provider's callback.
+    // Expected: refused, and the exchange never runs. Why: RFC 9700 §2.1/§4.4 mix-up defence.
+    // The callback learns its provider from its own URL path; without comparing that against
+    // the record, any structurally valid state is consumed — so an attacker who can steer an
+    // honest provider's callback to a hostile path receives the `code` AND the PKCE
+    // `code_verifier`, which is enough to redeem the code at the honest provider. PKCE cannot
+    // help: the verifier travels with the code by design.
+    // A mix-up is an attack; a record with no usable `provider` is a corrupt or forged one.
+    // Both answer the same opaque OAUTH_FAILED, so the log is the only place they are told
+    // apart — and the structural guard is what keeps a malformed record from being reported as
+    // an attempted mix-up. Asserting the line is present in one case and absent in the other
+    // pins both the guard and the message.
+    it.each([
+      ['a state minted for another provider', STORED_STATE_OTHER_PROVIDER, true],
+      ['a record whose provider is not a string', STORED_STATE_NO_PROVIDER, false]
+    ])('should refuse %s', async (_label, record, expectMismatchLog) => {
+      setupHappyPathCreate()
+      mockRedis.getdel.mockResolvedValue(record)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      try {
+        await expect(callCallback()).rejects.toThrow(AuthException)
+        expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
+
+        const logged = warnSpy.mock.calls.map((call) => String(call[0])).join('\n')
+        if (expectMismatchLog) {
+          expect(logged).toContain('OAuth state provider mismatch')
+          expect(logged).toContain('provider=google')
+        } else {
+          expect(logged).not.toContain('OAuth state provider mismatch')
+        }
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    // Each field is checked on its own. With a valid `provider` in front of it, a record whose
+    // `tenantId` is missing or mistyped must still be refused — otherwise the guard would only
+    // ever be as strong as its first clause, and the tenant scope would reach the hook as
+    // `undefined`.
+    it.each([
+      ['a missing tenantId', { provider: 'google', codeVerifier: 'verifier-xyz' }],
+      ['a non-string tenantId', { provider: 'google', tenantId: 7, codeVerifier: 'verifier-xyz' }]
+    ])('should refuse a stored state with %s', async (_label, record) => {
+      setupHappyPathCreate()
+      mockRedis.getdel.mockResolvedValue(JSON.stringify(record))
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+      expect(mockPlugin.exchangeCode).not.toHaveBeenCalled()
+    })
+
     // Verifies that a stored state whose `codeVerifier` is not a string is rejected
     // with OAUTH_FAILED — the type guard prevents malformed shapes from flowing into
     // the plugin's exchangeCode call.
     it('should reject stored state with a non-string codeVerifier field', async () => {
       setupHappyPathCreate()
       mockRedis.getdel.mockResolvedValue(
-        JSON.stringify({ tenantId: 'tenant-1', codeVerifier: 123 })
+        JSON.stringify({ provider: 'google', tenantId: 'tenant-1', codeVerifier: 123 })
       )
       await expect(callCallback()).rejects.toThrow(AuthException)
     })

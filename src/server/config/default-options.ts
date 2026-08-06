@@ -28,9 +28,13 @@ export const DEFAULT_OPTIONS = {
     // browser cookies outliving the JWT exp claim.
     accessCookieMaxAgeMs: 900_000,
     refreshExpiresInDays: 7,
-    // No cap by default: switching it on ends sessions already older than the cap, which is
-    // a decision a deployment makes, not one an upgrade makes for it.
-    absoluteSessionLifetimeDays: 0,
+    // 30 days, because NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a SHALL
+    // and puts it at no more than 30 days for AAL1. `refreshExpiresInDays` bounds one token,
+    // not the login: a client rotating every 15 minutes renews it forever, so without a cap a
+    // refresh token stolen once converts into permanent access — reuse detection only fires if
+    // the legitimate client also replays, which it never will once the victim has stopped using
+    // that device. Set to 0 to disable. Held equal to rust-auth's default.
+    absoluteSessionLifetimeDays: 30,
     algorithm: 'HS256' as const,
     // Security trade-off: 30 s grace window allows token rotation under slow mobile networks.
     // It also extends the replay window for a stolen refresh token by 30 s beyond expiry.
