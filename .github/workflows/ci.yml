@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   ci:
-    uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@v1
+    uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@bcd95609cd724e6d86168f3dd6e40eff4d2077ad # v1
     with:
       run-format-check: true # runs `pnpm format:check` (prettier --check .) as a hard gate
       run-build: false # build + integrity + size verified in the `verify` job below
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@bcd95609cd724e6d86168f3dd6e40eff4d2077ad # v1
       - name: Build all subpaths
         run: pnpm build
       - name: Verify build output integrity
@@ -76,7 +76,7 @@ jobs:
 
   security:
     if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
-    uses: bymaxone/.github/.github/workflows/security.yml@v1
+    uses: bymaxone/.github/.github/workflows/security.yml@bcd95609cd724e6d86168f3dd6e40eff4d2077ad # v1
     with:
       fail-on-severity: high
 
