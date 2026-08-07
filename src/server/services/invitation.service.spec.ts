@@ -450,6 +450,10 @@ describe('InvitationService', () => {
       expect(mockUserRepo.create).toHaveBeenCalledTimes(1)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledTimes(1)
       expect(mockHooks.afterInvitationAccepted).toHaveBeenCalledTimes(1)
+      // The FIELD NAME, not just that the screen ran: it is what a policy failure names in its
+      // `details`, so the argument exists to point the invitee at the input they sent. Accepting
+      // an invitation sends `password`. Unpinned, a call site could pass anything.
+      expect(mockPasswordService.assertAcceptable).toHaveBeenCalledWith(dto.password, 'password')
     })
 
     // An invitation is a delegation of authority, and authority is revocable. Validating it
