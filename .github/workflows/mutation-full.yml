@@ -1,0 +1,77 @@
+# The full mutation run, on a schedule — the one that is allowed to be slow.
+#
+# Why this exists as its own workflow: `stryker.config.json` now sets `incremental: true`, so
+# the per-push job in `ci.yml` re-tests only what changed and finishes in minutes instead of
+# an hour. That is the right trade for a routine gate, but it is a trade: an incremental run
+# reuses stored verdicts, and Stryker's own guidance is that reused verdicts for STATIC
+# mutants can be stale — which is precisely the class this library keeps in scope
+# (`ignoreStatic: false`, the setting that caught a refresh cookie shipping `httpOnly: false`
+# that no test covered). A score built on reuse is a fast signal, not the truth.
+#
+# So the truth is measured here, cold, once a week. It also refreshes the cache the per-push
+# job restores: this workflow saves under the same `stryker-incremental-` prefix, so every
+# push in the following week starts from a baseline a full run produced rather than from a
+# chain of incremental deltas.
+name: Mutation (full)
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Off the working day on purpose — nothing waits on this run.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    name: Full mutation run
+    # Default branch only, and this is a correctness guard rather than tidiness.
+    # `workflow_dispatch` can be aimed at any ref, and the save step below writes under the
+    # generic `stryker-incremental-` prefix that the per-push job restores from. A manual run
+    # on a feature branch would therefore hand main's CI a baseline built from code that is
+    # not on main — verdicts reused for mutants that no longer exist, or missing for ones that
+    # do. The window between the two is exactly where an incremental run is least trustworthy,
+    # so it must not be reachable by accident.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    # Three hours. A cold run has never been measured to completion on a GitHub runner — the
+    # 45-minute default cancelled every attempt — so this is deliberately generous until one
+    # finishes and reports a real duration. Nothing blocks on this job, so an over-wide
+    # ceiling costs only the minutes it actually uses.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
+
+      - name: Run the full mutation suite
+        # `mutation:full` deletes the incremental file first, so this run cannot inherit a
+        # verdict from the incremental chain it exists to check.
+        run: pnpm mutation:full
+
+      - name: Save the incremental baseline for the week's pushes
+        # Only on success, and for the same reason the job is pinned to the default branch:
+        # this file becomes the baseline every push that week reuses. Stryker writes it as it
+        # goes, so a run that dies partway through leaves a REAL file describing a fraction of
+        # the mutants — and the per-push gate cannot tell that apart from a complete one. It
+        # would silently treat the unmeasured remainder as unchanged. A failed run leaving the
+        # previous week's baseline in place is the safe outcome: stale beats wrong.
+        #
+        # The report upload below keeps `always()` on purpose — a partial report is worth
+        # reading when the run failed; a partial baseline is not worth reusing.
+        uses: actions/cache/save@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.sha }}
+
+      - name: Upload the mutation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-full
+          path: reports/mutation/
+          if-no-files-found: ignore
