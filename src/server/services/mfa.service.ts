@@ -1196,6 +1196,89 @@ export class MfaService {
   }
 
   // ---------------------------------------------------------------------------
+  // resetMfa() — administrative removal of a second factor
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Removes a user's second factor without their TOTP code, for a support desk facing a user
+   * who has lost their authenticator AND their recovery codes.
+   *
+   * Every self-service exit from MFA needs the factor itself: {@link disable} wants a valid
+   * TOTP code, and the recovery codes want the codes. A user who has lost both is locked out
+   * permanently, by the control that exists to protect them — ASVS v5 §6.1.1 asks for an
+   * administrative path out for exactly that reason.
+   *
+   * **Authorising the caller is the consumer's job.** The library deliberately ships no route
+   * for this, the same decision and for the same reason as {@link AuthService.unlockAccount}:
+   * who may reset whom is a question only the host application can answer, and all 39 routes
+   * this library does ship are scoped to the caller's own account.
+   *
+   * Idempotent: resetting an account that has no second factor is a no-op, so a support desk
+   * retrying does not get an error for a job already done.
+   *
+   * Three things happen beyond clearing the record, and none of them are optional:
+   *
+   * - **Sessions are invalidated and the token epoch is bumped**, so access tokens carrying
+   *   `mfaVerified: true` die with the factor rather than outliving it.
+   * - **The user is notified**, through the same channel {@link disable} uses. An
+   *   administrative reset that the account holder cannot see is an account-takeover path:
+   *   an attacker who reaches the support desk removes the second factor silently. The
+   *   notification is what makes it an event the owner can detect and dispute.
+   * - **It is logged** under its own prefix, so an administrative removal is distinguishable
+   *   from a user-initiated one in the library's own log.
+   *
+   * The `afterMfaDisabled` hook fires too, so consumer-side alerting keeps working. It is not
+   * given a separate hook: the consumer is the one calling this method, so they already know
+   * an administrative reset happened — the hook exists to tell them about the paths they do
+   * not initiate.
+   *
+   * @param userId - Internal ID of the user whose second factor is being removed.
+   * @param context - Which identity plane the user belongs to: `'dashboard'` (default) or
+   *   `'platform'`. Must match the plane the account lives in, or the lookup misses.
+   * @throws `TOKEN_INVALID` if no user with that ID exists in the given plane.
+   */
+  async resetMfa(userId: string, context: 'dashboard' | 'platform' = 'dashboard'): Promise<void> {
+    const user = await this.fetchUserForContext(context, userId)
+
+    if (!user.mfaEnabled) {
+      this.logger.log(`resetMfa: no second factor to remove userId=${userId} context=${context}`)
+      return
+    }
+
+    // Serialized against every other MFA transition, so a challenge that read the record a
+    // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
+    await this.transitionMfaRecord(context, userId, () => ({
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: null
+    }))
+
+    await this.redis.invalidateUserSessions(userId, context)
+    await this.redis.bumpUserTokenEpoch(userId, context)
+
+    this.logger.warn(`resetMfa: MFA removed administratively userId=${userId} context=${context}`)
+    await this.emailProvider.sendMfaDisabledNotification(user.email)
+
+    const safeUser =
+      context === 'platform'
+        ? this.platformUserAsSafeUser(user as AuthPlatformUser)
+        : this.toSafeUser(user as AuthUser)
+
+    if (this.hooks.afterMfaDisabled) {
+      void Promise.resolve(
+        this.hooks.afterMfaDisabled(safeUser, {
+          userId,
+          // No request context: this call does not come from one. Empty rather than invented,
+          // so a consumer logging the hook cannot mistake a placeholder for a real address.
+          ip: '',
+          userAgent: '',
+          sanitizedHeaders: {}
+        })
+      ).catch(() => undefined)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // regenerateRecoveryCodes — rotate the recovery code set for an MFA-enabled user
   // ---------------------------------------------------------------------------
 
