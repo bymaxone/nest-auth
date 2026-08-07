@@ -247,6 +247,11 @@ describe('AuthService', () => {
       const result = await service.register(dto, mockReq)
       expect(result).toBe(AUTH_RESULT)
       expect(mockUserRepo.create).toHaveBeenCalled()
+      // The FIELD NAME, not just that the screen ran. It is what the policy failure names in
+      // its `details`, so the whole reason the argument exists is to point the caller at the
+      // input they actually sent — and registration sends `password`, not `newPassword`.
+      // Without pinning it here, a call site could pass anything and the suite would agree.
+      expect(mockPasswordService.assertAcceptable).toHaveBeenCalledWith(dto.password, 'password')
     })
 
     // Verifies the email is canonicalized at the service boundary (not only via the DTO

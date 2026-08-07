@@ -1027,6 +1027,13 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
+      // The FIELD NAME, not just that the screen ran. A reset sends `newPassword`, and that is
+      // what a policy failure has to name in its `details` — the same argument on the register
+      // path carries `password`, so the two are only distinguishable if each is pinned.
+      expect(mockPasswordService.assertAcceptable).toHaveBeenCalledWith(
+        baseDto.newPassword,
+        'newPassword'
+      )
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', '$hashed$')
       // Full revocation: refresh sessions are deleted AND the user's token epoch is advanced,
       // so already-issued stateless access tokens are rejected immediately rather than staying
