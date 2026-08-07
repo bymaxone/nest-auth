@@ -54,7 +54,15 @@ jobs:
         run: pnpm mutation:full
 
       - name: Save the incremental baseline for the week's pushes
-        if: always()
+        # Only on success, and for the same reason the job is pinned to the default branch:
+        # this file becomes the baseline every push that week reuses. Stryker writes it as it
+        # goes, so a run that dies partway through leaves a REAL file describing a fraction of
+        # the mutants — and the per-push gate cannot tell that apart from a complete one. It
+        # would silently treat the unmeasured remainder as unchanged. A failed run leaving the
+        # previous week's baseline in place is the safe outcome: stale beats wrong.
+        #
+        # The report upload below keeps `always()` on purpose — a partial report is worth
+        # reading when the run failed; a partial baseline is not worth reusing.
         uses: actions/cache/save@v4
         with:
           path: reports/stryker-incremental.json
