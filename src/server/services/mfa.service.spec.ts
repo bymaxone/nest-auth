@@ -2371,6 +2371,157 @@ describe('MfaService', () => {
   // disable
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // resetMfa — administrative removal, no second factor required
+  // ---------------------------------------------------------------------------
+
+  describe('resetMfa', () => {
+    // Scenario: the account has no second factor. Expected: nothing happens, and no error.
+    // Why: a support desk retrying a job already done should not be told it failed — the same
+    // idempotence `unlockAccount` promises. Asserting the writes did NOT happen is what
+    // separates this from a method that quietly re-runs the whole teardown on every call.
+    it('is a no-op for an account with no second factor', async () => {
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+
+      await expect(service.resetMfa('user-1')).resolves.toBeUndefined()
+
+      expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockEmailProvider.sendMfaDisabledNotification).not.toHaveBeenCalled()
+      // The log is the only record this call happened at all — the return value is the same
+      // `undefined` a real reset produces, so without the line an operator cannot tell a
+      // no-op apart from a removal in the audit trail.
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('resetMfa: no second factor to remove')
+      )
+      logSpy.mockRestore()
+    })
+
+    // Scenario: a user who has lost both the authenticator and the recovery codes. Expected:
+    // the factor is cleared, every session dies with it, and the user is told. Why: each of
+    // these is load-bearing. Leaving the sessions alive keeps access tokens carrying
+    // `mfaVerified: true` valid past the factor they attest to; skipping the notification
+    // makes this an account-takeover path, because an attacker who reaches the support desk
+    // removes the second factor with nothing reaching the owner.
+    it('clears the factor, kills the sessions and notifies the account holder', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await service.resetMfa('user-1')
+
+      // At `warn`, and saying "administratively": an operator reading the log has to be able to
+      // tell this apart from a user who disabled their own factor, and both paths otherwise
+      // write the same record and send the same mail.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('resetMfa: MFA removed administratively')
+      )
+      warnSpy.mockRestore()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaRecoveryCodes: null
+      })
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
+        AUTH_USER_MFA_ENABLED.email
+      )
+      expect(mockHooks.afterMfaDisabled).toHaveBeenCalled()
+    })
+
+    // The hook context carries no IP or User-Agent, because there is no request behind this
+    // call. Empty rather than invented: a consumer logging the hook must not record a
+    // placeholder address as though someone had connected from it.
+    it('fires the hook with no request context', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+
+      await service.resetMfa('user-1')
+
+      expect(mockHooks.afterMfaDisabled).toHaveBeenCalledWith(
+        // `tenantId` is what separates the two projections: the dashboard one carries the
+        // account's own tenant, the platform one forces `''`. Asserting only the id would pass
+        // under either, so a reset that handed the hook a platform-shaped user for a dashboard
+        // account — losing the tenant every consumer scopes on — would go unnoticed.
+        expect.objectContaining({ id: 'user-1', tenantId: 'tenant-1' }),
+        { userId: 'user-1', ip: '', userAgent: '', sanitizedHeaders: {} }
+      )
+    })
+
+    // The platform plane is a separate identity space with its own repository and its own
+    // session keys. Without this, a reset aimed at an administrator would look successful and
+    // clear nothing.
+    it('resets a platform administrator in the platform plane', async () => {
+      mockPlatformUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        id: 'admin-1'
+      })
+
+      await service.resetMfa('admin-1', 'platform')
+
+      expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith('admin-1', {
+        mfaEnabled: false,
+        mfaSecret: null,
+        mfaRecoveryCodes: null
+      })
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      // The counterpart of the dashboard assertion above: a platform admin has no tenant, and
+      // the projection says so with `''` rather than leaving the field absent. The dashboard
+      // projection would leave it `undefined` here, so this is what pins which one ran.
+      expect(mockHooks.afterMfaDisabled).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'admin-1', tenantId: '' }),
+        expect.objectContaining({ userId: 'admin-1' })
+      )
+    })
+
+    // An unknown id is refused rather than silently succeeding, so a typo at the support desk
+    // does not read as "reset done".
+    it('throws when no user with that id exists', async () => {
+      mockUserRepo.findById.mockResolvedValue(null)
+
+      await expect(service.resetMfa('nobody')).rejects.toThrow(AuthException)
+    })
+
+    // The hook is fire-and-forget: a consumer whose alerting is down must not turn an
+    // administrative reset into a failed one. The factor is already gone by the time the hook
+    // runs, so propagating its error would report a failure for work that succeeded.
+    it('survives a hook that rejects', async () => {
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      mockHooks.afterMfaDisabled.mockRejectedValueOnce(new Error('alerting is down'))
+
+      await expect(service.resetMfa('user-1')).resolves.toBeUndefined()
+
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+    })
+
+    // A consumer that registers no `afterMfaDisabled` at all: the guard must short-circuit
+    // rather than call `undefined`.
+    it('completes when the consumer registers no hook', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          MfaService,
+          { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: {} }
+        ]
+      }).compile()
+      const noHookService = module.get<MfaService>(MfaService)
+
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+
+      await expect(noHookService.resetMfa('user-1')).resolves.toBeUndefined()
+    })
+  })
+
   describe('disable', () => {
     beforeEach(() => {
       jest.useFakeTimers()

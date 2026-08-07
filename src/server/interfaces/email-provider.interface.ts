@@ -192,18 +192,30 @@ export interface IEmailProvider {
   sendMfaDisabledNotification(email: string, locale?: string): Promise<void>
 
   /**
-   * Sends a security alert when a new session is detected from an unrecognized
-   * device or location.
+   * Sends a security alert about a newly established session.
    *
-   * Called after a successful login when new-session detection is enabled. The
-   * email should display the device description, IP address, and session hash so
-   * the user can identify whether the login was authorized.
+   * **This library never calls it.** The method is optional, and it is here as a typed
+   * signature for you to call from the {@link IAuthHooks.onNewSession} hook — which the
+   * library does fire, on every session it creates, with the same {@link SessionInfo} this
+   * takes.
+   *
+   * The alert deliberately does not live inside the library, because the library cannot send
+   * it well. Without device recognition it fires on *every* login, and an alert that arrives
+   * on every login is one the user learns to dismiss — at which point the control has stopped
+   * existing while still appearing to be in place. Recognizing a device means keeping a
+   * per-user device history, and the consumer already has one (or can key it to their own
+   * user record); the library would have to invent that state in the Redis keyspace it shares
+   * with rust-auth, which is a contract change to solve a problem the caller is better placed
+   * to solve.
+   *
+   * So: decide in your `onNewSession` hook whether the session is worth alerting about, and
+   * call this when it is.
    *
    * @param email - Recipient's email address.
    * @param sessionInfo - Device, IP, and session identifier details.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendNewSessionAlert(email: string, sessionInfo: SessionInfo, locale?: string): Promise<void>
+  sendNewSessionAlert?(email: string, sessionInfo: SessionInfo, locale?: string): Promise<void>
 
   /**
    * Sends a tenant invitation email to a prospective member.

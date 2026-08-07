@@ -300,9 +300,11 @@ export class SessionService {
    *
    * Reads all `rt:`-prefixed members from `sess:{userId}`, fetches the
    * corresponding `sd:{hash}` detail records, and marks the caller's own
-   * session via `isCurrent`. Stale members (no matching detail record or
-   * unparseable JSON) are removed from the SET asynchronously (fire-and-forget)
-   * and excluded from the result.
+   * session via `isCurrent`. A member whose detail record is missing, unreadable
+   * or malformed is excluded from the result, and removed from the SET
+   * asynchronously (fire-and-forget) only if its `rt:` key is also gone — see
+   * {@link AuthRedisService.pruneDeadMembers} for why the detail record alone
+   * does not settle it.
    *
    * Results are sorted by `createdAt` descending (newest session first).
    *
@@ -389,13 +391,18 @@ export class SessionService {
       })
     )
 
-    // Fire-and-forget: remove stale SET members without blocking the response.
-    for (const staleKey of staleKeys) {
-      void this.redis.srem(`sess:${userId}`, staleKey).catch((err: unknown) => {
-        // Truncate to "rt:" + 8 chars to avoid leaking full hashes in logs.
-        this.logger.error(`listSessions: failed to remove stale key ${staleKey.slice(0, 11)}`, err)
-      })
-    }
+    // Fire-and-forget: drop the dead members without blocking the response.
+    //
+    // Candidates, not verdicts. Every branch above reaches this list by way of the `sd:` record
+    // — missing, unreadable, or malformed — and none of those facts says the session is gone.
+    // The credential is the `rt:` key; a live `rt:` with no `sd:` still opens the account. So
+    // `pruneDeadMembers` re-checks each candidate against `EXISTS` and removes only the ones
+    // that name nothing, because a member dropped while its `rt:` lives is invisible to
+    // `invalidateUserSessions` — the session would then survive "sign out everywhere" and keep
+    // rotating, and merely opening this listing would be what orphaned it.
+    void this.redis.pruneDeadMembers(`sess:${userId}`, staleKeys).catch((err: unknown) => {
+      this.logger.error(`listSessions: failed to prune ${staleKeys.length} dead member(s)`, err)
+    })
 
     results.sort((a, b) => b.createdAt - a.createdAt)
 

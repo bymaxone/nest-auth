@@ -62,6 +62,22 @@ const OAUTH_STATE_TTL_SECONDS = 600
  * Keyed under `os:{sha256(state)}` — the raw state is never stored server-side.
  */
 interface StoredOAuthState {
+  /**
+   * The provider this state was minted for, compared against the provider named by the
+   * callback path before the record is used.
+   *
+   * RFC 9700 §2.1/§4.4 makes mix-up defence REQUIRED for a client that talks to more than one
+   * authorization server. Without this field the callback resolves the provider from its own
+   * URL and then consumes any structurally valid state, so an attacker able to steer an honest
+   * provider's callback to a hostile provider's path receives both the `code` and the PKCE
+   * `code_verifier` — enough to redeem the code at the honest provider. PKCE does not help:
+   * the verifier travels with the code by design.
+   *
+   * Only Google ships in-tree today, so this is defence-in-depth. It is stored anyway because
+   * the record is a shared structure and adding a field costs less now than after a second
+   * provider lands. Held byte-compatible with rust-auth.
+   */
+  provider: string
   /** Tenant identifier passed by the caller when initiating the flow. */
   tenantId: string
   /**
@@ -84,6 +100,11 @@ function isStoredOAuthState(value: unknown): value is StoredOAuthState {
   // Stryker disable next-line ConditionalExpression: non-object JSON values also fail the `typeof parsed['tenantId'] !== 'string'` check below, so dropping the type guard yields the same false
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
+  // Required, like `codeVerifier` and for the same reason: a record without it is corrupt or
+  // forged, and accepting one would restore exactly the unbound state the field exists to
+  // prevent. rust-auth types it as a plain `String`, so a record missing it fails to
+  // deserialize there too.
+  if (typeof v['provider'] !== 'string') return false
   if (typeof v['tenantId'] !== 'string') return false
   if (typeof v['codeVerifier'] !== 'string') return false
   return true
@@ -139,7 +160,9 @@ export class OAuthService {
    * Sequence:
    * 1. Validates the `provider` format and resolves the named plugin.
    * 2. Generates a 32-byte (64 hex char) cryptographically random state nonce.
-   * 3. Stores `os:{sha256(state)} → { tenantId }` in Redis with a 10-minute TTL.
+   * 3. Stores `os:{sha256(state)} → { provider, tenantId, codeVerifier }` in Redis with a
+   *    10-minute TTL. `provider` is what the callback checks itself against (RFC 9700
+   *    mix-up defence).
    * 4. Constructs the provider's authorization URL via `plugin.authorizeUrl(state)`.
    * 5. Issues a 302 redirect via the Express `res` object.
    *
@@ -179,7 +202,7 @@ export class OAuthService {
     const codeVerifier = generateSecureToken(32)
     const codeChallenge = base64url(createHash('sha256').update(codeVerifier, 'utf8').digest())
 
-    const stored: StoredOAuthState = { tenantId, codeVerifier }
+    const stored: StoredOAuthState = { provider, tenantId, codeVerifier }
     await this.redis.set(stateKey, JSON.stringify(stored), OAUTH_STATE_TTL_SECONDS)
 
     // Bind the flow to THIS browser. The `state` parameter alone proves only that somebody
@@ -292,6 +315,21 @@ export class OAuthService {
     }
 
     if (!isStoredOAuthState(parsedState)) {
+      throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
+    }
+
+    // Mix-up defence (RFC 9700 §2.1/§4.4). `provider` here comes from the callback's own URL
+    // path; the record says which provider the flow was actually started with. A mismatch means
+    // this state was minted for somebody else, and consuming it would forward the `code` and
+    // the PKCE `code_verifier` to a provider the user never authorized — which is exactly what
+    // lets a hostile provider redeem an honest one's code.
+    //
+    // A plain comparison, deliberately, unlike the state-cookie binding above: this is not a
+    // secret. Both sides are provider names drawn from the registered plugins, and the
+    // callback's own value is a URL path segment the caller supplied. There is nothing here for
+    // a timing side channel to reveal, and a constant-time compare would only imply otherwise.
+    if (parsedState.provider !== provider) {
+      this.logger.warn(`handleCallback: OAuth state provider mismatch provider=${provider}`)
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 

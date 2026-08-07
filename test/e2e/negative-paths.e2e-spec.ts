@@ -38,7 +38,7 @@ async function registerAndLogin(
 ): Promise<{ accessToken: string; refreshToken: string }> {
   const reg = await request(boot.app.getHttpServer())
     .post('/register')
-    .send({ email, password: 'NegPath123!', name: 'Neg Path User', tenantId: 'tenant-1' })
+    .send({ email, password: 'NegPath123!-xyz', name: 'Neg Path User', tenantId: 'tenant-1' })
   expect(reg.status).toBe(201)
   return reg.body as { accessToken: string; refreshToken: string }
 }
@@ -76,7 +76,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
       .post('/invitations/accept')
       .send({
         token: 'a'.repeat(64),
-        password: 'NewAccPass1!',
+        password: 'NewAccPass1!-xyz',
         name: 'Recipient Name'
       })
 
@@ -117,7 +117,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
     // Re-login the promoted inviter so the JWT carries role: ADMIN.
     const inviterLogin = await request(boot.app.getHttpServer())
       .post('/login')
-      .send({ email: stableEmail, password: 'NegPath123!', tenantId: 'tenant-1' })
+      .send({ email: stableEmail, password: 'NegPath123!-xyz', tenantId: 'tenant-1' })
     expect(inviterLogin.status).toBe(200)
     const inviterAccess = (inviterLogin.body as { accessToken: string }).accessToken
 
@@ -152,7 +152,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
     // First accept — succeeds.
     const accept1 = await request(boot.app.getHttpServer()).post('/invitations/accept').send({
       token: capturedToken,
-      password: 'AcceptPass1!',
+      password: 'AcceptPass1!-xyz',
       name: 'Invitee'
     })
     expect(accept1.status).toBe(201)
@@ -160,7 +160,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
     // Second accept with the same token — must be rejected (single-use).
     const accept2 = await request(boot.app.getHttpServer()).post('/invitations/accept').send({
       token: capturedToken,
-      password: 'AcceptPass2!',
+      password: 'AcceptPass2!-xyz',
       name: 'Replay'
     })
     expect(accept2.status).toBeGreaterThanOrEqual(400)
@@ -259,7 +259,7 @@ describe('password reset negative paths (E2E)', () => {
         .send({
           email: 'ghost@example.com',
           token: 'a'.repeat(64),
-          newPassword: 'NewPass123!',
+          newPassword: 'NewPass123!-xyz',
           tenantId: 'tenant-1'
         })
 

@@ -237,12 +237,29 @@ The original plan assumed defaults that did not hold for this ESM + pnpm + ts-je
 
 ### 5.3 Fast iteration with scoped runs
 
-For per-file verification during §8, scope the run to production files only and bump concurrency:
+For per-file verification during §8, scope the run to production files only — and **lower**
+concurrency rather than raising it:
 
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.14.1/bin:$PATH"   # Node 24
-./node_modules/.bin/stryker run --mutate "src/path/to/file.ts" --concurrency 10 --reporters clear-text
+LOG=/tmp/mutation-scoped.log
+NODE_OPTIONS=--max-old-space-size=3072 nohup ./node_modules/.bin/stryker run \
+  --mutate "src/path/to/file.ts" \
+  --concurrency 2 \
+  --reporters clear-text,json \
+  > "$LOG" 2>&1 < /dev/null & disown
 ```
+
+⚠️ **A narrow `--mutate` does not make the run cheap in memory.** It bounds how many mutants are
+generated, not what each worker loads: every test-runner still boots the full ts-jest module graph
+and the whole unit suite under `coverageAnalysis: perTest`, so the peak stays
+`concurrency × full-graph footprint`. Two files can yield ~1000 mutants and exhaust a 36 GB machine
+at the default concurrency. This is the same accounting behind `maxTestRunnerReuse: 20` (see commit
+`150a147`, which bounded memory after ~8 runners died of OOM mid-run). Read the mutant count the
+Instrumenter prints — that, not the file count, is the size of the job.
+
+Run it detached (`nohup … & disown`) so it survives the shell or agent session that launched it, and
+poll the log instead of blocking on it.
 
 ⚠️ A CLI `--mutate` glob **overrides** the config's `mutate` (including the `!**/*.spec.ts` exclusions). Never pass a broad glob like `src/server/guards/**/*.ts` — it will also mutate the `*.spec.ts` files and pollute the score with meaningless test-code mutants. List specific production files, or append `"!src/**/*.spec.ts" "!src/**/*.spec.tsx"` to the `--mutate` arguments.
 

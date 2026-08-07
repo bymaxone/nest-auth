@@ -18,6 +18,7 @@ import {
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { rateLimitBucket } from '../utils/rate-limit-bucket'
 
 /** Milliseconds in one second, for the window and `Retry-After` conversions. */
 const MS_PER_SECOND = 1_000
@@ -95,7 +96,10 @@ export class AuthRateLimitGuard implements CanActivate {
    */
   private counterKey(request: Request, context: ExecutionContext): string {
     const route = `${context.getClass().name}.${context.getHandler().name}`
-    return `rl:${route}:${hmacSha256(this.clientIp(request), this.options.hmacKey)}`
+    // Charged to the bucket, not the address: an IPv6 /64 is one allocation and 2^64 addresses,
+    // so keying the full address would give a single attacker that many independent budgets.
+    const bucket = rateLimitBucket(this.clientIp(request))
+    return `rl:${route}:${hmacSha256(bucket, this.options.hmacKey)}`
   }
 
   /**

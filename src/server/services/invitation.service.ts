@@ -625,7 +625,7 @@ export class InvitationService {
     //
     // The duplicate-address guard below cannot move with it: it reads the invitee's address out
     // of the stored record, which only the consume produces.
-    await this.passwordService.assertNotCompromised(dto.password)
+    await this.passwordService.assertAcceptable(dto.password, 'password')
 
     // Atomically read and delete — single-use enforcement prevents race conditions.
     const raw = await this.redis.getdel(tokenKey)

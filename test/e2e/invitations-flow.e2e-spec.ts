@@ -176,7 +176,7 @@ describe('invitations flow (E2E)', () => {
       // invitee account. Returns 201 Created with a full token pair.
       const accept = await request(app.getHttpServer())
         .post('/invitations/accept')
-        .send({ token: extractedToken, name: 'Invitee', password: 'StrongPass123!' })
+        .send({ token: extractedToken, name: 'Invitee', password: 'StrongPass123!-xyz' })
       acceptStatus = accept.status
       acceptBody = accept.body as Record<string, unknown>
 
@@ -184,7 +184,7 @@ describe('invitations flow (E2E)', () => {
       // hash was persisted correctly and the account is immediately usable.
       const inviteeLogin = await request(app.getHttpServer()).post('/login').send({
         email: 'invitee@example.com',
-        password: 'StrongPass123!',
+        password: 'StrongPass123!-xyz',
         tenantId: 'tenant-1'
       })
       inviteeLoginStatus = inviteeLogin.status

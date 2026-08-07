@@ -10,7 +10,7 @@
 import type { NextRequest } from 'next/server'
 
 import type { ResolvedAuthProxyConfig } from '../createAuthProxy'
-import { decodeJwtToken, verifyJwtToken, type DecodedToken } from '../helpers/jwt'
+import { verifyJwtToken, type DecodedToken } from '../helpers/jwt'
 
 /**
  * The access-token `type` discriminants the proxy admits — the dashboard and platform access
@@ -31,14 +31,11 @@ const ACCESS_TOKEN_TYPES: readonly string[] = ['dashboard', 'platform']
  *   request, regardless of whether it decoded successfully. Needed
  *   to choose between "redirect to login" (no cookie at all) and
  *   "attempt silent refresh" (cookie present but invalid).
- * - `authenticated`: `true` when the token decodes AND has not yet
- *   expired. In verify mode (`jwtSecret` provided) this additionally
- *   implies a valid HS256 signature. In decode-only mode it reflects
- *   ONLY expiry — the caller must have arranged for upstream
- *   signature verification.
+ * - `authenticated`: `true` when the token carried a valid HS256
+ *   signature, has not yet expired, and is an access token. There is
+ *   no mode in which this is `true` without a verified signature.
  * - `signatureVerified`: `true` only when the token was validated
- *   against the configured `jwtSecret` via HMAC. `false` in
- *   decode-only mode even when `authenticated` is `true`. It carries
+ *   against the configured `jwtSecret` via HMAC. It carries
  *   the signature fact and NOTHING else — it stays `true` for a
  *   genuinely signed token that has expired, or that is the wrong
  *   `type`, because the signature was checked before either was
@@ -54,9 +51,9 @@ export interface TokenState {
 }
 
 /**
- * Decode the access-token cookie attached to the given request,
- * performing HS256 verification via Web Crypto when a `jwtSecret`
- * is configured and decode-only parsing otherwise.
+ * Read the access-token cookie attached to the given request and
+ * verify it: HS256 via Web Crypto, against the configured
+ * `jwtSecret`. An absent or empty secret authenticates nobody.
  */
 export async function readTokenState(
   request: NextRequest,
@@ -72,8 +69,17 @@ export async function readTokenState(
     }
   }
 
-  const hasSecret = config.jwtSecret !== undefined && config.jwtSecret.length > 0
-  const decoded = hasSecret ? await verifyJwtToken(raw, config.jwtSecret) : decodeJwtToken(raw)
+  // Fail closed: a request is authenticated only by an HS256 verification. There is deliberately
+  // no decode-only fallback — `decodeJwtToken` answers `isValid` for any structurally sound,
+  // unexpired token, including one an attacker wrote, and that value would go on to drive route
+  // gating, role checks, status blocking and the identity headers injected into every server
+  // component. A missing secret must therefore authenticate nobody rather than everybody.
+  //
+  // Verification is called unconditionally because `verifyJwtToken` already refuses an absent or
+  // empty secret. Guarding the call would put the same decision in two places and let them
+  // drift; `assertJwtSecretConfigured` refuses to build the proxy at all, and this is the lock
+  // that survives a refactor of that one.
+  const decoded: DecodedToken = await verifyJwtToken(raw, config.jwtSecret)
   const isSession = decoded.isValid && isAccessToken(decoded)
 
   return {

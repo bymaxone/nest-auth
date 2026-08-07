@@ -198,6 +198,13 @@ export { BruteForceService } from './services/brute-force.service'
 // controllers.mfa: true OR controllers.platform: true. Importing it here for
 // use in a host-app module without those flags set will cause an injection error —
 // register it in extraProviders in that case.
+//
+// `MfaService.resetMfa` is the administrative removal of a second factor, for a user who has
+// lost both the authenticator and the recovery codes — every self-service exit needs the
+// factor itself, so without it that user is locked out permanently by the control meant to
+// protect them (ASVS v5 §6.1.1). Like `AuthService.unlockAccount`, it ships as a method and
+// NOT as a route: every route this library exposes is scoped to the caller's own account, and
+// who may reset whom is a decision only the host application can make.
 export { MfaService } from './services/mfa.service'
 export type { MfaSetupResult } from './services/mfa.service'
 export { OtpService } from './services/otp.service'

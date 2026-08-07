@@ -372,7 +372,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
           .post('/register')
           .send({
             email: `mfa-rec-noenrol-${Math.random().toString(36).slice(2)}@example.com`,
-            password: 'NoEnrolPass1!',
+            password: 'NoEnrolPass1!-xyz',
             name: 'No Enrol',
             tenantId: 'tenant-1'
           })
@@ -590,7 +590,7 @@ describe('platform MFA flow (E2E)', () => {
           .post('/register')
           .send({
             email: `user-${Math.random().toString(36).slice(2)}@dashboard.test`,
-            password: 'DashPass123!',
+            password: 'DashPass123!-xyz',
             name: 'Dash User',
             tenantId: 'tenant-1'
           })

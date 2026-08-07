@@ -265,7 +265,7 @@ export class PasswordResetService {
     // bundled HIBP provider is an outbound range query. That is the same exposure `register`
     // already carries on the same checker, and this route allows three requests per five
     // minutes — the burned token was the larger of the two costs by a wide margin.
-    await this.passwordService.assertNotCompromised(dto.newPassword)
+    await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
 
     if (method === 'token') {
       if (!dto.token) {
@@ -582,7 +582,7 @@ export class PasswordResetService {
 
     await this.bruteForce.resetFailures(bfIdentifier)
 
-    await this.passwordService.assertNotCompromised(dto.newPassword)
+    await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
     const passwordHash = await this.passwordService.hash(dto.newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
 

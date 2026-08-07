@@ -148,33 +148,30 @@ function parsePhcParams(text: string): { ln: number; r: number; p: number } | nu
   }
   const [ln, r, p] = [found.get('ln'), found.get('r'), found.get('p')]
   if (ln === undefined || r === undefined || p === undefined) return null
-  // `ln` is log2(N) and N must fit the KDF: 1..=31 covers every value either library will
-  // accept, and bounding it here keeps `2 ** ln` from overflowing into a nonsense cost.
+  // `ln` is log2(N), and only its FLOOR is checked here. A ceiling would be dead code: the
+  // working-set bound below refuses every `ln >= 23` on its own, because `128 * 2 ** 23` already
+  // exceeds MAX_KDF_BYTES_PER_DERIVATION at the smallest legal `r`. This parser carried
+  // `ln > 31` until mutation testing showed that no input distinguishes it from `>= 31`, or from
+  // no ceiling at all — every value it would have caught is refused eleven powers of two earlier.
+  // A malformed `ln` of a thousand digits is safe for the same reason rather than in spite of it:
+  // `2 ** 1e21` is `Infinity`, and `Infinity` is greater than the ceiling.
   //
-  // `r` and `p` need a CEILING for the same reason, which the first version of this parser
-  // missed. They reach `scrypt` directly and also feed `maxmem: N * r * 128 * 2` in `compare`,
-  // so a stored value of `999999999` makes Node throw `Invalid scrypt params` and one of
-  // `4294967295` makes it throw `maxmem is out of range` — an exception out of a function
-  // whose whole contract is that a malformed record returns `null` and the caller answers
-  // "wrong password" with no branch whose timing distinguishes the two. 255 is far above any
-  // parameter either implementation writes (8 and 1) and far below where the arithmetic
-  // stops being representable.
+  // `r` and `p` DO need a ceiling of their own, which the first version of this parser missed.
+  // They reach `scrypt` directly, so a stored value of `999999999` makes Node throw
+  // `Invalid scrypt params` — an exception out of a function whose whole contract is that a
+  // malformed record returns `null` and the caller answers "wrong password" with no branch
+  // whose timing distinguishes the two. 255 is far above any parameter either implementation
+  // writes (8 and 1) and far below where the arithmetic stops being representable.
   if (ln < 1) return null
-  // Split from the floor above so the suppression lands on this bound alone — the `ln < 1` mutants
-  // are killable (`ln = 0` means `N = 1`, which `scrypt` rejects) and must stay live.
-  //
-  // Stryker disable next-line ConditionalExpression,EqualityOperator: subsumed by the working-set
-  // ceiling below, so no record distinguishes it. Passing that ceiling requires `2 ** ln * r <=
-  // 2 ** 22`, and with `r >= 1` every `ln` from 23 up already fails it — this bound is about
-  // `2 ** ln` staying a representable number, and it is stated for that reason
-  if (ln > 31) return null
   if (r < 1 || r > MAX_SCRYPT_PARAMETER || p < 1 || p > MAX_SCRYPT_PARAMETER) return null
   // The working set the record ASKS FOR, held to the same ceiling the configured cost is held
-  // to at startup. Without this the bounds above are only about arithmetic: `ln = 31` with the
-  // shipped `r = 8` is inside them and asks for 2 TiB, and `compare` does not refuse it — it
-  // computes `maxmem` FROM the record and widens the limit to fit, so the derivation is
-  // attempted and the process is OOM-killed. That takes down every in-flight connection, not
-  // just the request carrying the record.
+  // to at startup. `compare` now caps `maxmem` with a constant, so a record above this one no
+  // longer GETS the allocation it asks for — it gets an exception out of `scrypt`, which is a
+  // 500 from every credential path rather than the `false` the contract promises. Refusing it
+  // here is what keeps that answer a `false`. (Before the cap, `maxmem` was computed from the
+  // record and widened to fit whatever it claimed, and this check was the only thing standing
+  // between a crafted `ln = 31, r = 8` and a 2 TiB allocation that OOM-kills the process. The
+  // two bounds are independent now, which is the point: neither is a single point of failure.)
   //
   // A hash written under a validated configuration is always inside this, because the same
   // ceiling is what let that configuration boot. So nothing legitimate is refused — this only
@@ -275,6 +272,7 @@ function parseStoredHash(hash: string): ParsedHash | null {
 export class PasswordService {
   private readonly logger = new Logger(PasswordService.name)
   private readonly N: number
+  private readonly minLength: number
   private readonly r: number
   private readonly p: number
   private readonly maxmem: number
@@ -283,6 +281,7 @@ export class PasswordService {
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions,
     @Inject(BYMAX_AUTH_BREACH_CHECKER) private readonly breachChecker: IPasswordBreachChecker
   ) {
+    this.minLength = options.password.minLength
     this.N = options.password.costFactor
     this.r = options.password.blockSize
     this.p = options.password.parallelization
@@ -306,6 +305,54 @@ export class PasswordService {
    * // '$scrypt$ln=17,r=8,p=1$YmFzZTY0c2FsdA$…'
    * ```
    */
+  /**
+   * The whole password policy, applied wherever a password is being *set*.
+   *
+   * One entry point so the four call sites — registration, reset, authenticated change and
+   * invitation acceptance — cannot drift into applying different halves of it.
+   *
+   * Order matters: length first, because it is decided locally and for free, and the breach
+   * check may reach a network corpus. A password refused for being short should not cost a
+   * round trip, and should not be sent anywhere first.
+   *
+   * @param plain - The plaintext password the user is trying to set.
+   * @param field - The request field to name in a length failure's `details`.
+   * @throws {@link AuthException} with `VALIDATION` when it is too short, or
+   *   `PASSWORD_COMPROMISED` when the corpus knows it.
+   */
+  async assertAcceptable(plain: string, field: string): Promise<void> {
+    this.assertLongEnough(plain, field)
+    await this.assertNotCompromised(plain)
+  }
+
+  /**
+   * Rejects a password shorter than the configured minimum.
+   *
+   * The DTOs carry a structural `@MinLength(8)` — the lowest NIST SP 800-63B-4 permits under any
+   * circumstance — and this is the deployment's policy on top of it, which is configurable and
+   * defaults to 15 because that is what §3.1.1.1 requires of a single-factor password. The check
+   * lives here rather than in a decorator because a decorator is evaluated when the class is
+   * defined, before any configuration exists.
+   *
+   * It answers the same `auth.validation` code and the same `{ field, message }[]` details the
+   * validation pipe produces for a length failure, so a client already handling a short password
+   * sees no new shape and the shared error catalog gains no entry. The breach and
+   * common-password screens run after: they remove passwords that are already *known*, which is
+   * a different question from how many guesses the password is worth.
+   *
+   * @param plain - The plaintext password the user is trying to set.
+   * @param field - The request field to name in `details`, so the message points at the input
+   *   the caller actually sent (`password` on registration, `newPassword` on a reset).
+   * @throws {@link AuthException} with `VALIDATION` when the password is too short.
+   */
+  assertLongEnough(plain: string, field: string): void {
+    if (plain.length >= this.minLength) return
+
+    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+      { field, message: `${field} must be at least ${String(this.minLength)} characters` }
+    ])
+  }
+
   /**
    * Rejects a password that appears in a known-breach corpus.
    *

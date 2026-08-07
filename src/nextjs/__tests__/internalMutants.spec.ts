@@ -329,36 +329,46 @@ describe('tokenState — readTokenState', () => {
     expect(state.signatureVerified).toBe(false)
   })
 
-  // Decode-only mode (no secret) + a valid-by-expiry token →
-  // authenticated true but signatureVerified FALSE. Kills the
-  // `hasSecret = true` mutant (which would flip signatureVerified to
-  // true) and the `hasSecret && decoded.isValid`→`true` mutant.
-  it('decode-only mode authenticates by expiry but never reports signature verified', async () => {
-    const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-    void _secret
-    const config = { ...rest, maxRefreshAttempts: 2 } as ResolvedAuthProxyConfig
-    const token = await signHs256Token(
+  // Scenario: no secret configured, and a token an attacker minted with a secret of their own.
+  // Expected: nobody is authenticated. Why: this is the whole of the decode-only hole. Parsing
+  // without verifying accepted any structurally sound, unexpired token, and the result drove
+  // route gating, role checks, status blocking and the x-user-* identity headers injected into
+  // every server component — so `role: 'admin'` was true because the attacker wrote it.
+  it.each([
+    ['no secret at all', undefined],
+    // An empty string is "no usable secret" and must not read as one. Verification against an
+    // empty key is not a weaker check, it is no check.
+    ['an empty-string secret', '']
+  ])('refuses a forged token under %s', async (_label, secret) => {
+    const { jwtSecret: _drop, ...rest } = DEFAULT_PROXY_CONFIG
+    void _drop
+    const config = {
+      ...rest,
+      ...(secret === undefined ? {} : { jwtSecret: secret }),
+      maxRefreshAttempts: 2
+    } as ResolvedAuthProxyConfig
+    const forged = await signHs256Token(
       { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
-      TEST_SECRET
+      'an-attackers-own-secret'
     )
     const request = makeMockRequest({
       url: 'https://app.example.com/dashboard',
-      cookies: { access_token: token }
+      cookies: { access_token: forged }
     })
+
     const state = await readTokenState(request as never, config)
-    expect(state.authenticated).toBe(true)
+
+    expect(state.authenticated).toBe(false)
     expect(state.signatureVerified).toBe(false)
+    // The cookie was there; it just proved nothing. The distinction still drives the choice
+    // between redirect-to-login and attempt-silent-refresh.
+    expect(state.hasCookie).toBe(true)
   })
 
-  // An EMPTY-string jwtSecret means "no usable secret": the proxy must
-  // fall to decode-only parsing, NOT attempt HMAC verification with an
-  // empty key. Kills the `&& true`, `>= 0`, and `<= 0` mutants on
-  // `config.jwtSecret.length > 0`: each would set hasSecret = true,
-  // routing through verifyJwtToken which fails closed on an empty
-  // secret and would report the otherwise-valid token as
-  // unauthenticated.
-  it('treats an empty-string jwtSecret as decode-only (authenticated, unverified)', async () => {
-    const config = { ...DEFAULT_PROXY_CONFIG, jwtSecret: '', maxRefreshAttempts: 2 }
+  // The counterpart: with a secret configured, a token signed with THAT secret authenticates.
+  // Without this, "refuse everything" would satisfy the two cases above.
+  it('authenticates a genuinely signed token when the secret is configured', async () => {
+    const config = { ...DEFAULT_PROXY_CONFIG, maxRefreshAttempts: 2 } as ResolvedAuthProxyConfig
     const token = await signHs256Token(
       { type: 'dashboard', sub: 'u', role: 'admin', exp: Math.floor(Date.now() / 1000) + 600 },
       TEST_SECRET
@@ -367,9 +377,11 @@ describe('tokenState — readTokenState', () => {
       url: 'https://app.example.com/dashboard',
       cookies: { access_token: token }
     })
+
     const state = await readTokenState(request as never, config)
+
     expect(state.authenticated).toBe(true)
-    expect(state.signatureVerified).toBe(false)
+    expect(state.signatureVerified).toBe(true)
   })
 })
 
@@ -450,96 +462,74 @@ describe('proxyUtils — sanitizeHeaderValue', () => {
   })
 })
 
-describe('configValidation — decode-only warning content', () => {
-  // The decode-only `console.warn` text must carry the full security
-  // rationale. Asserting a distinctive substring from EACH concatenated
-  // line kills the per-line `StringLiteral`→`""` mutants that would
-  // otherwise blank out individual sentences of the warning.
-  it('emits a warning whose text includes every security rationale line', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-      void _secret
-      createAuthProxy(rest)
-      const message = String(warnSpy.mock.calls[0]?.[0] ?? '')
-      expect(message).toContain('jwtSecret is not configured')
-      expect(message).toContain('decode-only mode')
-      expect(message).toContain('Every RBAC and status-blocking decision trusts the raw token')
-      expect(message).toContain('forged tokens with a future `exp` can impersonate any role')
-      expect(message).toContain('upstream gateway verifies signatures before requests reach')
-      expect(message).toContain('server components that read the injected identity headers')
-      expect(message).toContain('In production this condition throws instead of warning')
-    } finally {
-      warnSpy.mockRestore()
-    }
+describe('configValidation — the jwtSecret requirement', () => {
+  // Scenario: a proxy is built with no usable secret. Expected: it refuses to construct, in
+  // every environment. Why: without a secret nothing can distinguish a token this system issued
+  // from one an attacker wrote, and the proxy's whole job is deciding who may pass. This used to
+  // throw only under NODE_ENV==='production' and warn otherwise, which left preview and staging
+  // accepting forged identities — and staked that distinction on one unvalidated string.
+  it.each([
+    ['jwtSecret is absent', undefined],
+    // Empty string is "no usable secret", not a short one — it must be refused identically.
+    ['jwtSecret is an empty string', '']
+  ])('refuses to construct when %s', (_label, secret) => {
+    const { jwtSecret: _drop, ...rest } = DEFAULT_PROXY_CONFIG
+    void _drop
+    const config = { ...rest, ...(secret === undefined ? {} : { jwtSecret: secret }) }
+
+    expect(() => createAuthProxy(config)).toThrow(/jwtSecret is required/)
   })
 
-  // The production hard-fail Error message must likewise carry every
-  // rationale line. Kills the per-line `StringLiteral`→`""` mutants on
-  // the thrown message.
-  it('throws in production with an Error message that includes every rationale line', () => {
-    const originalNodeEnv = process.env['NODE_ENV']
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      process.env['NODE_ENV'] = 'production'
-      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-      void _secret
-      expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required in production/)
-      expect(() => createAuthProxy(rest)).toThrow(/decode-only mode where RBAC and status-blocking/)
-      expect(() => createAuthProxy(rest)).toThrow(
-        /crafted token with a future `exp` can impersonate/
-      )
-      expect(() => createAuthProxy(rest)).toThrow(
-        /Provide `jwtSecret` or move signature verification to an upstream/
-      )
-      expect(() => createAuthProxy(rest)).toThrow(
-        /gateway and explicitly opt out by running outside of a production environment/
-      )
-    } finally {
-      if (originalNodeEnv === undefined) {
-        delete process.env['NODE_ENV']
-      } else {
-        process.env['NODE_ENV'] = originalNodeEnv
-      }
-      warnSpy.mockRestore()
-    }
-  })
+  // The environment must not enter into it. Each of these took the old warning branch and
+  // shipped a proxy that trusted forged tokens: NODE_ENV unset, a near-miss spelling, and the
+  // exact string with a trailing space.
+  it.each([[undefined], ['development'], ['staging'], ['prod'], ['production ']])(
+    'refuses to construct with NODE_ENV=%p, exactly as in production',
+    (nodeEnv) => {
+      const originalNodeEnv = process.env['NODE_ENV']
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        if (nodeEnv === undefined) delete process.env['NODE_ENV']
+        else process.env['NODE_ENV'] = nodeEnv
+        const { jwtSecret: _drop, ...rest } = DEFAULT_PROXY_CONFIG
+        void _drop
 
-  // An EMPTY-string jwtSecret in production is rejected exactly like an
-  // absent one. Kills the `&& true` / `>= 0` mutants on the
-  // `config.jwtSecret.length > 0` early-return guard: each would
-  // short-circuit the guard as "secret present" and skip the throw.
-  it('throws in production when jwtSecret is an empty string', () => {
-    const originalNodeEnv = process.env['NODE_ENV']
-    try {
-      process.env['NODE_ENV'] = 'production'
-      expect(() => createAuthProxy({ ...DEFAULT_PROXY_CONFIG, jwtSecret: '' })).toThrow(
-        /jwtSecret is required in production/
-      )
-    } finally {
-      if (originalNodeEnv === undefined) {
-        delete process.env['NODE_ENV']
-      } else {
-        process.env['NODE_ENV'] = originalNodeEnv
+        expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required/)
+        // Not downgraded to telemetry anywhere: a warning is something a deploy can scroll past.
+        expect(warnSpy).not.toHaveBeenCalled()
+      } finally {
+        if (originalNodeEnv === undefined) delete process.env['NODE_ENV']
+        else process.env['NODE_ENV'] = originalNodeEnv
+        warnSpy.mockRestore()
       }
     }
+  )
+
+  // The message must carry the whole rationale: it is the only thing the person who hit this
+  // will read. A distinctive substring per concatenated line kills the per-line
+  // `StringLiteral`→`""` mutants that would blank out individual sentences.
+  it('throws with an Error message that includes every rationale line', () => {
+    const { jwtSecret: _drop, ...rest } = DEFAULT_PROXY_CONFIG
+    void _drop
+
+    expect(() => createAuthProxy(rest)).toThrow(/jwtSecret is required/)
+    expect(() => createAuthProxy(rest)).toThrow(/no JWT signature can be verified/)
+    expect(() => createAuthProxy(rest)).toThrow(
+      /route gating, role checks, status blocking and the identity headers injected into/
+    )
+    expect(() => createAuthProxy(rest)).toThrow(
+      /server components would all trust unverified token contents/
+    )
+    expect(() => createAuthProxy(rest)).toThrow(/crafted token with a future `exp` can impersonate/)
+    expect(() => createAuthProxy(rest)).toThrow(
+      /supply it even when an upstream gateway also verifies signatures/
+    )
   })
 
-  // When `console.warn` is not a function the factory must NOT throw —
-  // the warning is best-effort telemetry guarded by
-  // `typeof console.warn !== 'function'`. Kills the `if (false)` and
-  // `... || false` mutants on that guard: with the guard removed the
-  // factory would call the non-function `console.warn` and throw.
-  it('does not throw when console.warn is not a function (decode-only, non-production)', () => {
-    const originalWarn = console.warn
-    ;(console as unknown as { warn: unknown }).warn = undefined
-    try {
-      const { jwtSecret: _secret, ...rest } = DEFAULT_PROXY_CONFIG
-      void _secret
-      expect(() => createAuthProxy(rest)).not.toThrow()
-    } finally {
-      ;(console as unknown as { warn: unknown }).warn = originalWarn
-    }
+  // The counterpart: a configured secret constructs cleanly. Without this, "always throw" would
+  // satisfy every case above.
+  it('constructs when a jwtSecret is configured', () => {
+    expect(() => createAuthProxy(DEFAULT_PROXY_CONFIG)).not.toThrow()
   })
 
   // `redirectToLogin`'s reason guard, exercised directly because no assembled proxy path passes

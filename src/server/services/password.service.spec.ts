@@ -30,10 +30,28 @@ const mockBreachChecker = { isBreached: jest.fn().mockResolvedValue(false) }
 
 const mockOptions = {
   password: {
+    minLength: 15,
     costFactor: 32_768,
     blockSize: 8,
     parallelization: 1
   }
+}
+
+/** The serialized body of the `AuthException` a call throws. */
+function thrownBody(run: () => void): {
+  error: { code: string; details: { field: string; message: string }[] }
+} {
+  try {
+    run()
+  } catch (err: unknown) {
+    if (err instanceof AuthException) {
+      return err.getResponse() as {
+        error: { code: string; details: { field: string; message: string }[] }
+      }
+    }
+    throw err
+  }
+  throw new Error('expected the call to throw an AuthException')
 }
 
 describe('PasswordService', () => {
@@ -49,6 +67,95 @@ describe('PasswordService', () => {
     }).compile()
 
     service = module.get(PasswordService)
+  })
+
+  // ---------------------------------------------------------------------------
+  // assertLongEnough / assertAcceptable
+  // ---------------------------------------------------------------------------
+
+  describe('the password-length policy', () => {
+    /** Builds a service whose only difference from the default is the configured floor. */
+    async function withMinLength(minLength: number): Promise<PasswordService> {
+      const module = await Test.createTestingModule({
+        providers: [
+          PasswordService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { password: { ...mockOptions.password, minLength } }
+          },
+          { provide: BYMAX_AUTH_BREACH_CHECKER, useValue: mockBreachChecker }
+        ]
+      }).compile()
+      return module.get(PasswordService)
+    }
+
+    // Scenario: a password one character short of the configured floor. Expected: refused, with
+    // the same `auth.validation` code and `{ field, message }[]` details the validation pipe
+    // emits for a length failure. Why: the floor is the deployment's policy and cannot live in a
+    // decorator — decorators are evaluated when the class is defined, before any configuration
+    // exists — but the wire shape must not change, or a client that already handles a short
+    // password would see a code the shared error catalog does not carry.
+    it('refuses a password below the configured floor, as a validation error', () => {
+      expect(() => service.assertLongEnough('x'.repeat(14), 'password')).toThrow(AuthException)
+
+      const body = thrownBody(() => service.assertLongEnough('x'.repeat(14), 'password'))
+      expect(body.error.code).toBe(AUTH_ERROR_CODES.VALIDATION)
+      expect(body.error.details).toEqual([
+        { field: 'password', message: 'password must be at least 15 characters' }
+      ])
+    })
+
+    // Exactly at the floor is admitted: the comparison is >=, and an off-by-one here would
+    // reject a password the policy allows on every registration.
+    it('admits a password exactly at the floor', () => {
+      expect(() => service.assertLongEnough('x'.repeat(15), 'password')).not.toThrow()
+    })
+
+    // The floor is the CONFIGURED value, not a constant. Without this, a hardcoded 15 would
+    // satisfy every other test here.
+    it.each([
+      [8, 'x'.repeat(8), false],
+      [8, 'x'.repeat(7), true],
+      [20, 'x'.repeat(19), true],
+      [20, 'x'.repeat(20), false]
+    ])('with minLength %i, a %i-char password is refused: %s', async (min, password, refused) => {
+      const configured = await withMinLength(min)
+
+      if (refused) {
+        expect(() => configured.assertLongEnough(password, 'password')).toThrow(AuthException)
+      } else {
+        expect(() => configured.assertLongEnough(password, 'password')).not.toThrow()
+      }
+    })
+
+    // The field name travels into the message, so the error points at the input the caller
+    // actually sent rather than at whatever the library calls it internally.
+    it('names the field the caller sent', () => {
+      const body = thrownBody(() => service.assertLongEnough('short', 'newPassword'))
+      expect(body.error.details[0]?.field).toBe('newPassword')
+      expect(body.error.details[0]?.message).toContain('newPassword')
+    })
+
+    // Scenario: a password that is both too short and (hypothetically) breached. Expected: the
+    // breach corpus is never consulted. Why: the length is decided locally and for free, and the
+    // corpus may be a network call — a password refused for being short should not cost a round
+    // trip, and should not be sent anywhere first.
+    it('does not consult the breach corpus for a password it can refuse locally', async () => {
+      mockBreachChecker.isBreached.mockClear()
+
+      await expect(service.assertAcceptable('short', 'password')).rejects.toThrow(AuthException)
+
+      expect(mockBreachChecker.isBreached).not.toHaveBeenCalled()
+    })
+
+    // And a long-enough password does reach the corpus — otherwise "never call it" would pass.
+    it('screens a long-enough password against the breach corpus', async () => {
+      mockBreachChecker.isBreached.mockClear()
+
+      await service.assertAcceptable('x'.repeat(15), 'password')
+
+      expect(mockBreachChecker.isBreached).toHaveBeenCalledWith('x'.repeat(15))
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -532,9 +639,10 @@ describe('PasswordService', () => {
     // boundary with a cost BELOW the configured one makes the two answers differ.
     it.each([
       ['the lowest ln', 'ln=1,r=8,p=1'],
-      // The highest ln the WORKING-SET ceiling admits at r=1, not the highest the 1..31
-      // arithmetic bound admits — 128 * 2^22 * 1 is exactly 512 MiB. Above it the record asks
-      // for more memory than any configuration could have been validated with.
+      // The highest ln anything admits, and the working-set ceiling is what admits it: 128 * 2^22
+      // * 1 is exactly 512 MiB. Above it the record asks for more memory than any configuration
+      // could have been validated with. The parser used to carry a separate `ln <= 31` arithmetic
+      // bound too; it never decided a case, because everything from 2^23 up fails here first.
       ['the highest usable ln', 'ln=22,r=1,p=1'],
       ['r of exactly 1', 'ln=14,r=1,p=1'],
       ['p of exactly 1', 'ln=14,r=1,p=1']
@@ -625,6 +733,11 @@ describe('PasswordService', () => {
     // instead surface as a 500 from every credential path.
     it.each([
       ['an r above the ceiling', 'ln=14,r=256,p=1'],
+      // The case above cannot show that the `r` ceiling does any work: `128 * 2^14 * 256` is
+      // exactly 512 MiB, and the working-set bound is a strict `>`, so with the ceiling removed
+      // the record lands one byte inside it and is refused anyway. Dropping ln to 10 moves the
+      // working set to 32 MiB — far inside — so nothing but the ceiling itself refuses this one.
+      ['an r above the ceiling at a cost the working-set bound does not catch', 'ln=10,r=256,p=1'],
       ['an r that overflows maxmem', 'ln=14,r=4294967295,p=1'],
       ['a p above the ceiling', 'ln=14,r=8,p=256'],
       ['a p large enough to reject the params', 'ln=14,r=8,p=999999999']
@@ -636,11 +749,33 @@ describe('PasswordService', () => {
       expect(service.needsRehash(malformed)).toBe(false)
     })
 
+    // Scenario: a record the working set refuses, read through `needsRehash` ALONE. Expected:
+    // "nothing to do", because an unreadable record is not a stale one. Why: it pins the SHAPE of
+    // the arithmetic, which the cases below cannot. `128 * 2 ** ln * r` mutated to `/ r` turns
+    // this record from refused into accepted, and below it is caught only because the derivation
+    // that then runs is enormous — a kill by exhaustion, which depends on how loaded the machine
+    // is. Here the wrong answer is immediate and free: `r = 2` is under the configured 8, so a
+    // parser that accepts the record calls it stale and rewrites at a cost no validated
+    // configuration could have produced. `compare` is deliberately not called.
+    //
+    // It sits ABOVE the block below on purpose. Mutation testing stops at the first test that
+    // kills a mutant, and the ones below hand a 1 GiB derivation to `compare` under exactly this
+    // mutant — enough to get the runner OOM-killed mid-run. Killing it here means that never
+    // runs. Correctness does not depend on the order; the cost of measuring does.
+    it('refuses a record whose working set only the multiplication catches', async () => {
+      // 128 * 2^22 * 2 is 1 GiB, over the 512 MiB ceiling; 128 * 2^22 / 2 is 256 MiB, under it.
+      const service = await serviceAt(16_384)
+      const malformed = `$scrypt$ln=22,r=2,p=1$${B64_SALT}$${B64_KEY}`
+
+      expect(service.needsRehash(malformed)).toBe(false)
+    })
+
     // Scenario: a record whose recorded cost is arithmetically valid but asks for more memory
     // than any deployment could have configured. Expected: refused, and refused WITHOUT
-    // deriving. Why: `ln = 31` sits inside the 1..31 bound — that bound is about `2 ** ln`
-    // staying a number, not about what the number costs — and with the shipped `r = 8` it asks
-    // for 2 TiB. `compare` computes `maxmem` FROM the record, so it widens the limit to fit
+    // deriving. Why: `ln = 31` is arithmetically unremarkable — the parser bounds only the FLOOR
+    // of `ln`, because what a cost COSTS is a different question from whether it is a number —
+    // and with the shipped `r = 8` it asks for 2 TiB. This is the check that refuses it, and the
+    // only one: `compare` computes `maxmem` FROM the record, so it widens the limit to fit
     // rather than refusing, and the derivation is attempted: the process is OOM-killed, taking
     // every in-flight connection with it, not just the request that carried the record.
     //

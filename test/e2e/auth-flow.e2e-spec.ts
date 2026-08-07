@@ -112,7 +112,7 @@ describe('auth flow (E2E)', () => {
     it('should return the current user from /me when authenticated', async () => {
       const register = await request(app.getHttpServer()).post('/register').send({
         email: 'dave@example.com',
-        password: 'DaveSecret321!',
+        password: 'DaveSecret321!-xyz',
         name: 'Dave',
         tenantId: 'tenant-1'
       })
@@ -131,7 +131,7 @@ describe('auth flow (E2E)', () => {
     it('should log out an authenticated user', async () => {
       const register = await request(app.getHttpServer()).post('/register').send({
         email: 'eve@example.com',
-        password: 'EveSecret654!',
+        password: 'EveSecret654!-xyz',
         name: 'Eve',
         tenantId: 'tenant-1'
       })
@@ -196,7 +196,7 @@ describe('auth flow (E2E)', () => {
       // delivered via Set-Cookie headers.
       await request(app.getHttpServer()).post('/register').send({
         email: 'gary@example.com',
-        password: 'GarySecret852!',
+        password: 'GarySecret852!-xyz',
         name: 'Gary',
         tenantId: 'tenant-1'
       })
@@ -204,7 +204,7 @@ describe('auth flow (E2E)', () => {
       // Act
       const res = await request(app.getHttpServer()).post('/login').send({
         email: 'gary@example.com',
-        password: 'GarySecret852!',
+        password: 'GarySecret852!-xyz',
         tenantId: 'tenant-1'
       })
 
@@ -244,14 +244,14 @@ describe('auth flow (E2E)', () => {
     it('should return the current user from /me using the auth cookies', async () => {
       await request(app.getHttpServer()).post('/register').send({
         email: 'hank@example.com',
-        password: 'HankSecret741!',
+        password: 'HankSecret741!-xyz',
         name: 'Hank',
         tenantId: 'tenant-1'
       })
 
       const login = await request(app.getHttpServer()).post('/login').send({
         email: 'hank@example.com',
-        password: 'HankSecret741!',
+        password: 'HankSecret741!-xyz',
         tenantId: 'tenant-1'
       })
 

@@ -260,12 +260,12 @@ describe('resolveOptions — success', () => {
 })
 
 // ---------------------------------------------------------------------------
-// secureCookies default — NODE_ENV-driven
+// secureCookies default — driven by the declared environment, never by NODE_ENV
 // ---------------------------------------------------------------------------
 
 describe('resolveOptions — secureCookies default', () => {
-  // Helper: run resolveOptions with NODE_ENV temporarily forced to a value, then
-  // restore the original so other suites are not contaminated.
+  // Helper: run `fn` with NODE_ENV forced to a value, then restore it. Used here to prove the
+  // variable is IGNORED, which is the whole point of the change.
   function withNodeEnv<T>(value: string | undefined, fn: () => T): T {
     const original = process.env['NODE_ENV']
     if (value === undefined) {
@@ -284,43 +284,55 @@ describe('resolveOptions — secureCookies default', () => {
     }
   }
 
-  // Scenario: NODE_ENV is 'production' and the consumer did not set secureCookies.
-  // Expected: secureCookies resolves to true. Why: the default is computed as
-  // `NODE_ENV === 'production'`; this pins the production branch and kills the
-  // `?? false`, env-key, and env-value string mutants which would force false.
-  it('should default secureCookies to true when NODE_ENV is production', () => {
-    const resolved = withNodeEnv('production', () => resolveOptions(MINIMAL_OPTIONS))
-    expect(resolved.secureCookies).toBe(true)
+  // Scenario: no `environment` declared. Expected: secure. Why: a host that has not thought
+  // about it must get the strict behaviour. This is the branch that used to fail open.
+  it('defaults secureCookies to true when no environment is declared', () => {
+    expect(resolveOptions(MINIMAL_OPTIONS).secureCookies).toBe(true)
   })
 
-  // Scenario: NODE_ENV is a non-production value ('development') with no consumer override.
-  // Expected: secureCookies resolves to false. Why: pins the non-production branch and
-  // kills the `?? true` mutant (which would force true) and the `===`→`!==` equality mutant
-  // (which would flip the result to true for non-production).
-  it('should default secureCookies to false when NODE_ENV is not production', () => {
-    const resolved = withNodeEnv('development', () => resolveOptions(MINIMAL_OPTIONS))
-    expect(resolved.secureCookies).toBe(false)
+  // The escape hatch must be DECLARED, not inferred.
+  it('defaults secureCookies to false only when the host declares a non-production environment', () => {
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development' }).secureCookies).toBe(
+      false
+    )
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'test' }).secureCookies).toBe(false)
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, environment: 'production' }).secureCookies).toBe(
+      true
+    )
   })
 
-  // Scenario: consumer explicitly sets secureCookies: false while NODE_ENV is production.
-  // Expected: the explicit false wins over the production default. Why: confirms the
-  // `userOptions.secureCookies ??` short-circuit — distinguishes the user-value branch from
-  // the NODE_ENV fallback branch.
-  it('should let an explicit secureCookies: false override the production default', () => {
+  // Scenario: NODE_ENV says one thing, the declared environment says another. Expected: the
+  // declaration wins, every time. Why: the old default was `NODE_ENV === 'production'`, so every
+  // one of these values took the insecure branch — unset, a near-miss spelling, and the exact
+  // string with a trailing space. Reading the ambient environment at all is the defect; this
+  // pins that it is no longer read.
+  it.each([[undefined], ['development'], ['staging'], ['prod'], ['production ']])(
+    'ignores NODE_ENV=%p and stays secure',
+    (nodeEnv) => {
+      const resolved = withNodeEnv(nodeEnv, () => resolveOptions(MINIMAL_OPTIONS))
+
+      expect(resolved.secureCookies).toBe(true)
+      expect(resolved.environment).toBe('production')
+    }
+  )
+
+  // And the converse: a declared development environment is not overridden by NODE_ENV either.
+  it('ignores NODE_ENV=production when the host declared development', () => {
     const resolved = withNodeEnv('production', () =>
-      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false })
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development' })
     )
+
     expect(resolved.secureCookies).toBe(false)
   })
 
-  // Scenario: consumer explicitly sets secureCookies: true while NODE_ENV is development.
-  // Expected: the explicit true wins over the non-production default of false. Why: pins the
-  // other side of the `??` user-value branch so neither fallback constant can satisfy both cases.
-  it('should let an explicit secureCookies: true override the non-production default', () => {
-    const resolved = withNodeEnv('development', () =>
-      resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: true })
-    )
-    expect(resolved.secureCookies).toBe(true)
+  // An explicit secureCookies wins over whatever the environment implies, in both directions,
+  // so neither fallback constant can satisfy both cases.
+  it('lets an explicit secureCookies override the environment default in both directions', () => {
+    expect(resolveOptions({ ...MINIMAL_OPTIONS, secureCookies: false }).secureCookies).toBe(false)
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, environment: 'development', secureCookies: true })
+        .secureCookies
+    ).toBe(true)
   })
 })
 
@@ -491,31 +503,22 @@ describe('resolveOptions — cookies.sameSite', () => {
    * Verifies the startup gate: `'none'` without `Secure` is a misconfiguration
    * browsers silently drop. The validator catches it before the app boots so
    * the broken state is surfaced loud instead of as "auth doesn't work".
-   * Forces the non-production NODE_ENV branch where `secureCookies` defaults
-   * to `false`, so the consumer's missing override is what trips the check.
+   * Declares a development environment, where `secureCookies` defaults to
+   * `false`, so the consumer's missing override is what trips the check.
    */
   it('should throw when cookies.sameSite: "none" is set without secureCookies: true', () => {
-    const original = process.env['NODE_ENV']
-    process.env['NODE_ENV'] = 'development'
-    try {
-      const resolve = () =>
-        resolveOptions({
-          ...MINIMAL_OPTIONS,
-          cookies: { sameSite: 'none' }
-        })
+    const resolve = () =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { sameSite: 'none' }
+      })
 
-      expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
-      expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
-      expect(resolve).toThrow('the auth cookies would never be stored')
-      expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
-      expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
-    } finally {
-      if (original === undefined) {
-        delete process.env['NODE_ENV']
-      } else {
-        process.env['NODE_ENV'] = original
-      }
-    }
+    expect(resolve).toThrow(/cookies\.sameSite is 'none' but secureCookies is false/)
+    expect(resolve).toThrow('Browsers reject SameSite=None cookies without the Secure attribute')
+    expect(resolve).toThrow('the auth cookies would never be stored')
+    expect(resolve).toThrow('Set secureCookies: true (and serve over HTTPS)')
+    expect(resolve).toThrow("use cookies.sameSite: 'lax' / 'strict'")
   })
 
   /**
@@ -1546,15 +1549,18 @@ describe('resolveOptions — oauth provider validation', () => {
     })
   })
 
-  // Scenario: HTTP callbackUrl in a NON-production environment. Expected: accepted (no throw). Why:
-  // the production gate `process.env['NODE_ENV'] === 'production'` is false outside production. Kills
-  // the ConditionalExpression mutant replacing that gate with `true` (would throw everywhere) and the
-  // LogicalOperator mutant `&&`→`||` (which would throw on any HTTP URL regardless of environment).
+  // Scenario: HTTP callbackUrl with a DECLARED development environment, while NODE_ENV says
+  // production. Expected: accepted (no throw). Why: the gate reads the host's declaration and
+  // nothing else, so the ambient variable cannot re-enable the strict branch any more than it
+  // could disable it. Kills the ConditionalExpression mutant replacing the gate with `true`
+  // (would throw everywhere) and the LogicalOperator mutant `&&`→`||` (would throw on any HTTP
+  // URL regardless of environment).
   it('should accept an HTTP callbackUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             google: {
               clientId: 'id',
@@ -1706,10 +1712,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * remain valid — production gating is the only place HTTP is rejected.
    */
   it('should accept an HTTP successRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             successRedirectUrl: 'http://localhost:3000/dashboard',
             google: {
@@ -1910,10 +1917,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * remain valid.
    */
   it('should accept an HTTP mfaRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             mfaRedirectUrl: 'http://localhost:3000/auth/mfa',
             google: {
@@ -2072,10 +2080,11 @@ describe('resolveOptions — oauth provider validation', () => {
    * Verifies HTTP outside production is allowed for `errorRedirectUrl`.
    */
   it('should accept an HTTP errorRedirectUrl outside production', () => {
-    withNodeEnv('development', () => {
+    withNodeEnv('production', () => {
       expect(() =>
         resolveOptions({
           ...MINIMAL_OPTIONS,
+          environment: 'development',
           oauth: {
             errorRedirectUrl: 'http://localhost:3000/auth/error',
             google: {
@@ -3038,5 +3047,196 @@ describe('resolveOptions — what a refusal tells the operator', () => {
         Object.defineProperty(target, key, { value: 'leaked', enumerable: true })
       }).toThrow(TypeError)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// cookie name prefixes
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — cookie prefix contract', () => {
+  // Scenario: a consumer opts into a prefixed cookie name whose attributes do not satisfy the
+  // prefix. Expected: a startup error naming the option. Why: the browser enforces these
+  // prefixes by silently DROPPING the Set-Cookie, so the symptom is "login does not work" with
+  // nothing in any log — the failure has to be moved to boot, where it can say what is wrong.
+  it.each([
+    [
+      '__Secure- without Secure',
+      {
+        environment: 'development' as const,
+        cookies: { accessTokenName: '__Secure-access_token' }
+      },
+      /__Secure- prefix requires secureCookies: true/
+    ],
+    [
+      '__Host- without Secure',
+      { environment: 'development' as const, cookies: { accessTokenName: '__Host-access_token' } },
+      /__Host- prefix requires/
+    ],
+    [
+      // The refresh cookie is path-scoped to /auth, so __Host- can never apply to it.
+      '__Host- on the path-scoped refresh cookie',
+      { cookies: { refreshTokenName: '__Host-refresh_token' } },
+      /this cookie uses '\/auth'/
+    ],
+    [
+      // A domain resolver means a Domain attribute, which __Host- forbids outright.
+      '__Host- alongside a cookie domain resolver',
+      {
+        cookies: { sessionSignalName: '__Host-has_session', resolveDomains: () => ['example.com'] }
+      },
+      /no cookies.resolveDomains/
+    ]
+  ])('rejects %s', (_label, overrides, message) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, ...overrides })).toThrow(message)
+  })
+
+  // The counterpart, so "reject every prefix" cannot pass: a prefix whose attributes DO hold is
+  // accepted. __Host- fits the access and signal cookies in the default host-only, Path=/
+  // posture; __Secure- fits the path-scoped refresh cookie.
+  it('accepts prefixes whose attributes hold', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        cookies: {
+          accessTokenName: '__Host-access_token',
+          sessionSignalName: '__Host-has_session',
+          refreshTokenName: '__Secure-refresh_token'
+        }
+      })
+    ).not.toThrow()
+  })
+
+  // Unprefixed names carry no contract to check — the shipped defaults must keep resolving.
+  it('leaves unprefixed names alone', () => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, cookies: { accessTokenName: 'access_token' } })
+    ).not.toThrow()
+  })
+
+  // Scenario: an unprefixed name in a deployment that does NOT set Secure. Expected: still
+  // accepted. Why: the case above cannot see this, because its deployment is production, where
+  // `secure` is already true and the `__Secure-` branch is unreachable whatever the name is. With
+  // `!secure` actually true, emptying the `'__Secure-'` literal turns the test into
+  // `startsWith('')`, which every name satisfies — so every unprefixed cookie would fail to boot
+  // in development. That is the shipped default configuration, and nothing else covers it.
+  it('leaves unprefixed names alone when the deployment is not secure', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { accessTokenName: 'access_token' }
+      })
+    ).not.toThrow()
+  })
+
+  // Scenario: each of the three configurable cookie names carries a prefix its attributes do not
+  // satisfy. Expected: the error names THAT option. Why: pins the three `option` literals of the
+  // lookup table. Emptied, the message reads `cookies. is '<name>'` and every assertion above
+  // still matches — so an error pointing the operator at no setting at all would ship unnoticed.
+  it.each([
+    [
+      'accessTokenName',
+      {
+        environment: 'development' as const,
+        cookies: { accessTokenName: '__Secure-access_token' }
+      },
+      /cookies\.accessTokenName is '__Secure-access_token'/
+    ],
+    [
+      'refreshTokenName',
+      { cookies: { refreshTokenName: '__Host-refresh_token' } },
+      /cookies\.refreshTokenName is '__Host-refresh_token'/
+    ],
+    [
+      'sessionSignalName',
+      {
+        cookies: { sessionSignalName: '__Host-has_session', resolveDomains: () => ['example.com'] }
+      },
+      /cookies\.sessionSignalName is '__Host-has_session'/
+    ]
+  ])('names %s as the option at fault', (_label, overrides, message) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, ...overrides })).toThrow(message)
+  })
+
+  // Scenario: a __Host- violation. Expected: the message states the browser's silent-drop
+  // behaviour and the remediation. Why: pins the two trailing concatenated literals so the
+  // StringLiteral mutants emptying either are killed — that text is the whole reason the check
+  // exists at boot, since the symptom it replaces ("login does not work") names no cause.
+  it('should explain the silent drop and the remediation in the __Host- error', () => {
+    const run = (): unknown =>
+      resolveOptions({ ...MINIMAL_OPTIONS, cookies: { refreshTokenName: '__Host-refresh_token' } })
+    expect(run).toThrow(
+      /Browsers silently drop a Set-Cookie that violates the prefix, so the cookie would/
+    )
+    expect(run).toThrow(/never be stored\. Fix the attributes or drop the prefix\./)
+  })
+
+  // The same for the __Secure- branch, whose remediation differs: the prefix is satisfiable by
+  // turning secureCookies on, which the __Host- case cannot promise (it also constrains Path and
+  // Domain). Pins its two trailing literals.
+  it('should explain the silent drop and the remediation in the __Secure- error', () => {
+    const run = (): unknown =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { accessTokenName: '__Secure-access_token' }
+      })
+    expect(run).toThrow(
+      /the cookie would never be stored\. Set secureCookies: true \(and serve over HTTPS\) or/
+    )
+    expect(run).toThrow(/drop the prefix\./)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// password.minLength
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — password.minLength', () => {
+  // The shipped default is the number NIST SP 800-63B-4 §3.1.1.1 requires of a password used as
+  // a single factor. MFA here is opt-in per user, so the default deployment IS single-factor.
+  it('defaults to 15', () => {
+    expect(resolveOptions(MINIMAL_OPTIONS).password.minLength).toBe(15)
+  })
+
+  it('honours an explicit value', () => {
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength: 20 } }).password.minLength
+    ).toBe(20)
+  })
+
+  // Scenario: a policy outside the window the standard and the DTOs both allow. Expected: a
+  // startup error. Why: below 8 cannot describe a conformant deployment and is unreachable
+  // anyway — the DTOs reject the request first — so the setting would look applied and do
+  // nothing. Above 128 rejects every password the validation layer accepts, so nobody could
+  // register and the failure would read as a user-input problem rather than a configuration one.
+  it.each([[7], [0], [-1], [129], [15.5], [Number.NaN]])('rejects minLength %p', (minLength) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength } })).toThrow(
+      /password.minLength must be an integer between 8 and 128/
+    )
+  })
+
+  // Both ends of the window are accepted, so neither bound can be off by one.
+  it.each([[8], [128]])('accepts minLength %i', (minLength) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength } })).not.toThrow()
+  })
+
+  // Scenario: a value below the window. Expected: the message reports the value that was rejected
+  // and says why each bound is where it is. Why: pins the four trailing concatenated literals so
+  // the StringLiteral mutants emptying any of them are killed. The bounds are not arbitrary — 8
+  // and 15 come from NIST SP 800-63B-4 §3.1.1.1 and 128 from the DTOs — and an operator who
+  // cannot see which rule they hit has to read the source to fix their config. The interpolation
+  // also pins that the message reports `${minLength}` rather than a constant.
+  it('should report the rejected value and explain both bounds', () => {
+    const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength: 7 } })
+    expect(run).toThrow(/\(current: 7\)\. NIST SP 800-63B-4 §3\.1\.1\.1 allows 8 only for a/)
+    expect(run).toThrow(
+      /password used as part of multi-factor authentication and requires 15 for one used as a/
+    )
+    expect(run).toThrow(
+      /single factor; 128 is the maximum the password DTOs accept, so a higher policy would/
+    )
+    expect(run).toThrow(/reject every password that reaches this service\./)
   })
 })

@@ -217,7 +217,7 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
-    await this.passwordService.assertNotCompromised(dto.password)
+    await this.passwordService.assertAcceptable(dto.password, 'password')
     const passwordHash = await this.passwordService.hash(dto.password)
 
     // Read from `hookOverrides`, never from `dto`: a caller-supplied `role` or `status` is inert
@@ -655,6 +655,12 @@ export class AuthService {
     // Rotate the session detail record to the new token hash.
     // Fire-and-forget: sd: keys are display metadata only — a rotation failure
     // does not invalidate the auth tokens already issued above.
+    //
+    // That holds only because pruning is guarded by the `rt:` key's own existence
+    // (`AuthRedisService.pruneDeadMembers`). Were a reader to un-index a member on the strength
+    // of a missing `sd:` alone, a failure here would drop a live session out of `sess:{userId}`,
+    // and it would then survive a revoke-all while still rotating. Keep the two facts together:
+    // this call may fail silently precisely because nothing treats `sd:` as proof of a session.
     if (this.options.sessions.enabled) {
       void this.sessionService
         .rotateSession(sha256(oldRefreshToken), sha256(result.rawRefreshToken), ip, userAgent)

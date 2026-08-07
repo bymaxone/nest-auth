@@ -58,6 +58,7 @@ export type ResolvedOptions = Omit<
   | 'redisNamespace'
   | 'routePrefix'
   | 'userStatusCacheTtlSeconds'
+  | 'environment'
   | 'secureCookies'
   | 'mfa'
   | 'rateLimit'
@@ -92,6 +93,12 @@ export type ResolvedOptions = Omit<
   redisNamespace: string
   routePrefix: string
   userStatusCacheTtlSeconds: number
+  /**
+   * The deployment environment as the host declared it. The only input that answers "is this
+   * production"; the library never reads `process.env`. See
+   * {@link BymaxAuthModuleOptions.environment}.
+   */
+  environment: 'production' | 'development' | 'test'
   /** `true` if auth cookies should carry the `Secure` flag. */
   secureCookies: boolean
   /**
@@ -135,6 +142,24 @@ function deriveHmacKey(jwtSecret: string): string {
   return createHash('sha256')
     .update(`${HMAC_KEY_DERIVATION_LABEL}:${jwtSecret}`, 'utf8')
     .digest('hex')
+}
+
+/**
+ * Answers "is this a production deployment" from the host's own declaration.
+ *
+ * The single place that question is decided. It used to be
+ * `process.env['NODE_ENV'] === 'production'`, evaluated independently at six sites that
+ * together decided cookie `Secure`, OAuth callback HTTPS enforcement, and three redirect
+ * validations — so every near miss failed open at all six at once: `NODE_ENV` unset, `staging`,
+ * `prod`, or `production ` with a trailing space each took the insecure branch silently.
+ *
+ * Whether a deployment is production is something the deployer knows; the process environment
+ * only hints at it, and a hint is the wrong thing to hang a trust boundary on. So the value is
+ * passed in, and an absent one means production — the safe reading, since a host that has not
+ * thought about it should get the strict behaviour rather than the lax one.
+ */
+function isProductionDeployment(userOptions: BymaxAuthModuleOptions): boolean {
+  return (userOptions.environment ?? 'production') === 'production'
 }
 
 /**
@@ -182,11 +207,12 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateRolesHierarchy(userOptions.roles)
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
   validatePasswordResetOtpLength(userOptions.passwordReset)
+  validatePasswordMinLength(userOptions.password)
   validatePasswordCostFactor(userOptions.password)
   validatePasswordMemoryParameters(userOptions.password)
   validateMfaVerificationParameters(userOptions.mfa)
   validateBruteForce(userOptions.bruteForce)
-  validateOAuthProviders(userOptions.oauth)
+  validateOAuthProviders(userOptions.oauth, isProductionDeployment(userOptions))
   validateClientIpSource(userOptions.rateLimit)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
@@ -197,6 +223,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateOAuthErrorRedirectUrl(userOptions)
   validateRefreshCookiePath(userOptions.routePrefix, userOptions.cookies)
   validateSameSiteNoneRequiresSecure(userOptions)
+  validateCookiePrefixes(userOptions)
   validateTrustedOrigins(userOptions)
   validateRefreshGraceWindow(userOptions.jwt)
   validateAccessLifetimeAgainstEpochRetention(userOptions.jwt)
@@ -299,7 +326,8 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
       clientIpSource: userOptions.rateLimit?.clientIpSource ?? 'peer'
     },
 
-    secureCookies: userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production',
+    environment: userOptions.environment ?? 'production',
+    secureCookies: userOptions.secureCookies ?? isProductionDeployment(userOptions),
 
     hmacKey: deriveHmacKey(userOptions.jwt.secret),
     previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
@@ -717,6 +745,33 @@ function assertIntegralScryptParameter(name: string, value: number | undefined):
   )
 }
 
+/**
+ * Bounds `password.minLength` to the window the standard and the DTOs both allow.
+ *
+ * The floor is 8: NIST SP 800-63B-4 §3.1.1.1 permits it only for a password used as part of
+ * multi-factor authentication, and never anything shorter, so a value below it cannot describe
+ * a conformant deployment. It is also what the password DTOs enforce structurally, so a lower
+ * policy would be unreachable — the request would already have been rejected.
+ *
+ * The ceiling is 128, the DTOs' `@MaxLength`. A policy above it would reject every password the
+ * validation layer accepts: nobody could ever register, and the failure would look like a
+ * user-input problem rather than a configuration one.
+ */
+function validatePasswordMinLength(password: BymaxAuthModuleOptions['password']): void {
+  const minLength = password?.minLength
+  if (minLength === undefined) return
+
+  if (!Number.isInteger(minLength) || minLength < 8 || minLength > 128) {
+    throw new Error(
+      `[BymaxAuthModule] password.minLength must be an integer between 8 and 128 ` +
+        `(current: ${String(minLength)}). NIST SP 800-63B-4 §3.1.1.1 allows 8 only for a ` +
+        `password used as part of multi-factor authentication and requires 15 for one used as a ` +
+        `single factor; 128 is the maximum the password DTOs accept, so a higher policy would ` +
+        `reject every password that reaches this service.`
+    )
+  }
+}
+
 function validatePasswordCostFactor(password: BymaxAuthModuleOptions['password']): void {
   const costFactor = password?.costFactor
   if (costFactor === undefined) return
@@ -911,7 +966,10 @@ function validateMfaVerificationParameters(mfa: BymaxAuthModuleOptions['mfa']): 
 /** Fields required on every configured OAuth provider. */
 const REQUIRED_OAUTH_FIELDS = ['clientId', 'clientSecret', 'callbackUrl'] as const
 
-function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
+function validateOAuthProviders(
+  oauth: BymaxAuthModuleOptions['oauth'],
+  isProduction: boolean
+): void {
   if (!oauth) return
 
   for (const [providerOrField, rawConfig] of Object.entries(oauth)) {
@@ -944,11 +1002,7 @@ function validateOAuthProviders(oauth: BymaxAuthModuleOptions['oauth']): void {
     // An HTTP callback URL causes the authorization code to transit over an unencrypted
     // connection, making it vulnerable to interception.
     const callbackUrl = config['callbackUrl']
-    if (
-      typeof callbackUrl === 'string' &&
-      !callbackUrl.startsWith('https://') &&
-      process.env['NODE_ENV'] === 'production'
-    ) {
+    if (typeof callbackUrl === 'string' && !callbackUrl.startsWith('https://') && isProduction) {
       throw new Error(
         `[BymaxAuthModule] oauth.${provider}.callbackUrl must use HTTPS in production ` +
           `(got: '${callbackUrl}'). Use an HTTPS URL to prevent authorization code interception.`
@@ -980,7 +1034,7 @@ function validateOAuthSuccessRedirectUrl(userOptions: BymaxAuthModuleOptions): v
     )
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1021,7 +1075,7 @@ function validateOAuthMfaRedirectUrl(userOptions: BymaxAuthModuleOptions): void 
     throw new Error(`[BymaxAuthModule] oauth.mfaRedirectUrl must be a non-empty string when set.`)
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1046,7 +1100,7 @@ function validateOAuthErrorRedirectUrl(userOptions: BymaxAuthModuleOptions): voi
     throw new Error(`[BymaxAuthModule] oauth.errorRedirectUrl must be a non-empty string when set.`)
   }
 
-  const isProduction = process.env['NODE_ENV'] === 'production'
+  const isProduction = isProductionDeployment(userOptions)
   const isSafe = url.startsWith('/') || url.startsWith('https://')
   if (isProduction && !isSafe) {
     throw new Error(
@@ -1072,6 +1126,68 @@ function validateRefreshCookiePath(
 }
 
 /**
+ * Validates that a cookie named with a `__Secure-` or `__Host-` prefix actually satisfies it.
+ *
+ * The prefixes are the only browser-enforced defence against cookie tossing: a sibling host
+ * under the registrable domain — a marketing subdomain with an XSS, a stale DNS record, a
+ * user-content host, or a plaintext `http://` neighbour — can otherwise set
+ * `refresh_token=<theirs>; Domain=.example.com` and the server cannot tell the two apart,
+ * because `Set-Cookie` conveys `Domain`/`Path` and the `Cookie` header does not. `HttpOnly` and
+ * `Secure` do not stop that; the prefix does, by making the injected cookie unsettable.
+ *
+ * The trap is that a browser enforces the prefix by *silently dropping* the `Set-Cookie` whose
+ * attributes do not match. A consumer who renames a cookie to `__Secure-access_token` while
+ * `secureCookies` is false gets no error and no cookie — the symptom is "login does not work",
+ * miles from the cause. So the contract is checked here instead, at startup:
+ *
+ *   - `__Secure-` requires the `Secure` attribute.
+ *   - `__Host-` requires `Secure`, `Path=/`, and no `Domain`.
+ *
+ * That makes opting in safe. The defaults stay unprefixed: this library's Next.js proxy and the
+ * paired rust-auth read the cookie names from their own configuration, so changing the shipped
+ * names is a coordinated change across both packages rather than a rename here.
+ */
+function validateCookiePrefixes(userOptions: BymaxAuthModuleOptions): void {
+  const cookies = userOptions.cookies
+  if (cookies === undefined) return
+
+  const secure = userOptions.secureCookies ?? isProductionDeployment(userOptions)
+  const hasDomain = cookies.resolveDomains !== undefined
+  const refreshPath = cookies.refreshCookiePath ?? DEFAULT_OPTIONS.cookies.refreshCookiePath
+
+  const named: { option: string; name: string | undefined; path: string }[] = [
+    { option: 'accessTokenName', name: cookies.accessTokenName, path: '/' },
+    { option: 'refreshTokenName', name: cookies.refreshTokenName, path: refreshPath },
+    { option: 'sessionSignalName', name: cookies.sessionSignalName, path: '/' }
+  ]
+
+  for (const { option, name, path } of named) {
+    if (name === undefined) continue
+
+    if (name.startsWith('__Host-')) {
+      if (!secure || path !== '/' || hasDomain) {
+        throw new Error(
+          `[BymaxAuthModule] cookies.${option} is '${name}' but the __Host- prefix requires ` +
+            `secureCookies: true, Path=/ (this cookie uses '${path}'), and no cookies.resolveDomains. ` +
+            `Browsers silently drop a Set-Cookie that violates the prefix, so the cookie would ` +
+            `never be stored. Fix the attributes or drop the prefix.`
+        )
+      }
+      continue
+    }
+
+    if (name.startsWith('__Secure-') && !secure) {
+      throw new Error(
+        `[BymaxAuthModule] cookies.${option} is '${name}' but the __Secure- prefix requires ` +
+          `secureCookies: true. Browsers silently drop a Set-Cookie that violates the prefix, so ` +
+          `the cookie would never be stored. Set secureCookies: true (and serve over HTTPS) or ` +
+          `drop the prefix.`
+      )
+    }
+  }
+}
+
+/**
  * Validates that `cookies.sameSite: 'none'` is only used with `Secure` cookies.
  *
  * Per the HTTP cookie spec, browsers reject `SameSite=None` cookies that lack
@@ -1079,14 +1195,15 @@ function validateRefreshCookiePath(
  * runtime failure (browser drops the cookie, user can't log in) into a loud
  * configuration error.
  *
- * `secureCookies` defaults to `true` in production and `false` otherwise. The
- * `'none'` posture is only meaningful with a TLS-served origin, so requiring
- * `secureCookies: true` regardless of `NODE_ENV` is the safe rule.
+ * `secureCookies` defaults to `true` unless the host declared a non-production
+ * `environment`. The `'none'` posture is only meaningful with a TLS-served
+ * origin, so requiring `secureCookies: true` in every environment is the safe
+ * rule.
  */
 function validateSameSiteNoneRequiresSecure(userOptions: BymaxAuthModuleOptions): void {
   const sameSite = userOptions.cookies?.sameSite
   if (sameSite !== 'none') return
-  const secureCookies = userOptions.secureCookies ?? process.env['NODE_ENV'] === 'production'
+  const secureCookies = userOptions.secureCookies ?? isProductionDeployment(userOptions)
   if (!secureCookies) {
     throw new Error(
       `[BymaxAuthModule] cookies.sameSite is 'none' but secureCookies is false. ` +

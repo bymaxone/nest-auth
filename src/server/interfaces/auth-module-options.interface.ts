@@ -234,6 +234,28 @@ export interface BymaxAuthModuleOptions {
     costFactor?: number
 
     /**
+     * Minimum password length the deployment accepts. Default: `15`.
+     *
+     * NIST SP 800-63B-4 §3.1.1.1 requires 15 characters for a password used as a SINGLE
+     * authentication factor, and permits 8 only when the password is part of multi-factor
+     * authentication. MFA in this library is opt-in per user, so the default deployment is
+     * single-factor and 15 is the number that applies. Lower it to 8 — the structural floor the
+     * DTOs enforce, and the lowest the standard allows under any circumstance — only in a
+     * deployment that makes MFA mandatory.
+     *
+     * @remarks
+     * `costFactor` sets the price of one guess; this sets how many guesses there are. Only the
+     * second is what an offline attacker actually runs out of, and the breach and common-password
+     * screens remove passwords that are already *known*, not short ones nobody has seen yet.
+     *
+     * Deliberately not paired with any composition rule: the same clause says verifiers SHALL
+     * NOT impose them, and none of the password DTOs carries one.
+     *
+     * @throws {Error} When the value is not an integer in `[8, 128]`.
+     */
+    minLength?: number
+
+    /**
      * scrypt block size parameter (r).
      * Default: `8`
      */
@@ -276,18 +298,38 @@ export interface BymaxAuthModuleOptions {
   tokenDelivery?: 'cookie' | 'bearer' | 'both'
 
   /**
+   * The deployment environment, supplied explicitly.
+   *
+   * This is the ONLY input that answers "is this production". The library never reads the
+   * ambient `process.env`, and it is secure by default: an unset value is `'production'`, so
+   * `secureCookies` resolves to `true` and the production-gated OAuth-redirect checks apply
+   * unless the host opts into `'development'` or `'test'`.
+   *
+   * Default: `'production'`.
+   *
+   * @remarks
+   * This replaces reading `process.env['NODE_ENV'] === 'production'`. That test decided cookie
+   * `Secure`, OAuth callback HTTPS enforcement and three redirect validations, and it failed
+   * open on every near miss — unset, `'staging'`, `'prod'`, or `'production '` with a trailing
+   * space each silently took the insecure branch. Whether a deployment is production is
+   * something the deployer knows and the process environment only hints at, so it is now passed
+   * in rather than sniffed. Matches `Environment` in rust-auth.
+   */
+  environment?: 'production' | 'development' | 'test'
+
+  /**
    * Whether to set the `Secure` flag on auth cookies.
    *
    * When `true`, cookies are only sent over HTTPS. When `false`, cookies are
    * sent over HTTP as well (useful for local development).
    *
-   * Default: `process.env['NODE_ENV'] === 'production'` (evaluated once at module
-   * startup via `resolveOptions()` — not re-evaluated per request).
+   * Default: `true`, unless {@link BymaxAuthModuleOptions.environment} is
+   * `'development'` or `'test'`. Evaluated once at module startup via
+   * `resolveOptions()` — not re-evaluated per request.
    *
    * @remarks
-   * Override this explicitly in staging environments that do not set
-   * `NODE_ENV=production` but are served over HTTPS, to ensure cookies are
-   * marked Secure regardless of the environment variable.
+   * Set this explicitly to `true` in a non-production environment that is nonetheless served
+   * over HTTPS, so the cookies are marked `Secure` there too.
    */
   secureCookies?: boolean
 

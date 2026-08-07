@@ -138,7 +138,9 @@ const mockRedis = {
 
 const mockPasswordService = {
   hash: jest.fn(),
-  assertNotCompromised: jest.fn().mockResolvedValue(undefined)
+  assertNotCompromised: jest.fn().mockResolvedValue(undefined),
+  assertAcceptable: jest.fn().mockResolvedValue(undefined),
+  assertLongEnough: jest.fn()
 }
 
 const mockTokenManager = {
@@ -895,7 +897,7 @@ describe('InvitationService', () => {
     it('screens the password before consuming the token', async () => {
       // `Once`, so the rejection cannot leak into a later case — these mocks are shared and
       // not reset between tests.
-      mockPasswordService.assertNotCompromised.mockRejectedValueOnce(
+      mockPasswordService.assertAcceptable.mockRejectedValueOnce(
         new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
       )
       mockRedis.getdel.mockClear()

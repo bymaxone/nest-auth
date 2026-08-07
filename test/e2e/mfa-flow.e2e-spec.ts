@@ -203,7 +203,7 @@ describe('mfa flow (E2E)', () => {
       // from Scenario 1 because each scenario gets a fresh app instance.
       const register = await request(app.getHttpServer()).post('/register').send({
         email: 'mfa-totp@example.com',
-        password: 'TotpSecret456!',
+        password: 'TotpSecret456!-xyz',
         name: 'Totp User',
         tenantId: 'tenant-1'
       })
@@ -212,7 +212,7 @@ describe('mfa flow (E2E)', () => {
       const setup = await request(app.getHttpServer())
         .post('/mfa/setup')
         .set('Authorization', `Bearer ${initialAccessToken}`)
-        .send({ password: 'TotpSecret456!' })
+        .send({ password: 'TotpSecret456!-xyz' })
       secret = setup.body.secret as string
 
       // Use the current step's TOTP for the enable step.
@@ -227,7 +227,7 @@ describe('mfa flow (E2E)', () => {
       // instead of issuing full auth tokens.
       const login = await request(app.getHttpServer()).post('/login').send({
         email: 'mfa-totp@example.com',
-        password: 'TotpSecret456!',
+        password: 'TotpSecret456!-xyz',
         tenantId: 'tenant-1'
       })
       loginResponseBody = login.body as Record<string, unknown>

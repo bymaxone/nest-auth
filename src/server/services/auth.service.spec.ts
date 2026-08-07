@@ -100,6 +100,8 @@ const mockPasswordService = {
   compare: jest.fn(),
   compareDummy: jest.fn().mockResolvedValue(false),
   assertNotCompromised: jest.fn().mockResolvedValue(undefined),
+  assertAcceptable: jest.fn().mockResolvedValue(undefined),
+  assertLongEnough: jest.fn(),
   needsRehash: jest.fn().mockReturnValue(false)
 }
 

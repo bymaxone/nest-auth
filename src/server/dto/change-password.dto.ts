@@ -31,7 +31,14 @@ export class ChangePasswordDto {
 
   /**
    * New plaintext password chosen by the user.
-   * Minimum 8 characters for usability; maximum 128 characters as a practical bound.
+   * The 8-character floor here is STRUCTURAL, not the deployment's policy: it is the lowest
+   * NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and it is what a decorator
+   * can express — decorators are evaluated when the class is defined, before any
+   * configuration exists. The policy floor is `password.minLength` (default 15, as the
+   * standard requires of a single-factor password), enforced by `PasswordService` and
+   * answering this same `auth.validation` code and details shape.
+   *
+   * Maximum 128 characters as a practical bound.
    * Hashed immediately by the service layer — never persisted in plaintext.
    */
   @IsString()

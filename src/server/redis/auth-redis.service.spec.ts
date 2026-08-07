@@ -449,6 +449,67 @@ describe('AuthRedisService', () => {
     })
   })
 
+  describe('pruneDeadMembers', () => {
+    // Scenario: a reader found members it believes are stale and asks for them to be dropped.
+    // Expected: the drop is conditioned on the member's own key being gone, inside one script.
+    // Why: every caller reaches its candidate list by way of the `sd:` detail record, and a
+    // missing detail record does not mean a missing session. A live `rt:` with no `sd:` still
+    // opens the account, so removing that member from `sess:{userId}` hides a working session
+    // from `invalidateUserSessions` — it then survives "sign out everywhere" and keeps rotating.
+    it('drops a candidate only when its own key is gone', async () => {
+      mockRedis.eval.mockResolvedValue(1)
+
+      await expect(service.pruneDeadMembers('sess:u1', ['rt:aaa', 'rt:bbb'])).resolves.toBe(1)
+
+      const [script, numKeys, key, namespace, first, second] = mockRedis.eval.mock
+        .calls[0] as unknown as [string, number, string, string, string, string]
+      expect(numKeys).toBe(1)
+      expect(key).toBe(prefixed('sess:u1'))
+      expect(namespace).toBe('auth')
+      expect([first, second]).toEqual(['rt:aaa', 'rt:bbb'])
+      // The guard IS the fix. Without it the SREM is unconditional and a live session leaves
+      // the index; the two calls share one script so a key written between them cannot lose.
+      expect(script).toContain("redis.call('EXISTS', ns .. ':' .. ARGV[i]) == 0")
+      expect(script).toContain("redis.call('SREM', KEYS[1], ARGV[i])")
+      // From 2: ARGV[1] is the namespace, so a loop starting at 1 would test `auth:auth` —
+      // absent, so every candidate would be dropped and the guard would be decorative.
+      expect(script).toContain('for i = 2, #ARGV do')
+    })
+
+    // No candidates means no round trip: the script would loop zero times, and a reader that
+    // found nothing stale is the common case on every session listing.
+    it('makes no call when there are no candidates', async () => {
+      await expect(service.pruneDeadMembers('sess:u1', [])).resolves.toBe(0)
+
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+    })
+
+    // The platform plane prunes its own index: the two id spaces come from different
+    // repositories and may legitimately collide.
+    it('prunes the platform index', async () => {
+      mockRedis.eval.mockResolvedValue(0)
+
+      await service.pruneDeadMembers('psess:a1', ['prt:aaa'])
+
+      const call = mockRedis.eval.mock.calls[0] as unknown[]
+      expect(call).toContain(prefixed('psess:a1'))
+      expect(call).toContain('prt:aaa')
+    })
+
+    // Same reason as `pruneExpiredGraceMembers`: a client surfacing the Lua integer as a string
+    // would make a numeric read `NaN`, which is not a count.
+    it.each([
+      ['an integer reply', 3, 3],
+      ['the string "3"', '3', 3],
+      ['a nil reply', null, 0],
+      ['an unexpected shape', {}, 0]
+    ])('reads %s as a count', async (_label, reply, expected) => {
+      mockRedis.eval.mockResolvedValue(reply)
+
+      await expect(service.pruneDeadMembers('sess:u1', ['rt:aaa'])).resolves.toBe(expected)
+    })
+  })
+
   describe('rotateRefreshSession', () => {
     const BUNDLE = {
       kind: 'dashboard' as const,

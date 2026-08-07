@@ -28,9 +28,13 @@ export const DEFAULT_OPTIONS = {
     // browser cookies outliving the JWT exp claim.
     accessCookieMaxAgeMs: 900_000,
     refreshExpiresInDays: 7,
-    // No cap by default: switching it on ends sessions already older than the cap, which is
-    // a decision a deployment makes, not one an upgrade makes for it.
-    absoluteSessionLifetimeDays: 0,
+    // 30 days, because NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a SHALL
+    // and puts it at no more than 30 days for AAL1. `refreshExpiresInDays` bounds one token,
+    // not the login: a client rotating every 15 minutes renews it forever, so without a cap a
+    // refresh token stolen once converts into permanent access — reuse detection only fires if
+    // the legitimate client also replays, which it never will once the victim has stopped using
+    // that device. Set to 0 to disable. Held equal to rust-auth's default.
+    absoluteSessionLifetimeDays: 30,
     algorithm: 'HS256' as const,
     // Security trade-off: 30 s grace window allows token rotation under slow mobile networks.
     // It also extends the replay window for a stolen refresh token by 30 s beyond expiry.
@@ -39,6 +43,13 @@ export const DEFAULT_OPTIONS = {
   },
 
   password: {
+    // 15, because NIST SP 800-63B-4 §3.1.1.1 requires 15 characters for a password used as a
+    // SINGLE factor and permits 8 only when it is part of multi-factor authentication. MFA here
+    // is opt-in per user, so the default deployment is single-factor and 15 is the number that
+    // applies. A deployment that makes MFA mandatory can lower this to 8, which is the floor the
+    // DTOs enforce structurally. The KDF cost sets the price of one guess; this sets how many
+    // guesses there are, and only the second is what an offline attacker actually runs out of.
+    minLength: 15,
     costFactor: 131_072,
     blockSize: 8,
     parallelization: 1,
