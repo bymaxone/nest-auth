@@ -2382,12 +2382,20 @@ describe('MfaService', () => {
     // separates this from a method that quietly re-runs the whole teardown on every call.
     it('is a no-op for an account with no second factor', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await expect(service.resetMfa('user-1')).resolves.toBeUndefined()
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendMfaDisabledNotification).not.toHaveBeenCalled()
+      // The log is the only record this call happened at all — the return value is the same
+      // `undefined` a real reset produces, so without the line an operator cannot tell a
+      // no-op apart from a removal in the audit trail.
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('resetMfa: no second factor to remove')
+      )
+      logSpy.mockRestore()
     })
 
     // Scenario: a user who has lost both the authenticator and the recovery codes. Expected:
@@ -2398,8 +2406,17 @@ describe('MfaService', () => {
     // removes the second factor with nothing reaching the owner.
     it('clears the factor, kills the sessions and notifies the account holder', async () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await service.resetMfa('user-1')
+
+      // At `warn`, and saying "administratively": an operator reading the log has to be able to
+      // tell this apart from a user who disabled their own factor, and both paths otherwise
+      // write the same record and send the same mail.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('resetMfa: MFA removed administratively')
+      )
+      warnSpy.mockRestore()
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
         mfaEnabled: false,
@@ -2423,7 +2440,11 @@ describe('MfaService', () => {
       await service.resetMfa('user-1')
 
       expect(mockHooks.afterMfaDisabled).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'user-1' }),
+        // `tenantId` is what separates the two projections: the dashboard one carries the
+        // account's own tenant, the platform one forces `''`. Asserting only the id would pass
+        // under either, so a reset that handed the hook a platform-shaped user for a dashboard
+        // account — losing the tenant every consumer scopes on — would go unnoticed.
+        expect.objectContaining({ id: 'user-1', tenantId: 'tenant-1' }),
         { userId: 'user-1', ip: '', userAgent: '', sanitizedHeaders: {} }
       )
     })
@@ -2446,6 +2467,13 @@ describe('MfaService', () => {
       })
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      // The counterpart of the dashboard assertion above: a platform admin has no tenant, and
+      // the projection says so with `''` rather than leaving the field absent. The dashboard
+      // projection would leave it `undefined` here, so this is what pins which one ran.
+      expect(mockHooks.afterMfaDisabled).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'admin-1', tenantId: '' }),
+        expect.objectContaining({ userId: 'admin-1' })
+      )
     })
 
     // An unknown id is refused rather than silently succeeding, so a typo at the support desk

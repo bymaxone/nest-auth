@@ -66,7 +66,7 @@ pnpm add @bymax-one/nest-auth
 
 - ✅ **Zero External Crypto** — All cryptography via native `node:crypto` (scrypt, AES-256-GCM, HMAC-SHA1, TOTP)
 - ✅ **Brute-Force Protection** — Configurable rate limiting per email + tenant
-- ✅ **Session Management** — Track active sessions with FIFO eviction and new-session alerts
+- ✅ **Session Management** — Track active sessions with FIFO eviction, and an `onNewSession` hook fired on every session created (alerting on it is yours to decide — see `sendNewSessionAlert`)
 - ✅ **HttpOnly Cookies** — Secure, SameSite, path-scoped refresh tokens by default
 - ✅ **Timing-Safe Comparisons** — All secret comparisons use `crypto.timingSafeEqual`
 - ✅ **JWT Revocation** — Instant access token revocation via Redis JTI blacklist
@@ -647,7 +647,8 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | Group                 | Key Options                                                                                                                                         | Default                                 |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, off, `HS256`, both off     |
-| **password**          | `costFactor`, `blockSize`, `parallelization`                                                                                                        | scrypt N=2¹⁷, r=8, p=1                  |
+| **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                          |
+| **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1            |
 | **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                              |
 | **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)      |
 | **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
@@ -665,6 +666,32 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
+
+> [!IMPORTANT]
+> **`environment` is how the module decides whether this is production, and it defaults to
+> saying yes.** It drives cookie `Secure`, the HTTPS requirement on the OAuth `callbackUrl`, and
+> three redirect validations. It used to be read from `NODE_ENV`, which failed **open** on every
+> near miss — unset, `'staging'`, `'prod'`, or `'production '` with a trailing space each
+> silently took the insecure branch, in all six places at once. Whether a deployment is
+> production is something the deployer knows and the process environment only hints at, so it is
+> passed in. The consequence to plan for: a local or test setup must now say
+> `environment: 'development'` (or `'test'`) explicitly, or it will be held to production rules —
+> an `http://` callback URL is refused, and cookies are marked `Secure` and never sent over
+> plaintext. That failure is loud, which is the point; the old one was silent. Matches
+> `Environment` in rust-auth.
+
+> [!NOTE]
+> **`password.minLength` defaults to 15, not 8.** The DTOs keep a structural floor of 8 — the
+> lowest NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance — and this is the
+> deployment's policy on top of it. §3.1.1.1 allows 8 only for a password used as part of
+> multi-factor authentication and requires 15 for one used as a single factor; MFA here is
+> opt-in per user, so the default deployment **is** single-factor. Configurable to anything in
+> `8..=128`, validated at startup: below 8 changes no outcome (the DTOs refuse the request
+> first), and above 128 is longer than any password the validation layer accepts. It is checked
+> in the service rather than a decorator because a decorator is evaluated when the class is
+> defined, before any configuration exists — and it answers the same `auth.validation` code and
+> the same `{ field, message }[]` details a length failure already produced, so a client
+> handling short passwords sees no new shape.
 
 > [!IMPORTANT]
 > **`rateLimit.clientIpSource` is required** whenever rate limiting is enabled — there is no
@@ -953,6 +980,40 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > does not send it back — the binding RFC 6749 §10.12 requires, without which an attacker can
 > hand a victim a callback URL and have the victim's browser complete the attacker's login.
 > Mount `app.use(cookieParser())` before the module's routes or every callback answers 401.
+
+### Administrative operations — methods, deliberately not routes
+
+Two support-desk operations ship as **methods with no HTTP route**. Every route above is scoped
+to the caller's own account, and both of these act on somebody else's — so exposing them would
+mean inventing an authorization model ("who is an admin?") that this library does not have and
+your application already does. Call them from your own admin surface, where the caller is
+already authorized.
+
+| Method                                     | Answers                                             |
+| ------------------------------------------ | --------------------------------------------------- |
+| `AuthService.unlockAccount(email, tenant)` | "I am locked out and I need in now"                 |
+| `MfaService.resetMfa(userId, context?)`    | "I lost my authenticator **and** my recovery codes" |
+
+**`unlockAccount`** clears the brute-force lockout. It grants no access: the password, the
+status gate, the verification gate and MFA all still apply — it restores the ability to _try_.
+It exists because the counter is keyed by an HMAC under the library's own `hmacKey`, which no
+consumer can derive, so until it existed a lockout could only be waited out. It is also the
+lever an attacker pulls to deny service to one specific account, which makes undoing it part of
+the defence. Idempotent.
+
+**`resetMfa`** removes a second factor without one. Every self-service exit needs the factor
+itself — `disable` wants a valid TOTP code, the recovery codes want the codes — so a user who
+has lost both is locked out permanently by the control meant to protect them (ASVS v5 §6.1.1
+asks for this path for exactly that reason). It invalidates every session and bumps the token
+epoch, so access tokens carrying `mfaVerified: true` die with the factor; it **notifies the
+account holder** through the same channel a self-service disable uses; and it logs at `warn`
+under its own prefix. The notification is not optional: an administrative reset the owner
+cannot see is an account-takeover path, and it is what makes the event detectable and
+disputable. Idempotent; throws for an id that resolves to nobody, so a typo cannot read as
+"done".
+
+> `MfaService` is only registered when `controllers.mfa` or `controllers.platform` is on —
+> otherwise add it to `extraProviders` to inject it.
 
 ### Server Guards
 
