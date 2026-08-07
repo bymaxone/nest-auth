@@ -29,6 +29,13 @@ jobs:
       unit-command: pnpm test:cov:all
       run-mutation: true
       mutation-source-globs: '^(src/)'
+      # A cold run does not fit the shared 45-minute default and was being cancelled on every
+      # push to main, so the gate produced nothing. This library keeps `ignoreStatic: false`
+      # deliberately — that is how it caught a refresh cookie shipping `httpOnly: false` — and
+      # Stryker reports the 443 static mutants that choice keeps in scope as 6% of the total
+      # but 83% of the time. 120 rather than a tighter number on purpose: a completed run is
+      # what tells us the real duration, and undershooting costs another cancelled hour.
+      mutation-timeout-minutes: 120
 
   # Library-specific verification: full build, output integrity across every
   # subpath, and the brotli bundle-size budget.
