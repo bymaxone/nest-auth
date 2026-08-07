@@ -36,7 +36,7 @@ jobs:
     # Required for npm OIDC trusted publishing (`id-token: write`) and for
     # `gh release create` (`contents: write`). No `NPM_TOKEN` secret needed —
     # the publish exchanges the GitHub OIDC token for a short-lived npm
-    # credential via the Trusted Publisher cadastrado em npmjs.com.
+    # credential through the Trusted Publisher registered on npmjs.com.
     permissions:
       contents: write
       id-token: write

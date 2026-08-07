@@ -14,6 +14,14 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+# The floor for anything added to this file later. The `codeql` job below declares its own
+# set and therefore ignores this one — a job's block REPLACES the workflow's rather than
+# intersecting with it — but a job added without a block would otherwise inherit whatever the
+# repository default happens to be, which is a write token in a repository that has not been
+# tightened. Declaring the floor here means a future job has to ask for more on purpose.
+permissions:
+  contents: read
+
 # Kept from the workflow this replaces: without it, repeated pushes to a
 # branch leave several analyses of the same ref running at once.
 concurrency:
