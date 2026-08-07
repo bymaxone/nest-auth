@@ -59,6 +59,11 @@ export class AuthExceptionFilter implements ExceptionFilter {
 
     // An AuthException already carries the envelope and the right status — pass it through
     // untouched rather than rebuilding it, so a `details` payload survives.
+    //
+    // Stryker disable next-line BlockStatement: emptying this branch cannot change the response.
+    // AuthException extends HttpException and its body IS the envelope, so it falls into the
+    // `isAuthEnvelope` arm below, which writes the same status and the same object. The branch
+    // is here to say so at the top rather than to behave differently
     if (exception instanceof AuthException) {
       res.status(exception.getStatus()).json(exception.getResponse())
       return

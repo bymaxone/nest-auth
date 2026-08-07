@@ -284,10 +284,11 @@ describe('TokenDeliveryService', () => {
       expect(res.cookie).toHaveBeenCalled()
     })
 
-    // Scenario: valid hostname → exactly one domain resolved → setAuthCookies runs once (3 cookies).
-    // Expected: res.cookie called exactly 3 times. Why: kills `domains.length === 0` → `if (true)`,
-    // which would also fire the no-domain fallback and double the cookie count to 6.
-    it('sets each cookie exactly once when a valid domain is resolved', async () => {
+    // Scenario: a valid hostname and no `resolveDomains`, so NOTHING is resolved and the
+    // host-only fallback is what plants the cookies. Expected: each cookie set exactly once.
+    // (This case cannot speak to the `domains.length === 0` guard — the list is empty here, so
+    // the fallback fires either way. The non-empty case that does is under `resolveDomains`.)
+    it('sets each cookie exactly once when no domain is resolved', async () => {
       const service = await buildService('cookie')
       const res = makeRes()
       const req = makeReq({ hostname: 'example.com' })
@@ -820,10 +821,13 @@ describe('TokenDeliveryService', () => {
 
       service.deliverAuthResponse(res as Response, AUTH_RESULT, req as Request)
 
-      // resolveDomains returns 2 domains — cookies should be called twice for each of 3 cookie types.
       expect(resolveDomains).toHaveBeenCalledWith('app.example.com')
-      // At minimum 6 cookie calls (3 cookies × 2 domains).
-      expect((res.cookie as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(6)
+      // EXACTLY 3 cookies x 2 domains, not "at least". The host-only fallback is reserved for
+      // when nothing was resolved, and a lower bound cannot tell that apart from the fallback
+      // firing as well: a third, host-only copy of each cookie would then be planted alongside
+      // the shared ones — a cookie the sign-out path does not know to clear, because it clears
+      // the domains `resolveDomains` names.
+      expect((res.cookie as jest.Mock).mock.calls.length).toBe(6)
     })
 
     // Verifies the clear path honours the same configured domains. A cookie planted with

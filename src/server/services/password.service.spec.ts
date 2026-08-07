@@ -813,6 +813,25 @@ describe('PasswordService', () => {
       expect(strict.needsRehash(`$scrypt$ln=18,r=8,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
     })
 
+    // The `r` ceiling has to be its own refusal, and this is the record that proves it. A large
+    // `r` paired with a large `ln` is caught by the working-set ceiling instead — `128 * N * r`
+    // exceeds 512 MiB and the record never parses — which hides whether the parameter bound is
+    // doing anything. A large `r` with a TINY `ln` is not: `ln = 1, r = 1000` asks for 256 KiB,
+    // sails through the memory ceiling, and is refused only because 1000 is above 255.
+    //
+    // `needsRehash` is the distinguishing read. `compare` cannot be: it answers false either way
+    // — refused as unparseable, or parsed and then failing the derivation — so it cannot say
+    // which happened.
+    it('refuses a large block size that the memory ceiling would let through', async () => {
+      const service = await serviceAt(16_384)
+
+      // Unparseable → `needsRehash` is false. Were it parsed, `N = 2` sits below the configured
+      // cost and it would report stale.
+      expect(service.needsRehash(`$scrypt$ln=1,r=1000,p=1$${B64_SALT}$${B64_KEY}`)).toBe(false)
+      // The control at the boundary: 255 with the same tiny cost still reads.
+      expect(service.needsRehash(`$scrypt$ln=1,r=255,p=1$${B64_SALT}$${B64_KEY}`)).toBe(true)
+    })
+
     // The boundary itself: 255 is inside, so the ceiling cannot be tightened without a test
     // turning red, and a hash at the values both implementations actually write still reads.
     it.each([

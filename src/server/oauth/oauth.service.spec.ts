@@ -570,6 +570,62 @@ describe('OAuthService', () => {
       expect(mockRedis.getdel).not.toHaveBeenCalled()
     })
 
+    // The refusal above is answered as a flat `oauth_failed` — the same code a dozen other
+    // failures in this flow produce — so nothing in the response says a state/cookie binding was
+    // broken. That is deliberate, and it makes this line the only record of the one failure here
+    // that indicates an attack rather than a mistake: a callback URL delivered to a browser that
+    // did not start the authorization is the login-CSRF the binding exists to stop.
+    it('records which provider the unbound callback arrived for', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      setupHappyPathCreate()
+
+      await expect(
+        service.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          'a-different-cookie',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('not bound to this browser')
+      expect(warned).toContain('provider=google')
+      warnSpy.mockRestore()
+    })
+
+    // The stored state's `tenantId` decides which tenant the account is created in or looked up
+    // under, so its type is not a formality. The object-shape guard above this one is explicitly
+    // suppressed on the grounds that THIS check catches non-objects too — which makes it the only
+    // thing standing between a malformed state record and a tenant of `undefined` reaching the
+    // repository, where a tenant-scoped lookup silently stops being scoped.
+    it.each([
+      ['a number', 42],
+      ['an object', { id: 't' }],
+      ['absent', undefined]
+    ])('refuses a stored state whose tenantId is %s', async (_label, tenantId) => {
+      setupHappyPathCreate()
+      mockRedis.getdel.mockResolvedValue(JSON.stringify({ tenantId, codeVerifier: 'v'.repeat(43) }))
+
+      await expect(
+        service.handleCallback(
+          'google',
+          'auth-code-xyz',
+          'csrf-state-abc',
+          'csrf-state-abc',
+          '1.2.3.4',
+          'TestBrowser/1.0',
+          {}
+        )
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.OAUTH_FAILED } }
+      })
+      expect(mockUserRepo.createWithOAuth).not.toHaveBeenCalled()
+    })
+
     // Sets up the default happy-path mock state. Tests that diverge from this
     // arrange their own overrides.
     const setupHappyPathCreate = () => {
@@ -692,17 +748,20 @@ describe('OAuthService', () => {
       )
     })
 
-    // Scenario: the resolved account's address is unverified, and the deployment does NOT
-    // require verification. Expected: admitted. Why: the gate is a conjunction, and only this
-    // case separates it from the deployment setting alone. Without it, a rule that refused
-    // every unverified address — regardless of whether the deployment asked for verification —
-    // would pass the suite while locking out every OAuth user of a deployment that never
-    // wanted the requirement.
-    it('admits an unverified address when the deployment does not require verification', async () => {
+    // …and that account can still sign in, because this deployment does not require a verified
+    // address. The gate is a conjunction for exactly this reason, and the failure mode of getting
+    // it wrong is not a smaller one: every OAuth user whose provider does not assert
+    // `email_verified` would be locked out of a deployment that never asked for verification, with
+    // an `email_not_verified` telling them to complete a step it does not offer.
+    //
+    // The test above cannot show this — the account it creates comes back verified from the
+    // repository, so the gate reads `true` whatever the flag says.
+    it('admits an unverified account when verification is not required', async () => {
       setupHappyPathCreate()
+      mockPlugin.fetchProfile.mockResolvedValue({ ...OAUTH_PROFILE, emailVerified: false })
       mockUserRepo.createWithOAuth.mockResolvedValue({ ...AUTH_USER, emailVerified: false })
 
-      await expect(callCallback()).resolves.toBeDefined()
+      await expect(callCallback()).resolves.toBe(AUTH_RESULT)
       expect(mockTokenManager.issueTokens).toHaveBeenCalled()
     })
 

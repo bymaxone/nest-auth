@@ -354,7 +354,9 @@ export function redirectToLogin(
 ): NextResponse {
   // Stryker disable next-line StringLiteral: loginPath is always factory-validated to a non-empty path, so the '/' fallback is unreachable
   const loginPath = safeRelativePath(config.loginPath, '/')
-  // Stryker disable next-line EqualityOperator,ConditionalExpression: when defined, `reason` is always a non-empty constant ('expired' or an allowlist entry), so `length > 0` vs `>= 0` vs `true` are indistinguishable
+  // An empty `reason` produces no query parameter — `?reason=` is worse than no parameter at
+  // all, because the login page reads the key's presence to decide whether to show a message
+  // and would render an empty one.
   const destination =
     reason !== undefined && reason.length > 0
       ? withQueryParam(loginPath, REASON_PARAM, reason)

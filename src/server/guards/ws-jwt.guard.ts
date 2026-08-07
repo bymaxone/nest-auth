@@ -214,7 +214,16 @@ function readUpgradeTicket(client: WsClient): string | undefined {
   if (fromQuery !== undefined) return undefined
 
   const url = client.handshake.url
-  if (typeof url !== 'string' || url === '') return undefined
+  if (typeof url !== 'string') return undefined
+  // Split so the suppression covers the empty case alone — the `typeof` arm is killable and stays
+  // live.
+  //
+  // Stryker disable next-line ConditionalExpression,StringLiteral: nothing can observe this arm.
+  // An empty string parses against the base below into the base itself, whose query carries no
+  // `ticket`, so the fall-through returns `undefined` too. It is written out because "no URL" and
+  // "a URL with no ticket" are different facts, and only one of them should depend on how `URL`
+  // resolves an empty relative reference
+  if (url === '') return undefined
   // `URL` needs an absolute input; the base is a placeholder and never used for anything but
   // parsing the relative upgrade path.
   //

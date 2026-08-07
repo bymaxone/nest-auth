@@ -1070,6 +1070,10 @@ describe('cross-site callers are refused before any cookie is written', () => {
     expect(response.headers.get('set-cookie')).toBeNull()
     // And no upstream call, so the handler is not an amplifier either.
     expect(fetchSpy).not.toHaveBeenCalled()
+    // The refusal must not be storable. These three sit on the SAME urls the successful flows
+    // use, so a 403 a shared cache is allowed to keep is a 403 served to the next caller —
+    // turning a refusal aimed at an attacker into an outage for everyone behind that cache.
+    expect(response.headers.get('cache-control')).toBe('no-store, no-cache')
   })
 
   it.each(['same-origin', 'none'] as const)('logout still serves a %s caller', async (site) => {
@@ -1153,8 +1157,21 @@ describe('cookieDomain is rejected at factory construction, not at request time'
     )
   )
 
-  it.each(cases)('%s refuses the domain %j', (name, domain) => {
-    expect(() => factories[name](domain)).toThrow(/invalid cookie domain/)
+  /** What each factory must call itself in the error it throws. */
+  const factoryNames = {
+    logout: 'createLogoutHandler',
+    silentRefresh: 'createSilentRefreshHandler'
+  } as const
+
+  // The whole message, not just the phrase. This throws at construction — so it surfaces during
+  // a deploy, in a stack that names the framework's module loader rather than the offending
+  // config — and an app wires several of these handlers from one config object. Without the
+  // factory name and the field name in the text, the operator knows a cookie domain is bad
+  // somewhere and nothing more.
+  it.each(cases)('%s refuses the domain %j, naming itself and the field', (name, domain) => {
+    expect(() => factories[name](domain)).toThrow(
+      `${factoryNames[name]}: invalid cookie domain "${domain}" for cookieDomain.`
+    )
   })
 
   it.each(['logout', 'silentRefresh'] as const)('%s accepts a real shared-domain value', (name) => {

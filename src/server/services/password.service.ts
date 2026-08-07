@@ -157,21 +157,21 @@ function parsePhcParams(text: string): { ln: number; r: number; p: number } | nu
   // `2 ** 1e21` is `Infinity`, and `Infinity` is greater than the ceiling.
   //
   // `r` and `p` DO need a ceiling of their own, which the first version of this parser missed.
-  // They reach `scrypt` directly and also feed `maxmem: N * r * 128 * 2` in `compare`,
-  // so a stored value of `999999999` makes Node throw `Invalid scrypt params` and one of
-  // `4294967295` makes it throw `maxmem is out of range` — an exception out of a function
-  // whose whole contract is that a malformed record returns `null` and the caller answers
-  // "wrong password" with no branch whose timing distinguishes the two. 255 is far above any
-  // parameter either implementation writes (8 and 1) and far below where the arithmetic
-  // stops being representable.
+  // They reach `scrypt` directly, so a stored value of `999999999` makes Node throw
+  // `Invalid scrypt params` — an exception out of a function whose whole contract is that a
+  // malformed record returns `null` and the caller answers "wrong password" with no branch
+  // whose timing distinguishes the two. 255 is far above any parameter either implementation
+  // writes (8 and 1) and far below where the arithmetic stops being representable.
   if (ln < 1) return null
   if (r < 1 || r > MAX_SCRYPT_PARAMETER || p < 1 || p > MAX_SCRYPT_PARAMETER) return null
   // The working set the record ASKS FOR, held to the same ceiling the configured cost is held
-  // to at startup. Without this the bounds above are only about arithmetic: `ln = 31` with the
-  // shipped `r = 8` is inside them and asks for 2 TiB, and `compare` does not refuse it — it
-  // computes `maxmem` FROM the record and widens the limit to fit, so the derivation is
-  // attempted and the process is OOM-killed. That takes down every in-flight connection, not
-  // just the request carrying the record.
+  // to at startup. `compare` now caps `maxmem` with a constant, so a record above this one no
+  // longer GETS the allocation it asks for — it gets an exception out of `scrypt`, which is a
+  // 500 from every credential path rather than the `false` the contract promises. Refusing it
+  // here is what keeps that answer a `false`. (Before the cap, `maxmem` was computed from the
+  // record and widened to fit whatever it claimed, and this check was the only thing standing
+  // between a crafted `ln = 31, r = 8` and a 2 TiB allocation that OOM-kills the process. The
+  // two bounds are independent now, which is the point: neither is a single point of failure.)
   //
   // A hash written under a validated configuration is always inside this, because the same
   // ceiling is what let that configuration boot. So nothing legitimate is refused — this only
@@ -471,15 +471,27 @@ export class PasswordService {
       N,
       r,
       p,
-      // Sized for the parameters actually being used, which may exceed the configured ones —
-      // but never without bound: `parsePhcParams` has already refused any record whose working
-      // set is above `MAX_KDF_BYTES_PER_DERIVATION`, so this cannot be widened past 2x that
-      // ceiling by what the record claims.
-      // Stryker disable next-line ArithmeticOperator,MethodExpression: `maxmem` is a CEILING, and
-      // only its being too LOW is observable (scrypt throws). Every mutant here lowers it while
-      // leaving it above what any hash these tests verify actually needs, so the derivation and
-      // its result are identical — the same reason the constructor's copy carries a disable
-      maxmem: Math.max(N * r * 128 * 2, this.maxmem)
+      // A FIXED ceiling, deliberately not derived from the record.
+      //
+      // This used to be `Math.max(N * r * 128 * 2, this.maxmem)` — sized to the parameters
+      // actually being used, on the reasoning that `parsePhcParams` had already refused any
+      // record above `MAX_KDF_BYTES_PER_DERIVATION` so it could never widen far. That is true,
+      // and it made this line the second half of a single point of failure: the parser's ceiling
+      // was the ONLY thing between a crafted record and a `128 * N * r` allocation, because a
+      // ceiling computed FROM the record grows to fit whatever the record claims. Remove that one
+      // check and `ln = 31, r = 8` asks for 2 TiB, which does not fail the request — it OOM-kills
+      // the process and every in-flight connection with it.
+      //
+      // A constant cannot be widened by input. Nothing legitimate notices: the parser admits only
+      // records needing at most `MAX_KDF_BYTES_PER_DERIVATION`, and `this.maxmem` cannot exceed
+      // twice that ceiling either (startup holds the configured cost to the same limit), so this
+      // is at or above every value the old expression could produce for a reachable input.
+      // Above it, scrypt throws instead of allocating — a failed verification rather than a dead
+      // host.
+      // Stryker disable next-line ArithmeticOperator: `maxmem` is a CEILING and only its being too
+      // LOW is observable (scrypt throws). Halving it leaves it above what any hash these tests
+      // verify actually needs, so the derivation and its result are identical
+      maxmem: MAX_KDF_BYTES_PER_DERIVATION * 2
     })
 
     return cryptoTimingSafeEqual(candidate, parsed.derived)

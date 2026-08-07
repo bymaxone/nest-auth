@@ -17,7 +17,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { sha256 } from '../crypto/secure-token'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -142,6 +142,9 @@ describe('EmailChangeService', () => {
       expect(() => withoutSender.onModuleInit()).toThrow(/controllers\.emailChange is enabled/)
       expect(() => withoutSender.onModuleInit()).toThrow(/sendEmailChangeVerification/)
       expect(() => withoutSender.onModuleInit()).toThrow(/cannot deliver/)
+      // …including the closing half, which is the part that says the flow is dead rather than
+      // degraded. Truncated to "cannot deliver" it reads as a warning about one address.
+      expect(() => withoutSender.onModuleInit()).toThrow(/its token without it/)
     })
 
     it('boots when the provider can deliver it', () => {
@@ -216,6 +219,45 @@ describe('EmailChangeService', () => {
       // Refused before the KDF, so a locked account is not an amplifier either.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
       expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The budget is keyed to THIS account and THIS flow, which is the whole reason it is a
+    // separate counter. Two failures are possible here and both are severe in opposite
+    // directions: a key that drops the user id gives every account one shared counter, so any
+    // caller's failures lock out every user in the deployment; a key that drops the flow prefix
+    // merges this budget with `login`'s, so guessing here locks the owner out of signing in.
+    it('keys the failure budget to the account and to this flow alone', async () => {
+      await service.requestChange('user-1', dto)
+
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256('reauth:email-change:user-1', 'test-hmac-key')
+      )
+    })
+
+    // The control for the test above: two accounts must not share one counter, or a single
+    // caller's failures lock out every user in the deployment.
+    it('gives two accounts two different budgets', async () => {
+      await service.requestChange('user-1', dto)
+      const first = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
+      mockBruteForce.isLockedOut.mockClear()
+      mockUserRepo.findById.mockResolvedValue({ ...USER, id: 'user-2' })
+
+      await service.requestChange('user-2', dto)
+
+      expect(mockBruteForce.isLockedOut.mock.calls[0]?.[0]).not.toBe(first)
+    })
+
+    // The lockout is answered with `account_locked`, which says nothing about which account or
+    // why, so this line is the only record naming the user whose re-proof budget ran out — the
+    // signal that someone holding a token is guessing at the password behind it.
+    it('names the account whose budget ran out', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
+      warnSpy.mockRestore()
     })
 
     it('counts a wrong current password against that budget', async () => {
@@ -437,10 +479,22 @@ describe('EmailChangeService', () => {
       ['an object', { digest: 'x' }],
       ['null, which is a value and not an absence', null]
     ])('refuses a record whose fingerprint is %s', async (_label, fingerprint) => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.getdel.mockResolvedValue(storedContext({ passwordFingerprint: fingerprint }))
 
       await expect(service.confirmChange({ token: TOKEN })).rejects.toThrow(AuthException)
       expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
+
+      // Refused as a MALFORMED RECORD, and the difference is not visible in the response —
+      // both refusals answer the same `email_change_token_invalid`, deliberately. It is visible
+      // here: `assertStillBound` announces "no longer bound to the account password", which
+      // asserts something specific and false about a corrupted record — that the user changed
+      // their password. A shape check that lets the value through reaches that line and files
+      // the wrong diagnosis, sending whoever reads it after a password change that never
+      // happened.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).not.toContain('no longer bound to the account password')
+      warnSpy.mockRestore()
     })
 
     // A record with no fingerprint field at all — what a sibling implementation that has not

@@ -177,7 +177,16 @@ interface MfaSetupData {
  * @returns `true` when every field is present and correctly typed.
  */
 function isMfaSetupData(value: unknown): value is MfaSetupData {
-  if (typeof value !== 'object' || value === null) return false
+  if (value === null) return false
+  // Unobservable either way. A primitive answers `undefined` to every field read below, so the
+  // conjunction returns false without this arm, and returning true from it hands the caller a
+  // value whose fields are all `undefined` — refused a step later by the same MFA_SETUP_REQUIRED.
+  // Only `null` has to be stopped before the reads, because taking a property off it throws.
+  // Kept as a stated precondition rather than as behaviour.
+  //
+  // Stryker disable ConditionalExpression,BooleanLiteral: subsumed by the field reads below
+  if (typeof value !== 'object') return false
+  // Stryker restore ConditionalExpression,BooleanLiteral
   const v = value as Record<string, unknown>
   return (
     typeof v['encryptedSecret'] === 'string' &&
@@ -419,11 +428,17 @@ export class MfaService {
    * with Redis write access from distinguishing "no setup pending" from
    * "setup payload corrupted".
    */
-  private parseSetupData(raw: string): MfaSetupData {
+  private parseSetupData(raw: string, userId: string): MfaSetupData {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
     } catch {
+      // Recorded, not just refused. The caller gets an opaque MFA_SETUP_REQUIRED — correct, since
+      // it must learn nothing about the payload's structure — which leaves this line as the only
+      // trace of an event the docstring above calls either a downgrade of the stored value or an
+      // internal bug. Both are things an operator needs to see, and neither is visible anywhere
+      // else.
+      this.logger.warn(`parseSetupData: pending-setup payload is not valid JSON userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
@@ -445,11 +460,17 @@ export class MfaService {
    * `MFA_SETUP_REQUIRED` so callers do not learn structural details of the
    * encrypted payload.
    */
-  private parsePlainRecoveryCodes(raw: string): string[] {
+  private parsePlainRecoveryCodes(raw: string, userId: string): string[] {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
     } catch {
+      // Same reasoning as `parseSetupData`, and a stronger case: AES-GCM authenticates the
+      // ciphertext, so a decrypted value that will not parse means the plaintext itself was
+      // written wrong. That is an internal bug, and it is otherwise silent.
+      this.logger.warn(
+        `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${userId}`
+      )
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     if (!Array.isArray(parsed) || parsed.some((code) => typeof code !== 'string')) {
@@ -694,10 +715,10 @@ export class MfaService {
     // discarded by SET-NX after wasted work; subsequent requests hit the fast path.
     const existingFast = await this.redis.get(setupKey)
     if (existingFast !== null) {
-      const data = this.parseSetupData(existingFast)
+      const data = this.parseSetupData(existingFast, userId)
       const existingSecret = this.decryptSecret(data.encryptedSecret)
       const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
-      const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
+      const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson, userId)
       const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
       return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
     }
@@ -721,10 +742,10 @@ export class MfaService {
       // Another request already started setup — return their data for idempotency.
       const existing = await this.redis.get(setupKey)
       if (existing !== null) {
-        const data = this.parseSetupData(existing)
+        const data = this.parseSetupData(existing, userId)
         const existingSecret = this.decryptSecret(data.encryptedSecret)
         const decryptedCodesJson = this.decryptSecret(data.encryptedPlainCodes)
-        const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson)
+        const existingCodes = this.parsePlainRecoveryCodes(decryptedCodesJson, userId)
         const qrCodeUri = buildTotpUri(existingSecret, user.email, this.mfaOptions.issuer)
         return { secret: existingSecret, qrCodeUri, recoveryCodes: existingCodes }
       }
@@ -784,7 +805,7 @@ export class MfaService {
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
-    const data = this.parseSetupData(raw)
+    const data = this.parseSetupData(raw, userId)
     const secretBase32 = this.decryptSecret(data.encryptedSecret)
 
     const totpWindow = this.mfaOptions.totpWindow
@@ -990,6 +1011,10 @@ export class MfaService {
         // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
         // written back.
         if (!current.mfaEnabled) return null
+        // Stryker disable next-line ArrayDeclaration: the fallback's CONTENTS are unobservable. It
+        // stands in for "this account has no recovery codes", and the only thing done with the list
+        // is `indexOf(spentDigest)` — a digest that cannot be in a list the account does not have,
+        // so any placeholder yields the same -1 and the same early return
         const currentCodes = current.mfaRecoveryCodes ?? []
         // Re-locate the code in the CURRENT list: the index computed against the earlier read
         // may name a different code, or none, after a concurrent write.

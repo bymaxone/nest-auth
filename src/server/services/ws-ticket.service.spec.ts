@@ -7,6 +7,7 @@
  * make the equivalent HTTP request, and must be worth nothing after one redemption.
  */
 
+import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -214,6 +215,60 @@ describe('WsTicketService', () => {
     it('should refuse an empty ticket without consulting the store', async () => {
       await expect(service.redeem('')).rejects.toThrow(AuthException)
       expect(mockRedis.redeemWsTicket).not.toHaveBeenCalled()
+    })
+
+    // Scenario: a ticket that will not redeem. Expected: a warning is emitted. Why: the caller
+    // gets a deliberately uninformative `token_invalid`, so the log line is the ONLY place the
+    // event is recorded — and a run of them is either replayed upgrade URLs or clients missing
+    // the window, which is the distinction an operator acts on. Silence here is indistinguishable
+    // from no traffic.
+    it('should record the refusal for an operator', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.redeemWsTicket.mockResolvedValue(null)
+
+      await expect(service.redeem('stale')).rejects.toThrow(AuthException)
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('redemption refused'))
+      warnSpy.mockRestore()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Observability
+  // ---------------------------------------------------------------------------
+
+  describe('observability', () => {
+    // The two lines below are what an operator has to correlate a socket with an account. Both
+    // assert the identifying FIELD rather than the prose, so rewording the message stays free
+    // while emptying it does not.
+
+    // Scenario: an enrolled session that never cleared its challenge tries to mint. Expected:
+    // the refusal names the user. Why: this is the one refusal that means "a second factor was
+    // skipped", and it is invisible in the response — `mfa_required` is what a first, honest
+    // attempt gets too.
+    it('should name the user when refusing a session that skipped its second factor', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+      await expect(
+        service.issue(payload({ mfaEnabled: true, mfaVerified: false }))
+      ).rejects.toThrow(AuthException)
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
+      warnSpy.mockRestore()
+    })
+
+    // Scenario: a successful mint. Expected: the line carries both user and tenant. Why: a
+    // ticket authorizes a socket for its whole lifetime with no per-request gate behind it, so
+    // this line is the audit record of that grant — and without the tenant it cannot be
+    // attributed on a shared table.
+    it('should record an issued ticket with the user and tenant it authorizes', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {})
+
+      await service.issue(payload())
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('tenantId=tenant-1'))
+      logSpy.mockRestore()
     })
   })
 })

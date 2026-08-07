@@ -204,11 +204,18 @@ export function decodeJwtToken(token: string): DecodedToken {
  * {@link decodeJwtToken} remains the explicit, correctly-named entry
  * point for the non-authoritative read.
  *
- * The empty string is refused for a second reason of its own: an
- * empty HMAC key is technically valid to the Web Crypto API and
- * would verify a token signed with the same empty key — a common
- * misconfiguration (`JWT_SECRET=""` in an environment file) that
- * must not silently downgrade to a no-op.
+ * The empty string — `JWT_SECRET=""` in an environment file, the
+ * ordinary way a missing secret arrives as a present one — is refused
+ * by its own check rather than left to the crypto layer. WebCrypto
+ * already rejects zero-length HMAC key material (`importKey` throws
+ * `DataError`, which the catch below converts into the same
+ * `emptyDecoded()`), so the check changes no outcome here. It is kept
+ * because "this function refuses to verify without a secret" should be
+ * readable in the function, and should not rest on an exception thrown
+ * several layers down and swallowed by a broad `catch` — a `catch` that
+ * a later refactor can narrow without knowing it was load-bearing.
+ * No test can distinguish the two, so the mutants on it carry a
+ * suppression.
  *
  * @param token  - JWS compact serialisation.
  * @param secret - HS256 shared secret. A missing or empty value
@@ -219,10 +226,10 @@ export function decodeJwtToken(token: string): DecodedToken {
  *          actually checked.
  */
 export async function verifyJwtToken(token: string, secret?: string | null): Promise<DecodedToken> {
-  // Fail closed on a missing or empty secret — see the JSDoc above for rationale.
-  if (secret === undefined || secret === null || secret.length === 0) {
-    return emptyDecoded()
-  }
+  // Fail closed on a missing or empty secret — rationale in the JSDoc.
+  if (secret === undefined || secret === null) return emptyDecoded()
+  // Stryker disable next-line ConditionalExpression: subsumed by WebCrypto's own refusal
+  if (secret.length === 0) return emptyDecoded()
 
   const parts = token.split('.')
   if (parts.length !== 3) return emptyDecoded()

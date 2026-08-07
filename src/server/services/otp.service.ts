@@ -84,10 +84,66 @@ return { 'PRESENT', code }
  * @returns The tag and, for `PRESENT`, the stored code.
  */
 function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', string] {
-  if (!Array.isArray(raw) || raw.length < 2) return ['EXPIRED', '']
+  if (!Array.isArray(raw)) return expired()
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: no reply distinguishes it. A
+  // shorter array has no second element, which the string check below refuses on its own, and a
+  // one-element `['MAX']` answers the same OTP_INVALID after the same padding as an expiry. The
+  // arity is asserted because the wire contract is two elements
+  if (raw.length < 2) return expired()
   const [tag, storedCode] = raw as [unknown, unknown]
-  if (tag !== 'MAX' && tag !== 'PRESENT') return ['EXPIRED', '']
-  return [tag, typeof storedCode === 'string' ? storedCode : '']
+  // Taken before the code is inspected, because `MAX` carries an EMPTY second element by contract
+  // (the script returns `{ 'MAX', '' }`) — the emptiness check below would file it as an expiry
+  // and leave the ceiling branch in `verify` unreachable.
+  //
+  // Only the two mutators named are suppressed: `EqualityOperator` here IS killable (`!==` routes
+  // every other reply to the ceiling arm, which a correct code then fails on). The other two are
+  // not, because a MAX reply reaching the expiry arm answers the same OTP_INVALID after the same
+  // padding — the arms are separate so the ceiling is recorded as its own fact, not so the caller
+  // can tell.
+  // Stryker disable next-line ConditionalExpression,StringLiteral: MAX and EXPIRED answer alike
+  if (tag === 'MAX') return maxed()
+  // Stryker disable next-line ConditionalExpression: MAX and EXPIRED are deliberately the same
+  // answer — same code, same padding, nothing in the response separating them — so routing an
+  // unknown tag to either arm cannot be observed. They are kept distinct because the two are
+  // different facts in the log
+  if (tag !== 'PRESENT') return expired()
+  // For a PRESENT record the code is the credential, and one that is not a string, or is an empty
+  // one, is a record nobody wrote to spec — refused as expiry like every other malformed shape
+  // rather than read.
+  //
+  // Both halves matter, and for one reason: `timingSafeEqual` answers TRUE for two empty buffers.
+  // So an empty stored code compares EQUAL to an empty submitted one and the verification
+  // SUCCEEDS. This used to substitute `''` for a non-string, which manufactured exactly that
+  // record; refusing the non-string closed the manufactured case and left the stored-empty one,
+  // which is the same bug arriving by a different route. `store` only ever writes a generated
+  // code of the configured digit length, so nothing legitimate is refused here.
+  if (typeof storedCode !== 'string' || storedCode === '') return expired()
+  return ['PRESENT', storedCode]
+}
+
+/**
+ * The refusal every malformed or absent record shares.
+ *
+ * Its second element is never read: `verify` throws on the `EXPIRED` tag before reaching the
+ * comparison, which is why the value is a constant here rather than a decision at each site.
+ */
+function expired(): ['EXPIRED', string] {
+  // Stryker disable next-line StringLiteral: unreachable as a value — every branch returning this
+  // throws before the code is compared
+  return ['EXPIRED', '']
+}
+
+/**
+ * The attempt-ceiling reply.
+ *
+ * Its second element is never read either — `verify` throws on the `MAX` tag before the
+ * comparison — which is why the script's own empty string is restated here rather than carried
+ * through from the reply.
+ */
+function maxed(): ['MAX', string] {
+  // Stryker disable next-line StringLiteral: unreachable as a value — the MAX arm in `verify`
+  // throws before the code is compared
+  return ['MAX', '']
 }
 
 /**
