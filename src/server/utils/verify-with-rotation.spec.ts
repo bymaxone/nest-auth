@@ -97,6 +97,23 @@ describe('verifyWithRotation', () => {
     expect(() => verifyWithRotation(jwt, optionsWith([]), bad)).toThrow()
   })
 
+  // Scenario: no rotation configured, and a token that will not verify. Expected: the verifier
+  // is consulted ONCE. Why: the absent list has to stand in as empty, and the failure looks the
+  // same whatever it stands in as — a placeholder entry would be tried, fail, and rethrow the
+  // same error. What it would not do is stay free: every rejected token on a deployment that
+  // never rotated would pay for an extra signature verification, on the unauthenticated path
+  // where a flood of rejected tokens is the thing an attacker sends.
+  it('tries no additional secret when no rotation is configured', () => {
+    const jwt = serviceFor(CURRENT)
+    const bad = serviceFor(RETIRED).sign({ sub: 'u6' })
+    const verifySpy = jest.spyOn(jwt, 'verify')
+
+    expect(() => verifyWithRotation(jwt, optionsWith(), bad)).toThrow()
+
+    expect(verifySpy).toHaveBeenCalledTimes(1)
+    verifySpy.mockRestore()
+  })
+
   // Scenario: an expired token signed under a retired secret. Expected: still rejected. Why: a
   // retired secret buys a token nothing but signature acceptance — every other check the
   // verifier makes still applies, or a rotation would quietly extend token lifetimes.

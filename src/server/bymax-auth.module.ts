@@ -499,6 +499,23 @@ export class BymaxAuthModule {
         // NestJS auto-registers @UseGuards() guards as local providers in the controller's
         // module; all constructor deps must be resolvable from that module's context.
         AuthRedisService,
+        // Same reason, for the two exported guards whose remaining constructor deps are not
+        // covered by the entries above. Exporting the guard class is necessary but not
+        // sufficient: because @UseGuards() re-instantiates the guard in the *consumer's*
+        // injector, a dep missing here fails the consumer's boot with
+        // UnknownDependenciesException even though the guard itself is exported.
+        //
+        //   UserStatusGuard -> BYMAX_AUTH_USER_REPOSITORY
+        //   WsJwtGuard      -> WsTicketService
+        //
+        // Re-exporting the token (rather than asking the consumer to register the repository
+        // again) is what keeps the guard bound to the SAME instance the auth module uses; a
+        // second registration would resolve the guard against a different object.
+        BYMAX_AUTH_USER_REPOSITORY,
+        // WsTicketService also stands on its own as public surface: single-use ticket
+        // handshakes are the credential a realtime transport is meant to use, and a consumer
+        // cannot mint one without injecting this service.
+        WsTicketService,
         // Export JwtModule so host-app modules that apply JWT-dependent guards via
         // @UseGuards() have JwtService in scope.
         JwtModule

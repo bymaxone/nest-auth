@@ -4,7 +4,7 @@
  * Covers startup validation errors, controller registration, and NoOp fallback providers.
  */
 
-import { Inject, Injectable } from '@nestjs/common'
+import { Controller, Inject, Injectable, Module, UseGuards } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
@@ -28,7 +28,10 @@ import { PasswordResetController } from './controllers/password-reset.controller
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { MfaRequiredGuard } from './guards/mfa-required.guard'
+import { UserStatusGuard } from './guards/user-status.guard'
+import { WsJwtGuard } from './guards/ws-jwt.guard'
 import type { BymaxAuthModuleOptions } from './interfaces/auth-module-options.interface'
 import { NoOpAuthHooks } from './hooks/no-op-auth.hooks'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
@@ -40,6 +43,7 @@ import { InvitationService } from './services/invitation.service'
 import { MfaService } from './services/mfa.service'
 import { PasswordResetService } from './services/password-reset.service'
 import { SessionService } from './services/session.service'
+import { WsTicketService } from './services/ws-ticket.service'
 import { BymaxAuthModule } from './bymax-auth.module'
 
 // ---------------------------------------------------------------------------
@@ -205,7 +209,16 @@ describe('BymaxAuthModule', () => {
             })
           ]
         }).compile()
-      ).rejects.toThrow(/`controllers` must be passed to registerAsync\(\) itself/)
+      ).rejects.toThrow(
+        // The whole message, because the first clause alone only says WHERE to move the key. The
+        // rest says why the mistake is invisible without this error — the flags are dropped in
+        // silence and the endpoints are simply absent, so the symptom is a 404 in a different
+        // object from the one that was edited. That explanation is the reason this check exists
+        // rather than being left to the documentation it replaced.
+        '[BymaxAuthModule] `controllers` must be passed to registerAsync() itself, not returned ' +
+          'from useFactory — the module is assembled before the factory runs, so flags returned ' +
+          'here are ignored and the endpoints are never registered.'
+      )
     })
 
     // Verifies that the module fails when controllers.mfa: true is set without the mfa config group.
@@ -706,6 +719,117 @@ describe('BymaxAuthModule', () => {
 
       const probe = module.get(HostProbe)
       expect(probe.auth).toBeInstanceOf(AuthService)
+    })
+
+    // The three tests below cover a failure mode that exporting the guard does NOT prevent.
+    // @UseGuards(SomeGuard) makes Nest instantiate the guard in the injector of the module
+    // that declares the *controller*, so every constructor dep of that guard has to be
+    // resolvable from the consumer's context. A guard can therefore be exported and still
+    // be unusable, and the boot failure names the missing dep rather than the guard:
+    //
+    //   UnknownDependenciesException: Nest can't resolve dependencies of the UserStatusGuard
+    //   (AuthRedisService, ?, Symbol(BYMAX_AUTH_OPTIONS))
+    //
+    // They use a real consumer @Module rather than putting the controller on the testing
+    // module directly, because that is the shape the exception appears in.
+
+    // Scenario: a consumer module declares a controller guarded by UserStatusGuard.
+    // Expected: the module compiles. Why: UserStatusGuard needs BYMAX_AUTH_USER_REPOSITORY,
+    // which the consumer supplies to registerAsync but cannot see itself unless the auth
+    // module re-exports the token. Dropping it from `exports` fails this test.
+    it('should let a consumer module apply UserStatusGuard via @UseGuards', async () => {
+      @Controller('probe')
+      @UseGuards(JwtAuthGuard, UserStatusGuard)
+      class GuardedController {}
+
+      @Module({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: baseProviders
+          })
+        ],
+        controllers: [GuardedController]
+      })
+      class ConsumerModule {}
+
+      const module = await Test.createTestingModule({ imports: [ConsumerModule] }).compile()
+
+      expect(module.get(UserStatusGuard, { strict: false })).toBeInstanceOf(UserStatusGuard)
+    })
+
+    // Scenario: the same, for the guard that authenticates a realtime handshake.
+    // Expected: compiles. Why: WsJwtGuard needs WsTicketService, which was registered as a
+    // provider but never exported — so the single-use ticket handshake was unreachable from
+    // outside the library.
+    it('should let a consumer module apply WsJwtGuard via @UseGuards', async () => {
+      @Controller('ws-probe')
+      @UseGuards(WsJwtGuard)
+      class WsGuardedController {}
+
+      @Module({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: baseProviders
+          })
+        ],
+        controllers: [WsGuardedController]
+      })
+      class ConsumerModule {}
+
+      const module = await Test.createTestingModule({ imports: [ConsumerModule] }).compile()
+
+      expect(module.get(WsJwtGuard, { strict: false })).toBeInstanceOf(WsJwtGuard)
+    })
+
+    // Scenario: a host provider injects WsTicketService to mint a handshake ticket itself.
+    // Expected: it resolves, and it is the same instance the auth module uses — re-registering
+    // the service in the consumer would satisfy injection while binding to a different object,
+    // which is why this asserts identity against the auth module's own instance.
+    it('should export WsTicketService as the same instance the module uses', async () => {
+      @Injectable()
+      class TicketProbe {
+        constructor(@Inject(WsTicketService) readonly tickets: WsTicketService) {}
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: baseProviders
+          })
+        ],
+        providers: [TicketProbe]
+      }).compile()
+
+      const probe = module.get(TicketProbe)
+      expect(probe.tickets).toBeInstanceOf(WsTicketService)
+      expect(probe.tickets).toBe(module.get(WsTicketService, { strict: false }))
+    })
+
+    // Scenario: a host provider injects the user repository token across the module boundary.
+    // Expected: it resolves to the very object handed to registerAsync. Why: the guard fix is
+    // only correct if the re-export carries the consumer's own instance through; a second
+    // registration elsewhere would resolve to a different repository and the guard would read
+    // account status from the wrong source.
+    it('should export BYMAX_AUTH_USER_REPOSITORY as the instance supplied by the consumer', async () => {
+      @Injectable()
+      class RepoProbe {
+        constructor(@Inject(BYMAX_AUTH_USER_REPOSITORY) readonly repo: unknown) {}
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [
+          BymaxAuthModule.registerAsync({
+            useFactory: () => validOptions,
+            extraProviders: baseProviders
+          })
+        ],
+        providers: [RepoProbe]
+      }).compile()
+
+      expect(module.get(RepoProbe).repo).toBe(mockUserRepo)
     })
   })
 

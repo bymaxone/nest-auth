@@ -317,6 +317,17 @@ describe('verifyJwtToken — happy paths and fallbacks', () => {
     expect(decoded.isValid).toBe(false)
   })
 
+  // Node's Web Crypto rejects a zero-length HMAC key outright (`DataError: Zero-length key is
+  // not supported`), so a token signed with the empty secret cannot even be constructed here —
+  // which is why the refusal in the source carries a suppression rather than a test: on THIS
+  // runtime nothing can observe it. It is kept for the runtimes that do accept such a key, where
+  // an empty secret verifies anything signed with the same empty one.
+  it('cannot even sign with the empty secret on this runtime', async () => {
+    await expect(
+      signHs256Token({ type: 'dashboard', sub: 'u', role: 'admin', exp: 1 }, '')
+    ).rejects.toThrow(/[Zz]ero-length key/)
+  })
+
   // A 4-segment token must be rejected by the `parts.length !== 3`
   // structural guard in verify mode — even when its first three
   // segments form a perfectly valid, correctly-signed HS256 token with

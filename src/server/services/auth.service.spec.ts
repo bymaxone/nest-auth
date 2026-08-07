@@ -289,6 +289,52 @@ describe('AuthService', () => {
       logSpy.mockRestore()
     })
 
+    // Scenario: verification is not required and the hook returns no `emailVerified` at all.
+    // Expected: the key is ABSENT from what reaches the repository — not present holding
+    // `undefined`. Why: the spread is guarded on the value being a boolean precisely so a hook
+    // that says nothing leaves the decision to the repository's own default. Sending the key with
+    // `undefined` overrides that default in most persistence layers, writing NULL or false over
+    // whatever the column was meant to be — and this is the account-creation path, so the account
+    // starts life in a state nobody chose.
+    it('omits emailVerified entirely when the hook does not decide it', async () => {
+      mockHooks.beforeRegister.mockResolvedValue({ allowed: true })
+
+      await service.register(dto, mockReq)
+
+      const created = mockUserRepo.create.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(Object.hasOwn(created, 'emailVerified')).toBe(false)
+    })
+
+    // …and honours it when the hook does decide, so the guard is not just "always omit".
+    it('carries emailVerified through when the hook decides it', async () => {
+      mockHooks.beforeRegister.mockResolvedValue({
+        allowed: true,
+        modifiedData: { emailVerified: true }
+      })
+
+      await service.register(dto, mockReq)
+
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ emailVerified: true })
+      )
+    })
+
+    // A non-boolean is not a decision. The guard is a type check rather than a presence check
+    // because `modifiedData` crosses an interface the host application implements, so the value
+    // arrives as whatever that code put there — and a truthy string would otherwise be written
+    // into a boolean column as the host's idea of "verified".
+    it('ignores a non-boolean emailVerified from the hook', async () => {
+      mockHooks.beforeRegister.mockResolvedValue({
+        allowed: true,
+        modifiedData: { emailVerified: 'yes' }
+      })
+
+      await service.register(dto, mockReq)
+
+      const created = mockUserRepo.create.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(Object.hasOwn(created, 'emailVerified')).toBe(false)
+    })
+
     // Verifies that attempting to register with an already-used email throws EMAIL_ALREADY_EXISTS.
     it('should throw EMAIL_ALREADY_EXISTS when email is taken', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(USER)
@@ -649,6 +695,13 @@ describe('AuthService', () => {
         String(line).includes('outside the requested tenant')
       )
       expect(mismatchWarnings).toHaveLength(1)
+      // The line has to name what is actually wrong, which is the repository's own contract — not
+      // the request. The symptom is "logins fail for a valid password"; the cause is a
+      // `findByEmail` that ignores the argument it was given. Without the second clause the
+      // operator is told a tenant mismatch happened and left to guess where.
+      expect(String(mismatchWarnings[0]?.[0])).toContain(
+        'IUserRepository.findByEmail scopes by its tenantId argument'
+      )
       warnSpy.mockRestore()
     })
 
@@ -2717,11 +2770,20 @@ describe('AuthService', () => {
       mockPasswordService.hash.mockResolvedValue('scrypt:131072:8:1:aa:bb')
       // The reset landed first: the row no longer holds the hash that was verified.
       mockUserRepo.findById.mockResolvedValue({ ...USER, passwordHash: 'scrypt:1:1:1:zz:zz' })
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
       await service.login(dto, mockReq)
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
+      // And it says so. This is a silent abandonment on a background task — the login already
+      // succeeded, nothing surfaces to the user, and the account keeps a hash the migration was
+      // supposed to replace. Without the line, an operator watching a parameter migration stall
+      // on a subset of accounts has no record of why it skipped them.
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`the stored hash changed userId=${USER.id}`)
+      )
+      logSpy.mockRestore()
     })
 
     // The account disappearing between the login and the write is the same decision: there is no

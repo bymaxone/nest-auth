@@ -114,6 +114,40 @@ describe('AuthExceptionFilter', () => {
     expect(writtenEnvelope(json).message.length).toBeGreaterThan(0)
   })
 
+  // Scenario: an HttpException whose string body and whose `message` disagree. Expected: the
+  // BODY wins. Why: for an exception built the ordinary way Nest keeps the two in sync, so no
+  // other test here can tell which one the filter reads — and a subclass that sets its own
+  // `message` (or re-throws carrying a different one) makes the choice visible. The body is what
+  // the thrower chose to put on the wire.
+  it('prefers a string body over the exception message when they differ', () => {
+    const { host, json } = makeHost()
+    const exception = new HttpException('body-on-the-wire', HttpStatus.BAD_GATEWAY)
+    Object.defineProperty(exception, 'message', { value: 'internal-message' })
+
+    filter.catch(exception, host)
+
+    expect(writtenEnvelope(json).message).toBe('body-on-the-wire')
+  })
+
+  // Scenario: an HttpException carrying no body at all. Expected: answered, not thrown. Why: the
+  // envelope check reads `body.error`, and `typeof null === 'object'` — so without the explicit
+  // null arm it takes the property off `null` and the filter itself throws. A filter that throws
+  // while handling an exception is the worst failure mode available to it: the request dies with
+  // no envelope, no status, and a second error in the log that hides the first.
+  it.each([
+    ['a null body', null],
+    ['an absent body', undefined]
+  ])('answers an HttpException with %s instead of throwing', (_label, body) => {
+    const { host, status, json } = makeHost()
+
+    expect(() =>
+      filter.catch(new HttpException(body as never, HttpStatus.BAD_GATEWAY), host)
+    ).not.toThrow()
+
+    expect(status).toHaveBeenCalledWith(502)
+    expect(writtenEnvelope(json).code).toBe(AUTH_ERROR_CODES.INTERNAL)
+  })
+
   it('answers an unhandled throw generically, and never with the thrown message', () => {
     const { host, status, json } = makeHost()
     const errorLog = jest.spyOn(filter['logger'], 'error').mockImplementation(() => undefined)
@@ -126,8 +160,11 @@ describe('AuthExceptionFilter', () => {
     expect(envelope.message).toBe('Internal server error')
     // The one path where a stack detail or a connection string would otherwise reach a body.
     expect(JSON.stringify(envelope)).not.toContain('hunter2')
-    // …and the cause is still recorded where an operator can read it.
-    expect(errorLog).toHaveBeenCalled()
+    // …and the cause is still recorded where an operator can read it. The message is asserted,
+    // not just the call: the response deliberately says nothing about what failed, so this line
+    // is the only description of the failure that exists anywhere. An empty one leaves the
+    // operator with a bare stack and no statement of what the filter was doing.
+    expect(errorLog).toHaveBeenCalledWith('unhandled exception', expect.any(Error))
   })
 
   it('answers a non-Error throw the same way', () => {

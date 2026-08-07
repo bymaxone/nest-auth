@@ -233,8 +233,18 @@ const AUTH_REFRESH_SKIP_PROXY_PATHS = [
 function trimSlashes(value: string): string {
   let start = 0
   let end = value.length
+  // Block form because the reason spans both lines and a wrapped `next-line` binds to its own
+  // continuation.
+  //
+  // Stryker disable ConditionalExpression,EqualityOperator: the index bounds cannot be observed.
+  // `end` starts at `value.length`, so a scan that runs past the run of slashes reads `undefined`
+  // and stops on the character test alone; and a bound that lets the two cross produces a
+  // reversed range, which `slice` returns as `''` — the same answer the un-crossed range gives
+  // for an all-slash input. They are here so each loop states its own invariant rather than
+  // relying on the lookup falling off the end
   while (start < end && value[start] === '/') start += 1
   while (end > start && value[end - 1] === '/') end -= 1
+  // Stryker restore ConditionalExpression,EqualityOperator
   return value.slice(start, end)
 }
 

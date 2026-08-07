@@ -391,6 +391,54 @@ describe('MfaService', () => {
       expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
     })
 
+    // …and it is recorded, naming the account and which surface it was attempted on. This is the
+    // refusal that means "someone is holding a token for a passwordless account and trying to
+    // enrol a factor on it" — the exact shape of the attack the gate was added for. The response
+    // says only `reauthentication_required`, which a legitimate user also sees, so the log line is
+    // the only place the attempt is distinguishable at all.
+    it('records the refused enrolment with the account and the surface', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
+      mockRedis.get.mockImplementation(onlyRecentAuth(false))
+
+      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('no recent authentication')
+      expect(warned).toContain('userId=user-1')
+      expect(warned).toContain('context=dashboard')
+      warnSpy.mockRestore()
+    })
+
+    // The re-proof budget for an account WITH a password is keyed to the account and the surface.
+    // Dropping either gives the deployment one shared counter: anyone's failed attempts lock out
+    // every user, and a caller guessing here would lock the owner out of `login` as well —
+    // exactly what namespacing the counter by flow exists to prevent.
+    it('keys the re-proof budget to the account and the surface', async () => {
+      await service.setup('user-1', 'dashboard', PASSWORD)
+
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256('reauth:dashboard:user-1', HMAC_KEY)
+      )
+    })
+
+    // The lockout answers `account_locked`, which names neither the account nor the flow, so
+    // this line is what tells an operator whose budget ran out and where.
+    it('records a locked re-proof budget with the account and the surface', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
+
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
+      })
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('account locked')
+      expect(warned).toContain('userId=user-1')
+      expect(warned).toContain('context=dashboard')
+      warnSpy.mockRestore()
+    })
+
     // A distinct code rather than `INVALID_CREDENTIALS`, because the two mean different things
     // to the client: one says "that password is wrong", the other says "send the user back
     // through sign-in and retry". Collapsing them would leave a legitimate OAuth user staring
@@ -610,9 +658,17 @@ describe('MfaService', () => {
     // Verifies that a corrupted Redis payload on the fast path surfaces opaquely as
     // MFA_SETUP_REQUIRED rather than leaking SyntaxError. Anti-tampering defence.
     it('should throw MFA_SETUP_REQUIRED when fast-path Redis payload is corrupted JSON', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.get.mockResolvedValue('{not-valid-json')
 
       await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+
+      // The refusal is deliberately opaque to the caller — it must not describe the payload — so
+      // this line is the only record that a stored record is corrupt, and which account's it is.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('pending-setup payload is not valid JSON')
+      expect(warned).toContain('userId=user-1')
+      warnSpy.mockRestore()
       try {
         await service.setup('user-1', 'dashboard', PASSWORD)
       } catch (err) {
@@ -634,8 +690,16 @@ describe('MfaService', () => {
       }
 
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+
+      // AES-GCM authenticates the ciphertext, so a decrypted value that will not parse means the
+      // plaintext was written wrong — an internal bug, and otherwise entirely silent.
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('decrypted payload is not valid JSON')
+      expect(warned).toContain('userId=user-1')
+      warnSpy.mockRestore()
     })
 
     // Scenario: a pending-setup record that parses but carries no `hashedCodes`. Expected:
@@ -650,6 +714,65 @@ describe('MfaService', () => {
         JSON.stringify({
           encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
           encryptedPlainCodes: encrypt('["a"]', VALID_ENCRYPTION_KEY)
+        })
+      )
+
+      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+    })
+
+    // The other two fields get the same treatment as `hashedCodes`, and for the same reason: the
+    // record is read back out of Redis, so every field is attacker-influenced if the store is.
+    // Only `hashedCodes` was pinned, which left the two ciphertext fields checked by a conjunction
+    // no test could tell was there — dropping either clause, or turning the `&&` into an `||`, went
+    // unnoticed. A non-string `encryptedSecret` reaches `decrypt` as an object; a non-string
+    // `encryptedPlainCodes` reaches it as one on the recovery-code path.
+    it.each([
+      ['encryptedSecret', { encryptedSecret: 42 }],
+      ['encryptedSecret absent', { encryptedSecret: undefined }],
+      ['encryptedPlainCodes', { encryptedPlainCodes: 42 }],
+      ['encryptedPlainCodes absent', { encryptedPlainCodes: undefined }]
+    ])(
+      'should refuse a pending-setup record whose %s is not a string',
+      async (_label, override) => {
+        const aesGcm = await import('../crypto/aes-gcm')
+        const decryptSpy = jest.spyOn(aesGcm, 'decrypt')
+
+        mockRedis.get.mockResolvedValue(
+          JSON.stringify({
+            encryptedSecret: aesGcm.encrypt(
+              'SECRETBASE32ABCDEFGHIJKLMNOPQR12',
+              VALID_ENCRYPTION_KEY
+            ),
+            hashedCodes: ['hash1'],
+            encryptedPlainCodes: aesGcm.encrypt('["a"]', VALID_ENCRYPTION_KEY),
+            ...override
+          })
+        )
+
+        await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+        // Refused by the SHAPE CHECK, before the value reaches the cipher. Asserting only that it
+        // throws cannot show that: a record admitted by a weakened check fails a step later, when
+        // `decrypt` is handed a number, and surfaces as the same opaque MFA_SETUP_REQUIRED. Which
+        // is the point of checking the shape at all — a value read back out of Redis is
+        // attacker-influenced if the store is, and it should not be handed to AES-GCM to find out.
+        expect(decryptSpy).not.toHaveBeenCalled()
+        decryptSpy.mockRestore()
+      }
+    )
+
+    // Scenario: the decrypted recovery codes are an array with SOME non-string members.
+    // Expected: refused. Why: the check has to reject on any bad member, not only when every
+    // member is bad — the codes are handed to the user as their way back into the account, and a
+    // list where one entry is a number is one the user cannot use and cannot tell apart from the
+    // others. A mixed array is also the realistic corruption: a partially rewritten payload.
+    it('should refuse decrypted recovery codes that are only partly strings', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          encryptedSecret: encrypt('SECRETBASE32ABCDEFGHIJKLMNOPQR12', VALID_ENCRYPTION_KEY),
+          hashedCodes: ['hash1'],
+          encryptedPlainCodes: encrypt('["good-code", 42]', VALID_ENCRYPTION_KEY)
         })
       )
 
@@ -3193,6 +3316,32 @@ describe('MfaService', () => {
       await expect(
         service.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
+    })
+
+    // …and it refuses it after exactly ONE attempt. With no rotation configured the retired-key
+    // loop has nothing to iterate, and the absent list has to stand in as empty rather than as a
+    // placeholder entry: the refusal looks identical either way, but an AES-GCM open per rejected
+    // challenge is not free, and every enrolled account on a deployment that never rotated would
+    // pay it on the unauthenticated MFA path — where a flood of wrong codes is what an attacker
+    // sends.
+    it('should attempt exactly one decryption when no rotation is configured', async () => {
+      const aesGcm = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateTotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const decryptSpy = jest.spyOn(aesGcm, 'decrypt')
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: aesGcm.encrypt(base32, RETIRED_KEY),
+        mfaRecoveryCodes: []
+      })
+
+      await expect(
+        service.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      expect(decryptSpy).toHaveBeenCalledTimes(1)
+      decryptSpy.mockRestore()
     })
 
     // Scenario: a successful challenge against a secret under a retired key. Expected: the
