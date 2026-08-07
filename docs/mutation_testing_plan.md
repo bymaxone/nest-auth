@@ -189,7 +189,8 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
   // --- Incremental mode ---
   // Off for the baseline run (Phase 3) so that the report is complete.
-  // After the first run, switch to true via `pnpm mutation:incremental`.
+  // `true` since 2026-08-07: the per-push CI gate reuses the cached baseline. `pnpm mutation:full`
+  // deletes that baseline first, and the weekly `Mutation (full)` workflow is what measures the truth.
   "incremental": false,
   "incrementalFile": "reports/stryker-incremental.json",
 
@@ -276,7 +277,7 @@ Add the following three keys inside `"scripts"` **after the existing test script
   "scripts": {
     // ... existing scripts unchanged ...
     "mutation": "stryker run",
-    "mutation:incremental": "stryker run --incremental",
+    "mutation:full": "node -e \"require('node:fs').rmSync('reports/stryker-incremental.json',{force:true})\" && stryker run",
     "mutation:dry-run": "stryker run --dryRunOnly"
   }
 }
@@ -372,7 +373,7 @@ Use the existing `tester` workflow (`docs/guidelines/JEST-TESTING-GUIDELINES.md`
 2. Add **one** new `it(...)` that pins the behaviour the mutant would violate.
 3. The test header comment must follow the standards in `bymax-workflow:standards` §4: scenario → expected → why → optional edge-case tag.
 4. Run `pnpm test -- <file>.spec.ts` locally to confirm the new test passes against current code.
-5. Run `pnpm mutation:incremental` to confirm the mutant is now killed.
+5. Run `pnpm mutation` to confirm the mutant is now killed.
 
 **Example.** A `BooleanLiteral` mutant in `mfa.service.ts`:
 
@@ -493,7 +494,7 @@ pnpm test        # must pass — Jest is the authoritative gate
 ### 9.2 After every iteration in Phase 4
 
 ```bash
-pnpm mutation:incremental    # mutation score must be monotonically non-decreasing
+pnpm mutation    # mutation score must be monotonically non-decreasing
 ```
 
 If the score drops after a change, the change introduced or weakened a test. Revert and re-think.
@@ -535,7 +536,7 @@ For release validation, also run:
 
 \`\`\`bash
 pnpm mutation # full mutation testing (~15-25 min)
-pnpm mutation:incremental # incremental (uses reports/stryker-incremental.json)
+pnpm mutation # incremental (uses reports/stryker-incremental.json)
 \`\`\`
 
 Mutation score must be ≥ 95% before tagging a release. See
@@ -551,7 +552,7 @@ Add a short "Mutation testing" subsection pointing at this file. Do not duplicat
 Add a "Mutation testing" subsection that:
 
 - Briefly explains the relationship between line coverage and mutation score.
-- Tells contributors to run `pnpm mutation:incremental` locally when adding tests to a hot path.
+- Tells contributors to run `pnpm mutation` locally when adding tests to a hot path.
 - References §8 of this file for the iteration workflow.
 
 ---
@@ -660,7 +661,7 @@ Copy this checklist into a task list and tick items as you go:
 - [ ] §2 — Confirm baseline: `pnpm test:cov:all` shows 100% across all metrics.
 - [ ] §4 — Install Stryker dev dependencies.
 - [ ] §5 — Create `stryker.config.json` (valid JSON, no comments).
-- [ ] §6.1 — Add `mutation`, `mutation:incremental`, `mutation:dry-run` scripts to `package.json`.
+- [ ] §6.1 — Add `mutation`, `mutation:full`, `mutation:dry-run` scripts to `package.json`.
 - [ ] §6.2 — Add `.stryker-tmp/` and `reports/` to `.gitignore`.
 - [ ] §7 — Run `pnpm mutation:dry-run` and resolve any boot errors.
 - [ ] §7 — Run `pnpm mutation` (baseline). Save the score.
