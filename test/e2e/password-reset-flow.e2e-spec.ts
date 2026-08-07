@@ -109,7 +109,7 @@ describe('password reset flow (E2E)', () => {
       // Step 1 — register the user whose password will be reset.
       await request(app.getHttpServer()).post('/register').send({
         email: 'reset-token@example.com',
-        password: 'OldSecret123!',
+        password: 'OldSecret123!-xyz',
         name: 'Token Reset User',
         tenantId: 'tenant-1'
       })
@@ -138,14 +138,14 @@ describe('password reset flow (E2E)', () => {
         email: 'reset-token@example.com',
         tenantId: 'tenant-1',
         token: extractedToken,
-        newPassword: 'NewSecret456!'
+        newPassword: 'NewSecret456!-xyz'
       })
       resetStatus = reset.status
 
       // Step 5 — login with the new password should succeed and issue tokens.
       const loginNew = await request(app.getHttpServer()).post('/login').send({
         email: 'reset-token@example.com',
-        password: 'NewSecret456!',
+        password: 'NewSecret456!-xyz',
         tenantId: 'tenant-1'
       })
       loginNewStatus = loginNew.status
@@ -156,7 +156,7 @@ describe('password reset flow (E2E)', () => {
       // single attempt this scenario performs.
       const loginOld = await request(app.getHttpServer()).post('/login').send({
         email: 'reset-token@example.com',
-        password: 'OldSecret123!',
+        password: 'OldSecret123!-xyz',
         tenantId: 'tenant-1'
       })
       loginOldStatus = loginOld.status
@@ -266,7 +266,7 @@ describe('password reset flow (E2E)', () => {
       const email = 'siblings@example.com'
       await request(app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'OldSecret123!', name: 'Sib', tenantId: 'tenant-1' })
+        .send({ email, password: 'OldSecret123!-xyz', name: 'Sib', tenantId: 'tenant-1' })
 
       /**
        * Requests a reset and returns the token from the mail it produced.
@@ -343,7 +343,7 @@ describe('password reset flow (E2E)', () => {
     async function register(email: string): Promise<{ access: string; refresh: string }> {
       const res = await request(app.getHttpServer()).post('/register').send({
         email,
-        password: 'OldSecret123!',
+        password: 'OldSecret123!-xyz',
         name: 'Changer',
         tenantId: 'tenant-1'
       })
@@ -361,7 +361,7 @@ describe('password reset flow (E2E)', () => {
         .post('/password/change')
         .set('Authorization', `Bearer ${access}`)
         .send({
-          currentPassword: 'OldSecret123!',
+          currentPassword: 'OldSecret123!-xyz',
           newPassword: 'BrandNewSecret456!',
           refreshToken: refresh
         })
@@ -374,7 +374,7 @@ describe('password reset flow (E2E)', () => {
 
       const withOld = await request(app.getHttpServer())
         .post('/login')
-        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+        .send({ email, password: 'OldSecret123!-xyz', tenantId: 'tenant-1' })
       expect(withOld.status).toBe(401)
     })
 
@@ -400,7 +400,7 @@ describe('password reset flow (E2E)', () => {
       // The original password still works — nothing was written.
       const stillWorks = await request(app.getHttpServer())
         .post('/login')
-        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+        .send({ email, password: 'OldSecret123!-xyz', tenantId: 'tenant-1' })
       expect(stillWorks.status).toBe(200)
     })
 
@@ -410,7 +410,7 @@ describe('password reset flow (E2E)', () => {
     // guard would run, and everyone would be let through.
     it('refuses an unauthenticated caller', async () => {
       const anonymous = await request(app.getHttpServer()).post('/password/change').send({
-        currentPassword: 'OldSecret123!',
+        currentPassword: 'OldSecret123!-xyz',
         newPassword: 'BrandNewSecret456!'
       })
 
@@ -426,14 +426,14 @@ describe('password reset flow (E2E)', () => {
       // A second device.
       const other = await request(app.getHttpServer())
         .post('/login')
-        .send({ email, password: 'OldSecret123!', tenantId: 'tenant-1' })
+        .send({ email, password: 'OldSecret123!-xyz', tenantId: 'tenant-1' })
       const otherRefresh = (other.body as { refreshToken: string }).refreshToken
 
       await request(app.getHttpServer())
         .post('/password/change')
         .set('Authorization', `Bearer ${access}`)
         .send({
-          currentPassword: 'OldSecret123!',
+          currentPassword: 'OldSecret123!-xyz',
           newPassword: 'BrandNewSecret456!',
           refreshToken: refresh
         })

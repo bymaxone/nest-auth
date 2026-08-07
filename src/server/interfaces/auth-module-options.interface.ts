@@ -234,6 +234,28 @@ export interface BymaxAuthModuleOptions {
     costFactor?: number
 
     /**
+     * Minimum password length the deployment accepts. Default: `15`.
+     *
+     * NIST SP 800-63B-4 §3.1.1.1 requires 15 characters for a password used as a SINGLE
+     * authentication factor, and permits 8 only when the password is part of multi-factor
+     * authentication. MFA in this library is opt-in per user, so the default deployment is
+     * single-factor and 15 is the number that applies. Lower it to 8 — the structural floor the
+     * DTOs enforce, and the lowest the standard allows under any circumstance — only in a
+     * deployment that makes MFA mandatory.
+     *
+     * @remarks
+     * `costFactor` sets the price of one guess; this sets how many guesses there are. Only the
+     * second is what an offline attacker actually runs out of, and the breach and common-password
+     * screens remove passwords that are already *known*, not short ones nobody has seen yet.
+     *
+     * Deliberately not paired with any composition rule: the same clause says verifiers SHALL
+     * NOT impose them, and none of the password DTOs carries one.
+     *
+     * @throws {Error} When the value is not an integer in `[8, 128]`.
+     */
+    minLength?: number
+
+    /**
      * scrypt block size parameter (r).
      * Default: `8`
      */

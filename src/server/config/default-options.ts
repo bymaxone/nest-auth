@@ -43,6 +43,13 @@ export const DEFAULT_OPTIONS = {
   },
 
   password: {
+    // 15, because NIST SP 800-63B-4 §3.1.1.1 requires 15 characters for a password used as a
+    // SINGLE factor and permits 8 only when it is part of multi-factor authentication. MFA here
+    // is opt-in per user, so the default deployment is single-factor and 15 is the number that
+    // applies. A deployment that makes MFA mandatory can lower this to 8, which is the floor the
+    // DTOs enforce structurally. The KDF cost sets the price of one guess; this sets how many
+    // guesses there are, and only the second is what an offline attacker actually runs out of.
+    minLength: 15,
     costFactor: 131_072,
     blockSize: 8,
     parallelization: 1,

@@ -284,7 +284,7 @@ describe('platform auth flow (E2E)', () => {
       // Mint a dashboard token by registering through the normal flow.
       const reg = await request(boot.app.getHttpServer()).post('/register').send({
         email: 'user@dashboard.test',
-        password: 'DashPass123!',
+        password: 'DashPass123!-xyz',
         name: 'Dashboard User',
         tenantId: 'tenant-1'
       })

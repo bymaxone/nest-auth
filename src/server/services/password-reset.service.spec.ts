@@ -101,7 +101,9 @@ const mockOtpService = {
 const mockPasswordService = {
   hash: jest.fn(),
   compare: jest.fn(),
-  assertNotCompromised: jest.fn().mockResolvedValue(undefined)
+  assertNotCompromised: jest.fn().mockResolvedValue(undefined),
+  assertAcceptable: jest.fn().mockResolvedValue(undefined),
+  assertLongEnough: jest.fn()
 }
 
 /** The current-password re-proof is counted like a login; unlocked unless a case says otherwise. */
@@ -205,7 +207,7 @@ describe('PasswordResetService', () => {
       })
       mockPasswordService.compare.mockResolvedValue(true)
       mockPasswordService.hash.mockResolvedValue('scrypt:new')
-      mockPasswordService.assertNotCompromised.mockResolvedValue(undefined)
+      mockPasswordService.assertAcceptable.mockResolvedValue(undefined)
     })
 
     // The happy path, and the shape of it: the current password is verified against the STORED
@@ -215,7 +217,10 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', dto, 'raw-refresh')
 
       expect(mockPasswordService.compare).toHaveBeenCalledWith('the-old-one', 'scrypt:stored')
-      expect(mockPasswordService.assertNotCompromised).toHaveBeenCalledWith('a-brand-new-one')
+      expect(mockPasswordService.assertAcceptable).toHaveBeenCalledWith(
+        'a-brand-new-one',
+        'newPassword'
+      )
       expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'scrypt:new')
     })
 
@@ -316,7 +321,7 @@ describe('PasswordResetService', () => {
 
     // A new password the breach checker refuses never reaches the repository.
     it('refuses a compromised new password before writing', async () => {
-      mockPasswordService.assertNotCompromised.mockRejectedValue(
+      mockPasswordService.assertAcceptable.mockRejectedValue(
         new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
       )
 
@@ -1396,7 +1401,7 @@ describe('PasswordResetService', () => {
   // now runs first, so nothing is spent on a request that was never going to succeed.
   describe('a rejected new password costs the caller nothing', () => {
     beforeEach(() => {
-      mockPasswordService.assertNotCompromised.mockRejectedValue(
+      mockPasswordService.assertAcceptable.mockRejectedValue(
         new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
       )
     })
@@ -1404,7 +1409,7 @@ describe('PasswordResetService', () => {
     // `jest.clearAllMocks()` clears recorded calls, not implementations — without this the
     // rejection above would follow the mock into every later suite in the file.
     afterEach(() => {
-      mockPasswordService.assertNotCompromised.mockResolvedValue(undefined)
+      mockPasswordService.assertAcceptable.mockResolvedValue(undefined)
     })
 
     it.each([

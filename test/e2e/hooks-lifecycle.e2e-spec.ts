@@ -223,7 +223,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
 
       const reg = await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'HookPass123!', name: 'Hook User', tenantId: 'tenant-1' })
+        .send({ email, password: 'HookPass123!-xyz', name: 'Hook User', tenantId: 'tenant-1' })
       expect(reg.status).toBe(201)
       await flushHooks()
 
@@ -241,7 +241,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
 
       const login = await request(fixture.app.getHttpServer())
         .post('/login')
-        .send({ email, password: 'HookPass123!', tenantId: 'tenant-1' })
+        .send({ email, password: 'HookPass123!-xyz', tenantId: 'tenant-1' })
       expect(login.status).toBe(200)
       await flushHooks()
 
@@ -306,7 +306,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
       try {
         const reg = await request(fixture.app.getHttpServer()).post('/register').send({
           email: 'hook-mfa@example.com',
-          password: 'MfaHookPass1!',
+          password: 'MfaHookPass1!-xyz',
           name: 'MFA Hook',
           tenantId: 'tenant-1'
         })
@@ -315,7 +315,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
         const setup = await request(fixture.app.getHttpServer())
           .post('/mfa/setup')
           .set('Authorization', `Bearer ${accessToken}`)
-          .send({ password: 'MfaHookPass1!' })
+          .send({ password: 'MfaHookPass1!-xyz' })
         const secret = (setup.body as { secret: string }).secret
 
         const verify = await request(fixture.app.getHttpServer())
@@ -358,7 +358,7 @@ describe('IAuthHooks lifecycle (E2E)', () => {
           .send({
             email,
             token: resetToken,
-            newPassword: 'BrandNewPass1!',
+            newPassword: 'BrandNewPass1!-xyz',
             tenantId: 'tenant-1'
           })
         expect([200, 204]).toContain(res.status)

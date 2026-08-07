@@ -146,7 +146,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'verify-happy@example.com'
       const reg = await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'VerifyPass1!', name: 'Verify User', tenantId: 'tenant-1' })
+        .send({ email, password: 'VerifyPass1!-xyz', name: 'Verify User', tenantId: 'tenant-1' })
       expect(reg.status).toBe(201)
 
       const otp = fixture.email.otps.get(email)
@@ -177,7 +177,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'never-verifies@example.com'
       const reg = await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'VerifyPass1!', name: 'Never Verifies', tenantId: 'tenant-1' })
+        .send({ email, password: 'VerifyPass1!-xyz', name: 'Never Verifies', tenantId: 'tenant-1' })
       expect(reg.status).toBe(201)
       const refreshToken = (reg.body as { refreshToken: string }).refreshToken
       expect(refreshToken).toBeTruthy()
@@ -198,7 +198,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'verifies-then-rotates@example.com'
       const reg = await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'VerifyPass1!', name: 'Verifies', tenantId: 'tenant-1' })
+        .send({ email, password: 'VerifyPass1!-xyz', name: 'Verifies', tenantId: 'tenant-1' })
       const refreshToken = (reg.body as { refreshToken: string }).refreshToken
 
       const otp = fixture.email.otps.get(email)
@@ -219,7 +219,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'verify-bad-otp@example.com'
       await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'VerifyPass1!', name: 'Bad OTP User', tenantId: 'tenant-1' })
+        .send({ email, password: 'VerifyPass1!-xyz', name: 'Bad OTP User', tenantId: 'tenant-1' })
 
       const res = await request(fixture.app.getHttpServer())
         .post('/verify-email')
@@ -249,7 +249,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'verify-resend@example.com'
       await request(fixture.app.getHttpServer())
         .post('/register')
-        .send({ email, password: 'VerifyPass1!', name: 'Resend User', tenantId: 'tenant-1' })
+        .send({ email, password: 'VerifyPass1!-xyz', name: 'Resend User', tenantId: 'tenant-1' })
 
       const firstOtp = fixture.email.otps.get(email)
       expect(firstOtp).toBeTruthy()
@@ -292,7 +292,7 @@ describe('email verification flow (E2E)', () => {
       const email = 'verify-already@example.com'
       await request(fixture.app.getHttpServer()).post('/register').send({
         email,
-        password: 'VerifyPass1!',
+        password: 'VerifyPass1!-xyz',
         name: 'Already Verified',
         tenantId: 'tenant-1'
       })

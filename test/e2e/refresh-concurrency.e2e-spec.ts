@@ -121,14 +121,14 @@ describe('refresh concurrency with grace window (E2E)', () => {
       // typical client flow and ensure the active session is the login session.
       await request(app.getHttpServer()).post('/register').send({
         email: 'race@example.com',
-        password: 'RaceSecret123!',
+        password: 'RaceSecret123!-xyz',
         name: 'Race User',
         tenantId: 'tenant-1'
       })
 
       const login = await request(app.getHttpServer()).post('/login').send({
         email: 'race@example.com',
-        password: 'RaceSecret123!',
+        password: 'RaceSecret123!-xyz',
         tenantId: 'tenant-1'
       })
 

@@ -183,7 +183,7 @@ describe('mfa disable flow (E2E)', () => {
     it('should issue access + refresh tokens directly on /login after disable', async () => {
       const boot = await bootstrapTestApp()
       const email = `mfa-disable-relogin-${Math.random().toString(36).slice(2)}@example.com`
-      const password = 'RelogPass1!'
+      const password = 'RelogPass1!-xyz'
 
       // Register, enable MFA, then re-login via MFA challenge to mint an
       // access token with `mfaVerified: true`, then disable MFA.
@@ -272,7 +272,7 @@ describe('mfa disable flow (E2E)', () => {
           .post('/register')
           .send({
             email: `mfa-disable-noenroll-${Math.random().toString(36).slice(2)}@example.com`,
-            password: 'NoEnrollPass1!',
+            password: 'NoEnrollPass1!-xyz',
             name: 'No Enroll',
             tenantId: 'tenant-1'
           })

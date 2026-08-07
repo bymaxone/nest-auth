@@ -3049,3 +3049,194 @@ describe('resolveOptions — what a refusal tells the operator', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// cookie name prefixes
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — cookie prefix contract', () => {
+  // Scenario: a consumer opts into a prefixed cookie name whose attributes do not satisfy the
+  // prefix. Expected: a startup error naming the option. Why: the browser enforces these
+  // prefixes by silently DROPPING the Set-Cookie, so the symptom is "login does not work" with
+  // nothing in any log — the failure has to be moved to boot, where it can say what is wrong.
+  it.each([
+    [
+      '__Secure- without Secure',
+      {
+        environment: 'development' as const,
+        cookies: { accessTokenName: '__Secure-access_token' }
+      },
+      /__Secure- prefix requires secureCookies: true/
+    ],
+    [
+      '__Host- without Secure',
+      { environment: 'development' as const, cookies: { accessTokenName: '__Host-access_token' } },
+      /__Host- prefix requires/
+    ],
+    [
+      // The refresh cookie is path-scoped to /auth, so __Host- can never apply to it.
+      '__Host- on the path-scoped refresh cookie',
+      { cookies: { refreshTokenName: '__Host-refresh_token' } },
+      /this cookie uses '\/auth'/
+    ],
+    [
+      // A domain resolver means a Domain attribute, which __Host- forbids outright.
+      '__Host- alongside a cookie domain resolver',
+      {
+        cookies: { sessionSignalName: '__Host-has_session', resolveDomains: () => ['example.com'] }
+      },
+      /no cookies.resolveDomains/
+    ]
+  ])('rejects %s', (_label, overrides, message) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, ...overrides })).toThrow(message)
+  })
+
+  // The counterpart, so "reject every prefix" cannot pass: a prefix whose attributes DO hold is
+  // accepted. __Host- fits the access and signal cookies in the default host-only, Path=/
+  // posture; __Secure- fits the path-scoped refresh cookie.
+  it('accepts prefixes whose attributes hold', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        cookies: {
+          accessTokenName: '__Host-access_token',
+          sessionSignalName: '__Host-has_session',
+          refreshTokenName: '__Secure-refresh_token'
+        }
+      })
+    ).not.toThrow()
+  })
+
+  // Unprefixed names carry no contract to check — the shipped defaults must keep resolving.
+  it('leaves unprefixed names alone', () => {
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, cookies: { accessTokenName: 'access_token' } })
+    ).not.toThrow()
+  })
+
+  // Scenario: an unprefixed name in a deployment that does NOT set Secure. Expected: still
+  // accepted. Why: the case above cannot see this, because its deployment is production, where
+  // `secure` is already true and the `__Secure-` branch is unreachable whatever the name is. With
+  // `!secure` actually true, emptying the `'__Secure-'` literal turns the test into
+  // `startsWith('')`, which every name satisfies — so every unprefixed cookie would fail to boot
+  // in development. That is the shipped default configuration, and nothing else covers it.
+  it('leaves unprefixed names alone when the deployment is not secure', () => {
+    expect(() =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { accessTokenName: 'access_token' }
+      })
+    ).not.toThrow()
+  })
+
+  // Scenario: each of the three configurable cookie names carries a prefix its attributes do not
+  // satisfy. Expected: the error names THAT option. Why: pins the three `option` literals of the
+  // lookup table. Emptied, the message reads `cookies. is '<name>'` and every assertion above
+  // still matches — so an error pointing the operator at no setting at all would ship unnoticed.
+  it.each([
+    [
+      'accessTokenName',
+      {
+        environment: 'development' as const,
+        cookies: { accessTokenName: '__Secure-access_token' }
+      },
+      /cookies\.accessTokenName is '__Secure-access_token'/
+    ],
+    [
+      'refreshTokenName',
+      { cookies: { refreshTokenName: '__Host-refresh_token' } },
+      /cookies\.refreshTokenName is '__Host-refresh_token'/
+    ],
+    [
+      'sessionSignalName',
+      {
+        cookies: { sessionSignalName: '__Host-has_session', resolveDomains: () => ['example.com'] }
+      },
+      /cookies\.sessionSignalName is '__Host-has_session'/
+    ]
+  ])('names %s as the option at fault', (_label, overrides, message) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, ...overrides })).toThrow(message)
+  })
+
+  // Scenario: a __Host- violation. Expected: the message states the browser's silent-drop
+  // behaviour and the remediation. Why: pins the two trailing concatenated literals so the
+  // StringLiteral mutants emptying either are killed — that text is the whole reason the check
+  // exists at boot, since the symptom it replaces ("login does not work") names no cause.
+  it('should explain the silent drop and the remediation in the __Host- error', () => {
+    const run = (): unknown =>
+      resolveOptions({ ...MINIMAL_OPTIONS, cookies: { refreshTokenName: '__Host-refresh_token' } })
+    expect(run).toThrow(
+      /Browsers silently drop a Set-Cookie that violates the prefix, so the cookie would/
+    )
+    expect(run).toThrow(/never be stored\. Fix the attributes or drop the prefix\./)
+  })
+
+  // The same for the __Secure- branch, whose remediation differs: the prefix is satisfiable by
+  // turning secureCookies on, which the __Host- case cannot promise (it also constrains Path and
+  // Domain). Pins its two trailing literals.
+  it('should explain the silent drop and the remediation in the __Secure- error', () => {
+    const run = (): unknown =>
+      resolveOptions({
+        ...MINIMAL_OPTIONS,
+        environment: 'development',
+        cookies: { accessTokenName: '__Secure-access_token' }
+      })
+    expect(run).toThrow(
+      /the cookie would never be stored\. Set secureCookies: true \(and serve over HTTPS\) or/
+    )
+    expect(run).toThrow(/drop the prefix\./)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// password.minLength
+// ---------------------------------------------------------------------------
+
+describe('resolveOptions — password.minLength', () => {
+  // The shipped default is the number NIST SP 800-63B-4 §3.1.1.1 requires of a password used as
+  // a single factor. MFA here is opt-in per user, so the default deployment IS single-factor.
+  it('defaults to 15', () => {
+    expect(resolveOptions(MINIMAL_OPTIONS).password.minLength).toBe(15)
+  })
+
+  it('honours an explicit value', () => {
+    expect(
+      resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength: 20 } }).password.minLength
+    ).toBe(20)
+  })
+
+  // Scenario: a policy outside the window the standard and the DTOs both allow. Expected: a
+  // startup error. Why: below 8 cannot describe a conformant deployment and is unreachable
+  // anyway — the DTOs reject the request first — so the setting would look applied and do
+  // nothing. Above 128 rejects every password the validation layer accepts, so nobody could
+  // register and the failure would read as a user-input problem rather than a configuration one.
+  it.each([[7], [0], [-1], [129], [15.5], [Number.NaN]])('rejects minLength %p', (minLength) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength } })).toThrow(
+      /password.minLength must be an integer between 8 and 128/
+    )
+  })
+
+  // Both ends of the window are accepted, so neither bound can be off by one.
+  it.each([[8], [128]])('accepts minLength %i', (minLength) => {
+    expect(() => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength } })).not.toThrow()
+  })
+
+  // Scenario: a value below the window. Expected: the message reports the value that was rejected
+  // and says why each bound is where it is. Why: pins the four trailing concatenated literals so
+  // the StringLiteral mutants emptying any of them are killed. The bounds are not arbitrary — 8
+  // and 15 come from NIST SP 800-63B-4 §3.1.1.1 and 128 from the DTOs — and an operator who
+  // cannot see which rule they hit has to read the source to fix their config. The interpolation
+  // also pins that the message reports `${minLength}` rather than a constant.
+  it('should report the rejected value and explain both bounds', () => {
+    const run = (): unknown => resolveOptions({ ...MINIMAL_OPTIONS, password: { minLength: 7 } })
+    expect(run).toThrow(/\(current: 7\)\. NIST SP 800-63B-4 §3\.1\.1\.1 allows 8 only for a/)
+    expect(run).toThrow(
+      /password used as part of multi-factor authentication and requires 15 for one used as a/
+    )
+    expect(run).toThrow(
+      /single factor; 128 is the maximum the password DTOs accept, so a higher policy would/
+    )
+    expect(run).toThrow(/reject every password that reaches this service\./)
+  })
+})

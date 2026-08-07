@@ -217,7 +217,7 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
 
-    await this.passwordService.assertNotCompromised(dto.password)
+    await this.passwordService.assertAcceptable(dto.password, 'password')
     const passwordHash = await this.passwordService.hash(dto.password)
 
     // Read from `hookOverrides`, never from `dto`: a caller-supplied `role` or `status` is inert
