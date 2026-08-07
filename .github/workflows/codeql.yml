@@ -1,8 +1,10 @@
+# CodeQL — thin caller of the org-wide reusable analysis (bymaxone/.github).
+#
+# The whole definition, including the public-repository gate that decides
+# whether scanning may run at all, lives in bymaxone/.github so the licensing
+# rule exists once rather than in every repository that copies it.
 name: CodeQL
 
-# Runs on every push to `main`, on every PR targeting `main`, and on a weekly
-# cron — the weekly schedule catches new CVEs in patterns that did not change
-# in code. `workflow_dispatch` is kept for ad-hoc re-runs from the Actions tab.
 on:
   workflow_dispatch:
   push:
@@ -10,49 +12,28 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+    - cron: '0 6 * * 1'
 
+# Kept from the workflow this replaces: without it, repeated pushes to a
+# branch leave several analyses of the same ref running at once.
 concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: true
 
-# Default to read-only at the workflow level. The analyze job widens to
-# `security-events: write` only where it needs to upload SARIF.
-permissions:
-  contents: read
-
 jobs:
-  analyze:
-    name: Analyze (javascript-typescript)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+  # Job id is the convention across the org: it prefixes the reported check,
+  # so every repo shows `codeql / Analyze (<language>)` under the same name.
+  codeql:
+    # Declared on the calling job, which is the only place that reaches the
+    # called workflow: a job that sets its own permissions replaces the
+    # workflow-level set rather than intersecting with it, and a called
+    # workflow cannot be granted more than its caller holds.
     permissions:
       contents: read
-      # Required for CodeQL to upload its findings to the Security tab.
       security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [javascript-typescript]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
-        with:
-          languages: ${{ matrix.language }}
-          # security-extended adds higher-signal queries beyond the default set —
-          # appropriate for a package that handles tokens, sessions, and crypto.
-          queries: security-extended
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
-        with:
-          category: /language:${{ matrix.language }}
+      actions: read
+    uses: bymaxone/.github/.github/workflows/codeql.yml@v1
+    with:
+      # Carried over from the workflow this replaces. It is a superset of the
+      # default suite, so leaving it out analyses strictly less than before.
+      queries: security-extended
