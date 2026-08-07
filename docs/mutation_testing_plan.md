@@ -188,10 +188,10 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
   "timeoutMS": 30000,
 
   // --- Incremental mode ---
-  // Off for the baseline run (Phase 3) so that the report is complete.
+  // Was off for the baseline run (Phase 3), so that first report would be complete.
   // `true` since 2026-08-07: the per-push CI gate reuses the cached baseline. `pnpm mutation:full`
   // deletes that baseline first, and the weekly `Mutation (full)` workflow is what measures the truth.
-  "incremental": false,
+  "incremental": true,
   "incrementalFile": "reports/stryker-incremental.json",
 
   // --- Reporters ---
@@ -535,8 +535,8 @@ Append a new entry under **Verification — Run Before Completing Any Task**:
 For release validation, also run:
 
 \`\`\`bash
-pnpm mutation # full mutation testing (~15-25 min)
-pnpm mutation # incremental (uses reports/stryker-incremental.json)
+pnpm mutation # incremental (reuses reports/stryker-incremental.json)
+pnpm mutation:full # cold run — deletes that baseline first
 \`\`\`
 
 Mutation score must be ≥ 95% before tagging a release. See
