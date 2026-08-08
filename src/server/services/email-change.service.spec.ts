@@ -164,10 +164,9 @@ describe('EmailChangeService', () => {
       await service.requestChange('user-1', dto)
 
       expect(mockEmailProvider.sendEmailChangeVerification).toHaveBeenCalledTimes(1)
-      const [addressed, token] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [
-        string,
-        string
-      ]
+      const [tenant, addressed, token] = mockEmailProvider.sendEmailChangeVerification.mock
+        .calls[0] as [string, string, string]
+      expect(tenant).toBe('tenant-1')
       // The token goes to the NEW address and nowhere else — receiving it is the proof.
       expect(addressed).toBe(NEW_EMAIL)
       expect(token).toMatch(/^[0-9a-f]{64}$/)
@@ -319,7 +318,10 @@ describe('EmailChangeService', () => {
       await service.requestChange('user-1', { ...dto, newEmail: '  NEW@Example.COM  ' })
 
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
-      const [addressed] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [string]
+      const [, addressed] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [
+        string,
+        string
+      ]
       expect(addressed).toBe(NEW_EMAIL)
       expect(JSON.parse((mockRedis.set.mock.calls[0] as string[])[1] ?? '{}')).toMatchObject({
         newEmail: NEW_EMAIL
@@ -372,6 +374,7 @@ describe('EmailChangeService', () => {
       // receive somewhere they still control, and what turns a silent takeover into a visible
       // one (NIST SP 800-63B §4.6).
       expect(mockEmailProvider.sendEmailChangedNotification).toHaveBeenCalledWith(
+        'tenant-1',
         'old@example.com',
         NEW_EMAIL
       )
@@ -400,6 +403,7 @@ describe('EmailChangeService', () => {
       await service.confirmChange({ token: TOKEN })
 
       expect(mockEmailProvider.sendEmailChangedNotification).toHaveBeenCalledWith(
+        'tenant-1',
         'moved-since@example.com',
         NEW_EMAIL
       )

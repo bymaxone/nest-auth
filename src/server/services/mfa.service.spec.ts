@@ -1018,6 +1018,7 @@ describe('MfaService', () => {
       await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
 
       expect(mockEmailProvider.sendMfaEnabledNotification).toHaveBeenCalledWith(
+        'tenant-1',
         AUTH_USER_MFA_DISABLED.email
       )
     })
@@ -2426,6 +2427,7 @@ describe('MfaService', () => {
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
+        'tenant-1',
         AUTH_USER_MFA_ENABLED.email
       )
       expect(mockHooks.afterMfaDisabled).toHaveBeenCalled()
@@ -2652,6 +2654,7 @@ describe('MfaService', () => {
       await service.disable('user-1', validCode, '1.2.3.4', 'Browser')
 
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
+        'tenant-1',
         AUTH_USER_MFA_DISABLED.email
       )
     })
@@ -2709,6 +2712,12 @@ describe('MfaService', () => {
       // here would log out — and un-revoke — the wrong account.
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      // A platform admin carries no tenant, so the email port is handed the 'platform' plane
+      // sentinel as the notification's attribution — never an empty string.
+      expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
+        'platform',
+        SAFE_ADMIN.email
+      )
       // The afterMfaDisabled hook must receive the PLATFORM projection: the
       // `context === 'platform' ? platformUserAsSafeUser(...) : ...` ternary (line 690) takes the
       // platform branch, so tenantId is the '' sentinel. Kills the `false` and `!==` mutants on

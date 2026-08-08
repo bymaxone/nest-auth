@@ -40,32 +40,56 @@ export class NoOpEmailProvider implements IEmailProvider {
   private readonly logger = new Logger(NoOpEmailProvider.name)
 
   /** @inheritdoc */
-  async sendPasswordResetToken(email: string, _token: string, _locale?: string): Promise<void> {
+  async sendPasswordResetToken(
+    _tenantId: string,
+    email: string,
+    _token: string,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendPasswordResetToken → ${maskEmail(email)} (no-op)`)
   }
 
   /** @inheritdoc */
-  async sendPasswordResetOtp(email: string, _otp: string, _locale?: string): Promise<void> {
+  async sendPasswordResetOtp(
+    _tenantId: string,
+    email: string,
+    _otp: string,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendPasswordResetOtp → ${maskEmail(email)} (no-op)`)
   }
 
   /** @inheritdoc */
-  async sendEmailVerificationOtp(email: string, _otp: string, _locale?: string): Promise<void> {
+  async sendEmailVerificationOtp(
+    _tenantId: string,
+    email: string,
+    _otp: string,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendEmailVerificationOtp → ${maskEmail(email)} (no-op)`)
   }
 
   /** @inheritdoc */
-  async sendMfaEnabledNotification(email: string, _locale?: string): Promise<void> {
+  async sendMfaEnabledNotification(
+    _tenantId: string,
+    email: string,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendMfaEnabledNotification → ${maskEmail(email)} (no-op)`)
   }
 
   /** @inheritdoc */
-  async sendMfaDisabledNotification(email: string, _locale?: string): Promise<void> {
+  async sendMfaDisabledNotification(
+    _tenantId: string,
+    email: string,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendMfaDisabledNotification → ${maskEmail(email)} (no-op)`)
   }
 
   /** @inheritdoc */
   async sendNewSessionAlert(
+    _tenantId: string,
     email: string,
     _sessionInfo: SessionInfo,
     _locale?: string
@@ -74,7 +98,12 @@ export class NoOpEmailProvider implements IEmailProvider {
   }
 
   /** @inheritdoc */
-  async sendInvitation(email: string, _inviteData: InviteData, _locale?: string): Promise<void> {
+  async sendInvitation(
+    _tenantId: string,
+    email: string,
+    _inviteData: InviteData,
+    _locale?: string
+  ): Promise<void> {
     this.logger.log(`sendInvitation → ${maskEmail(email)} (no-op)`)
   }
 }

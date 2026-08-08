@@ -306,7 +306,11 @@ describe('InvitationService', () => {
     it('should send invitation email to the normalized email address', async () => {
       await service.invite('inviter-1', '  UPPER@EXAMPLE.COM  ', 'member', 'tenant-1')
 
-      const [toEmail] = mockEmailProvider.sendInvitation.mock.calls[0] as [string]
+      // The tenant the invite belongs to is the first argument, ahead of the recipient: the port
+      // contract now propagates the tenant, so a regression that dropped or swapped it must fail
+      // here rather than pass on the recipient alone.
+      const [tenantId, toEmail] = mockEmailProvider.sendInvitation.mock.calls[0] as [string, string]
+      expect(tenantId).toBe('tenant-1')
       expect(toEmail).toBe('upper@example.com')
     })
 
@@ -320,7 +324,8 @@ describe('InvitationService', () => {
         inviteToken: string
         expiresAt: Date
       }
-      const [, inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+      const [, , inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+        string,
         string,
         InvitePayload
       ]
@@ -339,7 +344,8 @@ describe('InvitationService', () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
       const after = Date.now()
 
-      const [, inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+      const [, , inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+        string,
         string,
         { expiresAt: Date }
       ]
@@ -366,7 +372,8 @@ describe('InvitationService', () => {
     it('should fall back to tenantId as display name when tenantName is not provided', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
 
-      const [, inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+      const [, , inviteData] = mockEmailProvider.sendInvitation.mock.calls[0] as [
+        string,
         string,
         { tenantName: string }
       ]

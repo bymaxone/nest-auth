@@ -238,7 +238,7 @@ export class InvitationService {
     // Send the invitation email. The raw token is passed as inviteToken —
     // the IEmailProvider implementation is responsible for constructing the full URL.
     // The raw token is NOT logged here.
-    await this.emailProvider.sendInvitation(normalizedEmail, {
+    await this.emailProvider.sendInvitation(tenantId, normalizedEmail, {
       inviterName: inviter.name,
       tenantName: displayTenantName,
       inviteToken: rawToken,

@@ -2273,6 +2273,14 @@ describe('AuthService', () => {
         '654321',
         600
       )
+      // The verification mail carries the tenant as its first argument, ahead of the recipient:
+      // the port contract now propagates the tenant, so this asserts the value rather than only
+      // that a send happened — a regression omitting or swapping it would otherwise pass here.
+      expect(mockEmailProvider.sendEmailVerificationOtp).toHaveBeenCalledWith(
+        'tenant-1',
+        'user@example.com',
+        '654321'
+      )
     })
 
     // Verifies that when the cooldown is active (setnx=false) the endpoint silently succeeds without sending.

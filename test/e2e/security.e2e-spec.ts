@@ -353,7 +353,9 @@ describe('security scenarios (E2E)', () => {
       // filtering the whole `sentEmails` array.
       sentOtps = 0
       ;(
-        bootstrap.email as { sendPasswordResetOtp: (to: string, otp: string) => Promise<void> }
+        bootstrap.email as {
+          sendPasswordResetOtp: (tenantId: string, to: string, otp: string) => Promise<void>
+        }
       ).sendPasswordResetOtp = async (): Promise<void> => {
         sentOtps += 1
       }

@@ -47,6 +47,30 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
 // ---------------------------------------------------------------------------
 
 /** TTL in seconds for the pending MFA setup data (10 minutes). */
+/**
+ * The tenant a platform-plane MFA notice is attributed to. A platform admin is cross-tenant and
+ * carries no `tenantId`, but the email port takes one for a notification backend's audit
+ * attribution and routing; `'platform'` names that plane, mirroring the `pep:` epoch namespace.
+ *
+ * This is a **reserved** attribution, not a real tenant: because tenant ids are arbitrary strings,
+ * a dashboard tenant literally named `'platform'` would otherwise be indistinguishable from the
+ * admin plane at the port. A deployment that lets tenants choose their own id must keep this one
+ * out of that space, the same way `pep:`/`ep:` keep the two epoch namespaces from colliding in
+ * Redis. A single-tenant provider ignores the value and the question does not arise.
+ */
+const PLATFORM_EMAIL_TENANT = 'platform'
+
+/**
+ * The tenant an MFA email is attributed to: a dashboard user's own tenant, or the platform plane
+ * for a cross-tenant admin who carries none.
+ *
+ * @param user - The dashboard or platform user the notice is about.
+ * @returns The tenant id for the email port.
+ */
+function emailTenantOf(user: AuthUser | AuthPlatformUser): string {
+  return 'tenantId' in user ? user.tenantId : PLATFORM_EMAIL_TENANT
+}
+
 const MFA_SETUP_TTL_SECONDS = 600
 
 /**
@@ -855,7 +879,7 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.log(`verifyAndEnable: MFA enabled userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaEnabledNotification(user.email)
+    await this.emailProvider.sendMfaEnabledNotification(emailTenantOf(user), user.email)
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
@@ -1176,7 +1200,7 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.log(`disable: MFA disabled userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaDisabledNotification(user.email)
+    await this.emailProvider.sendMfaDisabledNotification(emailTenantOf(user), user.email)
 
     const safeUser =
       context === 'platform'
@@ -1257,7 +1281,7 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.warn(`resetMfa: MFA removed administratively userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaDisabledNotification(user.email)
+    await this.emailProvider.sendMfaDisabledNotification(emailTenantOf(user), user.email)
 
     const safeUser =
       context === 'platform'

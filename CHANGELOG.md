@@ -19,6 +19,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truth for the check, so a fix reaches all three and every consumer at once. No behaviour changed:
   the guards' full suites pass unmodified.
 
+### Changed
+
+- **`IEmailProvider` carries the tenant on every method.** Each of the ten methods now
+  takes `tenantId: string` as its first parameter, ahead of the recipient address. A notification
+  backend serving more than one tenant could not, before this, tell which tenant a password-reset
+  or invitation email belonged to: it saw only an address, so it could not pick the right sender
+  identity, branding, locale default or audit stream. The tenant was known at every call site — a
+  dashboard user carries its own `tenantId`, and a cross-tenant platform admin is attributed to the
+  `'platform'` plane, mirroring the `pep:` epoch namespace — it simply was not being passed. It
+  closes bymaxone/nest-auth#93.
+
+  **Apply to a derived backend.** Any `IEmailProvider` implementation must add `tenantId: string`
+  as the first argument of every method it defines and route on it as its backend requires; a
+  provider that ignores tenancy can name the parameter `_tenantId` and change nothing else. The
+  bundled `NoOpEmailProvider` already conforms.
+
+  Migrate **every** method, not only the one the compiler flags. Because the added argument is a
+  `string` prepended to methods whose other arguments are also strings, a stale
+  `sendPasswordResetToken(email, token)` stays assignable to the new type — TypeScript accepts an
+  implementation with fewer parameters — so it compiles while binding `tenantId` to the recipient
+  at runtime. Only `sendInvitation`, whose second argument is an object, fails compilation. Fixing
+  that one is not proof the rest are done; the surest path is to extend the forthcoming
+  `DefaultAuthEmailProvider` rather than hand-write the port.
+
+  The library has no published dependents yet, so this breaks nothing already released and ships in
+  the ordinary `1.3.x` line rather than as a major — SemVer's promise is to existing consumers, and
+  there are none to break.
+
 ## [1.3.1] - 2026-08-08
 
 Documentation only — no runtime code changed. It is a release because the README and the

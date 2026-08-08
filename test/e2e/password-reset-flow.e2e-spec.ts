@@ -37,13 +37,17 @@ function instrumentPasswordResetEmails(email: MockEmailProvider): CapturedEmail[
   // NestJS DI container via `useValue`, so the service will call our overrides.
   ;(
     email as { sendPasswordResetToken: MockEmailProvider['sendPasswordResetToken'] }
-  ).sendPasswordResetToken = async (to: string, token: string): Promise<void> => {
+  ).sendPasswordResetToken = async (
+    _tenantId: string,
+    to: string,
+    token: string
+  ): Promise<void> => {
     const html = `<p>Reset your password: <a href="https://app.example.com/reset?token=${token}">Click here</a></p>`
     email.sentEmails.push({ to, subject: 'Password reset', html })
   }
   ;(
     email as { sendPasswordResetOtp: MockEmailProvider['sendPasswordResetOtp'] }
-  ).sendPasswordResetOtp = async (to: string, otp: string): Promise<void> => {
+  ).sendPasswordResetOtp = async (_tenantId: string, to: string, otp: string): Promise<void> => {
     const html = `<p>Your password reset code is <strong>${otp}</strong></p>`
     email.sentEmails.push({ to, subject: 'Password reset OTP', html })
   }
