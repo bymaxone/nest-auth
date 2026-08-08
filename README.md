@@ -646,7 +646,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 
 | Group                 | Key Options                                                                                                                                         | Default                                   |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, `30`d cap, `HS256`, both off |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, `30d` cap, `HS256`, both off |
 | **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                            |
 | **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1              |
 | **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                                |
@@ -770,7 +770,12 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refreshing every
 fifteen minutes keeps a session alive forever, and a refresh token stolen once becomes permanent
 access. Raise it to a value the product can justify, or set `0` to accept unbounded sessions
-deliberately; either way the change ends sessions already older than the value you pick.
+deliberately.
+
+Lowering the value ends sessions that are already older than the new one, at their next rotation;
+raising it or setting `0` ends nothing. Sessions established before the cap existed carry no
+recorded birth time and are never capped, whatever the value — they age out under
+`refreshExpiresInDays` like any other.
 
 `cookies.trustedOrigins` is deliberately off by default, because switching it on changes
 behaviour for origins that already exist. It is required as soon as `cookies.sameSite: 'none'`
