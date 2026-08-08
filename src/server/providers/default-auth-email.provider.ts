@@ -3,9 +3,10 @@
  *
  * Ships the security-notification policy every backend would otherwise hand-write to bridge this
  * library's email port onto a delivery channel: HTML escaping on a message path that carries
- * caller-chosen text, the NIST SP 800-63B notification catalogue (a password-changed notice, MFA
- * enable/disable notices, an email-changed notice to the *previous* address), and a
- * swallow-and-log failure policy so a down channel never turns "enable MFA" into a failed request.
+ * caller-chosen text, CR/LF stripping on the subject header so a name cannot inject one, the NIST
+ * SP 800-63B notification catalogue (a password-changed notice, MFA enable/disable notices, an
+ * email-changed notice to the *previous* address), and a swallow-and-log failure policy so a down
+ * channel never turns "enable MFA" into a failed request.
  *
  * It sends through {@link AuthEmailSink}, a channel port narrow enough that this file depends on no
  * concrete mailer — `@bymax-one/nest-notification`'s `EmailService` satisfies it structurally, and
@@ -230,6 +231,23 @@ function toHtml(text: string): string {
 }
 
 /**
+ * Strips CR and LF from a subject line.
+ *
+ * A subject is a single email header, and a header ends at the first newline. Caller-chosen text
+ * reaches the subject — an inviter's name, a tenant's name — so a `\r` or `\n` smuggled into one
+ * would otherwise let a channel that builds headers by concatenation read the rest of the value as
+ * additional headers (a hidden `Bcc:`), or reject the message outright. Newlines carry no meaning
+ * in a subject, so they are removed rather than escaped. The provider applies this to every subject,
+ * default or overridden, because the sink is a generic port that makes no such promise itself.
+ *
+ * @param subject - The rendered subject line.
+ * @returns The subject with each run of CR/LF replaced by a single space.
+ */
+function sanitizeSubject(subject: string): string {
+  return subject.replace(/[\r\n]+/g, ' ')
+}
+
+/**
  * Default {@link IEmailProvider} over a {@link AuthEmailSink} delivery channel.
  *
  * Wire it by binding the auth email-provider token to a factory that hands it the channel:
@@ -389,11 +407,14 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    * @param message - The rendered subject and body, and optionally its own HTML.
    */
   private async deliver(tenantId: string, to: string, message: AuthEmailMessage): Promise<void> {
+    // Stripped once, then used for both the header and the log line: a subject is a single header,
+    // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
+    const subject = sanitizeSubject(message.subject)
     try {
       await this.sink.send({
         tenantId,
         to,
-        subject: message.subject,
+        subject,
         html: message.html ?? toHtml(message.text),
         text: message.text
       })
@@ -402,7 +423,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // reaches a wider audience than the inbox it was going to. The built-in subjects carry no
       // secret — an override that puts a code in a subject breaks the same no-log rule the port
       // states — and the error is the channel's own, not the rendered body.
-      this.logger.error(`delivery failed for "${message.subject}"`, error)
+      this.logger.error(`delivery failed for "${subject}"`, error)
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
       if (this.rethrowOnError) {

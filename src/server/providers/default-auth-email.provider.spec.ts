@@ -228,6 +228,17 @@ describe('DefaultAuthEmailProvider', () => {
     expect(rendered).not.toContain(`&"'`)
   })
 
+  // A subject is a single email header, so a CR/LF smuggled through a caller-chosen name must not
+  // survive into it — otherwise a channel that builds headers by concatenation could read the rest
+  // of the value as additional headers.
+  it('strips CR/LF from the subject to prevent header injection', async () => {
+    const hostile: InviteData = { ...INVITE, inviterName: 'Ada\r\nBcc: evil@example.com' }
+    await provider.sendInvitation('tenant-1', 'invitee@example.com', hostile)
+    const { subject } = lastSend(sink)
+    expect(subject).not.toMatch(/[\r\n]/)
+    expect(subject).toBe('Ada Bcc: evil@example.com invited you to Acme')
+  })
+
   // The body is split on blank lines into one paragraph element each — a body with three blocks
   // renders as three <p> elements joined by newlines, not one.
   it('renders each blank-line-separated block as its own paragraph', async () => {
