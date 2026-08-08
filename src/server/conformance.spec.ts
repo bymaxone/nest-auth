@@ -624,8 +624,13 @@ describe('cross-implementation conformance', () => {
       expect(epoch['absentReadsAs']).toBe(0)
       expect(epoch['rejectWhen']).toBe('stampedEpoch < storedEpoch')
 
-      const guard = readFileSync(join(__dirname, 'guards/jwt-auth.guard.ts'), 'utf8')
-      expect(guard).toContain('readStampedEpoch(payload) < epoch')
+      // The rejection rule lives in AuthRevocationService, which the three JWT guards delegate to;
+      // reading it here pins the same comparison the guards used to carry inline.
+      const revocation = readFileSync(
+        join(__dirname, 'services/auth-revocation.service.ts'),
+        'utf8'
+      )
+      expect(revocation).toContain('readStampedEpoch(payload) < epoch')
     })
   })
 

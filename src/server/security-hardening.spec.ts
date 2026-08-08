@@ -21,6 +21,7 @@ import { hmacSha256 } from './crypto/secure-token'
 import { AuthException } from './errors/auth-exception'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
+import { AuthRevocationService } from './services/auth-revocation.service'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { TokenDeliveryService } from './services/token-delivery.service'
 
@@ -134,14 +135,14 @@ describe('security hardening — adversarial', () => {
     dashboardGuard = new JwtAuthGuard(
       jwtService,
       delivery,
-      permissiveRedis as unknown as AuthRedisService,
+      new AuthRevocationService(permissiveRedis as unknown as AuthRedisService),
       new Reflector(),
       options as never
     )
     platformGuard = new JwtPlatformGuard(
       jwtService,
       delivery,
-      permissiveRedis as unknown as AuthRedisService,
+      new AuthRevocationService(permissiveRedis as unknown as AuthRedisService),
       new Reflector(),
       options as never
     )

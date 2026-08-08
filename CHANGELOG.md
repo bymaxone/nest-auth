@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`AuthRevocationService` is exported**, answering whether a verified access token has been
+  revoked across both channels the module writes to — the per-token blacklist a logout writes and
+  the per-user epoch a password reset or revoke-all advances. It closes bymaxone/nest-auth#92: a
+  backend bridging this library to a realtime transport can inject it and consult the same two
+  channels the HTTP guards do, instead of verifying a token's signature and granting a stream that
+  outlives every revocation window. The `JwtAuthGuard`, `WsJwtGuard` and `JwtPlatformGuard` now
+  delegate to it rather than each carrying its own copy of the two Redis reads — one source of
+  truth for the check, so a fix reaches all three and every consumer at once. No behaviour changed:
+  the guards' full suites pass unmodified.
+
 ### Changed
 
-- **BREAKING — `IEmailProvider` carries the tenant on every method.** Each of the ten methods now
+- **`IEmailProvider` carries the tenant on every method.** Each of the ten methods now
   takes `tenantId: string` as its first parameter, ahead of the recipient address. A notification
   backend serving more than one tenant could not, before this, tell which tenant a password-reset
   or invitation email belonged to: it saw only an address, so it could not pick the right sender

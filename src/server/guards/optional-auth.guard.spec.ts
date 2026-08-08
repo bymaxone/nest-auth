@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { OptionalAuthGuard } from './optional-auth.guard'
 
@@ -78,6 +79,7 @@ describe('OptionalAuthGuard', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: TokenDeliveryService, useValue: mockTokenDelivery },
         { provide: AuthRedisService, useValue: mockRedis },
+        AuthRevocationService,
         { provide: Reflector, useClass: Reflector },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]

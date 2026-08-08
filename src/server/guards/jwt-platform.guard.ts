@@ -10,9 +10,8 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { PlatformJwtPayload } from '../interfaces/jwt-payload.interface'
-import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
-import { readStampedEpoch } from '../utils'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertValidJti, assertValidSub } from './utils/assert-token-type'
 
@@ -49,7 +48,7 @@ export class JwtPlatformGuard implements CanActivate {
   constructor(
     @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(TokenDeliveryService) private readonly tokenDelivery: TokenDeliveryService,
-    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService,
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
@@ -94,22 +93,12 @@ export class JwtPlatformGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
     }
 
-    // Revocation check: rv:{jti} is set on logout with remaining TTL.
-    const revoked = await this.redis.get(`rv:${payload.jti}`)
-    if (revoked !== null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    // Bulk revocation check: an invalidating event on the platform plane advances the admin's
-    // token epoch (`pep:{sub}`), and any access token stamped below it predates that event.
-    // Platform tokens have carried the stamp since they were introduced — issuing reads
-    // `pep:` — so a guard that never read it back meant a platform epoch bump revoked
-    // nothing: "log out everywhere" killed the refresh sessions while every outstanding
-    // access token kept working to expiry. Mirrors JwtAuthGuard (and rust-auth's verify,
-    // which has always enforced the admin epoch). Surfaced as TOKEN_INVALID for the same
-    // no-oracle reason as the jti revocation above.
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub, 'platform')
-    if (readStampedEpoch(payload) < epoch) {
+    // Both revocation channels, on the platform plane: the shared per-token blacklist a logout
+    // writes, and the admin's platform epoch (`pep:{sub}`) that "log out everywhere" advances.
+    // Passing `'platform'` selects that epoch namespace; the check is otherwise the one
+    // JwtAuthGuard runs, so a platform revocation kills outstanding access tokens and not only
+    // the refresh sessions. Surfaced as TOKEN_INVALID for the same no-oracle reason.
+    if (await this.revocation.isAccessTokenRevoked(payload, 'platform')) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
