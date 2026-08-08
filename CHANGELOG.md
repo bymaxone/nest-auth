@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-08
+
+Minor rather than patch because the API now accepts a request it previously rejected: with a
+`tenantIdResolver` configured, `tenantId` may be omitted from the body. Nothing a consumer sends
+today stops working, and no option changed meaning.
+
 ### Fixed
 
 - **`tenantId` is optional on every DTO that carries it**, so a deployment that configures
@@ -1187,7 +1193,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
