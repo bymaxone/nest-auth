@@ -6,10 +6,11 @@ fail_ if that line were wrong. We seeded thousands of small faults into the sour
 booleans, removed guards, mangled string literals, swapped operators — and measured how many our
 suite detects. This document reports the hardening pass that took the library from a **73.59%**
 mutation score to **99.10%**, the five configuration corrections that made the run trustworthy,
-and an honest accounting of every mutant that remains. A later pass
-([Where the score stands since](#where-the-score-stands-since)) closed the rest: the current run
-is **100.00%**, with no surviving mutants and none without coverage. All numbers below come from the recorded
-Stryker runs; nothing is estimated.
+and an honest accounting of every mutant that remains. Later passes
+([Where the score stands since](#where-the-score-stands-since)) closed the rest and have held it
+there as the library grew: the most recent cold run — **2026-08-08**, 4 822 valid mutants — is
+**100.00%**, with no surviving mutants and none without coverage. All numbers below come from the
+recorded Stryker runs; nothing is estimated.
 
 ---
 
@@ -301,6 +302,7 @@ figure here is from a recorded run; none is estimated.
 | 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                       |
 | 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below              |
 | 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs    |
+| 2026-08-08 | **100.00%** |  4 801 |    **0** |       **0** |      21 | First re-measurement since; held at 100% across four releases and a third audit   |
 
 The 2026-07-28 pair is one day's work read twice: the cross-implementation parity fixes landed
 with a single survivor of their own, and the second row is that survivor recorded rather than
@@ -354,18 +356,76 @@ Two of those directives were **silently inert** before this pass, which is worth
 If a mutant you documented keeps showing up as a survivor, check that the directive lands on the
 line you think it does — it fails quietly, in the direction of reporting more work, not less.
 
+### Re-measured cold — 2026-08-08
+
+The 2026-07-28 row was the last recorded measurement, and four releases landed on top of it
+(1.1.0, 1.1.1, 1.2.0, 1.3.0) including the third security audit. This run re-measures from cold —
+`pnpm mutation:full --concurrency 2` under Node 24, with the incremental baseline deleted first, so
+no verdict is inherited from an earlier run. It took **47 minutes 44 seconds** and instrumented
+**145 of 563 source files with 7 628 mutants**.
+
+| Outcome                          |   Mutants |
+| -------------------------------- | --------: |
+| Killed                           |     4 801 |
+| Timed out (counts as detected)   |        21 |
+| **Survived**                     |     **0** |
+| **No coverage**                  |     **0** |
+| Discarded — compile error        |     2 448 |
+| Discarded — runtime error        |         8 |
+| Ignored — documented equivalents |       350 |
+| **Instrumented, total**          | **7 628** |
+
+The score is the detected-over-valid ratio: **4 822 detected out of 4 822 valid mutants —
+100.00%**. The 2 456 discarded are faults the TypeScript checker rejected before any test ran, and
+the 350 ignored are the documented equivalents, which never enter the denominator. All five
+subpaths are individually at 100.00%:
+
+| Subpath | Killed | Timed out |
+| ------- | -----: | --------: |
+| server  |  3 718 |         9 |
+| nextjs  |    843 |        11 |
+| client  |    163 |         0 |
+| react   |     60 |         0 |
+| shared  |     17 |         1 |
+
+The suite behind it is **3 519 tests** — 3 392 unit across 116 files, plus 127 end-to-end across a
+further 17. That is 1 061 more than the 2 458 the 2026-07-28 run was measured against, and the
+mutant population grew with it: 4 822 valid mutants against the 3 474 killed then.
+
+Twenty-one timeouts, up from sixteen, and in the same places: `nextjs/helpers/dedupeSetCookieHeaders.ts`
+(7), `crypto/totp.ts` (3), `providers/common-password-checker.provider.ts` (3),
+`services/mfa.service.ts` (2), `nextjs/helpers/jwt.ts` (2), and one each in `configValidation.ts`,
+`routeClassifier.ts`, `invitation.service.ts` and `shared/constants/routes.ts`. A mutation that
+drives one of those loops non-terminating is a fault the suite detects by other means.
+
+Two things are worth recording rather than leaving implicit. The **350 ignored mutants sit under
+217 directives** (211 per-line, 6 block-form) — that is no longer "a handful", and the count is
+reported here so a future pass can audit whether each is still genuinely unkillable rather than
+trusting the label. And the **run no longer takes ten minutes**: at `--concurrency 2` on a 14-core
+machine it is three quarters of an hour, so the figure in [How to reproduce](#how-to-reproduce)
+below is the measured one, not the one from when the suite was half this size.
+
 ---
 
 ## How to reproduce
 
 ```bash
-# Full run — about 10 minutes on a multi-core machine, Node 24
+# Cold run — deletes the incremental baseline first, so nothing is inherited.
+# This is the one that measures the truth: ~48 minutes at --concurrency 2, Node 24.
+pnpm mutation:full --concurrency 2
+
+# Incremental run — reuses reports/stryker-incremental.json, re-testing only what changed
 pnpm mutation
 
-# Incremental run — only re-tests what changed since the last run
-pnpm mutation:incremental
+# Sandbox smoke test — no mutants, just proves the config still boots
+pnpm mutation:dry-run
 ```
 
+- **Override the concurrency on the command line.** `stryker.config.json` asks for 4, which with
+  the TypeScript checker means four runners plus four checkers, and every worker reloads the whole
+  module graph. On a 36 GB machine that is enough to push into swap if anything else is running.
+  `--concurrency 2` costs wall-clock and buys headroom; the run above never moved swap off its
+  baseline.
 - The HTML report is written to **`reports/mutation/mutation.html`**.
 - The `break` threshold is **95** (raised from the default 80) so the result is locked in: any
   future change that drops the score below 95% fails the run.
