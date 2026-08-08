@@ -30,7 +30,7 @@ function esc(value: string): string {
 function html(text: string): string {
   return text
     .split('\n\n')
-    .map((paragraph) => `<p>${esc(paragraph)}</p>`)
+    .map((paragraph) => `<p>${esc(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('\n')
 }
 
@@ -239,6 +239,33 @@ describe('DefaultAuthEmailProvider', () => {
     expect(rendered.match(/<p>/g)).toHaveLength(2)
   })
 
+  // A single newline inside a paragraph becomes a <br>, so the new-session details keep their line
+  // breaks — without it HTML whitespace collapsing would fold device, IP and session onto one line.
+  it('renders intra-paragraph newlines as <br> in the new-session alert', async () => {
+    await provider.sendNewSessionAlert('tenant-1', 'user@example.com', SESSION)
+    const { html: rendered } = lastSend(sink)
+    expect(rendered).toContain(
+      `Device: ${SESSION.device}<br>IP: ${SESSION.ip}<br>Session: ${SESSION.sessionHash}`
+    )
+  })
+
+  // An override that returns its own `html` owns it: the provider sends it verbatim, unescaped, so a
+  // product can emit real <a> links — while a body without `html` is still escaped into paragraphs.
+  it('uses an override-provided html body verbatim without escaping', async () => {
+    const messages: Partial<AuthEmailCatalogue> = {
+      passwordResetToken: ({ token }) => ({
+        subject: 'Reset',
+        text: `token ${token}`,
+        html: `<a href="https://app/reset?token=${token}">Reset</a>`
+      })
+    }
+    const custom = new DefaultAuthEmailProvider(sink, { messages })
+    await custom.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')
+    const sent = lastSend(sink)
+    expect(sent.html).toBe('<a href="https://app/reset?token=TOK">Reset</a>')
+    expect(sent.text).toBe('token TOK')
+  })
+
   // ---------------------------------------------------------------------------
   // Failure policy
   // ---------------------------------------------------------------------------
@@ -264,6 +291,18 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendPasswordResetToken('tenant-1', 'secret@example.com', 'TOK')
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain('secret@example.com')
+  })
+
+  // On the 'rethrow' policy the failure is logged AND propagated, so a caller that reacts to a
+  // rejection — early reset-token cleanup, a failed email-change surfacing — gets it back.
+  it('re-throws after logging when onDeliveryError is rethrow', async () => {
+    const boom = new Error('channel down')
+    sink.send.mockRejectedValueOnce(boom)
+    const strict = new DefaultAuthEmailProvider(sink, { onDeliveryError: 'rethrow' })
+    await expect(strict.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')).rejects.toBe(
+      boom
+    )
+    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Reset your password"', boom)
   })
 
   // ---------------------------------------------------------------------------

@@ -13,11 +13,11 @@
  * passed straight through to the sink, so a multi-tenant channel can attribute and route each
  * message.
  *
- * The copy is deliberately plain and entirely replaceable: pass `messages` to override any
- * subset of the catalogue with a product's own wording, branding or links, and the escaping and
- * failure policy still apply. What must survive a rewrite is the security shape — a code is stated
- * once and never linked to, a notice of a change the user may not have made tells them how to
- * react, and nothing here is logged.
+ * The copy is deliberately plain and entirely replaceable: pass `messages` to override any subset
+ * of the catalogue with a product's own wording, and return `html` from an override for real links,
+ * layout and branding. What must survive a rewrite is the security shape — a code is stated once,
+ * a notice of a change the user may not have made tells them how to react, and only a message's
+ * subject is ever logged (on a delivery failure), never a body, code or address.
  *
  * Coverage for this file is owned by the unit suite.
  *
@@ -64,8 +64,15 @@ export interface AuthEmailSink {
 export interface AuthEmailMessage {
   /** Subject line. Plain text — never rendered as HTML, so it needs no escaping. */
   readonly subject: string
-  /** Body as plain text. Rendered to minimal, escaped HTML by the provider. */
+  /** Body as plain text. Rendered to minimal, escaped HTML by the provider when `html` is absent. */
   readonly text: string
+  /**
+   * Body as HTML, used verbatim when present. The provider does not escape it — an override that
+   * sets this owns its own escaping, which is the point: it is the seam for a product's real
+   * `<a>` links, layout and branding, none of which the escaped-text default can carry. Leave it
+   * unset to have the provider render {@link text} into safe, escaped paragraphs.
+   */
+  readonly html?: string | undefined
 }
 
 /**
@@ -105,14 +112,28 @@ export interface AuthEmailCatalogue {
   invitation(input: { invite: InviteData; locale?: string | undefined }): AuthEmailMessage
 }
 
+/** How the provider reacts to a delivery failure. */
+export type DeliveryErrorPolicy = 'swallow' | 'rethrow'
+
 /** Options for {@link DefaultAuthEmailProvider}. */
 export interface DefaultAuthEmailProviderOptions {
   /**
    * Per-event copy overrides. Any renderer set here replaces the default for that message; every
-   * unset event keeps its secure default. The escaping and swallow-and-log policy apply to
+   * unset event keeps its secure default. The escaping and delivery-error policy apply to
    * overrides too.
    */
   readonly messages?: Partial<AuthEmailCatalogue>
+
+  /**
+   * What to do when the channel rejects a send. `'swallow'` (the default) logs the failure and
+   * resolves, so a down channel never turns a notification into a failed user request. `'rethrow'`
+   * logs and then re-throws, restoring the throw the two flows that react to one expect —
+   * `PasswordResetService` deletes an undelivered reset token early, and `EmailChangeService` lets
+   * a failed verification send surface rather than reporting "sent". The trade is symmetric: under
+   * `'rethrow'` a channel outage also fails MFA, invitation and the other awaited sends. Pick the
+   * failure mode the deployment's channel reliability warrants.
+   */
+  readonly onDeliveryError?: DeliveryErrorPolicy
 }
 
 /** How long a verification or reset code stays valid, stated in the message that carries it. */
@@ -192,16 +213,19 @@ function escapeHtml(value: string): string {
 
 /**
  * Renders a plain-text body as the minimal HTML the channel also wants: one escaped paragraph per
- * blank-line-separated block. Deliberately not a template engine — a product that needs layout
- * overrides the copy or moves to its own renderer, and inherits the escaping question with it.
+ * blank-line-separated block, with a single newline inside a block becoming a `<br>`. Without the
+ * `<br>`, HTML's whitespace collapsing would fold a body like the new-session alert — where device,
+ * IP and session sit on their own lines — back onto one line, so the HTML would say something the
+ * plain-text body did not. Deliberately not a template engine: a product that needs real layout
+ * returns `html` from its override instead.
  *
  * @param text - Plain-text body.
- * @returns The body as escaped HTML paragraphs.
+ * @returns The body as escaped HTML paragraphs, intra-paragraph newlines preserved as `<br>`.
  */
 function toHtml(text: string): string {
   return text
     .split('\n\n')
-    .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('\n')
 }
 
@@ -222,6 +246,16 @@ function toHtml(text: string): string {
  * sending an invitation, confirming an address change), so a channel that is down would turn each
  * into a failed request over a message that is a notification rather than the operation itself.
  * The failure is logged and the flow continues.
+ *
+ * That choice has a cost worth stating, because two flows react to a *throw* from the port. A
+ * reset-token send that rejects lets `PasswordResetService` delete the stored token early rather
+ * than leave it to its TTL; and `EmailChangeService` awaits the verification send before it records
+ * "verification sent". Under the default both degrade gracefully rather than break: the reset token
+ * still expires at its TTL and was never delivered to anyone, and the change still requires the
+ * verification the recipient never got, so it cannot complete. A deployment that wants the throw
+ * back on those flows constructs the provider with `{ onDeliveryError: 'rethrow' }`, accepting that
+ * an outage then also fails the awaited sends (MFA, invitation). The default optimizes for the
+ * common case: a transient channel outage must not fail the user's action.
  */
 export class DefaultAuthEmailProvider implements IEmailProvider {
   /** Records a delivery this provider swallowed, so a silent channel is still visible somewhere. */
@@ -230,15 +264,19 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   /** The copy in effect: the defaults, with any provided overrides layered on top. */
   private readonly messages: AuthEmailCatalogue
 
+  /** Whether a rejected send is re-thrown after logging; `false` (swallow) unless asked otherwise. */
+  private readonly rethrowOnError: boolean
+
   /**
    * @param sink - The delivery channel to send through.
-   * @param options - Optional copy overrides.
+   * @param options - Optional copy overrides and delivery-error policy.
    */
   public constructor(
     private readonly sink: AuthEmailSink,
     options?: DefaultAuthEmailProviderOptions
   ) {
     this.messages = { ...DEFAULT_MESSAGES, ...options?.messages }
+    this.rethrowOnError = options?.onDeliveryError === 'rethrow'
   }
 
   /** @inheritdoc */
@@ -343,11 +381,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   }
 
   /**
-   * Escapes the body, hands one rendered message to the channel, and swallows any delivery error.
+   * Renders the body to HTML (unless the message already carries its own), hands the message to the
+   * channel, and swallows any delivery error.
    *
    * @param tenantId - Tenant the message is attributed to.
    * @param to - Recipient address.
-   * @param message - The rendered subject and body.
+   * @param message - The rendered subject and body, and optionally its own HTML.
    */
   private async deliver(tenantId: string, to: string, message: AuthEmailMessage): Promise<void> {
     try {
@@ -355,13 +394,20 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
         tenantId,
         to,
         subject: message.subject,
-        html: toHtml(message.text),
+        html: message.html ?? toHtml(message.text),
         text: message.text
       })
     } catch (error: unknown) {
       // The subject names the message; the address is deliberately left out, because a log line
-      // reaches a wider audience than the inbox it was going to.
+      // reaches a wider audience than the inbox it was going to. The built-in subjects carry no
+      // secret — an override that puts a code in a subject breaks the same no-log rule the port
+      // states — and the error is the channel's own, not the rendered body.
       this.logger.error(`delivery failed for "${message.subject}"`, error)
+      // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
+      // to reach the caller that reacts to it, not to be absorbed here.
+      if (this.rethrowOnError) {
+        throw error
+      }
     }
   }
 }

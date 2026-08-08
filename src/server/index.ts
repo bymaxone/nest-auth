@@ -118,6 +118,7 @@ export type {
   AuthEmailSink,
   AuthEmailMessage,
   AuthEmailCatalogue,
+  DeliveryErrorPolicy,
   DefaultAuthEmailProviderOptions
 } from './providers/default-auth-email.provider'
 export {
