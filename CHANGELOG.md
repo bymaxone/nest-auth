@@ -33,9 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Apply to a derived backend.** Any `IEmailProvider` implementation must add `tenantId: string`
   as the first argument of every method it defines and route on it as its backend requires; a
   provider that ignores tenancy can name the parameter `_tenantId` and change nothing else. The
-  bundled `NoOpEmailProvider` already conforms. The signature change is compile-breaking, so a
-  derived backend must apply this before it builds against the release — it ships in the ordinary
-  `1.3.x` line rather than as a major, so the version number alone will not flag it.
+  bundled `NoOpEmailProvider` already conforms.
+
+  Migrate **every** method, not only the one the compiler flags. Because the added argument is a
+  `string` prepended to methods whose other arguments are also strings, a stale
+  `sendPasswordResetToken(email, token)` stays assignable to the new type — TypeScript accepts an
+  implementation with fewer parameters — so it compiles while binding `tenantId` to the recipient
+  at runtime. Only `sendInvitation`, whose second argument is an object, fails compilation. Fixing
+  that one is not proof the rest are done; the surest path is to extend the forthcoming
+  `DefaultAuthEmailProvider` rather than hand-write the port.
+
+  The library has no published dependents yet, so this breaks nothing already released and ships in
+  the ordinary `1.3.x` line rather than as a major — SemVer's promise is to existing consumers, and
+  there are none to break.
 
 ## [1.3.1] - 2026-08-08
 
