@@ -70,9 +70,10 @@ All of it stays in the 1.3.x line: there are no published dependents, so nothing
   2026-07-28, before 1.1.0, 1.1.1, 1.2.0, 1.3.0 and the third security audit, and the README still
   quoted its figures: 3,474 faults killed against 2,458 tests. A cold run on 2026-08-08 —
   incremental baseline deleted, nothing inherited, and now covering this release's own additions —
-  puts the library at **100.00% with 4,870 mutants killed, no survivors and none without
-  coverage**, out of 7,718 instrumented across 147 files. The suite behind it is **3,547 tests**
-  (3,420 unit, 127 end-to-end). All five subpaths are individually at 100.00%.
+  puts the library at **100.00% with 4,870 mutants detected (4,849 killed, 21 timed out), no
+  survivors and none without coverage**, out of 7,718 instrumented across 147 files. The suite
+  behind it is **3,547 tests** (3,420 unit, 127 end-to-end). All five subpaths are individually at
+  100.00%.
 
   The count of documented equivalents is now reported as the number it is — **350 mutants under
   217 `// Stryker disable` directives** — instead of "the handful that no test can kill". Nothing
