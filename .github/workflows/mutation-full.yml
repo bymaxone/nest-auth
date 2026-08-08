@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@bcd95609cd724e6d86168f3dd6e40eff4d2077ad # v1
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
 
       - name: Run the full mutation suite
         # `mutation:full` deletes the incremental file first, so this run cannot inherit a
