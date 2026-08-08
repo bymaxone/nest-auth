@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-08
+
+Adds the revocation checker and the overridable default auth-email provider, carries the tenant
+on the email port, and refreshes the mutation figures the packaged README and CHANGELOG report.
+All of it stays in the 1.3.x line: there are no published dependents, so nothing installed breaks.
+
 ### Added
 
 - **`DefaultAuthEmailProvider` is exported**, the overridable default that fills the email port so a
@@ -53,28 +59,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sendPasswordResetToken(email, token)` stays assignable to the new type — TypeScript accepts an
   implementation with fewer parameters — so it compiles while binding `tenantId` to the recipient
   at runtime. Only `sendInvitation`, whose second argument is an object, fails compilation. Fixing
-  that one is not proof the rest are done; the surest path is to extend the forthcoming
-  `DefaultAuthEmailProvider` rather than hand-write the port.
+  that one is not proof the rest are done; the surest path is to extend the `DefaultAuthEmailProvider`
+  this release adds rather than hand-write the port.
 
   The library has no published dependents yet, so this breaks nothing already released and ships in
   the ordinary `1.3.x` line rather than as a major — SemVer's promise is to existing consumers, and
   there are none to break.
 
-## [1.3.1] - 2026-08-08
-
-Documentation only — no runtime code changed. It is a release because the README and the
-CHANGELOG ship inside the package, so a consumer reading them on npm was reading numbers measured
-against a library four releases smaller than the one they installed.
-
-### Changed
-
 - **The mutation score is re-measured rather than restated.** The last recorded run was
   2026-07-28, before 1.1.0, 1.1.1, 1.2.0, 1.3.0 and the third security audit, and the README still
   quoted its figures: 3,474 faults killed against 2,458 tests. A cold run on 2026-08-08 —
-  incremental baseline deleted, nothing inherited — puts the library at **100.00% with 4,801
-  mutants killed, no survivors and none without coverage**, out of 7,628 instrumented across 145
-  files. The suite behind it is **3,519 tests** (3,392 unit, 127 end-to-end), 1,061 more than the
-  README claimed. All five subpaths are individually at 100.00%.
+  incremental baseline deleted, nothing inherited, and now covering this release's own additions —
+  puts the library at **100.00% with 4,870 mutants killed, no survivors and none without
+  coverage**, out of 7,718 instrumented across 147 files. The suite behind it is **3,547 tests**
+  (3,420 unit, 127 end-to-end). All five subpaths are individually at 100.00%.
 
   The count of documented equivalents is now reported as the number it is — **350 mutants under
   217 `// Stryker disable` directives** — instead of "the handful that no test can kill". Nothing
