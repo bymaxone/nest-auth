@@ -154,7 +154,7 @@ export class AuthService {
    * @throws {@link AuthException} with `FORBIDDEN` if `beforeRegister` hook rejects.
    */
   async register(
-    dto: { email: string; password: string; name: string; tenantId: string },
+    dto: { email: string; password: string; name: string; tenantId?: string },
     req: Request
   ): Promise<AuthResult> {
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
@@ -278,7 +278,7 @@ export class AuthService {
    * @throws {@link AuthException} with `INVALID_CREDENTIALS` on bad email/password.
    */
   async login(
-    dto: { email: string; password: string; tenantId: string },
+    dto: { email: string; password: string; tenantId?: string },
     req: Request
   ): Promise<AuthResult | MfaChallengeResult> {
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
@@ -839,7 +839,12 @@ export class AuthService {
    *   or the user does not exist (response shape is identical to prevent
    *   account enumeration via this endpoint).
    */
-  async verifyEmail(tenantId: string, email: string, otp: string, req: Request): Promise<void> {
+  async verifyEmail(
+    tenantId: string | undefined,
+    email: string,
+    otp: string,
+    req: Request
+  ): Promise<void> {
     // The configured resolver is authoritative, exactly as it is for login and register: a
     // deployment that derives the tenant from the request has stated that the body's value is
     // not to be trusted. Without this, a caller could name any tenant and probe for accounts
@@ -882,7 +887,11 @@ export class AuthService {
    * @param tenantId - Tenant scope.
    * @param email - The email address to re-send to (not validated — always succeeds).
    */
-  async resendVerificationEmail(tenantId: string, email: string, req: Request): Promise<void> {
+  async resendVerificationEmail(
+    tenantId: string | undefined,
+    email: string,
+    req: Request
+  ): Promise<void> {
     // See `verifyEmail`: the resolver decides the tenant whenever one is configured.
     tenantId = await this.resolveTenantId(tenantId, req)
     // See `verifyEmail`: raw, a change of case is a change of cooldown key, and the one-send-
@@ -987,7 +996,7 @@ export class AuthService {
     return hmacSha256(`dashboard:${tenantId}:${email}`, this.options.hmacKey)
   }
 
-  private async resolveTenantId(dtoTenantId: string, req: Request): Promise<string> {
+  private async resolveTenantId(dtoTenantId: string | undefined, req: Request): Promise<string> {
     return await resolveTenantId(dtoTenantId, req, this.options.tenantIdResolver)
   }
 

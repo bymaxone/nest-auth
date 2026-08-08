@@ -184,7 +184,7 @@ export class PasswordResetService {
     // mail bomb aimed at an address the caller merely has to know. Silent success on a
     // cooldown hit, with the same anti-enumeration floor as every other exit, so the throttle
     // does not itself answer whether the account exists.
-    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(dto.tenantId, dto.email)}`
+    const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${this.otpIdentifier(tenantId, dto.email)}`
     const wasSet = await this.redis.setnx(cooldownKey, RESEND_COOLDOWN_SECONDS)
     if (!wasSet) {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
@@ -192,18 +192,15 @@ export class PasswordResetService {
     }
 
     try {
-      const user = tenantScoped(
-        await this.userRepo.findByEmail(dto.email, dto.tenantId),
-        dto.tenantId
-      )
+      const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
 
       if (user && !this.isBlocked(user.status)) {
         const { method } = this.options.passwordReset
 
         if (method === 'otp') {
-          await this.sendOtp(dto.email, dto.tenantId, user.id)
+          await this.sendOtp(dto.email, tenantId, user.id)
         } else {
-          await this.sendToken(dto.email, dto.tenantId, user.id)
+          await this.sendToken(dto.email, tenantId, user.id)
         }
       }
     } catch (err: unknown) {
@@ -271,7 +268,7 @@ export class PasswordResetService {
       if (!dto.token) {
         throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
       }
-      await this.resetWithToken(dto.email, dto.tenantId, dto.token, dto.newPassword)
+      await this.resetWithToken(dto.email, tenantId, dto.token, dto.newPassword)
       return
     }
 
@@ -283,12 +280,12 @@ export class PasswordResetService {
     }
 
     if (dto.verifiedToken) {
-      await this.resetWithVerifiedToken(dto.email, dto.tenantId, dto.verifiedToken, dto.newPassword)
+      await this.resetWithVerifiedToken(dto.email, tenantId, dto.verifiedToken, dto.newPassword)
       return
     }
 
     if (dto.otp) {
-      await this.resetWithOtp(dto.email, dto.tenantId, dto.otp, dto.newPassword)
+      await this.resetWithOtp(dto.email, tenantId, dto.otp, dto.newPassword)
       return
     }
 
@@ -320,16 +317,13 @@ export class PasswordResetService {
     // the stored context and this step would disagree about which tenant it belonged to.
     const tenantId = await resolveTenantId(dto.tenantId, req, this.options.tenantIdResolver)
     dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
-    const identifier = this.otpIdentifier(dto.tenantId, dto.email)
+    const identifier = this.otpIdentifier(tenantId, dto.email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, dto.otp)
 
     // After successful OTP verification, ensure the account still exists before
     // issuing the verifiedToken. Use PASSWORD_RESET_TOKEN_INVALID to prevent
     // distinguishing "OTP consumed for a deleted account" from other failures.
-    const user = tenantScoped(
-      await this.userRepo.findByEmail(dto.email, dto.tenantId),
-      dto.tenantId
-    )
+    const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
@@ -338,7 +332,7 @@ export class PasswordResetService {
     const context: ResetContext = {
       userId: user.id,
       email: dto.email,
-      tenantId: dto.tenantId,
+      tenantId: tenantId,
       passwordFingerprint: await this.passwordFingerprintOf(user.id)
     }
     await this.redis.set(
@@ -371,7 +365,7 @@ export class PasswordResetService {
     dto = { ...dto, tenantId, email: normalizeEmail(dto.email) }
     const start = Date.now()
 
-    const identifier = this.otpIdentifier(dto.tenantId, dto.email)
+    const identifier = this.otpIdentifier(tenantId, dto.email)
     const cooldownKey = `resend:${PASSWORD_RESET_PURPOSE}:${identifier}`
 
     // Atomic NX: one send per cooldown window, shared with `initiateReset` — see the note
@@ -383,10 +377,7 @@ export class PasswordResetService {
     }
 
     try {
-      const user = tenantScoped(
-        await this.userRepo.findByEmail(dto.email, dto.tenantId),
-        dto.tenantId
-      )
+      const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
       if (user && !this.isBlocked(user.status)) {
         // `sendOtp` stores the OTP in Redis synchronously, then fires the email
         // provider call as fire-and-forget (void). Timing normalization in the
@@ -394,7 +385,7 @@ export class PasswordResetService {
         // awaited here. If this is changed to `await`, the email RTT will be
         // added to the synchronous path, potentially creating a timing difference
         // between "user found" and "user not found" responses.
-        await this.sendOtp(dto.email, dto.tenantId, user.id)
+        await this.sendOtp(dto.email, tenantId, user.id)
       }
     } catch (err: unknown) {
       this.logger.error('resendOtp: unexpected error', err)

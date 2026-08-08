@@ -91,9 +91,10 @@ export class ResetPasswordDto {
    * Validated against the stored tenant in the verifiedToken flow to prevent
    * cross-tenant password reset attacks.
    */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
-  tenantId!: string
+  tenantId?: string
 }

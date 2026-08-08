@@ -851,6 +851,12 @@ export interface BymaxAuthModuleOptions {
    * **ignores** any `tenantId` field in the request body. This prevents tenant
    * spoofing where a client sends a different tenant's ID.
    *
+   * Because a configured resolver makes the body's value dead weight, `tenantId` is optional on
+   * every DTO that carries it and a client may omit it entirely. With no resolver configured the
+   * body is the only thing that can name a tenant, and a request naming none is refused with
+   * `auth.validation` — the deployment has to choose one of the two, and neither choice is
+   * guessed on its behalf.
+   *
    * @param req - The Express request object
    * @returns The tenant ID string, or a Promise resolving to it
    *

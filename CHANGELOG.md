@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tenantId` is optional on every DTO that carries it**, so a deployment that configures
+  `tenantIdResolver` no longer forces its clients to send a value the server discards. The
+  option's whole purpose is that the resolved tenant wins and the body's is ignored, but the nine
+  DTOs declared the field with `@IsString() @IsNotEmpty()` and no `@IsOptional()`, so a request
+  that omitted it was rejected before any service ran. The two configurations were both wrong in
+  opposite directions: without a resolver the body named the tenant and was trusted, and with one
+  the body was mandatory and ignored.
+
+  `resolveTenantId` now refuses a request that no resolver and no body value can scope, answering
+  `auth.validation` with the same `{ field, message }[]` shape the validation pipe produces. It is
+  refused rather than defaulted deliberately: inventing a tenant name would gather into one scope
+  every account a misconfigured deployment created.
+
+  Nothing changes for a consumer that sends `tenantId` today, with or without a resolver.
+
+### Changed
+
+- `AuthService.register`, `AuthService.login`, `AuthService.verifyEmail`,
+  `AuthService.resendVerificationEmail` and `OAuthService.initiateOAuth` accept `tenantId` as
+  optional, matching the DTOs that feed them. The password-reset flows now read the resolved
+  tenant from the local binding rather than from the reassigned DTO, which is the same value and
+  removes the question of whether the reassignment happened.
+
 ## [1.2.0] - 2026-08-08
 
 Carries the third security audit and the findings that surfaced while driving the mutation

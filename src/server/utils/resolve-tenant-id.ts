@@ -1,4 +1,8 @@
+import { HttpStatus } from '@nestjs/common'
 import type { Request } from 'express'
+
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 
 /**
  * Resolves the tenant a request belongs to, preferring the configured resolver over the value
@@ -10,23 +14,40 @@ import type { Request } from 'express'
  * prevents tenant spoofing: without it, any caller can name any tenant and every tenant-scoped
  * lookup below runs against a scope they chose.
  *
+ * Because a configured resolver makes the body's value dead weight, the DTOs mark `tenantId`
+ * optional and a caller may omit it. The two states the request can arrive in therefore differ:
+ * with a resolver, the field is ignored whether present or absent; without one, it is the only
+ * thing that can name a tenant, and its absence is a request that cannot be scoped. That case is
+ * refused rather than defaulted, because inventing a tenant name would silently gather into one
+ * scope every account a misconfigured deployment created.
+ *
  * This lives as a shared helper rather than a method on one service because the promise has to
  * hold for **every** tenant-scoped flow. It previously lived inside `AuthService`, so only
  * login and register honoured it while password reset and email verification read the body
  * value verbatim — one rule with two implementations is how the gap opened in the first place.
  *
- * @param dtoTenantId - The tenant the caller named in the request body.
+ * @param dtoTenantId - The tenant the caller named in the request body, if any.
  * @param req - The request, handed to the configured resolver.
  * @param resolver - The configured `tenantIdResolver`, if any.
  * @returns The resolved tenant when a resolver is configured, otherwise the body's value.
+ * @throws {@link AuthException} with `VALIDATION` when no resolver is configured and the body
+ *   named no tenant, so nothing in the request can scope it.
  */
 export async function resolveTenantId(
-  dtoTenantId: string,
+  dtoTenantId: string | undefined,
   req: Request,
   resolver?: (req: Request) => string | Promise<string>
 ): Promise<string> {
   if (resolver) {
     return await resolver(req)
+  }
+  if (dtoTenantId === undefined) {
+    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+      {
+        field: 'tenantId',
+        message: 'tenantId is required unless the deployment configures tenantIdResolver'
+      }
+    ])
   }
   return dtoTenantId
 }

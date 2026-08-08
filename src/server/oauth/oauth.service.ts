@@ -177,7 +177,7 @@ export class OAuthService {
    */
   async initiateOAuth(
     provider: string,
-    tenantId: string,
+    tenantId: string | undefined,
     req: Request,
     res: Response
   ): Promise<void> {
