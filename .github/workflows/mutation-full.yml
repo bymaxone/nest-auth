@@ -1,151 +1,39 @@
-# The full mutation run, on a schedule — the one that is allowed to be slow.
+# The full cold mutation run. The logic lives once in `bymaxone/.github`; what stays here is
+# what is genuinely local: when it runs and how long it may take.
 #
-# Why this exists as its own workflow: `stryker.config.json` now sets `incremental: true`, so
-# the per-push job in `ci.yml` re-tests only what changed and finishes in minutes instead of
-# an hour. That is the right trade for a routine gate, but it is a trade: an incremental run
-# reuses stored verdicts, and Stryker's own guidance is that reused verdicts for STATIC
-# mutants can be stale — which is precisely the class this library keeps in scope
-# (`ignoreStatic: false`, the setting that caught a refresh cookie shipping `httpOnly: false`
-# that no test covered). A score built on reuse is a fast signal, not the truth.
-#
-# So the truth is measured here, cold, once a week. It also refreshes the cache the per-push
-# job restores: this workflow saves under the same `stryker-incremental-` prefix, so every
-# push in the following week starts from a baseline a full run produced rather than from a
-# chain of incremental deltas.
+# Why it exists: `stryker.config.json` sets `incremental: true`, so the per-push job re-tests
+# only what changed and finishes inside the minutes a routine gate is allowed to take. That is a
+# trade — an incremental run reuses stored verdicts, and reused verdicts for STATIC mutants can
+# be stale. The fast signal is here every push; the truth is measured cold, once a week.
 name: Mutation (full)
 
 on:
   schedule:
-    # Mondays 06:00 UTC. Off the working day on purpose — nothing waits on this run.
+    # Off the working day, and staggered against the other libraries so a Monday morning does
+    # not start ten cold suites at once.
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
+# Single-flight across the whole repository, deliberately NOT keyed by `github.ref`
+# — the same reasoning `peer-advisory-drift.yml` here already carries. What two runs
+# would race over is one shared incremental baseline, so a ref-scoped group would put
+# a dispatch and the scheduled run in different groups and leave the race intact.
+# Queue rather than cancel: a cold run killed halfway leaves no baseline at all,
+# which is worse than a second run waiting for the first.
+concurrency:
+  group: mutation-full
+  cancel-in-progress: false
+
 permissions:
   contents: read
-  # `gh run list`, in the step that decides whether anything can have moved the score.
+  # The reusable reads `gh run list` to decide whether anything can have moved the score.
   actions: read
-
-concurrency:
-  group: mutation-full-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   full:
-    name: Full mutation run
-    # Default branch only, and this is a correctness guard rather than tidiness.
-    # `workflow_dispatch` can be aimed at any ref, and the save step below writes under the
-    # generic `stryker-incremental-` prefix that the per-push job restores from. A manual run
-    # on a feature branch would therefore hand main's CI a baseline built from code that is
-    # not on main — verdicts reused for mutants that no longer exist, or missing for ones that
-    # do. The window between the two is exactly where an incremental run is least trustworthy,
-    # so it must not be reachable by accident.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
-    # Three hours. A cold run has never been measured to completion on a GitHub runner — the
-    # 45-minute default cancelled every attempt — so this is deliberately generous until one
-    # finishes and reports a real duration. Nothing blocks on this job, so an over-wide
-    # ceiling costs only the minutes it actually uses.
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Full history: the step below diffs against the commit the last successful full run
-          # measured, which is arbitrarily far back.
-          fetch-depth: 0
-
-      - name: Decide whether anything can have moved the score
-        id: changed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # A week with no relevant change produces the same verdict as the week before, and this
-        # run costs an hour and forty minutes to say so.
-        #
-        # The surface is deliberately WIDER than the per-push job's `^(src/)`. That one decides
-        # whether to re-measure after a change to production code; this one decides whether the
-        # SCORE can have moved, and the score also moves when a test changes (a new test kills a
-        # mutant that survived), when the Stryker or Jest configuration changes (which mutants
-        # exist, which tests select them), or when a dependency changes underneath the suite.
-        # Gating on `src/` alone would skip exactly the week where someone spent their time
-        # writing tests — which is the week most likely to change the number.
-        #
-        # A manual dispatch always runs: asking for it IS the decision.
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch — running."
-            exit 0
-          fi
-          # `|| true` is load-bearing under `set -e`: without it a transient API failure kills
-          # the step, which is the opposite of failing open. An empty result falls through to
-          # the "no previous run" branch below and runs the suite.
-          #
-          # The workflow is named by its FILE, not by `github.workflow` — that one carries the
-          # human-readable `name:`, so renaming the workflow would silently find no previous run
-          # forever.
-          last="$(gh run list --workflow mutation-full.yml --status success \
-            --branch "${{ github.event.repository.default_branch }}" --limit 1 \
-            --json headSha --jq '.[0].headSha // empty' 2>/dev/null || true)"
-          if [ -z "$last" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "No previous successful run to compare against — running."
-            exit 0
-          fi
-          # An unreachable SHA (history rewritten, or the commit garbage-collected) is not a
-          # reason to skip: it is a reason to stop trusting the comparison.
-          if ! git cat-file -e "${last}^{commit}" 2>/dev/null; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Last measured commit $last is unreachable — running."
-            exit 0
-          fi
-          if git diff --quiet "$last" HEAD -- \
-              src/ test/ package.json pnpm-lock.yaml \
-              stryker.config.json jest.config.ts jest.stryker.config.ts jest.coverage.config.ts \
-              tsconfig.json tsconfig.jest.json; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Nothing that can move the score changed since $last — skipping."
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Changed since $last:"
-            git diff --name-only "$last" HEAD -- src/ test/ package.json pnpm-lock.yaml \
-              stryker.config.json jest.config.ts jest.stryker.config.ts jest.coverage.config.ts \
-              tsconfig.json tsconfig.jest.json
-          fi
-
-      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
-        if: steps.changed.outputs.run == 'true'
-
-      - name: Run the full mutation suite
-        if: steps.changed.outputs.run == 'true'
-        # `mutation:full` deletes the incremental file first, so this run cannot inherit a
-        # verdict from the incremental chain it exists to check.
-        run: pnpm mutation:full
-
-      - name: Save the incremental baseline for the week's pushes
-        # Only on success, and for the same reason the job is pinned to the default branch:
-        # this file becomes the baseline every push that week reuses. Stryker writes it as it
-        # goes, so a run that dies partway through leaves a REAL file describing a fraction of
-        # the mutants — and the per-push gate cannot tell that apart from a complete one. It
-        # would silently treat the unmeasured remainder as unchanged. A failed run leaving the
-        # previous week's baseline in place is the safe outcome: stale beats wrong.
-        #
-        # The report upload below keeps `always()` on purpose — a partial report is worth
-        # reading when the run failed; a partial baseline is not worth reusing.
-        # Skipped along with the run itself: with nothing measured there is no baseline to
-        # write, and the previous week's stays current — which is correct, because the code it
-        # describes has not moved either.
-        if: steps.changed.outputs.run == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: reports/stryker-incremental.json
-          key: stryker-incremental-${{ github.sha }}
-
-      - name: Upload the mutation report
-        # `always()` so a failed run still uploads its partial report, but only when the suite
-        # actually ran — a skipped week has nothing to upload.
-        if: always() && steps.changed.outputs.run == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mutation-full
-          path: reports/mutation/
-          if-no-files-found: ignore
+    uses: bymaxone/.github/.github/workflows/mutation-full.yml@v1
+    with:
+      # Measured cold: 90 min. Generous on purpose — nothing blocks on this job, so an
+      # over-wide ceiling costs only the minutes it uses, while an under-tight one costs the
+      # whole run and leaves the week without a measured baseline.
+      timeout-minutes: 180
