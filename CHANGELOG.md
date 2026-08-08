@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-08
+
+Carries the third security audit and the findings that surfaced while driving the mutation
+score, across two pull requests that landed without versions of their own.
+
+> **Action required for two deployments.** The Next.js proxy now **requires** `jwtSecret`;
+> the decode-only fallback is gone, so a consumer that never set it fails at boot instead of
+> trusting an unverified token. And the password floor moved from 8 to **15** by default —
+> existing stored passwords keep working, but a set or change below 15 is now refused unless
+> `password.minLength` says otherwise.
+
+### Security
+
+- **A live session could hide from revoke-all.** Pruning removed members whose `rt:` key was
+  still present, so a session survived the call meant to end every session for an account.
+  Prune now removes only a member whose `rt:` key is actually gone.
+- **The Next.js proxy fell back to decoding a token without verifying it.** `jwtSecret` is
+  required and the decode-only path is removed. An unverified decode answers with whatever
+  the token claims.
+- **A crafted password record could OOM-kill the process.** `compare()` derived scrypt's
+  `maxmem` from the stored PHC parameters and widened it to fit, so `ln=31` with the shipped
+  `r=8` asked for 2 TiB — which does not fail the request, it takes the process and every
+  in-flight connection with it. The ceiling is a constant that input cannot widen. A block
+  size above the parameter ceiling that the memory ceiling let through is closed with it.
+- **An OTP check could pass on two absent values.** A non-string stored code fell back to
+  `''`, and `timingSafeEqual` answers true for two empty buffers, so an empty submitted code
+  compared equal to the placeholder and verification succeeded. The non-string record is
+  refused instead.
+- **Two guards were exported but unusable.** `UserStatusGuard` was missing
+  `BYMAX_AUTH_USER_REPOSITORY` and `WsJwtGuard` was missing `WsTicketService` from the
+  module's exports, so `@UseGuards(JwtAuthGuard, UserStatusGuard)` failed a consumer's boot
+  and every route on a derived backend was protected by token validity alone — a suspended
+  or deleted account kept access for a full access-token lifetime. The ticket handshake was
+  likewise unreachable, so realtime authenticators replayed the access-token cookie and never
+  consulted the revocation blacklist. All nine guards' constructor deps were audited; these
+  were the only gaps.
+- **OAuth `state` was not bound to its provider** (RFC 9700 mix-up). The provider is carried
+  in the state record.
+- **A cookie prefix whose attributes cannot satisfy it** is dropped silently by the browser.
+  The contract is validated at boot.
+- **The absolute session lifetime inherited no cap.** Capped at 30 days (NIST SP 800-63B-4
+  §3).
+- **The rate limit charged a single IPv6 address**, which costs an attacker nothing to move
+  within. Charged to the /64.
+- **"Is this production" was sniffed from `NODE_ENV`** in six places. An explicit
+  `environment` option decides it, defaulting to production.
+
+### Added
+
+- **`password.minLength`** — configurable, defaulting to **15**. NIST SP 800-63B-4 §3.1.1.1
+  allows 8 only for a password used as part of multi-factor authentication and requires 15
+  for a single factor; MFA here is opt-in per user, so the default deployment is
+  single-factor. The check moved to `PasswordService.assertAcceptable`, one entry point for
+  the four sites that set a password, screening length before the breach corpus — a password
+  refused for being short should not cost a round trip nor be sent anywhere first.
+- **`MfaService.resetMfa`** — administrative removal of a second factor, for a user who lost
+  both the authenticator and the recovery codes. Every self-service exit needs the factor
+  itself, so without it that user is locked out permanently by the control meant to protect
+  them (ASVS v5 §6.1.1). It ships as a method and **not** a route, the decision
+  `unlockAccount` already made: every route this library exposes is scoped to the caller's
+  own account, and who may reset whom is a question only the host can answer. It invalidates
+  sessions, bumps the token epoch so `mfaVerified: true` tokens die with the factor, and
+  notifies the account holder — an administrative reset the owner cannot see is an
+  account-takeover path.
+- Log lines where the response is deliberately uninformative, so the log is the only record
+  the event happened: ws-ticket refusals, invitation and revoke-rank refusals, email-change
+  and change-password lockouts, MFA re-authentication refusals, and corrupted MFA setup
+  payloads.
+
+### Changed
+
+- **`sendNewSessionAlert` is optional.** It was a required provider method the library never
+  called, with a docstring claiming it fired on login. Without device recognition it would
+  fire on every login, and an alert on every login is one the user learns to dismiss — the
+  control stops existing while appearing to be in place. `onNewSession` already fires on
+  every session created; the docs now say what is true.
+
 ## [1.1.1] - 2026-08-05
 
 This release carries the second cross-implementation security audit as well as the dependency-injection fix below. Both landed as separate pull requests; the audit one carried no version of its own, so its account is here.
@@ -1075,7 +1152,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
