@@ -1,5 +1,13 @@
 import { Transform } from 'class-transformer'
-import { IsEmail, IsNotEmpty, IsString, Length, Matches, MaxLength } from 'class-validator'
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MaxLength
+} from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
@@ -35,9 +43,10 @@ export class VerifyEmailDto {
   /**
    * Tenant identifier that scopes the verification to a specific organization.
    */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
-  tenantId!: string
+  tenantId?: string
 }

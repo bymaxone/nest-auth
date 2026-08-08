@@ -1,5 +1,13 @@
 import { Transform } from 'class-transformer'
-import { IsEmail, IsNotEmpty, IsString, Matches, MaxLength, MinLength } from 'class-validator'
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength
+} from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
@@ -54,9 +62,10 @@ export class LoginDto {
    * Bounded to 128 characters — tenant IDs are part of HMAC pre-images and
    * Redis keys, so an unbounded string is rejected at the boundary.
    */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
-  tenantId!: string
+  tenantId?: string
 }

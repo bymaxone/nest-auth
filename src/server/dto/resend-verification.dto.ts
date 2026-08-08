@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer'
-import { IsEmail, IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator'
+import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
 
 import { NO_CONTROL_CHARACTERS } from './no-control-characters'
 
@@ -27,9 +27,10 @@ export class ResendVerificationDto {
   /**
    * Tenant identifier that scopes the resend request to a specific organization.
    */
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
   @Matches(NO_CONTROL_CHARACTERS, { message: 'tenantId must not contain control characters' })
-  tenantId!: string
+  tenantId?: string
 }
