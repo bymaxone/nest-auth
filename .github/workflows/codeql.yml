@@ -42,9 +42,11 @@ jobs:
       actions: read
     uses: bymaxone/.github/.github/workflows/codeql.yml@v1
     with:
-      # Added to match the rest of the libraries. Audit policy: it records the
-      # job's outbound calls and blocks nothing, so it cannot fail a build that
-      # was passing, and it makes an unexpected destination visible.
+      # Added to match the rest of the libraries. On `audit` the policy records
+      # the job's outbound calls and blocks none of them, so nothing fails for
+      # reaching an unexpected destination — it only becomes visible. The step
+      # itself can still fail as any step can, if the action cannot be
+      # downloaded or errors out.
       harden-runner: true
       # Carried over from the workflow this replaces. It is a superset of the
       # default suite, so leaving it out analyses strictly less than before.
