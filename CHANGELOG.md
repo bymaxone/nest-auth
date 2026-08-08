@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Nothing changes for a consumer that sends `tenantId` today, with or without a resolver.
 
+- **`jwt.absoluteSessionLifetimeDays` is documented as the 30-day default it actually is.** The
+  option's doc comment, the README's option table, the README's "deliberately off by default"
+  note and the specification's table all still described the pre-1.2.0 behaviour, where the cap
+  was off unless a deployment asked for it. 1.2.0 turned it on at 30 days as a security fix and
+  the prose did not follow, so the surface a consumer reads in their editor argued for planning
+  around sessions that never end.
+
 ### Changed
 
 - `AuthService.register`, `AuthService.login`, `AuthService.verifyEmail`,

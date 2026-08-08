@@ -644,25 +644,25 @@ both channels are accepted, and a ticket wins when both are present.
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group                 | Key Options                                                                                                                                         | Default                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, off, `HS256`, both off     |
-| **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                          |
-| **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1            |
-| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                              |
-| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)      |
-| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                       |
-| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                         |
-| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                              |
-| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                    |
-| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                               |
-| **platform**          | `enabled`                                                                                                                                           | `false`                                 |
-| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                 |
-| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                         | —                                       |
-| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                       |
-| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                           |
-| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                    |
-| **controllers**       | Toggle individual controllers on/off                                                                                                                | `auth`, `passwordReset` on; rest opt-in |
+| Group                 | Key Options                                                                                                                                         | Default                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, `30`d cap, `HS256`, both off |
+| **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                            |
+| **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1              |
+| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                                |
+| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)        |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                         |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                           |
+| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                                |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                      |
+| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                                 |
+| **platform**          | `enabled`                                                                                                                                           | `false`                                   |
+| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                   |
+| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                         | —                                         |
+| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                         |
+| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                             |
+| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                      |
+| **controllers**       | Toggle individual controllers on/off                                                                                                                | `auth`, `passwordReset` on; rest opt-in   |
 
 > [!NOTE]
 > When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
@@ -765,14 +765,17 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > rather than letting it fail open, and rejects an unreadable time span or a non-positive
 > lifetime on the same pass.
 
-Two options are deliberately off by default because switching them on changes behaviour for
-sessions and origins that already exist:
+`jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
+**on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a
+SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refreshing every
+fifteen minutes keeps a session alive forever, and a refresh token stolen once becomes permanent
+access. Raise it to a value the product can justify, or set `0` to accept unbounded sessions
+deliberately; either way the change ends sessions already older than the value you pick.
 
-- `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation. Without
-  it, a client refreshing every fifteen minutes keeps a session alive forever.
-- `cookies.trustedOrigins` is required as soon as `cookies.sameSite: 'none'` is set, and refused
-  otherwise — that posture is the only one where the browser sends the session cookie
-  cross-site, and it is the only one where the origin check has anything to authorize.
+`cookies.trustedOrigins` is deliberately off by default, because switching it on changes
+behaviour for origins that already exist. It is required as soon as `cookies.sameSite: 'none'`
+is set, and refused otherwise — that posture is the only one where the browser sends the session
+cookie cross-site, and it is the only one where the origin check has anything to authorize.
 
 The breach check is opt-in for a different reason: it is the only part of the credential path
 that reaches the network, and a library should not start talking to a third party because it was

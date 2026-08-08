@@ -152,7 +152,7 @@ export interface BymaxAuthModuleOptions {
 
     /**
      * Hard cap on how long one login can be extended by rotation, in days.
-     * Default: `0` — no cap.
+     * Default: `30`. Set to `0` to disable the cap.
      *
      * `refreshExpiresInDays` bounds how long a single refresh token lives, not how long a
      * *session* lives: a client that rotates every fifteen minutes renews that lifetime
@@ -161,9 +161,12 @@ export interface BymaxAuthModuleOptions {
      * carried through every rotation, and once the cap is passed the rotation is refused and
      * the user signs in again.
      *
-     * Left off by default because switching it on ends sessions that are already older than
-     * the cap. Pick a value the product can justify asking a user to re-authenticate at (30
-     * or 90 days are common), and set it deliberately.
+     * On by default at 30 days, because NIST SP 800-63B-4 §3 makes a definite reauthentication
+     * timeout a SHALL and puts it at no more than 30 days for AAL1. Without the cap a refresh
+     * token stolen once converts into permanent access: reuse detection only fires if the
+     * legitimate client also replays, which it never will once the victim has stopped using
+     * that device. Raise it to a value the product can justify asking a user to re-authenticate
+     * at, or set `0` to accept unbounded sessions deliberately.
      *
      * Sessions written before this existed carry no birth time and are not capped; they age
      * out under `refreshExpiresInDays` like any other.
