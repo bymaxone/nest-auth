@@ -135,9 +135,9 @@ describe('/invitations/accept negative paths (E2E)', () => {
     let capturedToken: string | undefined
     const provider = boot.email
     const originalSend = provider.sendInvitation.bind(provider)
-    provider.sendInvitation = (async (toEmail, data) => {
+    provider.sendInvitation = (async (tenantId, toEmail, data) => {
       capturedToken = data.inviteToken
-      return originalSend(toEmail, data)
+      return originalSend(tenantId, toEmail, data)
     }) as typeof provider.sendInvitation
     void inviteeEmail
 

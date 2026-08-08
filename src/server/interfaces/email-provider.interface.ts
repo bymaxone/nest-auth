@@ -80,11 +80,18 @@ export interface IEmailProvider {
    * The email should contain a time-limited URL with the token embedded as a
    * query parameter (e.g. `/reset-password?token=...`).
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param token - Signed, opaque reset token. Never log or expose this value.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendPasswordResetToken(email: string, token: string, locale?: string): Promise<void>
+  sendPasswordResetToken(
+    tenantId: string,
+    email: string,
+    token: string,
+    locale?: string
+  ): Promise<void>
 
   /**
    * Sends a one-time password (OTP) code for password reset to the user.
@@ -93,11 +100,13 @@ export interface IEmailProvider {
    * The email should display the numeric/alphanumeric code clearly and state
    * its expiry time.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param otp - Short-lived OTP code. Never log or expose this value.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendPasswordResetOtp(email: string, otp: string, locale?: string): Promise<void>
+  sendPasswordResetOtp(tenantId: string, email: string, otp: string, locale?: string): Promise<void>
 
   /**
    * Sends an OTP code to verify the user's email address during registration or
@@ -106,11 +115,18 @@ export interface IEmailProvider {
    * Called immediately after account creation (when email verification is enabled)
    * or when the user requests a new verification code.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address to be verified.
    * @param otp - Short-lived OTP code for verification. Never log or expose this value.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendEmailVerificationOtp(email: string, otp: string, locale?: string): Promise<void>
+  sendEmailVerificationOtp(
+    tenantId: string,
+    email: string,
+    otp: string,
+    locale?: string
+  ): Promise<void>
 
   /**
    * Notifies the user that the password on their account has changed.
@@ -127,10 +143,12 @@ export interface IEmailProvider {
    * it when present and logs at debug when it is not, rather than failing a password change
    * over a missing notification.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendPasswordChangedNotification?(email: string, locale?: string): Promise<void>
+  sendPasswordChangedNotification?(tenantId: string, email: string, locale?: string): Promise<void>
 
   /**
    * Sends the address-change verification link to the **new** address.
@@ -142,11 +160,18 @@ export interface IEmailProvider {
    * Optional on the interface so an existing consumer keeps compiling, but the flow refuses
    * to mint a token when it is absent rather than writing one nobody will ever receive.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param newEmail - The address being moved to.
    * @param token - The raw single-use token. The provider builds the confirmation URL.
    * @param locale - Optional locale for the template.
    */
-  sendEmailChangeVerification?(newEmail: string, token: string, locale?: string): Promise<void>
+  sendEmailChangeVerification?(
+    tenantId: string,
+    newEmail: string,
+    token: string,
+    locale?: string
+  ): Promise<void>
 
   /**
    * Notifies the **old** address that the account's address has changed.
@@ -159,11 +184,18 @@ export interface IEmailProvider {
    * Fire-and-forget — a delivery failure does not roll back a change the user asked for and
    * has already proven.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param oldEmail - The address the account is leaving.
    * @param newEmail - The address it moved to, so the notice can say what happened.
    * @param locale - Optional locale for the template.
    */
-  sendEmailChangedNotification?(oldEmail: string, newEmail: string, locale?: string): Promise<void>
+  sendEmailChangedNotification?(
+    tenantId: string,
+    oldEmail: string,
+    newEmail: string,
+    locale?: string
+  ): Promise<void>
 
   /**
    * Notifies the user that multi-factor authentication (MFA) has been enabled on
@@ -173,10 +205,12 @@ export interface IEmailProvider {
    * security alert — if the user did not initiate this change, they should be
    * directed to contact support or reset their credentials.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendMfaEnabledNotification(email: string, locale?: string): Promise<void>
+  sendMfaEnabledNotification(tenantId: string, email: string, locale?: string): Promise<void>
 
   /**
    * Notifies the user that multi-factor authentication (MFA) has been disabled on
@@ -186,10 +220,12 @@ export interface IEmailProvider {
    * alert — if the user did not initiate this change, they should be directed to
    * contact support or reset their credentials immediately.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendMfaDisabledNotification(email: string, locale?: string): Promise<void>
+  sendMfaDisabledNotification(tenantId: string, email: string, locale?: string): Promise<void>
 
   /**
    * Sends a security alert about a newly established session.
@@ -211,11 +247,18 @@ export interface IEmailProvider {
    * So: decide in your `onNewSession` hook whether the session is worth alerting about, and
    * call this when it is.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.
    * @param sessionInfo - Device, IP, and session identifier details.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendNewSessionAlert?(email: string, sessionInfo: SessionInfo, locale?: string): Promise<void>
+  sendNewSessionAlert?(
+    tenantId: string,
+    email: string,
+    sessionInfo: SessionInfo,
+    locale?: string
+  ): Promise<void>
 
   /**
    * Sends a tenant invitation email to a prospective member.
@@ -224,9 +267,16 @@ export interface IEmailProvider {
    * The email should prominently display the inviter's name, the tenant name,
    * the accept URL, and the expiry date/time.
    *
+   * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
+   *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address (the invitee).
    * @param inviteData - Invitation metadata required to render the email.
    * @param locale - BCP 47 locale tag for email language (e.g. `'en'`, `'pt-BR'`).
    */
-  sendInvitation(email: string, inviteData: InviteData, locale?: string): Promise<void>
+  sendInvitation(
+    tenantId: string,
+    email: string,
+    inviteData: InviteData,
+    locale?: string
+  ): Promise<void>
 }

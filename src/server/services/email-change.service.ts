@@ -191,7 +191,7 @@ export class EmailChangeService implements OnModuleInit {
     )
 
     // Non-null by construction: `onModuleInit` refuses to boot without it.
-    await this.emailProvider.sendEmailChangeVerification?.(newEmail, rawToken)
+    await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
     this.logger.log(
       `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`
     )
@@ -245,7 +245,7 @@ export class EmailChangeService implements OnModuleInit {
         `from=${maskEmail(oldEmail)} to=${maskEmail(context.newEmail)}`
     )
 
-    await this.notifyOldAddress(oldEmail, context.newEmail)
+    await this.notifyOldAddress(user.tenantId, oldEmail, context.newEmail)
   }
 
   // ---------------------------------------------------------------------------
@@ -345,10 +345,14 @@ export class EmailChangeService implements OnModuleInit {
    * @param oldEmail - The address the account is leaving.
    * @param newEmail - The address it moved to.
    */
-  private async notifyOldAddress(oldEmail: string, newEmail: string): Promise<void> {
+  private async notifyOldAddress(
+    tenantId: string,
+    oldEmail: string,
+    newEmail: string
+  ): Promise<void> {
     if (!this.emailProvider.sendEmailChangedNotification) return
     try {
-      await this.emailProvider.sendEmailChangedNotification(oldEmail, newEmail)
+      await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
       this.logger.error('confirmChange: notification to the previous address failed', err)
     }

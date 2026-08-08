@@ -39,6 +39,7 @@ function instrumentInvitationEmails(email: MockEmailProvider): CapturedEmail[] {
   // Reassign the method directly — the same `email` instance is held by the
   // NestJS DI container via `useValue`, so the service will call our override.
   ;(email as { sendInvitation: MockEmailProvider['sendInvitation'] }).sendInvitation = async (
+    _tenantId: string,
     to: string,
     data: InviteData
   ): Promise<void> => {

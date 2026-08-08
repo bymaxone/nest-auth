@@ -343,31 +343,35 @@ export function createMockEmailProvider(): MockEmailProvider {
     send,
     sentEmails,
 
-    async sendPasswordResetToken(email: string, _token: string): Promise<void> {
+    async sendPasswordResetToken(_tenantId: string, email: string, _token: string): Promise<void> {
       send({ to: email, subject: 'Password reset', html: '<p>token</p>' })
     },
 
-    async sendPasswordResetOtp(email: string, _otp: string): Promise<void> {
+    async sendPasswordResetOtp(_tenantId: string, email: string, _otp: string): Promise<void> {
       send({ to: email, subject: 'Password reset OTP', html: '<p>otp</p>' })
     },
 
-    async sendEmailVerificationOtp(email: string, _otp: string): Promise<void> {
+    async sendEmailVerificationOtp(_tenantId: string, email: string, _otp: string): Promise<void> {
       send({ to: email, subject: 'Verify your email', html: '<p>otp</p>' })
     },
 
-    async sendMfaEnabledNotification(email: string): Promise<void> {
+    async sendMfaEnabledNotification(_tenantId: string, email: string): Promise<void> {
       send({ to: email, subject: 'MFA enabled', html: '<p>enabled</p>' })
     },
 
-    async sendMfaDisabledNotification(email: string): Promise<void> {
+    async sendMfaDisabledNotification(_tenantId: string, email: string): Promise<void> {
       send({ to: email, subject: 'MFA disabled', html: '<p>disabled</p>' })
     },
 
-    async sendNewSessionAlert(email: string, _sessionInfo: SessionInfo): Promise<void> {
+    async sendNewSessionAlert(
+      _tenantId: string,
+      email: string,
+      _sessionInfo: SessionInfo
+    ): Promise<void> {
       send({ to: email, subject: 'New session', html: '<p>session</p>' })
     },
 
-    async sendInvitation(email: string, _data: InviteData): Promise<void> {
+    async sendInvitation(_tenantId: string, email: string, _data: InviteData): Promise<void> {
       send({ to: email, subject: 'Invitation', html: '<p>invite</p>' })
     }
   }

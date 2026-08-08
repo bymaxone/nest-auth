@@ -1096,7 +1096,7 @@ export class AuthService {
     const otp = this.otpService.generate(length)
     await this.otpService.store('email_verification', identifier, otp, ttl)
 
-    void this.emailProvider.sendEmailVerificationOtp(email, otp).catch((err: unknown) => {
+    void this.emailProvider.sendEmailVerificationOtp(tenantId, email, otp).catch((err: unknown) => {
       this.logger.error(`sendEmailVerificationOtp failed for user ${userId}`, err)
     })
   }

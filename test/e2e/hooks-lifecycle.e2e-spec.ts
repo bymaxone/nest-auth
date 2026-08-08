@@ -277,9 +277,9 @@ describe('IAuthHooks lifecycle (E2E)', () => {
         // Capture the OTP using a temporary spy on the email provider.
         let capturedOtp: string | undefined
         const original = fixture.email.sendEmailVerificationOtp.bind(fixture.email)
-        fixture.email.sendEmailVerificationOtp = async (to, otp) => {
+        fixture.email.sendEmailVerificationOtp = async (tenantId, to, otp) => {
           capturedOtp = otp
-          return original(to, otp)
+          return original(tenantId, to, otp)
         }
 
         await request(fixture.app.getHttpServer())
@@ -343,9 +343,9 @@ describe('IAuthHooks lifecycle (E2E)', () => {
         // Capture the raw token from sendPasswordResetToken.
         let resetToken: string | undefined
         const original = fixture.email.sendPasswordResetToken.bind(fixture.email)
-        fixture.email.sendPasswordResetToken = async (to, token) => {
+        fixture.email.sendPasswordResetToken = async (tenantId, to, token) => {
           resetToken = token
-          return original(to, token)
+          return original(tenantId, to, token)
         }
 
         await request(fixture.app.getHttpServer())

@@ -299,7 +299,12 @@ export class ResendEmailProvider implements IEmailProvider {
   private readonly from = 'no-reply@example.com'
   private readonly appUrl = process.env.APP_URL!
 
-  async sendPasswordResetToken(email: string, token: string, _locale?: string): Promise<void> {
+  async sendPasswordResetToken(
+    _tenantId: string,
+    email: string,
+    token: string,
+    _locale?: string
+  ): Promise<void> {
     const url = `${this.appUrl}/reset-password?token=${encodeURIComponent(token)}`
     await this.client.emails.send({
       from: this.from,
@@ -309,7 +314,12 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendPasswordResetOtp(email: string, otp: string, _locale?: string): Promise<void> {
+  async sendPasswordResetOtp(
+    _tenantId: string,
+    email: string,
+    otp: string,
+    _locale?: string
+  ): Promise<void> {
     await this.client.emails.send({
       from: this.from,
       to: email,
@@ -318,7 +328,12 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendEmailVerificationOtp(email: string, otp: string, _locale?: string): Promise<void> {
+  async sendEmailVerificationOtp(
+    _tenantId: string,
+    email: string,
+    otp: string,
+    _locale?: string
+  ): Promise<void> {
     await this.client.emails.send({
       from: this.from,
       to: email,
@@ -327,7 +342,11 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendMfaEnabledNotification(email: string, _locale?: string): Promise<void> {
+  async sendMfaEnabledNotification(
+    _tenantId: string,
+    email: string,
+    _locale?: string
+  ): Promise<void> {
     await this.client.emails.send({
       from: this.from,
       to: email,
@@ -336,7 +355,11 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendMfaDisabledNotification(email: string, _locale?: string): Promise<void> {
+  async sendMfaDisabledNotification(
+    _tenantId: string,
+    email: string,
+    _locale?: string
+  ): Promise<void> {
     await this.client.emails.send({
       from: this.from,
       to: email,
@@ -346,6 +369,7 @@ export class ResendEmailProvider implements IEmailProvider {
   }
 
   async sendNewSessionAlert(
+    _tenantId: string,
     email: string,
     sessionInfo: SessionInfo,
     _locale?: string
@@ -365,7 +389,12 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
-  async sendInvitation(email: string, inviteData: InviteData, _locale?: string): Promise<void> {
+  async sendInvitation(
+    _tenantId: string,
+    email: string,
+    inviteData: InviteData,
+    _locale?: string
+  ): Promise<void> {
     const url = `${this.appUrl}/accept-invite?token=${encodeURIComponent(inviteData.inviteToken)}`
     await this.client.emails.send({
       from: this.from,

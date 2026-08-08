@@ -203,6 +203,7 @@ describe('PasswordResetService', () => {
         id: 'u1',
         email: 'user@example.com',
         status: 'active',
+        tenantId: 'tenant-1',
         passwordHash: 'scrypt:stored'
       })
       mockPasswordService.compare.mockResolvedValue(true)
@@ -413,6 +414,7 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', dto, 'raw-refresh')
 
       expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalledWith(
+        'tenant-1',
         'user@example.com'
       )
     })
@@ -620,6 +622,7 @@ describe('PasswordResetService', () => {
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
       expect(mockEmailProvider.sendPasswordResetToken).toHaveBeenCalledTimes(1)
       expect(mockEmailProvider.sendPasswordResetToken).toHaveBeenCalledWith(
+        'tenant1',
         dto.email,
         expect.any(String)
       )

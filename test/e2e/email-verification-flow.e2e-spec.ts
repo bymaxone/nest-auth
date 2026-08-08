@@ -57,9 +57,9 @@ function createCapturingEmailProvider(): CapturingMockEmailProvider {
   return {
     ...base,
     otps,
-    async sendEmailVerificationOtp(email: string, otp: string): Promise<void> {
+    async sendEmailVerificationOtp(_tenantId: string, email: string, otp: string): Promise<void> {
       otps.set(email.toLowerCase(), otp)
-      await base.sendEmailVerificationOtp(email, otp)
+      await base.sendEmailVerificationOtp(_tenantId, email, otp)
     }
   }
 }

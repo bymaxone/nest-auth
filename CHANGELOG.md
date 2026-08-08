@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — `IEmailProvider` carries the tenant on every method.** Each of the ten methods now
+  takes `tenantId: string` as its first parameter, ahead of the recipient address. A notification
+  backend serving more than one tenant could not, before this, tell which tenant a password-reset
+  or invitation email belonged to: it saw only an address, so it could not pick the right sender
+  identity, branding, locale default or audit stream. The tenant was known at every call site — a
+  dashboard user carries its own `tenantId`, and a cross-tenant platform admin is attributed to the
+  `'platform'` plane, mirroring the `pep:` epoch namespace — it simply was not being passed. It
+  closes bymaxone/nest-auth#93.
+
+  **Apply to a derived backend.** Any `IEmailProvider` implementation must add `tenantId: string`
+  as the first argument of every method it defines and route on it as its backend requires; a
+  provider that ignores tenancy can name the parameter `_tenantId` and change nothing else. The
+  bundled `NoOpEmailProvider` already conforms. This is the reason the release is a major.
+
 ## [1.3.1] - 2026-08-08
 
 Documentation only — no runtime code changed. It is a release because the README and the

@@ -604,9 +604,11 @@ export class PasswordResetService {
   private async notifyPasswordChanged(user: AuthUser): Promise<void> {
     const send = this.emailProvider?.sendPasswordChangedNotification
     if (send === undefined) return
-    void Promise.resolve(send.call(this.emailProvider, user.email)).catch((err: unknown) => {
-      this.logger.error('notifyPasswordChanged: delivery failed', err)
-    })
+    void Promise.resolve(send.call(this.emailProvider, user.tenantId, user.email)).catch(
+      (err: unknown) => {
+        this.logger.error('notifyPasswordChanged: delivery failed', err)
+      }
+    )
   }
 
   /**
@@ -718,14 +720,14 @@ export class PasswordResetService {
     // does not linger in Redis until natural TTL expiry. A leaked Redis snapshot
     // could otherwise expose unconsumed reset tokens for accounts that never
     // received the email.
-    void Promise.resolve(this.emailProvider.sendPasswordResetToken(email, rawToken)).catch(
-      (err: unknown) => {
-        this.logger.error(`sendPasswordResetToken failed for user ${userId}`, err)
-        void this.redis.del(tokenKey).catch((delErr: unknown) => {
-          this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
-        })
-      }
-    )
+    void Promise.resolve(
+      this.emailProvider.sendPasswordResetToken(tenantId, email, rawToken)
+    ).catch((err: unknown) => {
+      this.logger.error(`sendPasswordResetToken failed for user ${userId}`, err)
+      void this.redis.del(tokenKey).catch((delErr: unknown) => {
+        this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
+      })
+    })
   }
 
   /**
@@ -743,7 +745,7 @@ export class PasswordResetService {
     const otp = this.otpService.generate(otpLength)
     await this.otpService.store(PASSWORD_RESET_PURPOSE, identifier, otp, otpTtlSeconds)
 
-    void Promise.resolve(this.emailProvider.sendPasswordResetOtp(email, otp)).catch(
+    void Promise.resolve(this.emailProvider.sendPasswordResetOtp(tenantId, email, otp)).catch(
       (err: unknown) => {
         this.logger.error(`sendPasswordResetOtp failed for user ${userId}`, err)
       }
