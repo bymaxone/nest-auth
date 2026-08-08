@@ -76,9 +76,16 @@ jobs:
             echo "Manual dispatch — running."
             exit 0
           fi
-          last="$(gh run list --workflow "${{ github.workflow }}" --status success \
+          # `|| true` is load-bearing under `set -e`: without it a transient API failure kills
+          # the step, which is the opposite of failing open. An empty result falls through to
+          # the "no previous run" branch below and runs the suite.
+          #
+          # The workflow is named by its FILE, not by `github.workflow` — that one carries the
+          # human-readable `name:`, so renaming the workflow would silently find no previous run
+          # forever.
+          last="$(gh run list --workflow mutation-full.yml --status success \
             --branch "${{ github.event.repository.default_branch }}" --limit 1 \
-            --json headSha --jq '.[0].headSha // empty')"
+            --json headSha --jq '.[0].headSha // empty' 2>/dev/null || true)"
           if [ -z "$last" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "No previous successful run to compare against — running."
