@@ -927,9 +927,9 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 3,474 seeded faults killed, **no survivors and nothing left uncovered**, against a `break` threshold of 95
-- ✅ **2,458 tests** — unit and end-to-end, spanning all five subpaths
-- ✅ **Every equivalent mutant documented** — the handful that no test can kill (a redundant guard, a dependency array of stable references) carries an inline `// Stryker disable` with the reason it cannot be killed, so the score is an accounting rather than a number
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 4,801 seeded faults killed, **no survivors and nothing left uncovered**, against a `break` threshold of 95 ([measured cold on 2026-08-08](./docs/mutation_testing_results.md#re-measured-cold--2026-08-08))
+- ✅ **3,519 tests** — 3,392 unit and 127 end-to-end, spanning all five subpaths
+- ✅ **Every equivalent mutant documented** — the 350 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
 ```bash
 pnpm test          # unit suite

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-08
+
+Documentation only — no runtime code changed. It is a release because the README and the
+CHANGELOG ship inside the package, so a consumer reading them on npm was reading numbers measured
+against a library four releases smaller than the one they installed.
+
+### Changed
+
+- **The mutation score is re-measured rather than restated.** The last recorded run was
+  2026-07-28, before 1.1.0, 1.1.1, 1.2.0, 1.3.0 and the third security audit, and the README still
+  quoted its figures: 3,474 faults killed against 2,458 tests. A cold run on 2026-08-08 —
+  incremental baseline deleted, nothing inherited — puts the library at **100.00% with 4,801
+  mutants killed, no survivors and none without coverage**, out of 7,628 instrumented across 145
+  files. The suite behind it is **3,519 tests** (3,392 unit, 127 end-to-end), 1,061 more than the
+  README claimed. All five subpaths are individually at 100.00%.
+
+  The count of documented equivalents is now reported as the number it is — **350 mutants under
+  217 `// Stryker disable` directives** — instead of "the handful that no test can kill". Nothing
+  about them changed; the README's description of them had simply stopped matching their size, and
+  a number that is written down can be audited.
+
+- **`docs/mutation_testing_results.md` records the run** in a new dated section, with the full
+  outcome table, the per-subpath split, and where the twenty-one timeouts sit. The earlier
+  sections are left as they were — they are the record of the passes that produced them. The
+  reproduce instructions are corrected in the same pass: they named `pnpm mutation:incremental`,
+  which is not a script in this package, and promised a ten-minute run that now takes
+  forty-eight at `--concurrency 2`.
+
 ## [1.3.0] - 2026-08-08
 
 Minor rather than patch because the API now accepts a request it previously rejected: with a
@@ -1193,7 +1221,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/bymaxone/nest-auth/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
