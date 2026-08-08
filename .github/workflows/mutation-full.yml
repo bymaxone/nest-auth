@@ -22,6 +22,8 @@ on:
 
 permissions:
   contents: read
+  # `gh run list`, in the step that decides whether anything can have moved the score.
+  actions: read
 
 concurrency:
   group: mutation-full-${{ github.ref }}
@@ -46,9 +48,68 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the step below diffs against the commit the last successful full run
+          # measured, which is arbitrarily far back.
+          fetch-depth: 0
+
+      - name: Decide whether anything can have moved the score
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A week with no relevant change produces the same verdict as the week before, and this
+        # run costs an hour and forty minutes to say so.
+        #
+        # The surface is deliberately WIDER than the per-push job's `^(src/)`. That one decides
+        # whether to re-measure after a change to production code; this one decides whether the
+        # SCORE can have moved, and the score also moves when a test changes (a new test kills a
+        # mutant that survived), when the Stryker or Jest configuration changes (which mutants
+        # exist, which tests select them), or when a dependency changes underneath the suite.
+        # Gating on `src/` alone would skip exactly the week where someone spent their time
+        # writing tests — which is the week most likely to change the number.
+        #
+        # A manual dispatch always runs: asking for it IS the decision.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — running."
+            exit 0
+          fi
+          last="$(gh run list --workflow "${{ github.workflow }}" --status success \
+            --branch "${{ github.event.repository.default_branch }}" --limit 1 \
+            --json headSha --jq '.[0].headSha // empty')"
+          if [ -z "$last" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "No previous successful run to compare against — running."
+            exit 0
+          fi
+          # An unreachable SHA (history rewritten, or the commit garbage-collected) is not a
+          # reason to skip: it is a reason to stop trusting the comparison.
+          if ! git cat-file -e "${last}^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Last measured commit $last is unreachable — running."
+            exit 0
+          fi
+          if git diff --quiet "$last" HEAD -- \
+              src/ test/ package.json pnpm-lock.yaml \
+              stryker.config.json jest.config.ts jest.stryker.config.ts jest.coverage.config.ts \
+              tsconfig.json tsconfig.jest.json; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing that can move the score changed since $last — skipping."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Changed since $last:"
+            git diff --name-only "$last" HEAD -- src/ test/ package.json pnpm-lock.yaml \
+              stryker.config.json jest.config.ts jest.stryker.config.ts jest.coverage.config.ts \
+              tsconfig.json tsconfig.jest.json
+          fi
+
       - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
+        if: steps.changed.outputs.run == 'true'
 
       - name: Run the full mutation suite
+        if: steps.changed.outputs.run == 'true'
         # `mutation:full` deletes the incremental file first, so this run cannot inherit a
         # verdict from the incremental chain it exists to check.
         run: pnpm mutation:full
@@ -63,13 +124,19 @@ jobs:
         #
         # The report upload below keeps `always()` on purpose — a partial report is worth
         # reading when the run failed; a partial baseline is not worth reusing.
+        # Skipped along with the run itself: with nothing measured there is no baseline to
+        # write, and the previous week's stays current — which is correct, because the code it
+        # describes has not moved either.
+        if: steps.changed.outputs.run == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: reports/stryker-incremental.json
           key: stryker-incremental-${{ github.sha }}
 
       - name: Upload the mutation report
-        if: always()
+        # `always()` so a failed run still uploads its partial report, but only when the suite
+        # actually ran — a skipped week has nothing to upload.
+        if: always() && steps.changed.outputs.run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mutation-full
