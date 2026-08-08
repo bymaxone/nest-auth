@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.2] - 2026-08-08
+## [1.2.0] - 2026-08-08
 
 Carries the third security audit and the findings that surfaced while driving the mutation
 score, across two pull requests that landed without versions of their own.
@@ -1152,8 +1152,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.1.2...HEAD
-[1.1.2]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.1.2
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/bymaxone/nest-auth/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/bymaxone/nest-auth/compare/v1.0.11...v1.1.0
 [1.0.11]: https://github.com/bymaxone/nest-auth/compare/v1.0.10...v1.0.11
