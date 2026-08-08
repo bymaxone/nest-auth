@@ -113,6 +113,13 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { NoOpEmailProvider } from './providers/no-op-email.provider'
+export { DefaultAuthEmailProvider } from './providers/default-auth-email.provider'
+export type {
+  AuthEmailSink,
+  AuthEmailMessage,
+  AuthEmailCatalogue,
+  DefaultAuthEmailProviderOptions
+} from './providers/default-auth-email.provider'
 export {
   CommonPasswordChecker,
   reduceToBaseWord

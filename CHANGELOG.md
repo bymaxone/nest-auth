@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`DefaultAuthEmailProvider` is exported**, the overridable default that fills the email port so a
+  derived backend no longer hand-writes the same bridge onto its notification channel. It carries
+  the policy that should not be copied per backend: HTML escaping on a path that renders
+  caller-chosen text (an inviter's name, a tenant's name, the address an account moved to), the
+  NIST SP 800-63B notification catalogue (a password-changed notice, MFA enable/disable notices, an
+  email-changed notice to the _previous_ address), and a swallow-and-log failure policy so a down
+  channel never turns "enable MFA" into a failed request. It sends through `AuthEmailSink`, a port
+  narrow enough that the class imports no concrete mailer — `@bymax-one/nest-notification`'s
+  `EmailService` satisfies it structurally — and it consumes the tenant the email port now carries,
+  so a multi-tenant channel can attribute and route each message. Pass `messages` to override any
+  subset of the copy with a product's own wording or branding; the escaping and failure policy
+  still apply. It closes bymaxone/nest-notification#54.
+
 - **`AuthRevocationService` is exported**, answering whether a verified access token has been
   revoked across both channels the module writes to — the per-token blacklist a logout writes and
   the per-user epoch a password reset or revoke-all advances. It closes bymaxone/nest-auth#92: a
