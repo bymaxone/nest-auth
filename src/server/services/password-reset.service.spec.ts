@@ -758,6 +758,15 @@ describe('PasswordResetService', () => {
         expect(mockOtpService.generate).toHaveBeenCalledTimes(1)
         expect(mockOtpService.store).toHaveBeenCalledTimes(1)
         expect(mockEmailProvider.sendPasswordResetOtp).toHaveBeenCalledTimes(1)
+        // The reset code is attributed to the resolved tenant, passed as the first argument ahead
+        // of the recipient: the port contract now propagates the tenant, so a regression that
+        // dropped it or swapped it with the address would fail here instead of passing on the
+        // call count alone.
+        expect(mockEmailProvider.sendPasswordResetOtp).toHaveBeenCalledWith(
+          'tenant1',
+          'user@example.com',
+          '123456'
+        )
       })
 
       // Scenario: OTP send path; expected: otpService.store receives the purpose 'password_reset'

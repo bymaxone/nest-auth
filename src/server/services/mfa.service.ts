@@ -51,6 +51,12 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
  * The tenant a platform-plane MFA notice is attributed to. A platform admin is cross-tenant and
  * carries no `tenantId`, but the email port takes one for a notification backend's audit
  * attribution and routing; `'platform'` names that plane, mirroring the `pep:` epoch namespace.
+ *
+ * This is a **reserved** attribution, not a real tenant: because tenant ids are arbitrary strings,
+ * a dashboard tenant literally named `'platform'` would otherwise be indistinguishable from the
+ * admin plane at the port. A deployment that lets tenants choose their own id must keep this one
+ * out of that space, the same way `pep:`/`ep:` keep the two epoch namespaces from colliding in
+ * Redis. A single-tenant provider ignores the value and the question does not arise.
  */
 const PLATFORM_EMAIL_TENANT = 'platform'
 
