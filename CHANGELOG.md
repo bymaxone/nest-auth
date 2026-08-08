@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Apply to a derived backend.** Any `IEmailProvider` implementation must add `tenantId: string`
   as the first argument of every method it defines and route on it as its backend requires; a
   provider that ignores tenancy can name the parameter `_tenantId` and change nothing else. The
-  bundled `NoOpEmailProvider` already conforms. This is the reason the release is a major.
+  bundled `NoOpEmailProvider` already conforms. The signature change is compile-breaking, so a
+  derived backend must apply this before it builds against the release — it ships in the ordinary
+  `1.3.x` line rather than as a major, so the version number alone will not flag it.
 
 ## [1.3.1] - 2026-08-08
 
