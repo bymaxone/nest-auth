@@ -10,9 +10,8 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
-import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
-import { readStampedEpoch } from '../utils'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
 
@@ -44,7 +43,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     @Inject(JwtService) protected readonly jwtService: JwtService,
     @Inject(TokenDeliveryService) protected readonly tokenDelivery: TokenDeliveryService,
-    @Inject(AuthRedisService) protected readonly redis: AuthRedisService,
+    @Inject(AuthRevocationService) protected readonly revocation: AuthRevocationService,
     @Inject(Reflector) protected readonly reflector: Reflector,
     @Inject(BYMAX_AUTH_OPTIONS) protected readonly options: ResolvedOptions
   ) {}
@@ -85,23 +84,12 @@ export class JwtAuthGuard implements CanActivate {
     // Reject platform tokens and MFA challenge tokens in dashboard context.
     assertTokenType(payload, 'dashboard')
 
-    // Revocation check: rv:{jti} is set on logout with remaining TTL. A hit is
-    // surfaced to callers as TOKEN_INVALID — exposing TOKEN_REVOKED would let an
-    // HTTP client distinguish "token was valid but logged out" from "token was
-    // malformed", which is a small but unnecessary information oracle.
-    const revoked = await this.redis.get(`rv:${payload.jti}`)
-    if (revoked !== null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    // Bulk revocation check: a password reset advances the user's token epoch (`ep:{sub}`).
-    // Any access token stamped below it predates that event and is rejected, so one write
-    // invalidates every outstanding access token — not only the refresh tokens. Surfaced as
-    // TOKEN_INVALID for the same no-oracle reason as the jti revocation above.
-    // A token carrying no epoch reads as 0, which only matters once the user has been bumped
-    // at least once — exactly the tokens that must stop working.
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub)
-    if (readStampedEpoch(payload) < epoch) {
+    // Both revocation channels, in one place: the per-token blacklist a logout writes and the
+    // per-user epoch a password reset or revoke-all advances. Surfaced as TOKEN_INVALID rather
+    // than a distinct revoked code — letting a caller tell "valid but logged out" from "never
+    // valid" is a small, unnecessary oracle. `sub` and `jti` were asserted well-formed above, so
+    // the keys built from them are uniform.
+    if (await this.revocation.isAccessTokenRevoked(payload)) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

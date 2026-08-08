@@ -45,6 +45,7 @@ import { OAuthService } from './oauth/oauth.service'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
+import { AuthRevocationService } from './services/auth-revocation.service'
 import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
 import { EmailChangeService } from './services/email-change.service'
@@ -414,6 +415,7 @@ export class BymaxAuthModule {
         // BYMAX_AUTH_REDIS_CLIENT and BYMAX_AUTH_OPTIONS provided via extraProviders
         // are visible in the same module scope.
         AuthRedisService,
+        AuthRevocationService,
         PasswordService,
         TokenManagerService,
         TokenDeliveryService,
@@ -499,6 +501,10 @@ export class BymaxAuthModule {
         // NestJS auto-registers @UseGuards() guards as local providers in the controller's
         // module; all constructor deps must be resolvable from that module's context.
         AuthRedisService,
+        // Export AuthRevocationService for the same @UseGuards() reason — the exported guards now
+        // depend on it — and so a host bridging a realtime transport can inject it and consult
+        // both revocation channels rather than granting a stream that outlives a logout.
+        AuthRevocationService,
         // Same reason, for the two exported guards whose remaining constructor deps are not
         // covered by the entries above. Exporting the guard class is necessary but not
         // sufficient: because @UseGuards() re-instantiates the guard in the *consumer's*

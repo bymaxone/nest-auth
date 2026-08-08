@@ -23,6 +23,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { WsTicketService } from '../services/ws-ticket.service'
 import { WsJwtGuard } from './ws-jwt.guard'
 
@@ -128,6 +129,7 @@ describe('WsJwtGuard', () => {
         WsJwtGuard,
         { provide: JwtService, useValue: mockJwtService },
         { provide: AuthRedisService, useValue: mockRedis },
+        AuthRevocationService,
         { provide: WsTicketService, useValue: mockWsTickets },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
@@ -157,7 +159,7 @@ describe('WsJwtGuard', () => {
       const { WsJwtGuard: FreshGuard } = await import('./ws-jwt.guard')
       const freshGuard = new FreshGuard(
         mockJwtService as unknown as JwtService,
-        mockRedis as unknown as AuthRedisService,
+        new AuthRevocationService(mockRedis as unknown as AuthRedisService),
         mockWsTickets as unknown as WsTicketService,
         mockOptions as unknown as ResolvedOptions
       )
@@ -340,7 +342,7 @@ describe('WsJwtGuard', () => {
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'dashboard')
     })
 
     // A token stamped at the current generation is still valid — the bump must not lock out

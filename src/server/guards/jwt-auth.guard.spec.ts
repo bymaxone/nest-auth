@@ -7,6 +7,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { JwtAuthGuard } from './jwt-auth.guard'
 
@@ -90,6 +91,7 @@ describe('JwtAuthGuard', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: TokenDeliveryService, useValue: mockTokenDelivery },
         { provide: AuthRedisService, useValue: mockRedis },
+        AuthRevocationService,
         { provide: Reflector, useClass: Reflector },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
@@ -275,7 +277,7 @@ describe('JwtAuthGuard', () => {
       expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
         AUTH_ERROR_CODES.TOKEN_INVALID
       )
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub)
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'dashboard')
     })
 
     // A token stamped at the current generation is still valid — the bump must not lock the

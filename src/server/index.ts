@@ -233,6 +233,8 @@ export type { SessionInfo as ActiveSessionInfo } from './services/session.servic
 // with the canonical attribute set.
 export { TokenDeliveryService } from './services/token-delivery.service'
 export { WsTicketService } from './services/ws-ticket.service'
+export { AuthRevocationService } from './services/auth-revocation.service'
+export type { RevocableTokenPayload } from './services/auth-revocation.service'
 export { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 export type { WsTicketSnapshot } from './interfaces/ws-ticket.interface'
 export type {
