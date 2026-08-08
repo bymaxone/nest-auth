@@ -23,8 +23,9 @@ export interface RevocableTokenPayload {
  * There are two, and a check that consults only the first is not a revocation check. A single
  * logout writes `rv:{jti}` with the token's remaining TTL — the per-token blacklist. A password
  * reset, an MFA reset or an administrative revoke-all advances the user's token epoch — the bulk
- * channel, which invalidates every access token stamped below it in one write, refresh tokens and
- * access tokens alike.
+ * channel, which invalidates every access token stamped below it in one write. Both channels this
+ * service reads gate access tokens only; a refresh token is opaque and carries no epoch, so a bulk
+ * flow revokes it through a separate session invalidation, not through either read here.
  *
  * `JwtAuthGuard`, `WsJwtGuard` and `JwtPlatformGuard` all consult both, and did so through three
  * separate copies of the same two Redis reads. This is that logic in one place — the guards
