@@ -8,9 +8,8 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
-import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { WsTicketService } from '../services/ws-ticket.service'
-import { readStampedEpoch } from '../utils'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
@@ -79,7 +78,7 @@ type WsClient = {
 export class WsJwtGuard implements CanActivate, OnModuleInit {
   constructor(
     @Inject(JwtService) private readonly jwtService: JwtService,
-    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService,
     @Inject(WsTicketService) private readonly wsTickets: WsTicketService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
   ) {}
@@ -134,28 +133,15 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
 
     assertTokenType(payload, 'dashboard')
 
-    // rv:{jti} is written on logout with the token's remaining TTL as expiry. A hit is
-    // surfaced as TOKEN_INVALID, exactly as `JwtAuthGuard` does it: TOKEN_REVOKED would let a
-    // caller distinguish "this token was valid until someone logged it out" from "this token
-    // was never valid", and the upgrade handshake is a cheaper place to ask that question than
-    // the REST surface, not a more private one.
-    const revoked = await this.redis.get(`rv:${payload.jti}`)
-    if (revoked !== null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
-    // Require a well-formed `sub` before it keys the epoch lookup (`ep:{sub}`) —
-    // mirrors JwtAuthGuard; a missing/empty/oversized sub would otherwise build a
-    // malformed Redis key.
+    // Require a well-formed `sub` before it keys the epoch lookup — mirrors JwtAuthGuard; a
+    // missing/empty/oversized sub would otherwise build a malformed Redis key.
     assertValidSub(payload.sub)
 
-    // Bulk revocation: reject any access token stamped below the user's current token epoch
-    // (advanced on password reset). Mirrors JwtAuthGuard so a dashboard revocation event kills
-    // WebSocket access tokens too, not just HTTP ones. Surfaced as TOKEN_INVALID (not
-    // TOKEN_REVOKED) so the response is indistinguishable from a malformed/expired token and
-    // leaks no oracle for whether a given user has been bumped.
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub)
-    if (readStampedEpoch(payload) < epoch) {
+    // Both revocation channels, the same check JwtAuthGuard runs: a dashboard logout or a
+    // password reset kills a WebSocket access token exactly as it kills an HTTP one. Surfaced as
+    // TOKEN_INVALID (not a distinct revoked code) so the handshake leaks no oracle for whether a
+    // given token was logged out or a given user was bumped.
+    if (await this.revocation.isAccessTokenRevoked(payload)) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 

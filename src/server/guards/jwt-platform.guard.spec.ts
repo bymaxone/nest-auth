@@ -23,6 +23,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { JwtPlatformGuard } from './jwt-platform.guard'
 
@@ -103,6 +104,7 @@ describe('JwtPlatformGuard', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: TokenDeliveryService, useValue: mockTokenDelivery },
         { provide: AuthRedisService, useValue: mockRedis },
+        AuthRevocationService,
         { provide: Reflector, useClass: Reflector },
         { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions }
       ]
