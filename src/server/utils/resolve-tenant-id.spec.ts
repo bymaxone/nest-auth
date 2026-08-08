@@ -71,4 +71,20 @@ describe('resolveTenantId', () => {
   it('does not treat an empty body value as an absent one', async () => {
     await expect(resolveTenantId('', REQUEST)).resolves.toBe('')
   })
+
+  // `null` is absent, and reaching this state is ordinary rather than exotic: `@IsOptional()`
+  // skips validation for `null` as well as for `undefined`, so a caller sending `tenantId: null`
+  // arrives here past every DTO constraint. Admitting it would carry `null` into the
+  // tenant-scoped lookups and into the Redis and HMAC keys built from it.
+  it('refuses a null body value the same way as an absent one', async () => {
+    const failure = resolveTenantId(null, REQUEST)
+
+    await expect(failure).rejects.toBeInstanceOf(AuthException)
+    await expect(failure).rejects.toMatchObject({ status: 400 })
+  })
+
+  // …and a resolver still decides, so `null` in the body changes nothing when one is configured.
+  it('uses the resolver even when the body value is null', async () => {
+    await expect(resolveTenantId(null, REQUEST, () => 'resolved')).resolves.toBe('resolved')
+  })
 })

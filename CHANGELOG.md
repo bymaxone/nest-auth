@@ -20,7 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resolveTenantId` now refuses a request that no resolver and no body value can scope, answering
   `auth.validation` with the same `{ field, message }[]` shape the validation pipe produces. It is
   refused rather than defaulted deliberately: inventing a tenant name would gather into one scope
-  every account a misconfigured deployment created.
+  every account a misconfigured deployment created. `null` counts as absent there, because
+  `@IsOptional()` skips validation for `null` as well as for `undefined` — a caller may send
+  `tenantId: null` past every DTO constraint, and admitting it would carry `null` into the
+  tenant-scoped lookups and into the Redis and HMAC keys built from it.
 
   Nothing changes for a consumer that sends `tenantId` today, with or without a resolver.
 

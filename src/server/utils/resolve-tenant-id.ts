@@ -21,12 +21,18 @@ import { AuthException } from '../errors/auth-exception'
  * refused rather than defaulted, because inventing a tenant name would silently gather into one
  * scope every account a misconfigured deployment created.
  *
+ * `null` counts as absent, and the distinction is not academic: `@IsOptional()` skips validation
+ * for `null` as well as for `undefined`, so a caller may send `tenantId: null` and reach here past
+ * every DTO constraint. Treating it as a value would carry `null` into the tenant-scoped lookups
+ * and into the Redis and HMAC keys built from it.
+ *
  * This lives as a shared helper rather than a method on one service because the promise has to
  * hold for **every** tenant-scoped flow. It previously lived inside `AuthService`, so only
  * login and register honoured it while password reset and email verification read the body
  * value verbatim — one rule with two implementations is how the gap opened in the first place.
  *
- * @param dtoTenantId - The tenant the caller named in the request body, if any.
+ * @param dtoTenantId - The tenant the caller named in the request body, if any. `null` and
+ *   `undefined` both mean the body named none.
  * @param req - The request, handed to the configured resolver.
  * @param resolver - The configured `tenantIdResolver`, if any.
  * @returns The resolved tenant when a resolver is configured, otherwise the body's value.
@@ -34,14 +40,14 @@ import { AuthException } from '../errors/auth-exception'
  *   named no tenant, so nothing in the request can scope it.
  */
 export async function resolveTenantId(
-  dtoTenantId: string | undefined,
+  dtoTenantId: string | null | undefined,
   req: Request,
   resolver?: (req: Request) => string | Promise<string>
 ): Promise<string> {
   if (resolver) {
     return await resolver(req)
   }
-  if (dtoTenantId === undefined) {
+  if (dtoTenantId === undefined || dtoTenantId === null) {
     throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
       {
         field: 'tenantId',

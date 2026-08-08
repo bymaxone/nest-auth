@@ -113,6 +113,21 @@ describe('tenantId charset', () => {
     expect(errors).toHaveLength(0)
   })
 
+  // `@IsOptional()` skips validation for `null` as well as for `undefined`, so this passes the
+  // DTO and reaches the service layer. Asserted rather than assumed, because it is the reason
+  // `resolveTenantId` treats `null` as absent: without that, a caller could send `tenantId: null`
+  // past every constraint here and have it carried into the tenant-scoped lookups.
+  it.each(CASES)(
+    '%s admits a null tenantId, which the service must then reject',
+    async (_n, Dto, body) => {
+      const dto = plainToInstance(Dto, { ...body, tenantId: null })
+
+      const errors = await validate(dto)
+
+      expect(errors).toHaveLength(0)
+    }
+  )
+
   // Optional means absent, not empty. A caller that sends the field must still send a usable
   // value: an empty string names no tenant and would scope the request to one nothing owns.
   it.each(CASES)('%s still refuses an empty tenantId', async (_n, Dto, body) => {
