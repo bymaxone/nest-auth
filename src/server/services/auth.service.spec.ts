@@ -2169,6 +2169,9 @@ describe('AuthService', () => {
       )
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
       expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
+      // The UserStatusGuard verified-flag cache (`uev:{userId}`) is invalidated so the account
+      // reaches its protected routes on the next request rather than after the cache TTL.
+      expect(mockRedis.del).toHaveBeenCalledWith(`uev:${USER.id}`)
       // Pin the success log template (line 408) so blanking it to '' is caught.
       expect(logSpy).toHaveBeenCalledWith(
         `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`

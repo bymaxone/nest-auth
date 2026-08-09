@@ -26,6 +26,14 @@ import { assertNotBlocked } from '../utils/assert-not-blocked'
  * - `SUSPENDED` → `ACCOUNT_SUSPENDED` (403)
  * - `PENDING`   → `PENDING_APPROVAL` (403)
  *
+ * When `emailVerification.required` is enabled (the default), this guard also
+ * refuses an account whose email is not yet verified, with `EMAIL_NOT_VERIFIED`.
+ * This is what makes verification a gate on API access and not only on `login`:
+ * registration issues a session before verification, and without this check that
+ * session would reach every route this guard protects for the access token's
+ * lifetime. The verified flag is cached alongside the status under `uev:{userId}`,
+ * on the same miss and the same TTL, so the check costs no extra round-trip.
+ *
  * Routes without an authenticated user (`request.user` absent) are passed
  * through — this guard is designed to be composed after {@link JwtAuthGuard}.
  *
@@ -54,20 +62,29 @@ export class UserStatusGuard implements CanActivate {
     if (!user) return true
 
     const userId = user.sub
-    const cacheKey = `us:${userId}`
+    const statusKey = `us:${userId}`
+    const verifiedKey = `uev:${userId}`
     const cacheTtl = this.options.userStatusCacheTtlSeconds
+    const requireVerified = this.options.emailVerification.required
 
-    let status = await this.redis.get(cacheKey)
+    let status = await this.redis.get(statusKey)
+    // Only consulted when verification is enforced; left null otherwise so the cost is a single
+    // `get` for the common case.
+    let verified = requireVerified ? await this.redis.get(verifiedKey) : null
 
-    if (status === null) {
-      // Cache miss — fetch from repository and cache the result.
+    if (status === null || (requireVerified && verified === null)) {
+      // A miss on either fact resolves both from one repository read.
       const userRecord = await this.userRepo.findById(userId)
       if (!userRecord) {
         // User deleted after JWT was issued.
         throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
       status = userRecord.status
-      await this.redis.set(cacheKey, status, cacheTtl)
+      await this.redis.set(statusKey, status, cacheTtl)
+      if (requireVerified) {
+        verified = userRecord.emailVerified ? '1' : '0'
+        await this.redis.set(verifiedKey, verified, cacheTtl)
+      }
     }
 
     // Passed as stored, not normalized here: `assertNotBlocked` canonicalizes both sides itself,
@@ -84,6 +101,14 @@ export class UserStatusGuard implements CanActivate {
     // configure one of those names as a blocked status, so the outcome was a malformed 403 body
     // rather than a bypass. Deleting the copy removes the question.
     assertNotBlocked(status, this.options.blockedStatuses)
+
+    // Email verification is a gate on API access, not only on `login`. Registration mints a
+    // session before the address is verified; without this check that session would reach every
+    // route the guard protects while `emailVerified` is still false. A blocked status is refused
+    // first, so a banned account is told it is banned rather than that it must verify.
+    if (requireVerified && verified === '0') {
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    }
 
     return true
   }

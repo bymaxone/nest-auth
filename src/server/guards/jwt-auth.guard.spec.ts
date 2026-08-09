@@ -344,4 +344,82 @@ describe('JwtAuthGuard', () => {
       await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Tenant binding (enforceTenantBinding)
+  // ---------------------------------------------------------------------------
+  describe('tenant binding', () => {
+    const errorCodeOf = (e: unknown): string =>
+      ((e as AuthException).getResponse() as { error: { code: string } }).error.code
+
+    async function buildGuard(
+      overrides: Record<string, unknown>
+    ): Promise<{ guard: JwtAuthGuard; reflector: Reflector }> {
+      const module = await Test.createTestingModule({
+        providers: [
+          JwtAuthGuard,
+          { provide: JwtService, useValue: mockJwtService },
+          { provide: TokenDeliveryService, useValue: mockTokenDelivery },
+          { provide: AuthRedisService, useValue: mockRedis },
+          AuthRevocationService,
+          { provide: Reflector, useClass: Reflector },
+          { provide: BYMAX_AUTH_OPTIONS, useValue: { ...mockOptions, ...overrides } }
+        ]
+      }).compile()
+      return { guard: module.get(JwtAuthGuard), reflector: module.get(Reflector) }
+    }
+
+    /** Arm the standard valid-token path: not public, signature verifies, not revoked. */
+    function armValidToken(reflector: Reflector): void {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+    }
+
+    // With binding on and the resolved host tenant matching the token, the request is allowed.
+    it('allows a token whose tenant matches the resolved request tenant', async () => {
+      const resolver = jest.fn().mockReturnValue('tenant-1')
+      const { guard, reflector } = await buildGuard({
+        enforceTenantBinding: true,
+        tenantIdResolver: resolver
+      })
+      armValidToken(reflector)
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+      expect(resolver).toHaveBeenCalledTimes(1)
+    })
+
+    // With binding on and the resolved tenant differing from the token's, the request is refused
+    // with TOKEN_INVALID: a token presented under another tenant's host does not pass.
+    it('rejects a token whose tenant does not match the resolved request tenant', async () => {
+      const resolver = jest.fn().mockReturnValue('tenant-2')
+      const { guard, reflector } = await buildGuard({
+        enforceTenantBinding: true,
+        tenantIdResolver: resolver
+      })
+      armValidToken(reflector)
+      const ctx = makeContext('some.jwt.token')
+      const thrown = await guard.canActivate(ctx as never).catch((e: unknown) => e)
+      expect(thrown).toBeInstanceOf(AuthException)
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+    })
+
+    // Binding is a no-op without a resolver: there is nothing to compare the token's tenant to.
+    it('allows the request when binding is on but no resolver is configured', async () => {
+      const { guard, reflector } = await buildGuard({ enforceTenantBinding: true })
+      armValidToken(reflector)
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+    })
+
+    // Default off: a configured resolver is not consulted unless binding is explicitly enabled.
+    it('does not consult the resolver when binding is not enabled', async () => {
+      const resolver = jest.fn().mockReturnValue('tenant-2')
+      const { guard, reflector } = await buildGuard({ tenantIdResolver: resolver })
+      armValidToken(reflector)
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+      expect(resolver).not.toHaveBeenCalled()
+    })
+  })
 })

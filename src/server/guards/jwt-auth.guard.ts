@@ -93,6 +93,20 @@ export class JwtAuthGuard implements CanActivate {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    // Optional tenant binding. The resolver decides an account's tenant on the credential flows,
+    // but a valid token is otherwise trusted for the tenant baked into it — so a token minted for
+    // one tenant is accepted when presented under another tenant's host, operating as its own
+    // tenant rather than the host's. Where the host is the tenant boundary, this re-resolves the
+    // request tenant and refuses a mismatch. Off unless both the flag and a resolver are set: with
+    // no resolver there is nothing to compare, and a single-origin multi-tenant API wants the two
+    // to differ. Surfaced as TOKEN_INVALID, like every other refusal here, to open no oracle.
+    if (this.options.enforceTenantBinding === true && this.options.tenantIdResolver) {
+      const requestTenant = await this.options.tenantIdResolver(request)
+      if (requestTenant !== payload.tenantId) {
+        throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      }
+    }
+
     request.user = payload
     return true
   }

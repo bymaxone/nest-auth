@@ -1,10 +1,21 @@
 import { Test } from '@nestjs/testing'
 
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { sleep } from '../utils/sleep'
 import { OtpService } from './otp.service'
+
+/** Server-only key the store hashes codes under; any fixed value serves the test. */
+const HMAC_KEY = 'test-otp-hmac-key'
+
+/** The keyed fingerprint the service writes and compares, mirrored here so tests seed records the
+ * store would actually produce rather than the bare code. */
+function fingerprint(identifier: string, code: string): string {
+  return hmacSha256(`${identifier}:${code}`, HMAC_KEY)
+}
 
 // Mock the timing-normalization sleep so anti-timing-attack delays are observable and instant.
 jest.mock('../utils/sleep', () => ({ sleep: jest.fn().mockResolvedValue(undefined) }))
@@ -52,7 +63,11 @@ describe('OtpService', () => {
     jest.clearAllMocks()
 
     const module = await Test.createTestingModule({
-      providers: [OtpService, { provide: AuthRedisService, useValue: mockRedis }]
+      providers: [
+        OtpService,
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BYMAX_AUTH_OPTIONS, useValue: { hmacKey: HMAC_KEY } }
+      ]
     }).compile()
 
     service = module.get(OtpService)
@@ -95,10 +110,12 @@ describe('OtpService', () => {
 
       await service.store('email_verification', 'user-hash', '123456', 600)
 
+      // The record carries the keyed fingerprint, never the plaintext code, so a Redis reader
+      // cannot reverse the six-digit keyspace.
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)"),
         ['otp:email_verification:user-hash'],
-        ['123456', '600']
+        [fingerprint('user-hash', '123456'), '600']
       )
     })
 
@@ -125,6 +142,8 @@ describe('OtpService', () => {
   describe('verify', () => {
     const OTP_KEY = 'otp:email_verification:user-hash'
     const CODE = '123456'
+    /** The fingerprint the store would have written for CODE under this identifier. */
+    const FP = fingerprint('user-hash', CODE)
 
     /** Arm the atomic script's reply. */
     function armScript(tag: 'EXPIRED' | 'MAX' | 'PRESENT', storedCode = ''): void {
@@ -135,7 +154,7 @@ describe('OtpService', () => {
     // plain match, so the service must not delete anything itself — a second DEL here would be
     // a wasted round trip and a lie about who owns the consume.
     it('should resolve on the correct code without a separate delete', async () => {
-      armScript('PRESENT', CODE)
+      armScript('PRESENT', FP)
 
       await expect(service.verify('email_verification', 'user-hash', CODE)).resolves.toBeUndefined()
       expect(mockRedis.del).not.toHaveBeenCalled()
@@ -149,7 +168,7 @@ describe('OtpService', () => {
     // for the OTP's whole lifetime. Pinning the arity is what keeps a future refactor from
     // quietly splitting it apart again.
     it('should verify in a single atomic script call', async () => {
-      armScript('PRESENT', CODE)
+      armScript('PRESENT', FP)
 
       await service.verify('email_verification', 'user-hash', CODE)
 
@@ -158,7 +177,7 @@ describe('OtpService', () => {
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call('HGET', KEYS[1], 'code')"),
         [OTP_KEY],
-        [CODE, '5']
+        [FP, '5']
       )
     })
 
@@ -168,7 +187,7 @@ describe('OtpService', () => {
     // OTP's lifetime; and the ceiling check has to precede the comparison so an exhausted
     // record cannot be probed further.
     it('should carry a script that bumps under the residual TTL and consumes on a match', async () => {
-      armScript('PRESENT', CODE)
+      armScript('PRESENT', FP)
       await service.verify('email_verification', 'user-hash', CODE)
       const script = mockRedis.eval.mock.calls[0]?.[0] as string
 
@@ -206,7 +225,7 @@ describe('OtpService', () => {
       ['the attempt ceiling was reached', 'MAX' as const, CODE],
       ['the code is simply wrong', 'PRESENT' as const, '999999']
     ])('answers OTP_INVALID when %s', async (_label, tag, submitted) => {
-      armScript(tag, CODE)
+      armScript(tag, FP)
 
       try {
         await service.verify('email_verification', 'user-hash', submitted)
@@ -219,7 +238,7 @@ describe('OtpService', () => {
 
     // Scenario: a wrong code while under the ceiling. Expected: OTP_INVALID.
     it('should throw OTP_INVALID for a wrong code below the ceiling', async () => {
-      armScript('PRESENT', CODE)
+      armScript('PRESENT', FP)
 
       try {
         await service.verify('email_verification', 'user-hash', '999999')
@@ -234,7 +253,7 @@ describe('OtpService', () => {
     // length check has to come first — and it leaks nothing, since the digit count is already
     // implied by the configured flow.
     it('should reject a length mismatch as OTP_INVALID rather than throwing', async () => {
-      armScript('PRESENT', CODE)
+      armScript('PRESENT', FP)
 
       try {
         await service.verify('email_verification', 'user-hash', '1')
@@ -311,8 +330,8 @@ describe('OtpService', () => {
       // record" from "wrong code" from "exhausted" — the three answers an attacker probing for
       // a valid identifier would otherwise separate.
       it.each([
-        ['success', ['PRESENT', CODE] as const, CODE],
-        ['wrong code', ['PRESENT', CODE] as const, '999999'],
+        ['success', ['PRESENT', FP] as const, CODE],
+        ['wrong code', ['PRESENT', FP] as const, '999999'],
         ['expired', ['EXPIRED', ''] as const, CODE],
         ['max attempts', ['MAX', ''] as const, CODE]
       ])(
@@ -345,7 +364,7 @@ describe('OtpService', () => {
       // Without this the floor could be a negative sleep, which `sleep` would clamp for it —
       // masking the sign error until some other caller did not.
       it.each([
-        ['success', ['PRESENT', CODE] as const, CODE],
+        ['success', ['PRESENT', FP] as const, CODE],
         ['expired', ['EXPIRED', ''] as const, CODE]
       ])('should not pad the %s path when the work outran the floor', async (_l, reply, sent) => {
         let now = 1_700_000_000_000

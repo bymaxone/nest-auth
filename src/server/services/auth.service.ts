@@ -866,6 +866,12 @@ export class AuthService {
     }
 
     await this.userRepo.updateEmailVerified(user.id, true)
+
+    // Drop the verified-flag the UserStatusGuard caches under `uev:{userId}`, so the account
+    // reaches its protected routes on the very next request rather than after the cache TTL. The
+    // guard refreshes the flag from the repository on the miss this creates.
+    await this.redis.del(`uev:${user.id}`)
+
     this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${logSafe(tenantId)}`)
 
     if (this.hooks?.afterEmailVerified) {
