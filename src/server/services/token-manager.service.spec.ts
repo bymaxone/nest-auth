@@ -1382,10 +1382,17 @@ describe('TokenManagerService', () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
 
-      const token = await service.issueMfaTempToken('user-1', 'dashboard')
+      const token = await service.issueMfaTempToken('user-1', 'dashboard', 'tenant-1')
 
+      // The dashboard token carries the tenant as the camelCase `tenantId` wire claim (verbatim,
+      // since @nestjs/jwt signs the payload keys as-is) so the challenge resolves it tenant-scoped.
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ sub: 'user-1', type: 'mfa_challenge', context: 'dashboard' }),
+        expect.objectContaining({
+          sub: 'user-1',
+          type: 'mfa_challenge',
+          context: 'dashboard',
+          tenantId: 'tenant-1'
+        }),
         expect.objectContaining({ expiresIn: '300s' })
       )
       expect(mockRedis.set).toHaveBeenCalledWith(expect.stringMatching(/^mfa:/), 'user-1', 300)
@@ -1417,7 +1424,7 @@ describe('TokenManagerService', () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
 
-      await service.issueMfaTempToken('user-1', 'dashboard')
+      await service.issueMfaTempToken('user-1', 'dashboard', 'tenant-1')
 
       const challengeCounter = `lf:${createHmac('sha256', HMAC_KEY)
         .update('challenge:user-1', 'utf8')
@@ -1444,6 +1451,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1451,7 +1459,73 @@ describe('TokenManagerService', () => {
 
       const result = await service.verifyMfaTempToken(FIXED_JWT)
 
-      expect(result).toEqual({ userId: 'user-1', context: 'dashboard', jti: FIXED_UUID })
+      expect(result).toEqual({
+        userId: 'user-1',
+        context: 'dashboard',
+        tenantId: 'tenant-1',
+        jti: FIXED_UUID
+      })
+    })
+
+    // Plane/tenant binding is mandatory and mutually exclusive: a dashboard token WITHOUT a tenant
+    // is refused, never degraded to the tenant-blind lookup. Refusing rather than falling back is
+    // what stops an attacker forcing the old path by simply dropping the claim.
+    it('refuses a dashboard token that carries no tenant', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        iat: 0,
+        exp: 9999999999
+      })
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      // Refused on the claim alone — never reaches the Redis single-use lookup.
+      expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
+    // The mirror rule: a platform token MUST NOT carry a tenant it does not have. The Redis entry
+    // is present and the epoch matches, so the ONLY thing that can refuse this token is the
+    // plane/tenant binding — isolating that branch from the single-use and epoch gates.
+    it('refuses a platform token that carries a tenant', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'admin-1',
+        type: 'mfa_challenge',
+        context: 'platform',
+        tenantId: 'tenant-1',
+        iat: 0,
+        exp: 9999999999
+      })
+      mockRedis.get.mockResolvedValue('admin-1')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+    })
+
+    // A valid platform token returns NO tenantId key — not `tenantId: undefined`. toStrictEqual
+    // distinguishes the two: it pins that the conditional spread omits the key on the platform
+    // plane rather than emitting an explicit undefined.
+    it('returns no tenantId key for a valid platform token', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'admin-1',
+        type: 'mfa_challenge',
+        context: 'platform',
+        iat: 0,
+        exp: 9999999999
+      })
+      mockRedis.get.mockResolvedValue('admin-1')
+      mockRedis.getUserTokenEpoch.mockResolvedValue(0)
+
+      const result = await service.verifyMfaTempToken(FIXED_JWT)
+
+      expect(result).toStrictEqual({ userId: 'admin-1', context: 'platform', jti: FIXED_UUID })
     })
 
     // The challenge token is half a credential, held by a caller who has already proved the
@@ -1467,6 +1541,9 @@ describe('TokenManagerService', () => {
           sub: 'user-1',
           type: 'mfa_challenge',
           context,
+          // Dashboard tokens must carry the tenant (platform must not) or verify rejects on the
+          // plane/tenant binding before it ever reaches the epoch check this test is about.
+          ...(context === 'dashboard' ? { tenantId: 'tenant-1' } : {}),
           epoch: 2,
           iat: 0,
           exp: 9999999999
@@ -1488,6 +1565,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1497,6 +1575,7 @@ describe('TokenManagerService', () => {
       await expect(service.verifyMfaTempToken(FIXED_JWT)).resolves.toEqual({
         userId: 'user-1',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         jti: FIXED_UUID
       })
     })
@@ -1510,6 +1589,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1531,6 +1611,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1548,6 +1629,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1566,6 +1648,7 @@ describe('TokenManagerService', () => {
         sub: 'user-1',
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       })
@@ -1591,6 +1674,7 @@ describe('TokenManagerService', () => {
         sub: null,
         type: 'mfa_challenge',
         context: 'dashboard',
+        tenantId: 'tenant-1',
         iat: 0,
         exp: 9999999999
       } as unknown as { jti: string; sub: string; type: string; context: string })
@@ -2193,7 +2277,7 @@ describe('TokenManagerService', () => {
       const bound = await bindingService({ issuer: 'bymax', audience: 'dashboard' })
       mockRedis.set.mockResolvedValue(undefined)
 
-      await bound.issueMfaTempToken('user-1', 'dashboard')
+      await bound.issueMfaTempToken('user-1', 'dashboard', 'tenant-1')
 
       const [, signOptions] = mockJwtService.sign.mock.calls.at(-1) as [
         unknown,

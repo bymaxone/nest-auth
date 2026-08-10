@@ -248,7 +248,7 @@ describe('MFA — integration smoke tests', () => {
     // setup() then reads back the data it just stored
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
-    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD)
+    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
     expect(setupResult.secret).toBeDefined()
     expect(setupResult.qrCodeUri).toContain('TestApp')
     expect(setupResult.recoveryCodes).toHaveLength(2)
@@ -260,7 +260,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
     await expect(
-      service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+      service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
     ).resolves.toBeUndefined()
 
     expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
@@ -311,7 +311,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setIfAbsent.mockResolvedValue(false)
     mockRedis.get.mockResolvedValue(JSON.stringify(storedSetupData))
 
-    const result = await service.setup('user-1', 'dashboard', PASSWORD)
+    const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
     // Result must reflect the STORED secret — not a freshly generated one.
     expect(result.secret).toBe(storedBase32)
@@ -598,7 +598,14 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setnx.mockResolvedValue(true)
 
     const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
-    await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+    await service.verifyAndEnable(
+      'user-1',
+      validCode,
+      '1.2.3.4',
+      'Browser',
+      'dashboard',
+      'tenant-1'
+    )
 
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
@@ -623,9 +630,9 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setnx.mockResolvedValue(true)
 
     // 'RCVRYCODE' looks nothing like a 6-digit TOTP — TOTP verify will return false
-    await expect(service.disable('user-1', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
-      AuthException
-    )
+    await expect(
+      service.disable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+    ).rejects.toThrow(AuthException)
     // The service must record a brute-force failure — confirming TOTP was attempted
     expect(mockBruteForce.recordFailure).toHaveBeenCalled()
     // The service must NOT have updated the MFA data (recovery not attempted)

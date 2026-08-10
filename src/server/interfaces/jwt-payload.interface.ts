@@ -140,6 +140,24 @@ export interface MfaTempPayload {
   /** Indicates which authentication context triggered the MFA challenge. */
   context: 'dashboard' | 'platform'
   /**
+   * The tenant the dashboard challenge belongs to. Present on the dashboard plane, ABSENT on the
+   * platform plane — platform admins carry no tenant. It is the whole reason the challenge can
+   * resolve the pending account tenant-scoped: without it the second-factor step, the
+   * account-status gate and the finally-minted session all resolved the account by `sub` alone, so
+   * under a host schema whose ids are per-tenant sequential a challenge could decide against, and
+   * mint a session for, a homonym in another tenant.
+   *
+   * NOT optional in effect, despite the `?`: `verifyMfaTempToken` REJECTS a dashboard token that
+   * lacks it and a platform token that carries it. The `?` only expresses that the two planes
+   * populate it differently — it is never a value the caller may omit and have honoured. A missing
+   * claim reads as an invalid token, not as a fall back to the pre-tenant lookup: a fallback would
+   * leave the tenant-blind path reachable to anyone who simply drops the field (RFC 8725 §3.9/§3.12;
+   * ASVS 6.6.2 — the out-of-band token must be bound to the request that originated it). A token
+   * minted before this claim existed is therefore refused, and the user redoes login within the
+   * five-minute TTL; there is no in-flight fallback to drain.
+   */
+  tenantId?: string
+  /**
    * The subject's token **epoch** at issuance, in the plane named by `context`.
    *
    * The challenge token is a credential like any other — half of one, held by a caller who has

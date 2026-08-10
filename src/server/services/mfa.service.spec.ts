@@ -281,7 +281,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.setup('user-1')).rejects.toMatchObject({
+      await expect(
+        service.setup('user-1', 'dashboard', undefined, 'tenant-1')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
       // Nothing was minted or claimed — the refusal happens before the setup record exists.
@@ -294,7 +296,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.setup('user-1', 'dashboard', 'wrong')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', 'wrong', 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Scenario: a missing password still pays the KDF. Expected: `compare` is called either
@@ -304,7 +308,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await service.setup('user-1').catch(() => undefined)
+      await service.setup('user-1', 'dashboard', undefined, 'tenant-1').catch(() => undefined)
 
       expect(mockPasswordService.compare).toHaveBeenCalledWith(
         '',
@@ -321,9 +325,11 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_DISABLED)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.setup('user-1', 'dashboard', 'guess')).rejects.toMatchObject({
-        response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
-      })
+      await expect(service.setup('user-1', 'dashboard', 'guess', 'tenant-1')).rejects.toMatchObject(
+        {
+          response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
+        }
+      )
       // Refused before the KDF, so a locked account is not an amplifier either.
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
       expect(mockRedis.setIfAbsent).not.toHaveBeenCalled()
@@ -334,14 +340,16 @@ describe('MfaService', () => {
       mockPasswordService.compare.mockResolvedValue(false)
       mockBruteForce.recordFailure.mockClear()
 
-      await expect(service.setup('user-1', 'dashboard', 'wrong')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', 'wrong', 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
       expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
 
       mockPasswordService.compare.mockResolvedValue(true)
       mockRedis.setIfAbsent.mockResolvedValue(true)
       mockBruteForce.resetFailures.mockClear()
 
-      await service.setup('user-1', 'dashboard', 'right')
+      await service.setup('user-1', 'dashboard', 'right', 'tenant-1')
       expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
 
@@ -364,7 +372,9 @@ describe('MfaService', () => {
       // The marker `issueTokens` plants: a real authentication completed within the window.
       mockRedis.get.mockImplementation(onlyRecentAuth(true))
 
-      await expect(service.setup('user-1')).resolves.toMatchObject({
+      await expect(
+        service.setup('user-1', 'dashboard', undefined, 'tenant-1')
+      ).resolves.toMatchObject({
         secret: expect.any(String)
       })
       // No password was asked for — there is none to ask for.
@@ -384,7 +394,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.get.mockImplementation(onlyRecentAuth(false))
 
-      await expect(service.setup('user-1')).rejects.toMatchObject({
+      await expect(
+        service.setup('user-1', 'dashboard', undefined, 'tenant-1')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED } }
       })
       // Nothing minted: the attacker cannot even obtain a secret they control.
@@ -401,7 +413,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.get.mockImplementation(onlyRecentAuth(false))
 
-      await expect(service.setup('user-1')).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', undefined, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
 
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('no recent authentication')
@@ -415,7 +429,7 @@ describe('MfaService', () => {
     // every user, and a caller guessing here would lock the owner out of `login` as well —
     // exactly what namespacing the counter by flow exists to prevent.
     it('keys the re-proof budget to the account and the surface', async () => {
-      await service.setup('user-1', 'dashboard', PASSWORD)
+      await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
         hmacSha256('reauth:dashboard:user-1', HMAC_KEY)
@@ -428,7 +442,9 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toMatchObject({
+      await expect(
+        service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
       })
 
@@ -447,7 +463,9 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, passwordHash: null })
       mockRedis.get.mockImplementation(onlyRecentAuth(false))
 
-      await expect(service.setup('user-1')).rejects.not.toMatchObject({
+      await expect(
+        service.setup('user-1', 'dashboard', undefined, 'tenant-1')
+      ).rejects.not.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
     })
@@ -456,7 +474,7 @@ describe('MfaService', () => {
   describe('setup', () => {
     // Verifies that setup returns a valid Base32 TOTP secret, QR URI, and recovery codes.
     it('should return a Base32 secret, qrCodeUri, and recoveryCodes on first call', async () => {
-      const result = await service.setup('user-1', 'dashboard', PASSWORD)
+      const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(result.secret).toMatch(/^[A-Z2-7]+$/)
       expect(result.qrCodeUri).toMatch(/^otpauth:\/\/totp\//)
@@ -469,7 +487,7 @@ describe('MfaService', () => {
     // the slice argument mutants (line 242), the '-' join separator (line 244:32) and the
     // toUpperCase->toLowerCase mutant (line 244:20) — all break the canonical format.
     it('should format every recovery code as 6 groups of 4 uppercase hex chars', async () => {
-      const result = await service.setup('user-1', 'dashboard', PASSWORD)
+      const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       for (const code of result.recoveryCodes) {
         expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){5}$/)
       }
@@ -479,7 +497,7 @@ describe('MfaService', () => {
     // exactly 2 hashedCodes. Why: kills the hashedCodes=["Stryker"] prefill (line 232), which
     // would persist 3 hashes instead of 2.
     it('should persist exactly recoveryCodeCount hashed codes in the setup payload', async () => {
-      await service.setup('user-1', 'dashboard', PASSWORD)
+      await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       const payload = mockRedis.setIfAbsent.mock.calls[0]?.[1] as string
       const parsed = JSON.parse(payload) as { hashedCodes: string[] }
       expect(parsed.hashedCodes).toHaveLength(2)
@@ -487,7 +505,7 @@ describe('MfaService', () => {
 
     // Verifies that setup stores the pending setup data in Redis with a 600s TTL.
     it('should store setup data in Redis via setIfAbsent', async () => {
-      await service.setup('user-1', 'dashboard', PASSWORD)
+      await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(
         expect.stringMatching(/^mfa_setup:/),
@@ -502,7 +520,7 @@ describe('MfaService', () => {
     // setup log template (line 385).
     it('should not call redis.set and should log when setIfAbsent succeeds', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.setup('user-1', 'dashboard', PASSWORD)
+      await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(logSpy).toHaveBeenCalledWith(
         'setup: MFA setup initiated userId=user-1 context=dashboard'
@@ -513,7 +531,7 @@ describe('MfaService', () => {
     // Scenario: setup for a known user. Expected: the Redis setup key is exactly
     // 'mfa_setup:' + HMAC(userId). Why: pins the key template so a blanked key would diverge.
     it('should claim the mfa_setup key derived from the HMAC of the userId', async () => {
-      await service.setup('user-1', 'dashboard', PASSWORD)
+      await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       const expectedKey = `mfa_setup:${hmacSha256('dashboard:user-1', HMAC_KEY)}`
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
@@ -524,7 +542,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: true })
 
       try {
-        await service.setup('user-1', 'dashboard', PASSWORD)
+        await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_ALREADY_ENABLED })
@@ -536,9 +554,9 @@ describe('MfaService', () => {
     it('should throw TOKEN_INVALID when user is not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.setup('unknown-user', 'dashboard', PASSWORD)).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.setup('unknown-user', 'dashboard', PASSWORD, 'tenant-1')
+      ).rejects.toThrow(AuthException)
     })
 
     // Verifies the rare race-condition branch: the fast-path GET returns null
@@ -550,7 +568,7 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(null) // both fast-path and post-setIfAbsent GETs return null
       mockRedis.setIfAbsent.mockResolvedValue(false) // racing request claimed the key first
 
-      const result = await service.setup('user-1', 'dashboard', PASSWORD)
+      const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       // Service regenerates and stores new setup data via set()
       expect(mockRedis.set).toHaveBeenCalledWith(
@@ -579,7 +597,7 @@ describe('MfaService', () => {
         .mockResolvedValueOnce(JSON.stringify(winnerSetupData)) // post-setIfAbsent — winner wrote it
       mockRedis.setIfAbsent.mockResolvedValue(false)
 
-      const result = await service.setup('user-1', 'dashboard', PASSWORD)
+      const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(result.secret).toBe(winningSecret)
       expect(result.recoveryCodes).toEqual(winningCodes)
@@ -622,7 +640,7 @@ describe('MfaService', () => {
 
       const svc = module.get(MfaService)
       // mockPasswordService.hash is already configured to return '$scrypt$hashed'
-      const result = await svc.setup('user-1', 'dashboard', PASSWORD)
+      const result = await svc.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       // The default count is 8 — verify the service produces the default number of codes
       expect(result.recoveryCodes).toHaveLength(8)
@@ -645,7 +663,7 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       mockPasswordService.hash.mockClear()
 
-      const result = await service.setup('user-1', 'dashboard', PASSWORD)
+      const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
       expect(result.recoveryCodes).toEqual(existingCodes)
       expect(result.secret).toBe(existingSecret)
@@ -661,7 +679,9 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.get.mockResolvedValue('{not-valid-json')
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
 
       // The refusal is deliberately opaque to the caller — it must not describe the payload — so
       // this line is the only record that a stored record is corrupt, and which account's it is.
@@ -670,7 +690,7 @@ describe('MfaService', () => {
       expect(warned).toContain('userId=user-1')
       warnSpy.mockRestore()
       try {
-        await service.setup('user-1', 'dashboard', PASSWORD)
+        await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
       } catch (err) {
         expect(err).toBeInstanceOf(AuthException)
         const code = (err as AuthException).getResponse() as { error: { code: string } }
@@ -692,7 +712,9 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
 
       // AES-GCM authenticates the ciphertext, so a decrypted value that will not parse means the
       // plaintext was written wrong — an internal bug, and otherwise entirely silent.
@@ -717,7 +739,9 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // The other two fields get the same treatment as `hashedCodes`, and for the same reason: the
@@ -749,7 +773,9 @@ describe('MfaService', () => {
           })
         )
 
-        await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+        await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+          AuthException
+        )
         // Refused by the SHAPE CHECK, before the value reaches the cipher. Asserting only that it
         // throws cannot show that: a record admitted by a weakened check fails a step later, when
         // `decrypt` is handed a number, and surfaces as the same opaque MFA_SETUP_REQUIRED. Which
@@ -776,7 +802,9 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Scenario: a stored pending-setup value that parses to something that is not an object —
@@ -786,7 +814,9 @@ describe('MfaService', () => {
       async (raw) => {
         mockRedis.get.mockResolvedValue(raw)
 
-        await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+        await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+          AuthException
+        )
       }
     )
 
@@ -804,7 +834,9 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // Scenario: the decrypted plain-code payload is valid JSON but not an array of strings.
@@ -821,7 +853,9 @@ describe('MfaService', () => {
         })
       )
 
-      await expect(service.setup('user-1', 'dashboard', PASSWORD)).rejects.toThrow(AuthException)
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
   })
 
@@ -844,7 +878,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
       await expect(
-        service.verifyAndEnable('unknown', '123456', '1.2.3.4', 'Browser')
+        service.verifyAndEnable('unknown', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
     })
 
@@ -854,7 +888,14 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: true })
 
       try {
-        await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.verifyAndEnable(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_ALREADY_ENABLED })
@@ -868,7 +909,14 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(null)
 
       try {
-        await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.verifyAndEnable(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_SETUP_REQUIRED })
@@ -884,7 +932,14 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue('{not-json-at-all')
 
       try {
-        await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.verifyAndEnable(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_SETUP_REQUIRED })
@@ -908,7 +963,7 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(
-        service.verifyAndEnable('user-1', '000000', '1.2.3.4', 'Browser')
+        service.verifyAndEnable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
       // Pin the invalid-code warn template (line 432) so blanking it to '' is caught.
       expect(warnSpy).toHaveBeenCalledWith('verifyAndEnable: invalid TOTP code userId=user-1')
@@ -933,7 +988,14 @@ describe('MfaService', () => {
       mockRedis.getdel.mockResolvedValue(JSON.stringify(setupData)) // completion gate wins
 
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
@@ -988,7 +1050,7 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(
-        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
@@ -1015,7 +1077,14 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
       mockRedis.setnx.mockResolvedValue(true)
 
-      await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
 
       expect(mockEmailProvider.sendMfaEnabledNotification).toHaveBeenCalledWith(
         'tenant-1',
@@ -1041,7 +1110,7 @@ describe('MfaService', () => {
 
       // Should resolve without throwing — hook errors must not propagate
       await expect(
-        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).resolves.toBeUndefined()
       // Drain microtasks so the .catch callback executes (for coverage).
       // Two hops needed: one to resolve the internal Promise.resolve(rejected), one to run .catch.
@@ -1066,7 +1135,7 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(false) // key already exists = replayed code
 
       await expect(
-        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+        service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).rejects.toThrow(AuthException)
     })
   })
@@ -1585,7 +1654,14 @@ describe('MfaService', () => {
           })
 
         await expect(
-          service.regenerateRecoveryCodes('user-1', code, '1.2.3.4', 'Browser')
+          service.regenerateRecoveryCodes(
+            'user-1',
+            code,
+            '1.2.3.4',
+            'Browser',
+            'dashboard',
+            'tenant-1'
+          )
         ).rejects.toMatchObject({
           response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
         })
@@ -2361,7 +2437,14 @@ describe('MfaService', () => {
       // the same platform-less service is an ordinary call and must not be refused by it.
       mockUserRepo.findById.mockResolvedValue(null)
       await expect(
-        serviceWithoutRepo.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+        serviceWithoutRepo.regenerateRecoveryCodes(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).rejects.not.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
       })
@@ -2385,7 +2468,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
-      await expect(service.resetMfa('user-1')).resolves.toBeUndefined()
+      await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
       expect(mockUserRepo.updateMfa).not.toHaveBeenCalled()
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
@@ -2409,7 +2492,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
-      await service.resetMfa('user-1')
+      await service.resetMfa('user-1', 'dashboard', 'tenant-1')
 
       // At `warn`, and saying "administratively": an operator reading the log has to be able to
       // tell this apart from a user who disabled their own factor, and both paths otherwise
@@ -2439,7 +2522,7 @@ describe('MfaService', () => {
     it('fires the hook with no request context', async () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
 
-      await service.resetMfa('user-1')
+      await service.resetMfa('user-1', 'dashboard', 'tenant-1')
 
       expect(mockHooks.afterMfaDisabled).toHaveBeenCalledWith(
         // `tenantId` is what separates the two projections: the dashboard one carries the
@@ -2483,7 +2566,9 @@ describe('MfaService', () => {
     it('throws when no user with that id exists', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.resetMfa('nobody')).rejects.toThrow(AuthException)
+      await expect(service.resetMfa('nobody', 'dashboard', 'tenant-1')).rejects.toThrow(
+        AuthException
+      )
     })
 
     // The hook is fire-and-forget: a consumer whose alerting is down must not turn an
@@ -2493,7 +2578,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
       mockHooks.afterMfaDisabled.mockRejectedValueOnce(new Error('alerting is down'))
 
-      await expect(service.resetMfa('user-1')).resolves.toBeUndefined()
+      await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
     })
@@ -2520,7 +2605,9 @@ describe('MfaService', () => {
 
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
 
-      await expect(noHookService.resetMfa('user-1')).resolves.toBeUndefined()
+      await expect(
+        noHookService.resetMfa('user-1', 'dashboard', 'tenant-1')
+      ).resolves.toBeUndefined()
     })
   })
 
@@ -2538,9 +2625,9 @@ describe('MfaService', () => {
     it('should throw TOKEN_INVALID when user is not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.disable('unknown', '123456', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.disable('unknown', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      ).rejects.toThrow(AuthException)
     })
 
     // Verifies that disable throws MFA_NOT_ENABLED when MFA is not active on the account.
@@ -2549,7 +2636,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
 
       try {
-        await service.disable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.disable('user-1', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
@@ -2564,7 +2651,7 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_ENABLED, mfaSecret: null })
 
       try {
-        await service.disable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.disable('user-1', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
@@ -2587,7 +2674,7 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       try {
-        await service.disable('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.disable('user-1', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
@@ -2614,7 +2701,7 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true)
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
-      await service.disable('user-1', validCode, '1.2.3.4', 'Browser')
+      await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
         mfaEnabled: false,
@@ -2651,7 +2738,7 @@ describe('MfaService', () => {
       })
       mockRedis.setnx.mockResolvedValue(true)
 
-      await service.disable('user-1', validCode, '1.2.3.4', 'Browser')
+      await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
 
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
         'tenant-1',
@@ -2672,9 +2759,9 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
-      await expect(service.disable('user-1', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.disable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      ).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalled()
       // Pin the disable invalid-code warn template including the context (line 670).
       expect(warnSpy).toHaveBeenCalledWith(
@@ -2746,7 +2833,7 @@ describe('MfaService', () => {
 
       // Should resolve without throwing — hook errors must not propagate
       await expect(
-        service.disable('user-1', validCode, '1.2.3.4', 'Browser')
+        service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).resolves.toBeUndefined()
       // Drain microtasks so the .catch callback executes (for coverage).
       // Two hops needed: one to resolve the internal Promise.resolve(rejected), one to run .catch.
@@ -2789,7 +2876,7 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true)
 
       await expect(
-        noHookService.disable('user-1', validCode, '1.2.3.4', 'Browser')
+        noHookService.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ).resolves.toBeUndefined()
     })
   })
@@ -2974,7 +3061,14 @@ describe('MfaService', () => {
       })
       mockRedis.get.mockResolvedValue(null)
       await expect(
-        serviceWithoutRepo.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+        serviceWithoutRepo.verifyAndEnable(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).rejects.not.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.MFA_NOT_ENABLED } }
       })
@@ -3001,7 +3095,14 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
       await expect(
-        service.regenerateRecoveryCodes('unknown', '123456', '1.2.3.4', 'Browser')
+        service.regenerateRecoveryCodes(
+          'unknown',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).rejects.toThrow(AuthException)
     })
 
@@ -3012,7 +3113,14 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_DISABLED, mfaEnabled: false })
 
       try {
-        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.regenerateRecoveryCodes(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_NOT_ENABLED })
@@ -3027,7 +3135,14 @@ describe('MfaService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...AUTH_USER_MFA_ENABLED, mfaSecret: null })
 
       try {
-        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.regenerateRecoveryCodes(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
@@ -3052,7 +3167,14 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       try {
-        await service.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+        await service.regenerateRecoveryCodes(
+          'user-1',
+          '123456',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
@@ -3080,7 +3202,14 @@ describe('MfaService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
 
       await expect(
-        service.regenerateRecoveryCodes('user-1', '000000', '1.2.3.4', 'Browser')
+        service.regenerateRecoveryCodes(
+          'user-1',
+          '000000',
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).rejects.toThrow(AuthException)
       expect(mockBruteForce.recordFailure).toHaveBeenCalledWith(
         hmacSha256('disable:dashboard:user-1', HMAC_KEY)
@@ -3113,7 +3242,9 @@ describe('MfaService', () => {
         'user-1',
         validCode,
         '1.2.3.4',
-        'Browser'
+        'Browser',
+        'dashboard',
+        'tenant-1'
       )
 
       // recoveryCodeCount=2 in mockOptions
@@ -3240,7 +3371,14 @@ describe('MfaService', () => {
       )
 
       await expect(
-        service.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+        service.regenerateRecoveryCodes(
+          'user-1',
+          validCode,
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).resolves.toEqual(expect.objectContaining({ recoveryCodes: expect.any(Array) }))
       // Drain microtasks so the .catch callback executes (for coverage).
       await Promise.resolve()
@@ -3280,7 +3418,14 @@ describe('MfaService', () => {
       mockRedis.setnx.mockResolvedValue(true)
 
       await expect(
-        noHookService.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+        noHookService.regenerateRecoveryCodes(
+          'user-1',
+          validCode,
+          '1.2.3.4',
+          'Browser',
+          'dashboard',
+          'tenant-1'
+        )
       ).resolves.toEqual(expect.objectContaining({ recoveryCodes: expect.any(Array) }))
     })
 
@@ -3332,7 +3477,14 @@ describe('MfaService', () => {
       })
       mockRedis.setnx.mockResolvedValue(true)
 
-      const result = await svc.regenerateRecoveryCodes('user-1', validCode, '1.2.3.4', 'Browser')
+      const result = await svc.regenerateRecoveryCodes(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
 
       expect(result.recoveryCodes).toHaveLength(8)
     })
@@ -3409,7 +3561,9 @@ describe('MfaService', () => {
       mockRedis.get.mockResolvedValue(null)
       mockRedis.setIfAbsent.mockResolvedValue(true)
 
-      await expect(unwired.setup('user-1', 'dashboard', PASSWORD)).resolves.toMatchObject({
+      await expect(
+        unwired.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
+      ).resolves.toMatchObject({
         secret: expect.any(String)
       })
     })
@@ -3677,6 +3831,65 @@ describe('MfaService', () => {
   //
   // The gate lives in `fetchUserForContext`, which every one of these methods calls, so the
   // check is inherited rather than remembered. These cases pin that it actually fires on each.
+  describe('plane/tenant binding on the public API', () => {
+    // MfaService is a public API. The controller always sources a validated tenant from the JWT,
+    // but a host wiring the service directly could hand a dashboard flow no tenant — which would
+    // otherwise reach the tenant-blind account read and key derivation. Every entry point refuses
+    // it, naming the field, BEFORE any repository read. Each is called here with only its required
+    // arguments, so the plane defaults to `'dashboard'` and no tenant is supplied — the very shape
+    // a direct caller would produce.
+    it.each<[string, (svc: MfaService) => Promise<unknown>]>([
+      ['setup', (svc) => svc.setup('user-1')],
+      ['verifyAndEnable', (svc) => svc.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')],
+      ['disable', (svc) => svc.disable('user-1', '123456', '1.2.3.4', 'Browser')],
+      ['resetMfa', (svc) => svc.resetMfa('user-1')],
+      [
+        'regenerateRecoveryCodes',
+        (svc) => svc.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+      ]
+    ])(
+      'refuses %s on the default dashboard plane with no tenant, before the repository',
+      async (_label, call) => {
+        await expect(call(service)).rejects.toMatchObject({
+          response: {
+            error: {
+              code: AUTH_ERROR_CODES.VALIDATION,
+              details: [
+                {
+                  field: 'tenantId',
+                  message:
+                    'tenantId is required on the dashboard plane and forbidden on the platform plane'
+                }
+              ]
+            }
+          }
+        })
+        expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      }
+    )
+
+    // The mirror rule: a platform flow MUST NOT carry a tenant it does not have. The named field
+    // and message are pinned so the refusal keeps telling the caller which claim is wrong.
+    it('refuses a platform call that supplies a tenant', async () => {
+      await expect(
+        service.setup('admin-1', 'platform', PASSWORD, 'tenant-1')
+      ).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              {
+                field: 'tenantId',
+                message:
+                  'tenantId is required on the dashboard plane and forbidden on the platform plane'
+              }
+            ]
+          }
+        }
+      })
+    })
+  })
+
   describe('account status gates every MFA state change', () => {
     const BLOCKED = { ...AUTH_USER_MFA_ENABLED, status: 'SUSPENDED' }
 
@@ -3686,15 +3899,28 @@ describe('MfaService', () => {
     })
 
     it.each([
-      ['setup', (svc: MfaService) => svc.setup('user-1', 'dashboard', PASSWORD)],
+      ['setup', (svc: MfaService) => svc.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')],
       [
         'verifyAndEnable',
-        (svc: MfaService) => svc.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser')
+        (svc: MfaService) =>
+          svc.verifyAndEnable('user-1', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
       ],
-      ['disable', (svc: MfaService) => svc.disable('user-1', '123456', '1.2.3.4', 'Browser')],
+      [
+        'disable',
+        (svc: MfaService) =>
+          svc.disable('user-1', '123456', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      ],
       [
         'regenerateRecoveryCodes',
-        (svc: MfaService) => svc.regenerateRecoveryCodes('user-1', '123456', '1.2.3.4', 'Browser')
+        (svc: MfaService) =>
+          svc.regenerateRecoveryCodes(
+            'user-1',
+            '123456',
+            '1.2.3.4',
+            'Browser',
+            'dashboard',
+            'tenant-1'
+          )
       ]
     ])('refuses %s for a blocked dashboard account', async (_label, call) => {
       await expect(call(service)).rejects.toMatchObject({

@@ -415,7 +415,13 @@ export class AuthService {
 
     // MFA challenge path.
     if (user.mfaEnabled) {
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(user.id, 'dashboard')
+      // Bind the tenant into the challenge token so the challenge resolves this account
+      // tenant-scoped rather than by `sub` alone.
+      const mfaTempToken = await this.tokenManager.issueMfaTempToken(
+        user.id,
+        'dashboard',
+        user.tenantId
+      )
       this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${logSafe(tenantId)}`)
       return { mfaRequired: true, mfaTempToken }
     }

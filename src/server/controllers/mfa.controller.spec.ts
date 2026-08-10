@@ -167,7 +167,12 @@ describe('MfaController', () => {
 
       const result = await controller.setup(JWT_PAYLOAD as never, { password: 'pw' })
 
-      expect(mockMfaService.setup).toHaveBeenCalledWith(JWT_PAYLOAD.sub, 'dashboard', 'pw')
+      expect(mockMfaService.setup).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        'dashboard',
+        'pw',
+        JWT_PAYLOAD.tenantId
+      )
       expect(result).toBe(MFA_SETUP_RESULT)
     })
 
@@ -200,7 +205,9 @@ describe('MfaController', () => {
         JWT_PAYLOAD.sub,
         dto.code,
         '1.2.3.4',
-        'TestBrowser'
+        'TestBrowser',
+        'dashboard',
+        JWT_PAYLOAD.tenantId
       )
     })
 
@@ -220,7 +227,14 @@ describe('MfaController', () => {
 
       await controller.verifyEnable(JWT_PAYLOAD as never, dto as never, reqWithoutMeta)
 
-      expect(mockMfaService.verifyAndEnable).toHaveBeenCalledWith(JWT_PAYLOAD.sub, dto.code, '', '')
+      expect(mockMfaService.verifyAndEnable).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        dto.code,
+        '',
+        '',
+        'dashboard',
+        JWT_PAYLOAD.tenantId
+      )
     })
 
     // Verifies that MFA_SETUP_REQUIRED propagates when no pending setup is found.
@@ -718,7 +732,8 @@ describe('MfaController', () => {
         dto.code,
         '1.2.3.4',
         'TestBrowser',
-        'dashboard'
+        'dashboard',
+        JWT_PAYLOAD.tenantId
       )
     })
 
@@ -770,7 +785,8 @@ describe('MfaController', () => {
         dto.code,
         '',
         '',
-        'dashboard'
+        'dashboard',
+        JWT_PAYLOAD.tenantId
       )
     })
   })
@@ -786,7 +802,12 @@ describe('MfaController', () => {
   // and the tests that exercised it were feeding the method a payload the guard would refuse.
   it('always acts on the dashboard plane, whatever a payload claims', async () => {
     mockMfaService.disable.mockResolvedValue(undefined)
-    const impossible = { sub: 'admin-1', type: 'platform' as const, jti: 'jti' }
+    const impossible = {
+      sub: 'admin-1',
+      tenantId: 'tenant-1',
+      type: 'platform' as const,
+      jti: 'jti'
+    }
 
     await controller.disable(impossible as never, { code: '123456' } as never, mockReq)
 
@@ -795,7 +816,8 @@ describe('MfaController', () => {
       '123456',
       expect.any(String),
       expect.any(String),
-      'dashboard'
+      'dashboard',
+      'tenant-1'
     )
   })
 
@@ -820,7 +842,8 @@ describe('MfaController', () => {
         dto.code,
         '1.2.3.4',
         'TestBrowser',
-        'dashboard'
+        'dashboard',
+        JWT_PAYLOAD.tenantId
       )
       expect(result).toBe(REGENERATE_RESULT)
     })
@@ -838,7 +861,8 @@ describe('MfaController', () => {
         dto.code,
         '',
         '',
-        'dashboard'
+        'dashboard',
+        JWT_PAYLOAD.tenantId
       )
     })
 

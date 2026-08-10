@@ -351,6 +351,7 @@ export class MfaService {
   private async transitionMfaRecord(
     context: 'dashboard' | 'platform',
     userId: string,
+    tenantId: string | undefined,
     mutate: (current: AuthUser | AuthPlatformUser) => MfaRecordUpdate | null
   ): Promise<boolean> {
     const lockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
@@ -368,7 +369,7 @@ export class MfaService {
     try {
       // Re-read inside the lock. The caller's copy was read before the lock existed and may
       // already be stale — reusing it would leave exactly the window this method closes.
-      const current = await this.fetchUserForContext(context, userId)
+      const current = await this.fetchUserForContext(context, userId, tenantId)
       const update = mutate(current)
       if (update === null) return false
       // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
@@ -697,8 +698,10 @@ export class MfaService {
   async setup(
     userId: string,
     context: 'dashboard' | 'platform' = 'dashboard',
-    password?: string
+    password?: string,
+    tenantId?: string
   ): Promise<MfaSetupResult> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // Misconfiguration: caller asked for a platform setup but the host
       // application did not register BYMAX_AUTH_PLATFORM_USER_REPOSITORY.
@@ -708,7 +711,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
 
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Re-authenticate before minting a factor. Enabling MFA is a change to how the account
@@ -814,15 +817,17 @@ export class MfaService {
     code: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<void> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // See setup() — same misconfiguration guard, same rationale.
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
 
     // Fetch once at entry — used for mfaEnabled guard, email notification, and hook.
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
@@ -861,7 +866,7 @@ export class MfaService {
     // Serialized against every other MFA transition. The `getdel` above already makes the
     // enable single-shot among concurrent verify calls; this puts it in the same queue as
     // `disable` and the challenge splice, which write the same three fields.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: true,
       mfaSecret: data.encryptedSecret,
       mfaRecoveryCodes: data.hashedCodes
@@ -935,6 +940,7 @@ export class MfaService {
     const {
       userId,
       context,
+      tenantId,
       jti: tempTokenJti
     } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
 
@@ -951,8 +957,10 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
-    // Step 3: Fetch user from the correct repository.
-    const user = await this.fetchUserForContext(context, userId)
+    // Step 3: Fetch user from the correct repository, tenant-scoped for a dashboard challenge
+    // (the temp token guarantees the tenant is present) so status / secret / session all resolve
+    // against the account the login authenticated, not a homonym in another tenant.
+    const user = await this.fetchUserForContext(context, userId, tenantId)
 
     // The account status was re-checked by `fetchUserForContext` above. Login gated it before
     // issuing the temp token, but that token outlives the check by its whole TTL: an account
@@ -1029,7 +1037,7 @@ export class MfaService {
       // the copy read at the top of this method. Splicing the stale copy is what let a
       // concurrent `regenerateRecoveryCodes` be rolled back wholesale and a completed
       // `disable` be undone — see `transitionMfaRecord`.
-      await this.transitionMfaRecord(context, userId, (current) => {
+      await this.transitionMfaRecord(context, userId, tenantId, (current) => {
         // The account stopped having MFA while this challenge was in flight — a `disable`
         // that has already completed. Writing here would re-enable it with the pre-disable
         // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
@@ -1146,9 +1154,11 @@ export class MfaService {
     code: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<void> {
-    const user = await this.fetchUserForContext(context, userId)
+    this.assertPlaneTenant(context, tenantId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // 'disable:' prefix namespaces this counter away from the 'challenge' counter —
@@ -1185,7 +1195,7 @@ export class MfaService {
 
     // Serialized against every other MFA transition, so a challenge that read the record a
     // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: false,
       mfaSecret: null,
       mfaRecoveryCodes: null
@@ -1261,8 +1271,13 @@ export class MfaService {
    *   `'platform'`. Must match the plane the account lives in, or the lookup misses.
    * @throws `TOKEN_INVALID` if no user with that ID exists in the given plane.
    */
-  async resetMfa(userId: string, context: 'dashboard' | 'platform' = 'dashboard'): Promise<void> {
-    const user = await this.fetchUserForContext(context, userId)
+  async resetMfa(
+    userId: string,
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
+  ): Promise<void> {
+    this.assertPlaneTenant(context, tenantId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
 
     if (!user.mfaEnabled) {
       this.logger.log(`resetMfa: no second factor to remove userId=${userId} context=${context}`)
@@ -1271,7 +1286,7 @@ export class MfaService {
 
     // Serialized against every other MFA transition, so a challenge that read the record a
     // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: false,
       mfaSecret: null,
       mfaRecoveryCodes: null
@@ -1348,8 +1363,10 @@ export class MfaService {
     totpCode: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<{ recoveryCodes: string[] }> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // See setup()/verifyAndEnable() — same misconfiguration guard.
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
@@ -1371,7 +1388,7 @@ export class MfaService {
     // read on every request from an already-authenticated session is
     // acceptable for that threat model. Future contributors: do NOT
     // "fix" this to match challenge() — the ordering is deliberate.
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // Reuse the 'disable:' counter namespace — both flows are TOTP-gated MFA
@@ -1429,7 +1446,7 @@ export class MfaService {
     // Serialized against every other MFA transition. The doc above promises the prior set is
     // replaced wholesale so an old code can never coexist with the new one — which held only
     // until a challenge that had read the old list spliced it back after this write.
-    const replaced = await this.transitionMfaRecord(context, userId, (current) => {
+    const replaced = await this.transitionMfaRecord(context, userId, tenantId, (current) => {
       // MFA was disabled while the new codes were being derived. Writing them would re-enable
       // it with the pre-disable secret, so the caller is told the factor is gone instead.
       if (!current.mfaEnabled) return null
@@ -1598,12 +1615,48 @@ export class MfaService {
    * @throws `TOKEN_INVALID` if the user is not found.
    * @throws {@link AuthException} the status error when the account is blocked.
    */
+  /**
+   * A dashboard MFA flow MUST carry the tenant it was authenticated in; a platform flow MUST NOT.
+   *
+   * The controller sources the tenant from the verified JWT, which always carries a validated
+   * `tenantId`, so this never trips through the HTTP surface. It guards the OTHER caller:
+   * `MfaService` is a public API, and a host wiring it directly — or a future SSO path — could hand
+   * a dashboard `userId` with no tenant, which would silently reach the tenant-blind account read
+   * and key derivation. Refuse it here, naming the field, rather than let it degrade to the
+   * pre-tenant behaviour, which is exactly the fallback an attacker would aim for.
+   *
+   * @param context - The identity plane the call is on.
+   * @param tenantId - The tenant supplied by the caller, if any.
+   * @throws {@link AuthException} `VALIDATION` (400) when a dashboard call omits the tenant, or a
+   *   platform call supplies one.
+   */
+  private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
+    if (
+      (context === 'dashboard' && tenantId === undefined) ||
+      (context === 'platform' && tenantId !== undefined)
+    ) {
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+        {
+          field: 'tenantId',
+          message: 'tenantId is required on the dashboard plane and forbidden on the platform plane'
+        }
+      ])
+    }
+  }
+
   private async fetchUserForContext(
     context: 'dashboard' | 'platform',
-    userId: string
+    userId: string,
+    tenantId?: string
   ): Promise<AuthUser | AuthPlatformUser> {
     if (context === 'dashboard') {
-      const user = await this.userRepo.findById(userId)
+      // Scoped to the tenant the caller was authenticated in — the JWT's `tenantId` on the
+      // dashboard-authenticated flows, the challenge token's on the MFA challenge. A repository id
+      // is unique only within a tenant, so an unscoped read could return, and this then decides
+      // status / secret / session against, a homonym in another tenant. On the dashboard plane the
+      // tenant is guaranteed present: the temp token and the public entry points both refuse a
+      // dashboard flow that lacks it, so this is never a tenant-blind read in practice.
+      const user = await this.userRepo.findById(userId, tenantId)
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)
       return user
