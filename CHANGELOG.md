@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-10
+
+Binds the MFA challenge to its tenant and scopes every MFA key, counter and write by it — the
+multi-tenant hardening rust-auth mirrors byte-for-byte. It stays in the 1.3.x line, where the
+library still has no published dependents; the one breaking change is the
+`IUserRepository.updateMfa` signature, which a derived backend adopts as it upgrades.
+
 ### Security
 
 - **The MFA challenge is bound to its tenant, and every MFA key is scoped by it.** The MFA temp
@@ -28,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rate limiting NIST SP 800-63B requires. All eight now derive from one tenant-scoped `mfaSubject`,
   driven by the plane rather than by whether a tenant was supplied. The wire contract gains
   `mfaSubjectPreimages` and `mfaSubjectDerivedKeys`, pinning the shape rust-auth mirrors byte-for-byte.
+
+- **The MFA write is scoped by tenant too, and a blank tenant is refused.** Every MFA transition
+  writes — the recovery-code splice and the key-rotation re-encrypt — and both wrote through
+  `updateMfa(id, data)`, keyed by id alone, so under colliding ids the write could land on another
+  tenant's row and leave a spent recovery code in the list. **`IUserRepository.updateMfa` now takes
+  the tenant: `updateMfa(id, tenantId, data)`** — a breaking change that forces every implementation
+  to scope the write as its read is scoped (the platform repository is unchanged). And
+  `assertPlaneTenant` now refuses a blank `tenantId`, not merely a missing one: `''` — what an unset
+  environment variable becomes — would build `dashboard::{userId}`, a third keyspace.
 
 **Apply to a derived backend:** upgrade and deploy this release **in full** before the one that
 follows it. For a rolling upgrade this release dual-writes the anti-replay marker and the three
@@ -1303,7 +1319,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/bymaxone/nest-auth/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/bymaxone/nest-auth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/bymaxone/nest-auth/compare/v1.1.1...v1.2.0
