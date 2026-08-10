@@ -12,10 +12,13 @@ declare module 'ioredis-mock' {
   /**
    * Constructor signature for the ioredis-mock default export.
    *
-   * Returns a partial ioredis-compatible instance (not fully typed — callers must cast as `unknown as Redis`).
+   * Accepts the same connection options as `ioredis`; only `port` is typed here,
+   * used to give each instance its own isolated keyspace (ioredis-mock keys its
+   * store by connection). Returns a partial ioredis-compatible instance (not fully
+   * typed — callers must cast as `unknown as Redis`).
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const RedisMock: new () => any
+  const RedisMock: new (options?: { port?: number }) => any
 
   export default RedisMock
 }
