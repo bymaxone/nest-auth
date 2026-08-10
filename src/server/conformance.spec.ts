@@ -51,6 +51,8 @@ interface WireContract {
       derivedKeyHex: string
       identifierMessage: string
       identifierHex: string
+      otpCode: string
+      otpRecordCodeHex: string
     }[]
   }
   redisKeyPrefixes: Record<string, string>
@@ -123,6 +125,13 @@ describe('cross-implementation conformance', () => {
 
         expect(resolved.hmacKey).toBe(vector.derivedKeyHex)
         expect(hmacSha256(vector.identifierMessage, resolved.hmacKey)).toBe(vector.identifierHex)
+        // The OTP record's stored value continues the same vector: never the code, but the keyed
+        // fingerprint `hmac(`{identifier}:{code}`, hmacKey)`. Pinned byte-for-byte because both
+        // backends write and compare the SAME `otp:` record — a drift here is every code minted on
+        // one failing to verify on the other. This is exactly `OtpService.fingerprint`'s derivation.
+        expect(hmacSha256(`${vector.identifierHex}:${vector.otpCode}`, resolved.hmacKey)).toBe(
+          vector.otpRecordCodeHex
+        )
       }
     )
   })
