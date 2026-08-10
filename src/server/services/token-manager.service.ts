@@ -267,7 +267,7 @@ export class TokenManagerService {
     // not of a credential. That asymmetry is the whole value of the marker: an attacker holding
     // a stolen session can rotate it forever and never make this mark fresh again.
     await this.redis.set(
-      recentAuthKey('dashboard', user.id, this.options.hmacKey),
+      recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId),
       '1',
       RECENT_AUTH_TTL_SECONDS
     )

@@ -424,6 +424,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -438,14 +439,14 @@ describe('MFA — integration smoke tests', () => {
       user: {}
     })
 
-    // First challenge: setnx returns true (fresh code) → succeeds
-    mockRedis.setnx.mockResolvedValueOnce(true)
+    // First challenge: both the scoped and legacy anti-replay markers are unclaimed → succeeds.
+    mockRedis.setnx.mockResolvedValueOnce(true).mockResolvedValueOnce(true)
     await expect(
       service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')
     ).resolves.toBeDefined()
 
-    // Second challenge with the same code: setnx returns false (replay detected) → rejected
-    mockRedis.setnx.mockResolvedValueOnce(false)
+    // Second challenge, same code: the scoped marker is already claimed → replay → rejected.
+    mockRedis.setnx.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
@@ -465,6 +466,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -475,12 +477,12 @@ describe('MFA — integration smoke tests', () => {
     })
     mockRedis.setnx.mockResolvedValue(true)
 
-    // First attempt: not locked → wrong code → recordFailure
+    // First attempt: not locked → wrong code → recordFailure on BOTH migration counters.
     mockBruteForce.isLockedOut.mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
 
     // Second attempt: now locked → ACCOUNT_LOCKED thrown before TOTP check
     mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
@@ -492,8 +494,9 @@ describe('MFA — integration smoke tests', () => {
         error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
       })
     }
-    // recordFailure must NOT be called again — lockout check exits early
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    // recordFailure must NOT be called again — lockout check exits early, so the count stays at
+    // the two records the first failure wrote.
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
   })
 
   // ---------------------------------------------------------------------------
