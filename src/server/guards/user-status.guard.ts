@@ -67,9 +67,12 @@ export class UserStatusGuard implements CanActivate {
     // Keys and the repository read are tenant-scoped. A repository id is only unique WITHIN a
     // tenant, so a status or verified flag cached under a bare id could authorize a colliding id in
     // another tenant; the JWT's own `tenantId` binds every cache entry and the miss-path lookup to
-    // the caller's tenant.
-    const statusKey = `us:${tenantId}:${userId}`
-    const verifiedKey = `uev:${tenantId}:${userId}`
+    // the caller's tenant. Each half is percent-encoded before it is joined by `:`, so a tenant or
+    // subject that itself contains a `:` cannot shift the boundary and collide with another pair
+    // (`('a:b','c')` and `('a','b:c')` would otherwise both key `a:b:c`).
+    const scope = `${encodeURIComponent(tenantId)}:${encodeURIComponent(userId)}`
+    const statusKey = `us:${scope}`
+    const verifiedKey = `uev:${scope}`
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 

@@ -87,3 +87,28 @@ export function assertValidSub(sub: unknown): asserts sub is string {
     throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }
 }
+
+/**
+ * Asserts that a dashboard JWT `tenantId` claim is a non-empty string within the
+ * configured upper bound.
+ *
+ * `DashboardJwtPayload` types `tenantId` as a `string`, but the payload is decoded from
+ * a token and only cast — the type binds a TypeScript caller and nothing on the wire. The
+ * value drives both the tenant-binding comparison and the tenant-scoped status keys
+ * (`us:${tenantId}:${sub}`), so an absent or non-string tenant must be refused rather than
+ * slipping through an `undefined === undefined` binding comparison or producing a degenerate
+ * key. Content is unconstrained for the same reason as `sub`; only the shape is enforced.
+ *
+ * @param tenantId - The raw value of the `tenantId` claim from the decoded payload.
+ * @throws {@link AuthException} with `TOKEN_INVALID` (HTTP 401) when the value is not a
+ *   string, is empty, or exceeds {@link MAX_SUBJECT_LENGTH}.
+ */
+export function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
+  if (
+    typeof tenantId !== 'string' ||
+    tenantId.length === 0 ||
+    tenantId.length > MAX_SUBJECT_LENGTH
+  ) {
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  }
+}

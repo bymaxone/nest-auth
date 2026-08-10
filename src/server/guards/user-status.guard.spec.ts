@@ -122,6 +122,20 @@ describe('UserStatusGuard', () => {
     expect(mockRedis.set).toHaveBeenCalledTimes(1)
   })
 
+  // A tenant or subject that contains the `:` delimiter must not shift the key boundary: each half
+  // is percent-encoded, so `('x:y','a:b')` keys `us:x%3Ay:a%3Ab` and cannot collide with another
+  // pair. Dropping the encoding would let two distinct pairs share a status entry across tenants.
+  it('percent-encodes tenant and subject so a `:` in either cannot shift the key boundary', async () => {
+    mockRedis.get.mockResolvedValue(null)
+    mockUserRepo.findById.mockResolvedValue({ id: 'a:b', status: 'active' })
+    mockRedis.set.mockResolvedValue(undefined)
+
+    const ctx = makeContext({ sub: 'a:b', tenantId: 'x:y' })
+    await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+
+    expect(mockRedis.set).toHaveBeenCalledWith('us:x%3Ay:a%3Ab', 'active', 60)
+  })
+
   // Verifies that a BANNED status causes a 403 ACCOUNT_BANNED AuthException.
   it('should throw ACCOUNT_BANNED for BANNED status', async () => {
     mockRedis.get.mockResolvedValue('BANNED')

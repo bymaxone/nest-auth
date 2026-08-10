@@ -13,7 +13,12 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
-import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
+import {
+  assertTokenType,
+  assertValidJti,
+  assertValidSub,
+  assertValidTenantId
+} from './utils/assert-token-type'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -77,9 +82,14 @@ export class JwtAuthGuard implements CanActivate {
     assertValidJti(payload.jti)
 
     // Require sub as a bounded non-empty string — used downstream in Redis keys
-    // (`us:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting empty
-    // and pathological shapes keeps the key space well-formed.
+    // (`us:{tenantId}:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting
+    // empty and pathological shapes keeps the key space well-formed.
     assertValidSub(payload.sub)
+
+    // Require tenantId as a bounded non-empty string for the same reason: it is only cast
+    // from the token, yet it drives the tenant-binding comparison and the tenant-scoped
+    // status keys, so an absent or non-string tenant must be refused, not trusted.
+    assertValidTenantId(payload.tenantId)
 
     // Reject platform tokens and MFA challenge tokens in dashboard context.
     assertTokenType(payload, 'dashboard')

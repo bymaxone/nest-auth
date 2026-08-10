@@ -2180,6 +2180,20 @@ describe('AuthService', () => {
       logSpy.mockRestore()
     })
 
+    // The invalidation key must be percent-encoded exactly as the guard encodes it: a tenant or
+    // id containing the `:` delimiter must not shift the boundary, or the delete would target a
+    // different key than the guard wrote and leave the just-verified account locked out.
+    it('percent-encodes the tenant and id in the verified-flag invalidation key', async () => {
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'us:er', tenantId: 'ten:ant' })
+      mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
+      mockHooks.afterEmailVerified.mockResolvedValue(undefined)
+
+      await service.verifyEmail('ten:ant', 'user@example.com', '123456', mockReq)
+
+      expect(mockRedis.del).toHaveBeenCalledWith('uev:ten%3Aant:us%3Aer')
+    })
+
     // Verifies that OTP verification errors from otpService propagate to the caller.
     it('should propagate OTP errors', async () => {
       mockOtpService.verify.mockRejectedValue(new AuthException(AUTH_ERROR_CODES.OTP_INVALID))

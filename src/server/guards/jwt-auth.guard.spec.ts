@@ -343,6 +343,17 @@ describe('JwtAuthGuard', () => {
       const ctx = makeContext('some.jwt.token')
       await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
     })
+
+    // A token whose tenantId claim is absent is rejected: the value is only cast, yet it drives
+    // the tenant-scoped status keys and the binding compare, so an unvalidated tenant must not pass.
+    it('should throw when tenantId is missing from payload', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      const { tenantId: _tenantId, ...payloadWithoutTenant } = VALID_PAYLOAD
+      mockJwtService.verify.mockReturnValue(payloadWithoutTenant)
+
+      const ctx = makeContext('some.jwt.token')
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+    })
   })
 
   // ---------------------------------------------------------------------------

@@ -869,10 +869,10 @@ export class AuthService {
 
     // Drop the verified-flag the UserStatusGuard caches under `uev:{tenantId}:{userId}`, so the
     // account reaches its protected routes on the very next request rather than after the cache TTL.
-    // The key must carry the same tenant the guard binds it under — a bare-id delete would leave the
-    // stale `0` in place and keep the just-verified account locked out until the TTL expired. The
-    // guard refreshes the flag from the repository on the miss this creates.
-    await this.redis.del(`uev:${tenantId}:${user.id}`)
+    // The key must be byte-identical to the guard's — same tenant, same percent-encoding of each
+    // half — or the delete misses and the stale `0` keeps the just-verified account locked out until
+    // the TTL expires. The guard refreshes the flag from the repository on the miss this creates.
+    await this.redis.del(`uev:${encodeURIComponent(tenantId)}:${encodeURIComponent(user.id)}`)
 
     this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${logSafe(tenantId)}`)
 
