@@ -245,10 +245,18 @@ export interface IUserRepository {
   /**
    * Updates the user's TOTP MFA configuration.
    *
+   * The tenant is required for the same reason {@link findById} takes one: the library may not
+   * assume ids are unique across tenants, so a write keyed by id alone can land on another tenant's
+   * row — or on a row other than the one the MFA flow read a moment earlier, which would leave a
+   * spent recovery code in the account's list. An implementation MUST scope the update by both the
+   * id and the tenant, exactly as its read does.
+   *
    * @param id - The user's unique identifier.
+   * @param tenantId - The tenant the account belongs to; the update MUST be scoped to it, as
+   *   {@link findById} scopes its read. Never omitted for a dashboard account.
    * @param data - New MFA state. See {@link UpdateMfaData}.
    */
-  updateMfa(id: string, data: UpdateMfaData): Promise<void>
+  updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void>
 
   /**
    * Records the current timestamp as the user's last successful login time.

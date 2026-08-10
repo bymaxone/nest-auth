@@ -289,12 +289,14 @@ export class MfaService {
    * @param context - Which identity plane the account belongs to.
    * @param secretBase32 - The decrypted secret.
    * @param recoveryCodes - The stored recovery digests, written back unchanged.
+   * @param tenantId - The tenant the account belongs to, so the write is scoped like the read.
    */
   private async reencryptSecret(
     userId: string,
     context: 'dashboard' | 'platform',
     secretBase32: string,
-    recoveryCodes: string[]
+    recoveryCodes: string[],
+    tenantId: string | undefined
   ): Promise<void> {
     const update = {
       mfaEnabled: true as const,
@@ -305,7 +307,7 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, update)
       } else {
-        await this.userRepo.updateMfa(userId, update)
+        await this.userRepo.updateMfa(userId, tenantId, update)
       }
     } catch (err: unknown) {
       this.logger.error('re-encryption under the current MFA key failed', err)
@@ -411,7 +413,7 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, write)
       } else {
-        await this.userRepo.updateMfa(userId, write)
+        await this.userRepo.updateMfa(userId, tenantId, write)
       }
       return true
     } finally {
@@ -1106,7 +1108,13 @@ export class MfaService {
       // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
       // Fire-and-forget: the challenge has already succeeded and the retired key still opens
       // the secret, so a failure costs the migration and nothing else.
-      void this.reencryptSecret(userId, context, secretBase32, user.mfaRecoveryCodes ?? [])
+      void this.reencryptSecret(
+        userId,
+        context,
+        secretBase32,
+        user.mfaRecoveryCodes ?? [],
+        tenantId
+      )
     }
 
     this.logger.log(`challenge: MFA challenge passed userId=${userId} context=${context}`)
@@ -1677,13 +1685,18 @@ export class MfaService {
    */
   private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
     if (
-      (context === 'dashboard' && tenantId === undefined) ||
+      (context === 'dashboard' && (tenantId === undefined || tenantId === '')) ||
       (context === 'platform' && tenantId !== undefined)
     ) {
+      // A dashboard call needs a non-EMPTY tenant, not merely a present one: a blank tenant builds
+      // `dashboard::{userId}`, a third keyspace distinct from every real tenant's — and an empty
+      // string is exactly what an unset environment variable becomes by the time it reaches this
+      // call site. The platform plane refuses any tenant at all, blank included.
       throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
         {
           field: 'tenantId',
-          message: 'tenantId is required on the dashboard plane and forbidden on the platform plane'
+          message:
+            'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
         }
       ])
     }

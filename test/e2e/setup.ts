@@ -137,9 +137,11 @@ export function createMockUserRepository(): MockUserRepository {
       if (user) users.set(id, { ...user, passwordHash })
     },
 
-    async updateMfa(id: string, data: UpdateMfaData): Promise<void> {
+    async updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void> {
       const user = users.get(id)
-      if (!user) return
+      // Scoped by tenant like `findById`: a write for the wrong tenant matches no row, exactly as a
+      // read would, so an id shared across tenants cannot cross the update onto the wrong account.
+      if (!user || (tenantId !== undefined && user.tenantId !== tenantId)) return
       // Strip the existing optional fields first, then re-add only when present —
       // exactOptionalPropertyTypes forbids assigning `undefined` to optional fields.
       const { mfaSecret: _s, mfaRecoveryCodes: _r, ...rest } = user

@@ -265,6 +265,7 @@ describe('MFA — integration smoke tests', () => {
 
     expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
       'user-1',
+      'tenant-1',
       expect.objectContaining({ mfaEnabled: true })
     )
 
@@ -277,6 +278,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue(userWithMfa)
@@ -336,6 +338,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -377,6 +380,7 @@ describe('MFA — integration smoke tests', () => {
     expect(result).toMatchObject({ accessToken: 'at' })
     expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
       'user-1',
+      'tenant-1',
       expect.objectContaining({ mfaEnabled: true, mfaRecoveryCodes: [] })
     )
   })
@@ -393,6 +397,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -513,6 +518,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({

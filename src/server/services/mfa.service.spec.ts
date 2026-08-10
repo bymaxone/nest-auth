@@ -1004,6 +1004,7 @@ describe('MfaService', () => {
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
+        'tenant-1',
         expect.objectContaining({ mfaEnabled: true })
       )
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
@@ -1471,7 +1472,7 @@ describe('MfaService', () => {
 
       const result = await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
         mfaEnabled: true,
         mfaSecret: expect.any(String),
         mfaRecoveryCodes: [otherDigest] // matched code consumed; mfaSecret preserved
@@ -1523,7 +1524,7 @@ describe('MfaService', () => {
 
         // The spent code is gone and both live siblings survive. Splicing the stale index 1
         // would have produced [newerA, usedDigest] — the used code resurrected.
-        expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+        expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
           mfaEnabled: true,
           mfaSecret: expect.any(String),
           mfaRecoveryCodes: [newerA, newerB]
@@ -1883,7 +1884,7 @@ describe('MfaService', () => {
 
       const result = await rotated.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
         mfaEnabled: true,
         mfaSecret: expect.any(String),
         mfaRecoveryCodes: [otherDigest]
@@ -1934,6 +1935,7 @@ describe('MfaService', () => {
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
+        'tenant-1',
         expect.objectContaining({ mfaRecoveryCodes: [before, after] })
       )
     })
@@ -1968,6 +1970,7 @@ describe('MfaService', () => {
       // Index 0 consumed, so index 1 survives. Picking the later match would leave the other.
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
+        'tenant-1',
         expect.objectContaining({ mfaRecoveryCodes: [underCurrent] })
       )
     })
@@ -1993,6 +1996,7 @@ describe('MfaService', () => {
 
       expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
         'user-1',
+        'tenant-1',
         expect.objectContaining({ mfaRecoveryCodes: [digest] })
       )
     })
@@ -2593,7 +2597,7 @@ describe('MfaService', () => {
       )
       warnSpy.mockRestore()
 
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
         mfaEnabled: false,
         mfaSecret: null,
         mfaRecoveryCodes: null
@@ -2794,7 +2798,7 @@ describe('MfaService', () => {
 
       await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
 
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
         mfaEnabled: false,
         mfaSecret: null,
         mfaRecoveryCodes: null
@@ -3353,14 +3357,14 @@ describe('MfaService', () => {
       for (const code of result.recoveryCodes) {
         expect(code).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){5}$/)
       }
-      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', {
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith('user-1', 'tenant-1', {
         mfaEnabled: true,
         mfaSecret: encryptedSecret, // unchanged — only recovery codes rotate
         mfaRecoveryCodes: expect.any(Array)
       })
       // The stored hashes must NOT be the same as the old ones — pins that
       // the new codes are actually fresh.
-      const persisted = mockUserRepo.updateMfa.mock.calls[0]?.[1] as {
+      const persisted = mockUserRepo.updateMfa.mock.calls[0]?.[2] as {
         mfaRecoveryCodes: string[]
       }
       expect(persisted.mfaRecoveryCodes).not.toEqual(['$scrypt$old1', '$scrypt$old2'])
@@ -3782,7 +3786,11 @@ describe('MfaService', () => {
       await rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
       await new Promise((resolve) => setImmediate(resolve))
 
-      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [string, { mfaSecret: string }]
+      const [, , update] = mockUserRepo.updateMfa.mock.calls[0] as [
+        string,
+        string | undefined,
+        { mfaSecret: string }
+      ]
       // Readable under the CURRENT key, and the plaintext is unchanged.
       expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
     })
@@ -3881,8 +3889,9 @@ describe('MfaService', () => {
 
       await rotated.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
-      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [
+      const [, , update] = mockUserRepo.updateMfa.mock.calls[0] as [
         string,
+        string | undefined,
         { mfaSecret: string; mfaRecoveryCodes: string[] }
       ]
       expect(decrypt(update.mfaSecret, VALID_ENCRYPTION_KEY)).toBe(base32)
@@ -3914,8 +3923,9 @@ describe('MfaService', () => {
       await rotated.challenge('mfa.temp', generateTotp(base32), '1.2.3.4', 'Browser')
       await new Promise((resolve) => setImmediate(resolve))
 
-      const [, update] = mockUserRepo.updateMfa.mock.calls[0] as [
+      const [, , update] = mockUserRepo.updateMfa.mock.calls[0] as [
         string,
+        string | undefined,
         { mfaRecoveryCodes: string[] }
       ]
       expect(update.mfaRecoveryCodes).toEqual([])
@@ -3960,7 +3970,7 @@ describe('MfaService', () => {
                 {
                   field: 'tenantId',
                   message:
-                    'tenantId is required on the dashboard plane and forbidden on the platform plane'
+                    'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
                 }
               ]
             }
@@ -3983,12 +3993,54 @@ describe('MfaService', () => {
               {
                 field: 'tenantId',
                 message:
-                  'tenantId is required on the dashboard plane and forbidden on the platform plane'
+                  'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
               }
             ]
           }
         }
       })
+    })
+
+    // An unset environment variable becomes an empty string by the time it reaches the call site,
+    // and a blank tenant would build `dashboard::{userId}` — a third keyspace distinct from every
+    // real tenant's. A dashboard call needs a non-empty tenant, so `''` is refused exactly as a
+    // missing one is, before any repository read.
+    it('refuses a dashboard call whose tenant is the empty string', async () => {
+      await expect(service.setup('user-1', 'dashboard', PASSWORD, '')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
+      })
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
+    // Scoping the READ is not enough: the write every MFA transition makes must be scoped by the
+    // same tenant, or a recovery-code splice lands on another tenant's row — or on no row — and the
+    // spent code is never removed. The write must carry the FLOW's tenant, not a constant: a
+    // challenge authenticated in `tenant-9` splices through `updateMfa(userId, 'tenant-9', …)`.
+    it('scopes the recovery-code splice write to the challenge tenant', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'user-1',
+        context: 'dashboard',
+        tenantId: 'tenant-9',
+        jti: 'jti-write-scope'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+      })
+
+      await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-9',
+        expect.objectContaining({ mfaRecoveryCodes: [] })
+      )
     })
   })
 

@@ -209,9 +209,11 @@ export class PrismaUserRepository implements IUserRepository {
     await this.prisma.user.update({ where: { id }, data: { passwordHash } })
   }
 
-  async updateMfa(id: string, data: UpdateMfaData): Promise<void> {
-    await this.prisma.user.update({
-      where: { id },
+  async updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void> {
+    // Scoped by tenant, like findById: `updateMany` with both id and tenantId so an id shared
+    // across tenants cannot cross the write onto the wrong account.
+    await this.prisma.user.updateMany({
+      where: { id, tenantId },
       data: {
         mfaEnabled: data.mfaEnabled,
         mfaSecret: data.mfaSecret,
