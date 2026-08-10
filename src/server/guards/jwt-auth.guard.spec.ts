@@ -404,8 +404,11 @@ describe('JwtAuthGuard', () => {
       expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
     })
 
-    // Binding is a no-op without a resolver: there is nothing to compare the token's tenant to.
-    it('allows the request when binding is on but no resolver is configured', async () => {
+    // Defensive fallback only: `resolveOptions` rejects `enforceTenantBinding` without a resolver
+    // at startup, so this pairing never reaches a running guard. Constructed directly here to pin
+    // the guard's own `&& tenantIdResolver` short-circuit — if that operand were dropped, the guard
+    // would call an undefined resolver and crash instead of passing through.
+    it('passes through when binding is on but no resolver is configured (unreachable in production)', async () => {
       const { guard, reflector } = await buildGuard({ enforceTenantBinding: true })
       armValidToken(reflector)
       const ctx = makeContext('some.jwt.token')

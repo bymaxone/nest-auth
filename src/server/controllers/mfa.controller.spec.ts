@@ -16,6 +16,7 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
 import { MfaController } from './mfa.controller'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -143,6 +144,8 @@ describe('MfaController', () => {
       ]
     })
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserStatusGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TrustedOriginGuard)
       .useValue({ canActivate: () => true })

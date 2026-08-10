@@ -97,9 +97,10 @@ export class JwtAuthGuard implements CanActivate {
     // but a valid token is otherwise trusted for the tenant baked into it — so a token minted for
     // one tenant is accepted when presented under another tenant's host, operating as its own
     // tenant rather than the host's. Where the host is the tenant boundary, this re-resolves the
-    // request tenant and refuses a mismatch. Off unless both the flag and a resolver are set: with
-    // no resolver there is nothing to compare, and a single-origin multi-tenant API wants the two
-    // to differ. Surfaced as TOKEN_INVALID, like every other refusal here, to open no oracle.
+    // request tenant and refuses a mismatch. The flag requires a resolver: `resolveOptions` rejects
+    // `enforceTenantBinding` without a `tenantIdResolver` at startup, so the flag can never be a
+    // silent no-op; the resolver check here is the matching defensive guard. Surfaced as
+    // TOKEN_INVALID, like every other refusal here, to open no oracle.
     if (this.options.enforceTenantBinding === true && this.options.tenantIdResolver) {
       const requestTenant = await this.options.tenantIdResolver(request)
       if (requestTenant !== payload.tenantId) {

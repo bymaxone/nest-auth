@@ -2169,9 +2169,10 @@ describe('AuthService', () => {
       )
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
       expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
-      // The UserStatusGuard verified-flag cache (`uev:{userId}`) is invalidated so the account
-      // reaches its protected routes on the next request rather than after the cache TTL.
-      expect(mockRedis.del).toHaveBeenCalledWith(`uev:${USER.id}`)
+      // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
+      // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
+      // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
+      expect(mockRedis.del).toHaveBeenCalledWith(`uev:tenant-1:${USER.id}`)
       // Pin the success log template (line 408) so blanking it to '' is caught.
       expect(logSpy).toHaveBeenCalledWith(
         `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`
