@@ -34,17 +34,37 @@ const mockUserRepo = {
 
 const mockOptions = {
   userStatusCacheTtlSeconds: 60,
-  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED', 'PENDING_APPROVAL']
+  blockedStatuses: ['BANNED', 'INACTIVE', 'SUSPENDED', 'PENDING_APPROVAL'],
+  // The status-only suites below run with verification enforcement OFF, so the guard reads a
+  // single cache fact and the existing expectations are unchanged. The dedicated suite at the
+  // bottom flips this on.
+  emailVerification: { required: false }
+}
+
+/** Builds a guard instance with option overlays over {@link mockOptions}. */
+async function buildGuard(overrides: Record<string, unknown>): Promise<UserStatusGuard> {
+  const module = await Test.createTestingModule({
+    providers: [
+      UserStatusGuard,
+      { provide: AuthRedisService, useValue: mockRedis },
+      { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+      { provide: BYMAX_AUTH_OPTIONS, useValue: { ...mockOptions, ...overrides } }
+    ]
+  }).compile()
+  return module.get(UserStatusGuard)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeContext(user: { sub: string } | undefined) {
+function makeContext(user: { sub: string; tenantId?: string } | undefined) {
+  // Every authenticated principal carries a tenant; default one so the cache keys and the
+  // repository lookup are tenant-scoped exactly as they are in production.
+  const withTenant = user === undefined ? undefined : { tenantId: 'tenant-1', ...user }
   return {
     switchToHttp: () => ({
-      getRequest: () => ({ user })
+      getRequest: () => ({ user: withTenant })
     })
   }
 }
@@ -94,8 +114,26 @@ describe('UserStatusGuard', () => {
     const ctx = makeContext({ sub: 'user-1' })
     await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
 
-    expect(mockUserRepo.findById).toHaveBeenCalledWith('user-1')
-    expect(mockRedis.set).toHaveBeenCalledWith('us:user-1', 'active', 60)
+    expect(mockUserRepo.findById).toHaveBeenCalledWith('user-1', 'tenant-1')
+    expect(mockRedis.set).toHaveBeenCalledWith('us:tenant-1:user-1', 'active', 60)
+    // With verification enforcement OFF, only the status is cached — the verified flag is neither
+    // read nor written. Pins the `if (requireVerified)` guard: were it always-true, this miss would
+    // also write the `uev:` key, so exactly one set call proves the branch is honoured.
+    expect(mockRedis.set).toHaveBeenCalledTimes(1)
+  })
+
+  // A tenant or subject that contains the `:` delimiter must not shift the key boundary: each half
+  // is percent-encoded, so `('x:y','a:b')` keys `us:x%3Ay:a%3Ab` and cannot collide with another
+  // pair. Dropping the encoding would let two distinct pairs share a status entry across tenants.
+  it('percent-encodes tenant and subject so a `:` in either cannot shift the key boundary', async () => {
+    mockRedis.get.mockResolvedValue(null)
+    mockUserRepo.findById.mockResolvedValue({ id: 'a:b', status: 'active' })
+    mockRedis.set.mockResolvedValue(undefined)
+
+    const ctx = makeContext({ sub: 'a:b', tenantId: 'x:y' })
+    await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+
+    expect(mockRedis.set).toHaveBeenCalledWith('us:x%3Ay:a%3Ab', 'active', 60)
   })
 
   // Verifies that a BANNED status causes a 403 ACCOUNT_BANNED AuthException.
@@ -125,7 +163,8 @@ describe('UserStatusGuard', () => {
   ])('should map blocked status "%s" to its specific error code', async (status, expectedCode) => {
     const customOptions = {
       userStatusCacheTtlSeconds: 60,
-      blockedStatuses: ['banned', 'suspended', 'pending', 'pending_approval']
+      blockedStatuses: ['banned', 'suspended', 'pending', 'pending_approval'],
+      emailVerification: { required: false }
     }
     const customModule = await Test.createTestingModule({
       providers: [
@@ -181,7 +220,8 @@ describe('UserStatusGuard', () => {
     // Create a separate guard instance with a non-standard blocked status.
     const customOptions = {
       userStatusCacheTtlSeconds: 60,
-      blockedStatuses: ['CUSTOM_BLOCKED']
+      blockedStatuses: ['CUSTOM_BLOCKED'],
+      emailVerification: { required: false }
     }
 
     const customModule = await Test.createTestingModule({
@@ -206,5 +246,91 @@ describe('UserStatusGuard', () => {
       // Should fall back to ACCOUNT_INACTIVE since 'custom_blocked' is not in STATUS_ERROR_MAP.
       expect((e as AuthException).getStatus()).toBe(HttpStatus.FORBIDDEN)
     }
+  })
+
+  // -------------------------------------------------------------------------
+  // Email-verification enforcement (emailVerification.required = true)
+  // -------------------------------------------------------------------------
+  describe('email verification enforcement', () => {
+    /** Routes the two cache reads by key so status and verified flag can differ. */
+    function cacheReturning(status: string | null, verified: string | null): void {
+      mockRedis.get.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('uev:') ? verified : status)
+      )
+    }
+
+    // A verified account (flag '1' in cache) passes without a repository read.
+    it('allows a verified account from cache', async () => {
+      const guard = await buildGuard({ emailVerification: { required: true } })
+      cacheReturning('active', '1')
+      const ctx = makeContext({ sub: 'user-1' })
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
+    // An unverified account (flag '0' in cache) is refused with EMAIL_NOT_VERIFIED — this is the
+    // gate that stops a registration session reaching a protected route before verification.
+    it('rejects an unverified account with EMAIL_NOT_VERIFIED', async () => {
+      const guard = await buildGuard({ emailVerification: { required: true } })
+      cacheReturning('active', '0')
+      const ctx = makeContext({ sub: 'user-1' })
+      const thrown = await guard.canActivate(ctx as never).catch((e: unknown) => e)
+      expect(thrown).toBeInstanceOf(AuthException)
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+    })
+
+    // A verified-flag cache miss (status cached) resolves the flag from the repository and caches
+    // it under `uev:{tenantId}:{id}` with the configured TTL.
+    it('resolves and caches the verified flag on a uev cache miss', async () => {
+      const guard = await buildGuard({ emailVerification: { required: true } })
+      cacheReturning('active', null)
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'user-1',
+        status: 'active',
+        emailVerified: true
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+      const ctx = makeContext({ sub: 'user-1' })
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+      expect(mockUserRepo.findById).toHaveBeenCalledWith('user-1', 'tenant-1')
+      expect(mockRedis.set).toHaveBeenCalledWith('uev:tenant-1:user-1', '1', 60)
+    })
+
+    // Both facts miss: one repository read refreshes status and verified, and an unverified record
+    // caches '0' and is refused.
+    it('caches 0 and rejects when the repository reports an unverified account', async () => {
+      const guard = await buildGuard({ emailVerification: { required: true } })
+      cacheReturning(null, null)
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'user-1',
+        status: 'active',
+        emailVerified: false
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+      const ctx = makeContext({ sub: 'user-1' })
+      const thrown = await guard.canActivate(ctx as never).catch((e: unknown) => e)
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
+      expect(mockRedis.set).toHaveBeenCalledWith('us:tenant-1:user-1', 'active', 60)
+      expect(mockRedis.set).toHaveBeenCalledWith('uev:tenant-1:user-1', '0', 60)
+    })
+
+    // A blocked status is refused first: a banned, unverified account is told it is banned, not
+    // that it must verify — the verification check never runs.
+    it('refuses a blocked status before the verification check', async () => {
+      const guard = await buildGuard({ emailVerification: { required: true } })
+      cacheReturning('BANNED', '0')
+      const ctx = makeContext({ sub: 'user-1' })
+      const thrown = await guard.canActivate(ctx as never).catch((e: unknown) => e)
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.ACCOUNT_BANNED)
+    })
+
+    // With enforcement off, an unverified account passes and the verified flag is never read.
+    it('does not consult the verified flag when enforcement is off', async () => {
+      const guard = await buildGuard({ emailVerification: { required: false } })
+      mockRedis.get.mockResolvedValue('active')
+      const ctx = makeContext({ sub: 'user-1' })
+      await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
+      expect(mockRedis.get).not.toHaveBeenCalledWith('uev:tenant-1:user-1')
+    })
   })
 })

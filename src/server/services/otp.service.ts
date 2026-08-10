@@ -2,7 +2,9 @@ import { randomInt } from 'node:crypto'
 
 import { Inject, Injectable } from '@nestjs/common'
 
-import { timingSafeCompare } from '../crypto/secure-token'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import type { ResolvedOptions } from '../config/resolved-options'
+import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -170,7 +172,29 @@ function maxed(): ['MAX', string] {
  */
 @Injectable()
 export class OtpService {
-  constructor(@Inject(AuthRedisService) private readonly redis: AuthRedisService) {}
+  constructor(
+    @Inject(AuthRedisService) private readonly redis: AuthRedisService,
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+  ) {}
+
+  /**
+   * Keyed one-way transform of an OTP under which it is stored and compared.
+   *
+   * The record is never the code itself: a six-digit code is a keyspace of a million, which a
+   * plain digest lets anyone who reads Redis reverse instantly, so the transform is HMAC-SHA256
+   * under the library's server-only `hmacKey` — the same key that already conceals the identifier.
+   * It is bound to the identifier so the same code under two accounts does not collapse to one
+   * value. `store` and `verify` compute it the same way; the byte-identical verify script keeps
+   * comparing two opaque strings, so the rust-auth side stays in step by transforming the code the
+   * same way before it reads or writes the shared record.
+   *
+   * @param identifier - The user-scoped identifier the record is keyed by.
+   * @param code - The plaintext OTP.
+   * @returns The hex HMAC written to, and compared against, the record.
+   */
+  private fingerprint(identifier: string, code: string): string {
+    return hmacSha256(`${identifier}:${code}`, this.options.hmacKey)
+  }
 
   // ---------------------------------------------------------------------------
   // Generate
@@ -213,7 +237,7 @@ export class OtpService {
     await this.redis.eval(
       OTP_STORE_LUA,
       [`otp:${purpose}:${identifier}`],
-      [code, String(ttlSeconds)]
+      [this.fingerprint(identifier, code), String(ttlSeconds)]
     )
   }
 
@@ -248,7 +272,12 @@ export class OtpService {
     // ceiling could be exceeded arbitrarily by submitting in parallel, for the OTP's whole
     // lifetime. This is the one counter in the codebase that was not built on an atomic
     // primitive. The script is byte-identical to rust-auth's `otp_verify.lua`.
-    const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [code, String(MAX_ATTEMPTS)])
+    // The record holds the keyed fingerprint, never the code, so the submitted code is
+    // transformed the same way before it reaches the script: the byte-identical comparison inside
+    // Lua then matches fingerprint against fingerprint exactly as it used to match code against
+    // code, and the stored value the script returns is a fingerprint the caller re-compares.
+    const fingerprint = this.fingerprint(identifier, code)
+    const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [fingerprint, String(MAX_ATTEMPTS)])
     const [tag, storedCode] = parseOtpVerifyReply(raw)
 
     // Every failure below answers `OTP_INVALID`, in the same time, whatever went wrong.
@@ -277,11 +306,9 @@ export class OtpService {
     }
 
     // The script's own comparison only decided the bump-or-consume; this is the authoritative
-    // one. Constant-time, with the length check first to avoid a RangeError from
-    // `crypto.timingSafeEqual` on differing buffer sizes — the length is already implied by
-    // the configured OTP digit count, so it leaks nothing new.
-    // Stryker disable next-line ConditionalExpression: the length-mismatch disjunct is redundant: timingSafeCompare already returns false on a length mismatch, so the OR result is unchanged
-    if (code.length !== storedCode.length || !timingSafeCompare(code, storedCode)) {
+    // one, constant-time over the fingerprints. Both sides are fixed-length hex HMAC digests, so
+    // the buffer sizes always match and no RangeError branch is needed ahead of the compare.
+    if (!timingSafeCompare(fingerprint, storedCode)) {
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }

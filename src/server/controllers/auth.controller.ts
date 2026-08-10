@@ -197,6 +197,15 @@ export class AuthController {
   /**
    * Returns the safe user record for the currently authenticated user.
    *
+   * `JwtAuthGuard` alone, deliberately without `UserStatusGuard`: this is the one
+   * dashboard read a not-yet-verified — or suspended — session must still reach, so a
+   * client can fetch who it is and render the "verify your email" or "account
+   * suspended" state instead of being locked out with no way to learn why. The safe
+   * record exposes no privileged data and drives no action; every route that DOES act
+   * (MFA management, invitations, password change, ws-ticket) composes `UserStatusGuard`
+   * and so refuses an unverified or blocked account. The account's own `status` and
+   * `emailVerified` fields are in the returned record for the client to branch on.
+   *
    * @param user - JWT payload from the verified access token.
    */
   @UseGuards(JwtAuthGuard)

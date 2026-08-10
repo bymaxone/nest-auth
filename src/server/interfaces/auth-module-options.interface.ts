@@ -890,6 +890,26 @@ export interface BymaxAuthModuleOptions {
   tenantIdResolver?: (req: Request) => string | Promise<string>
 
   /**
+   * Whether the dashboard guard re-resolves the request's tenant and rejects a token whose
+   * `tenantId` claim does not match it.
+   *
+   * The resolver runs on the credential flows — register, login, OTP, OAuth — where it decides
+   * which tenant an account is scoped to. It does **not** run on every guarded request: a valid
+   * token is trusted for the tenant baked into it. That is safe on its own, because a token minted
+   * for tenant A never carries tenant B, so there is no cross-tenant escalation to be had. What it
+   * does leave open is a token being *presented* under the wrong host — accepted, and operating as
+   * its own tenant rather than the host's. For a deployment where the host is the tenant boundary
+   * (subdomain-per-tenant behind an edge that refuses a `Host` it does not serve), turning this on
+   * closes that gap: the guard calls {@link tenantIdResolver} and refuses a mismatch.
+   *
+   * Off by default, and requires a resolver to have any effect: with no resolver there is nothing
+   * to compare against. Leave it off where a token is legitimately used across hosts (a single API
+   * origin serving many tenants by claim), because there the resolved host tenant and the token
+   * tenant are *meant* to differ.
+   */
+  enforceTenantBinding?: boolean
+
+  /**
    * Granular control over which controllers are registered.
    * Allows disabling endpoints that are not needed for a specific application.
    */

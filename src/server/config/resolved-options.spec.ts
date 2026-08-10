@@ -213,6 +213,29 @@ describe('resolveOptions — success', () => {
     expect(resolved.tenantIdResolver).toBe(fn)
   })
 
+  // enforceTenantBinding without a resolver is a silent no-op — the binding check would have
+  // nothing to resolve the request tenant with, so every token is accepted while the deployment
+  // believes host binding is enforced. It must be rejected at startup, naming both halves.
+  it('should reject enforceTenantBinding when no tenantIdResolver is configured', () => {
+    const resolve = (): unknown =>
+      resolveOptions({ ...MINIMAL_OPTIONS, enforceTenantBinding: true })
+    // Assert a fragment from each line of the message so blanking any one of them is caught: the
+    // operator must be told what is wrong, why it is dangerous, and the two ways out.
+    expect(resolve).toThrow('enforceTenantBinding is true but no tenantIdResolver is set')
+    expect(resolve).toThrow('refuses a token minted for a different one')
+    expect(resolve).toThrow('every token is accepted')
+    expect(resolve).toThrow('Provide a tenantIdResolver')
+    expect(resolve).toThrow('or remove enforceTenantBinding')
+  })
+
+  // The same flag WITH a resolver is the supported configuration and must resolve without throwing.
+  it('should accept enforceTenantBinding when a tenantIdResolver is configured', () => {
+    const fn = (_req: Request): string => 'tenant-1'
+    expect(() =>
+      resolveOptions({ ...MINIMAL_OPTIONS, enforceTenantBinding: true, tenantIdResolver: fn })
+    ).not.toThrow()
+  })
+
   // Verifies that partial jwt options are merged over defaults, preserving unspecified defaults.
   it('should merge partial jwt options over defaults', () => {
     const resolved = resolveOptions({

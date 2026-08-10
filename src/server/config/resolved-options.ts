@@ -214,6 +214,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
   validateBruteForce(userOptions.bruteForce)
   validateOAuthProviders(userOptions.oauth, isProductionDeployment(userOptions))
   validateClientIpSource(userOptions.rateLimit)
+  validateTenantBinding(userOptions)
   validateOAuthSuccessRedirectUrl(userOptions)
   validateOAuthMfaRedirectUrl(userOptions)
 
@@ -482,6 +483,30 @@ function validateClientIpSource(rateLimit: BymaxAuthModuleOptions['rateLimit']):
       `the caller choose their own key. Both look like a working limiter. Pass ` +
       `rateLimit.enabled: false if the limits are enforced at the edge instead.`
   )
+}
+
+/**
+ * Reject `enforceTenantBinding: true` configured without a `tenantIdResolver`.
+ *
+ * The binding check re-resolves the request's tenant and refuses a token minted for another —
+ * but it has nothing to resolve the request tenant WITH unless a resolver is set, so the flag on
+ * its own is a silent no-op: every token is accepted while the deployment believes host binding
+ * is enforced. That is precisely the false sense of security a security control must never give,
+ * so the pair fails at startup rather than shipping a guard that reports success and does nothing.
+ *
+ * @param userOptions - The full option object, read for the flag and the resolver together.
+ * @throws When `enforceTenantBinding` is `true` but no `tenantIdResolver` is provided.
+ */
+function validateTenantBinding(userOptions: BymaxAuthModuleOptions): void {
+  if (userOptions.enforceTenantBinding === true && !userOptions.tenantIdResolver) {
+    throw new Error(
+      `[BymaxAuthModule] enforceTenantBinding is true but no tenantIdResolver is set. The binding ` +
+        `check re-resolves the request's tenant and refuses a token minted for a different one, so ` +
+        `with no resolver there is nothing to compare against and every token is accepted — the ` +
+        `control reports success while enforcing nothing. Provide a tenantIdResolver (typically the ` +
+        `same host-to-tenant function used on the credential flows), or remove enforceTenantBinding.`
+    )
+  }
 }
 
 function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {

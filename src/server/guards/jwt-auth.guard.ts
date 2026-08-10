@@ -13,7 +13,12 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import { AuthRevocationService } from '../services/auth-revocation.service'
 import { TokenDeliveryService } from '../services/token-delivery.service'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
-import { assertTokenType, assertValidJti, assertValidSub } from './utils/assert-token-type'
+import {
+  assertTokenType,
+  assertValidJti,
+  assertValidSub,
+  assertValidTenantId
+} from './utils/assert-token-type'
 
 /**
  * Primary authentication guard for dashboard (tenant) routes.
@@ -77,9 +82,14 @@ export class JwtAuthGuard implements CanActivate {
     assertValidJti(payload.jti)
 
     // Require sub as a bounded non-empty string — used downstream in Redis keys
-    // (`us:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting empty
-    // and pathological shapes keeps the key space well-formed.
+    // (`us:{tenantId}:{sub}`, `sess:{sub}`) and HMAC-identifier pre-images. Rejecting
+    // empty and pathological shapes keeps the key space well-formed.
     assertValidSub(payload.sub)
+
+    // Require tenantId as a bounded non-empty string for the same reason: it is only cast
+    // from the token, yet it drives the tenant-binding comparison and the tenant-scoped
+    // status keys, so an absent or non-string tenant must be refused, not trusted.
+    assertValidTenantId(payload.tenantId)
 
     // Reject platform tokens and MFA challenge tokens in dashboard context.
     assertTokenType(payload, 'dashboard')
@@ -91,6 +101,21 @@ export class JwtAuthGuard implements CanActivate {
     // the keys built from them are uniform.
     if (await this.revocation.isAccessTokenRevoked(payload)) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
+    // Optional tenant binding. The resolver decides an account's tenant on the credential flows,
+    // but a valid token is otherwise trusted for the tenant baked into it — so a token minted for
+    // one tenant is accepted when presented under another tenant's host, operating as its own
+    // tenant rather than the host's. Where the host is the tenant boundary, this re-resolves the
+    // request tenant and refuses a mismatch. The flag requires a resolver: `resolveOptions` rejects
+    // `enforceTenantBinding` without a `tenantIdResolver` at startup, so the flag can never be a
+    // silent no-op; the resolver check here is the matching defensive guard. Surfaced as
+    // TOKEN_INVALID, like every other refusal here, to open no oracle.
+    if (this.options.enforceTenantBinding === true && this.options.tenantIdResolver) {
+      const requestTenant = await this.options.tenantIdResolver(request)
+      if (requestTenant !== payload.tenantId) {
+        throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      }
     }
 
     request.user = payload

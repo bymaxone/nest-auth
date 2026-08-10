@@ -32,6 +32,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AuthRateLimitGuard } from '../guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard'
+import { UserStatusGuard } from '../guards/user-status.guard'
 import { NoStoreInterceptor } from '../interceptors/no-store.interceptor'
 import type { AuthResult, PlatformAuthResult } from '../interfaces/auth-result.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -173,7 +174,7 @@ export class MfaController {
    * @param user - JWT payload of the authenticated user.
    * @throws `MFA_ALREADY_ENABLED` if MFA is already active on the account.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaSetup)
   @Post('setup')
@@ -196,7 +197,7 @@ export class MfaController {
    * @throws `MFA_SETUP_REQUIRED` if no pending setup data is found in Redis.
    * @throws `MFA_INVALID_CODE` if the submitted TOTP code is invalid.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaVerifyEnable)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -301,7 +302,7 @@ export class MfaController {
    * @throws `ACCOUNT_LOCKED` if the brute-force threshold has been reached.
    * @throws `MFA_INVALID_CODE` if the submitted TOTP code is incorrect.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -339,7 +340,7 @@ export class MfaController {
    * @throws `MFA_INVALID_CODE` if the submitted TOTP code is incorrect.
    * @returns The fresh plain-text recovery codes, one-time display.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, UserStatusGuard)
   @Throttle(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.mfaDisable)
   @HttpCode(HttpStatus.OK)

@@ -2169,11 +2169,29 @@ describe('AuthService', () => {
       )
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
       expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
+      // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
+      // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
+      // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
+      expect(mockRedis.del).toHaveBeenCalledWith(`uev:tenant-1:${USER.id}`)
       // Pin the success log template (line 408) so blanking it to '' is caught.
       expect(logSpy).toHaveBeenCalledWith(
         `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`
       )
       logSpy.mockRestore()
+    })
+
+    // The invalidation key must be percent-encoded exactly as the guard encodes it: a tenant or
+    // id containing the `:` delimiter must not shift the boundary, or the delete would target a
+    // different key than the guard wrote and leave the just-verified account locked out.
+    it('percent-encodes the tenant and id in the verified-flag invalidation key', async () => {
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'us:er', tenantId: 'ten:ant' })
+      mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
+      mockHooks.afterEmailVerified.mockResolvedValue(undefined)
+
+      await service.verifyEmail('ten:ant', 'user@example.com', '123456', mockReq)
+
+      expect(mockRedis.del).toHaveBeenCalledWith('uev:ten%3Aant:us%3Aer')
     })
 
     // Verifies that OTP verification errors from otpService propagate to the caller.

@@ -1,5 +1,10 @@
 import { AuthException } from '../../errors/auth-exception'
-import { assertTokenType, assertValidJti, assertValidSub } from './assert-token-type'
+import {
+  assertTokenType,
+  assertValidJti,
+  assertValidSub,
+  assertValidTenantId
+} from './assert-token-type'
 
 describe('assertTokenType', () => {
   // Verifies that no exception is thrown when the payload type matches the expected type exactly.
@@ -68,6 +73,40 @@ describe('assertValidSub', () => {
   // Accepts exactly the upper-bound length — the boundary is inclusive.
   it('should accept sub at exactly the 256-character upper bound', () => {
     expect(() => assertValidSub('a'.repeat(256))).not.toThrow()
+  })
+})
+
+describe('assertValidTenantId', () => {
+  // Accepts the same legitimate identifier shapes as a subject.
+  it.each([
+    'bf9d3a10-5c33-4a72-9f31-83dc7c7e2b44',
+    '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    'acme',
+    'tenant-a'
+  ])('should accept well-formed tenantId value %p', (value) => {
+    expect(() => assertValidTenantId(value)).not.toThrow()
+  })
+
+  // Rejects an empty tenant — it would produce a degenerate `us::{sub}` key and defeat the
+  // tenant-binding comparison it feeds.
+  it('should throw when tenantId is an empty string', () => {
+    expect(() => assertValidTenantId('')).toThrow(AuthException)
+  })
+
+  // Rejects non-string values: the payload is only cast, so a token whose tenantId is absent or a
+  // number/object must be refused rather than flow into a key or an `undefined` binding compare.
+  it.each([null, undefined, 42, {}, []])('should throw when tenantId is %p', (value) => {
+    expect(() => assertValidTenantId(value)).toThrow(AuthException)
+  })
+
+  // Rejects pathologically long strings, exactly as the subject bound does.
+  it('should throw when tenantId exceeds the 256-character upper bound', () => {
+    expect(() => assertValidTenantId('a'.repeat(257))).toThrow(AuthException)
+  })
+
+  // Accepts exactly the upper-bound length — the boundary is inclusive.
+  it('should accept tenantId at exactly the 256-character upper bound', () => {
+    expect(() => assertValidTenantId('a'.repeat(256))).not.toThrow()
   })
 })
 
