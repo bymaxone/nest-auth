@@ -13,7 +13,7 @@ describe('recentAuthKey', () => {
   // bare id there is an account identifier in the clear, which is why every user-derived key in
   // this library is keyed rather than plain.
   it('never puts the account id in the key', () => {
-    const key = recentAuthKey('dashboard', 'user-1', HMAC_KEY)
+    const key = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
 
     expect(key).toMatch(/^ra:[0-9a-f]{64}$/)
     expect(key).not.toContain('user-1')
@@ -23,24 +23,48 @@ describe('recentAuthKey', () => {
   // carry the same id. Without the plane in the preimage one could satisfy the other's
   // freshness check — the same collision the `lf:` lockout identifier was fixed for.
   it('binds the marker to its authentication plane', () => {
-    const dashboard = recentAuthKey('dashboard', 'shared-id', HMAC_KEY)
-    const platform = recentAuthKey('platform', 'shared-id', HMAC_KEY)
+    const dashboard = recentAuthKey('dashboard', 'shared-id', HMAC_KEY, 'tenant-1')
+    const platform = recentAuthKey('platform', 'shared-id', HMAC_KEY, undefined)
 
     expect(dashboard).not.toBe(platform)
+  })
+
+  // The library may not assume ids are unique across tenants — a host that numbers users per
+  // tenant gives every tenant a user `1`. Without the tenant in the preimage, one tenant's user
+  // would satisfy another tenant's freshness check.
+  it('binds a dashboard marker to its tenant', () => {
+    const tenantA = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-a')
+    const tenantB = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-b')
+
+    expect(tenantA).not.toBe(tenantB)
+  })
+
+  // The platform plane has no tenant, and the derivation is driven by the plane rather than by
+  // whether a tenant was supplied — so a tenant passed on the platform plane cannot move the key.
+  it('ignores a tenant supplied on the platform plane', () => {
+    const withTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, 'tenant-1')
+    const withoutTenant = recentAuthKey('platform', 'admin-1', HMAC_KEY, undefined)
+
+    expect(withTenant).toBe(withoutTenant)
   })
 
   // Keyed, not hashed: an id carries far too little entropy for a plain digest to hide it, so a
   // key change must change every derived key.
   it('derives from the HMAC key, so a rotation invalidates the keyspace', () => {
-    const first = recentAuthKey('dashboard', 'user-1', HMAC_KEY)
-    const second = recentAuthKey('dashboard', 'user-1', 'a-different-key-of-sufficient-length')
+    const first = recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
+    const second = recentAuthKey(
+      'dashboard',
+      'user-1',
+      'a-different-key-of-sufficient-length',
+      'tenant-1'
+    )
 
     expect(first).not.toBe(second)
   })
 
   it('is deterministic for the same inputs', () => {
-    expect(recentAuthKey('dashboard', 'user-1', HMAC_KEY)).toBe(
-      recentAuthKey('dashboard', 'user-1', HMAC_KEY)
+    expect(recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')).toBe(
+      recentAuthKey('dashboard', 'user-1', HMAC_KEY, 'tenant-1')
     )
   })
 

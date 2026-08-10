@@ -248,7 +248,7 @@ describe('MFA — integration smoke tests', () => {
     // setup() then reads back the data it just stored
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
-    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD)
+    const setupResult = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
     expect(setupResult.secret).toBeDefined()
     expect(setupResult.qrCodeUri).toContain('TestApp')
     expect(setupResult.recoveryCodes).toHaveLength(2)
@@ -260,11 +260,12 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
 
     await expect(
-      service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+      service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
     ).resolves.toBeUndefined()
 
     expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
       'user-1',
+      'tenant-1',
       expect.objectContaining({ mfaEnabled: true })
     )
 
@@ -277,6 +278,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue(userWithMfa)
@@ -311,7 +313,7 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setIfAbsent.mockResolvedValue(false)
     mockRedis.get.mockResolvedValue(JSON.stringify(storedSetupData))
 
-    const result = await service.setup('user-1', 'dashboard', PASSWORD)
+    const result = await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
 
     // Result must reflect the STORED secret — not a freshly generated one.
     expect(result.secret).toBe(storedBase32)
@@ -336,6 +338,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -377,6 +380,7 @@ describe('MFA — integration smoke tests', () => {
     expect(result).toMatchObject({ accessToken: 'at' })
     expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
       'user-1',
+      'tenant-1',
       expect.objectContaining({ mfaEnabled: true, mfaRecoveryCodes: [] })
     )
   })
@@ -393,6 +397,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -424,6 +429,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -438,14 +444,14 @@ describe('MFA — integration smoke tests', () => {
       user: {}
     })
 
-    // First challenge: setnx returns true (fresh code) → succeeds
-    mockRedis.setnx.mockResolvedValueOnce(true)
+    // First challenge: both the scoped and legacy anti-replay markers are unclaimed → succeeds.
+    mockRedis.setnx.mockResolvedValueOnce(true).mockResolvedValueOnce(true)
     await expect(
       service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')
     ).resolves.toBeDefined()
 
-    // Second challenge with the same code: setnx returns false (replay detected) → rejected
-    mockRedis.setnx.mockResolvedValueOnce(false)
+    // Second challenge, same code: the scoped marker is already claimed → replay → rejected.
+    mockRedis.setnx.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', validCode, '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
@@ -465,6 +471,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -475,12 +482,12 @@ describe('MFA — integration smoke tests', () => {
     })
     mockRedis.setnx.mockResolvedValue(true)
 
-    // First attempt: not locked → wrong code → recordFailure
+    // First attempt: not locked → wrong code → recordFailure on BOTH migration counters.
     mockBruteForce.isLockedOut.mockResolvedValueOnce(false)
     await expect(service.challenge('temp.token', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
       AuthException
     )
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
 
     // Second attempt: now locked → ACCOUNT_LOCKED thrown before TOTP check
     mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
@@ -492,8 +499,9 @@ describe('MFA — integration smoke tests', () => {
         error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_LOCKED })
       })
     }
-    // recordFailure must NOT be called again — lockout check exits early
-    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
+    // recordFailure must NOT be called again — lockout check exits early, so the count stays at
+    // the two records the first failure wrote.
+    expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(2)
   })
 
   // ---------------------------------------------------------------------------
@@ -510,6 +518,7 @@ describe('MFA — integration smoke tests', () => {
     mockTokenManager.verifyMfaTempToken.mockResolvedValue({
       userId: 'user-1',
       context: 'dashboard',
+      tenantId: 'tenant-1',
       jti: 'jti-test-1'
     })
     mockUserRepo.findById.mockResolvedValue({
@@ -598,7 +607,14 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setnx.mockResolvedValue(true)
 
     const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
-    await service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser')
+    await service.verifyAndEnable(
+      'user-1',
+      validCode,
+      '1.2.3.4',
+      'Browser',
+      'dashboard',
+      'tenant-1'
+    )
 
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
@@ -623,9 +639,9 @@ describe('MFA — integration smoke tests', () => {
     mockRedis.setnx.mockResolvedValue(true)
 
     // 'RCVRYCODE' looks nothing like a 6-digit TOTP — TOTP verify will return false
-    await expect(service.disable('user-1', '000000', '1.2.3.4', 'Browser')).rejects.toThrow(
-      AuthException
-    )
+    await expect(
+      service.disable('user-1', '000000', '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+    ).rejects.toThrow(AuthException)
     // The service must record a brute-force failure — confirming TOTP was attempted
     expect(mockBruteForce.recordFailure).toHaveBeenCalled()
     // The service must NOT have updated the MFA data (recovery not attempted)

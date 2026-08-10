@@ -5,6 +5,7 @@
  * @layer Constants
  */
 
+import { mfaSubject } from './mfa-subject'
 import { hmacSha256 } from '../crypto/secure-token'
 
 /**
@@ -26,15 +27,23 @@ export const RECENT_AUTH_TTL_SECONDS = 300
  * because a dashboard user and a platform admin can carry the same id from different consumer
  * repositories — without it, one could satisfy the other's freshness check.
  *
+ * The preimage is the tenant-scoped {@link mfaSubject}, shared with every other MFA key: a
+ * dashboard user `1` in one tenant must not satisfy the freshness check of user `1` in another.
+ * The marker is written and read in the same release, so it takes a hard cutover — a marker under
+ * the old plane-only key is simply not found after the upgrade, which costs an OAuth-only caller
+ * mid-flow one extra sign-in, not a security hole.
+ *
  * @param plane - The authentication plane the marker belongs to.
  * @param userId - The account that authenticated.
  * @param hmacKey - The library's identifier-HMAC key.
+ * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
  * @returns The fully-qualified Redis key.
  */
 export function recentAuthKey(
   plane: 'dashboard' | 'platform',
   userId: string,
-  hmacKey: string
+  hmacKey: string,
+  tenantId: string | undefined
 ): string {
-  return `ra:${hmacSha256(`${plane}:${userId}`, hmacKey)}`
+  return `ra:${hmacSha256(mfaSubject(plane, userId, tenantId), hmacKey)}`
 }

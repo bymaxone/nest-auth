@@ -182,7 +182,7 @@ export class MfaController {
     @CurrentUser() user: DashboardJwtPayload,
     @Body() dto: MfaSetupDto
   ): Promise<MfaSetupResult> {
-    return this.mfaService.setup(user.sub, 'dashboard', dto.password)
+    return this.mfaService.setup(user.sub, 'dashboard', dto.password, user.tenantId)
   }
 
   /**
@@ -209,7 +209,14 @@ export class MfaController {
   ): Promise<void> {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
-    await this.mfaService.verifyAndEnable(user.sub, dto.code, ip, userAgent)
+    await this.mfaService.verifyAndEnable(
+      user.sub,
+      dto.code,
+      ip,
+      userAgent,
+      'dashboard',
+      user.tenantId
+    )
   }
 
   /**
@@ -318,7 +325,7 @@ export class MfaController {
     // so a platform token cannot reach this controller at all. The platform surface has its
     // own — `PlatformMfaController` — and the branch that used to read the plane off the
     // payload here could never take its other arm.
-    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard')
+    await this.mfaService.disable(user.sub, dto.code, ip, userAgent, 'dashboard', user.tenantId)
   }
 
   /**
@@ -353,6 +360,13 @@ export class MfaController {
     const ip = req.ip ?? ''
     const userAgent = String(req.headers['user-agent'] ?? '')
     // See `disable`: this controller is dashboard-only by its guard.
-    return this.mfaService.regenerateRecoveryCodes(user.sub, dto.code, ip, userAgent, 'dashboard')
+    return this.mfaService.regenerateRecoveryCodes(
+      user.sub,
+      dto.code,
+      ip,
+      userAgent,
+      'dashboard',
+      user.tenantId
+    )
   }
 }

@@ -14,6 +14,7 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { mfaSubject } from '../constants/mfa-subject'
 import { recentAuthKey } from '../constants/recent-auth'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
@@ -288,12 +289,14 @@ export class MfaService {
    * @param context - Which identity plane the account belongs to.
    * @param secretBase32 - The decrypted secret.
    * @param recoveryCodes - The stored recovery digests, written back unchanged.
+   * @param tenantId - The tenant the account belongs to, so the write is scoped like the read.
    */
   private async reencryptSecret(
     userId: string,
     context: 'dashboard' | 'platform',
     secretBase32: string,
-    recoveryCodes: string[]
+    recoveryCodes: string[],
+    tenantId: string | undefined
   ): Promise<void> {
     const update = {
       mfaEnabled: true as const,
@@ -304,7 +307,7 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, update)
       } else {
-        await this.userRepo.updateMfa(userId, update)
+        await this.userRepo.updateMfa(userId, tenantId, update)
       }
     } catch (err: unknown) {
       this.logger.error('re-encryption under the current MFA key failed', err)
@@ -351,10 +354,21 @@ export class MfaService {
   private async transitionMfaRecord(
     context: 'dashboard' | 'platform',
     userId: string,
+    tenantId: string | undefined,
     mutate: (current: AuthUser | AuthPlatformUser) => MfaRecordUpdate | null
   ): Promise<boolean> {
-    const lockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
-    // The lock carries a per-call nonce so it can only be released by the call that took it.
+    // Two lock keys for one release: the legacy plane-only key an old pod still takes, and the
+    // tenant-scoped key this release takes. Acquiring BOTH keeps the transition mutually exclusive
+    // with old pods (via the legacy key) AND other new pods (via the scoped key) through the
+    // rolling upgrade — holding only one would let an old and a new pod transition the same account
+    // at once, the very race this method exists to prevent. A later release drops the legacy arm.
+    // On the platform plane the two keys coincide (the subject never carried a tenant), so the
+    // legacy arm is skipped — taking the same lock a second time would always fail and refuse every
+    // platform transition.
+    const scopedLockKey = `mfalock:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
+    const legacyLockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
+    const acquireLegacy = legacyLockKey !== scopedLockKey
+    // Both locks carry a per-call nonce so each can only be released by the call that took it.
     // A fixed value made the release unsafe: the TTL is short, and a transition that outlives
     // it — the repository is the host's, and a read plus a write can stall past ten seconds
     // under load — has already lost the lock by the time its `finally` runs. Deleting it
@@ -362,13 +376,25 @@ export class MfaService {
     // alongside the second. That is the serialization this method exists to provide, undone
     // precisely under the load that makes concurrent transitions likely in the first place.
     const lockToken = randomBytes(16).toString('hex')
-    if (!(await this.redis.setIfAbsent(lockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))) {
+    if (
+      !(await this.redis.setIfAbsent(scopedLockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))
+    ) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
+    }
+    if (
+      acquireLegacy &&
+      !(await this.redis.setIfAbsent(legacyLockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))
+    ) {
+      // Roll back the scoped lock we already hold before refusing — a compare-and-delete, never a
+      // bare DEL, so a scoped lock whose TTL lapsed and was retaken by another caller is left
+      // alone rather than stolen.
+      await this.redis.eval(RELEASE_LOCK_LUA, [scopedLockKey], [lockToken])
       throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
     }
     try {
       // Re-read inside the lock. The caller's copy was read before the lock existed and may
       // already be stale — reusing it would leave exactly the window this method closes.
-      const current = await this.fetchUserForContext(context, userId)
+      const current = await this.fetchUserForContext(context, userId, tenantId)
       const update = mutate(current)
       if (update === null) return false
       // Narrowed to the repository contract rather than cast to it. `MfaRecordUpdate` widens to
@@ -387,12 +413,16 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, write)
       } else {
-        await this.userRepo.updateMfa(userId, write)
+        await this.userRepo.updateMfa(userId, tenantId, write)
       }
       return true
     } finally {
-      // Compare-and-delete: release only a lock still holding this call's nonce.
-      await this.redis.eval(RELEASE_LOCK_LUA, [lockKey], [lockToken])
+      // Compare-and-delete each: release only a lock still holding this call's nonce, and only the
+      // legacy lock if this call actually took it.
+      await this.redis.eval(RELEASE_LOCK_LUA, [scopedLockKey], [lockToken])
+      if (acquireLegacy) {
+        await this.redis.eval(RELEASE_LOCK_LUA, [legacyLockKey], [lockToken])
+      }
     }
   }
 
@@ -629,9 +659,15 @@ export class MfaService {
   private async claimRecoveryCode(
     context: 'dashboard' | 'platform',
     userId: string,
-    code: string
+    code: string,
+    tenantId: string | undefined
   ): Promise<boolean> {
-    const claimKey = `rcu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
+    // The claim marker is keyed by the tenant-scoped subject, like every other MFA key. It takes an
+    // orphan cutover — a claim written under the old plane-only key is simply not consulted after
+    // the upgrade, and both markers are short-lived, so the worst case is that a code in flight
+    // across the deploy could be claimed once on each side within the claim TTL. That race is the
+    // repository write's to arbitrate; this marker only narrows it.
+    const claimKey = `rcu:${hmacSha256(`${mfaSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
   }
 
@@ -697,8 +733,10 @@ export class MfaService {
   async setup(
     userId: string,
     context: 'dashboard' | 'platform' = 'dashboard',
-    password?: string
+    password?: string,
+    tenantId?: string
   ): Promise<MfaSetupResult> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // Misconfiguration: caller asked for a platform setup but the host
       // application did not register BYMAX_AUTH_PLATFORM_USER_REPOSITORY.
@@ -708,7 +746,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
 
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
     // Re-authenticate before minting a factor. Enabling MFA is a change to how the account
@@ -724,10 +762,10 @@ export class MfaService {
     // An account with no local password — provisioned purely through OAuth — has nothing to
     // re-authenticate against here, and refusing it would make MFA unreachable for those
     // users. Their credential is the provider's, which this library cannot re-verify inline.
-    await this.assertReauthenticated(context, userId, user.passwordHash, password)
+    await this.assertReauthenticated(context, userId, user.passwordHash, password, tenantId)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
-    const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
 
     // Fast-path idempotency check: if a setup payload already exists for this user,
     // return it without performing the expensive scrypt + AES work. This prevents a
@@ -814,18 +852,20 @@ export class MfaService {
     code: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<void> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // See setup() — same misconfiguration guard, same rationale.
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
     }
 
     // Fetch once at entry — used for mfaEnabled guard, email notification, and hook.
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
-    const setupKey = `mfa_setup:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
@@ -840,7 +880,8 @@ export class MfaService {
       userId,
       secretBase32,
       code,
-      totpWindow
+      totpWindow,
+      tenantId
     )
     if (!codeValid) {
       this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${userId}`)
@@ -861,7 +902,7 @@ export class MfaService {
     // Serialized against every other MFA transition. The `getdel` above already makes the
     // enable single-shot among concurrent verify calls; this puts it in the same queue as
     // `disable` and the challenge splice, which write the same three fields.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: true,
       mfaSecret: data.encryptedSecret,
       mfaRecoveryCodes: data.hashedCodes
@@ -935,6 +976,7 @@ export class MfaService {
     const {
       userId,
       context,
+      tenantId,
       jti: tempTokenJti
     } = await this.tokenManager.verifyMfaTempToken(mfaTempToken)
 
@@ -945,14 +987,15 @@ export class MfaService {
     // The context namespaces it away from the OTHER identity plane: the two id spaces come
     // from different consumer repositories and may collide, so a counter keyed on the id
     // alone lets either party exhaust — or clear — the other's lockout budget.
-    const bfIdentifier = hmacSha256(`challenge:${context}:${userId}`, this.options.hmacKey)
-    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+    if (await this.isMfaFlowLockedOut('challenge', context, userId, tenantId)) {
       this.logger.warn(`challenge: account locked userId=${userId}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
-    // Step 3: Fetch user from the correct repository.
-    const user = await this.fetchUserForContext(context, userId)
+    // Step 3: Fetch user from the correct repository, tenant-scoped for a dashboard challenge
+    // (the temp token guarantees the tenant is present) so status / secret / session all resolve
+    // against the account the login authenticated, not a homonym in another tenant.
+    const user = await this.fetchUserForContext(context, userId, tenantId)
 
     // The account status was re-checked by `fetchUserForContext` above. Login gated it before
     // issuing the temp token, but that token outlives the check by its whole TTL: an account
@@ -981,7 +1024,8 @@ export class MfaService {
         userId,
         secretBase32,
         code,
-        totpWindow
+        totpWindow,
+        tenantId
       )
     } else {
       // Stryker disable next-line ArrayDeclaration: equivalent — the fallback stands in for an
@@ -989,11 +1033,12 @@ export class MfaService {
       // comparison exactly as the empty array does.
       const recoveryCodes = user.mfaRecoveryCodes ?? []
       usedRecoveryIndex = await this.verifyRecoveryCode(code, recoveryCodes)
-      codeValid = usedRecoveryIndex >= 0 && (await this.claimRecoveryCode(context, userId, code))
+      codeValid =
+        usedRecoveryIndex >= 0 && (await this.claimRecoveryCode(context, userId, code, tenantId))
     }
 
     if (!codeValid) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordMfaFlowFailure('challenge', context, userId, tenantId)
       this.logger.warn(`challenge: invalid MFA code userId=${userId} context=${context}`)
       // Keep the MFA temp token alive — the user can retry with the next
       // TOTP window or a different recovery code under the same token.
@@ -1002,7 +1047,7 @@ export class MfaService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await this.resetMfaFlowFailures('challenge', context, userId, tenantId)
 
     // Step 5a: consume the MFA temp token now that the code is confirmed valid — and the
     // consume must WIN. Two concurrent submissions both observe the marker and both delete
@@ -1029,7 +1074,7 @@ export class MfaService {
       // the copy read at the top of this method. Splicing the stale copy is what let a
       // concurrent `regenerateRecoveryCodes` be rolled back wholesale and a completed
       // `disable` be undone — see `transitionMfaRecord`.
-      await this.transitionMfaRecord(context, userId, (current) => {
+      await this.transitionMfaRecord(context, userId, tenantId, (current) => {
         // The account stopped having MFA while this challenge was in flight — a `disable`
         // that has already completed. Writing here would re-enable it with the pre-disable
         // secret, so the code is spent (its `rcu:` claim already stands) and nothing is
@@ -1063,7 +1108,13 @@ export class MfaService {
       // A TOTP challenge writes nothing on its own, so the re-encryption needs its own write.
       // Fire-and-forget: the challenge has already succeeded and the retired key still opens
       // the secret, so a failure costs the migration and nothing else.
-      void this.reencryptSecret(userId, context, secretBase32, user.mfaRecoveryCodes ?? [])
+      void this.reencryptSecret(
+        userId,
+        context,
+        secretBase32,
+        user.mfaRecoveryCodes ?? [],
+        tenantId
+      )
     }
 
     this.logger.log(`challenge: MFA challenge passed userId=${userId} context=${context}`)
@@ -1146,16 +1197,17 @@ export class MfaService {
     code: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<void> {
-    const user = await this.fetchUserForContext(context, userId)
+    this.assertPlaneTenant(context, tenantId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // 'disable:' prefix namespaces this counter away from the 'challenge' counter —
     // preventing a pre-auth attacker from exhausting the lockout threshold via the
     // challenge endpoint and blocking the authenticated user from disabling MFA.
-    const bfIdentifier = hmacSha256(`disable:${context}:${userId}`, this.options.hmacKey)
-    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+    if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
       this.logger.warn(`disable: account locked userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -1173,19 +1225,20 @@ export class MfaService {
       userId,
       secretBase32,
       code,
-      totpWindow
+      totpWindow,
+      tenantId
     )
     if (!codeValid) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordMfaFlowFailure('disable', context, userId, tenantId)
       this.logger.warn(`disable: invalid MFA code userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await this.resetMfaFlowFailures('disable', context, userId, tenantId)
 
     // Serialized against every other MFA transition, so a challenge that read the record a
     // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: false,
       mfaSecret: null,
       mfaRecoveryCodes: null
@@ -1261,8 +1314,13 @@ export class MfaService {
    *   `'platform'`. Must match the plane the account lives in, or the lookup misses.
    * @throws `TOKEN_INVALID` if no user with that ID exists in the given plane.
    */
-  async resetMfa(userId: string, context: 'dashboard' | 'platform' = 'dashboard'): Promise<void> {
-    const user = await this.fetchUserForContext(context, userId)
+  async resetMfa(
+    userId: string,
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
+  ): Promise<void> {
+    this.assertPlaneTenant(context, tenantId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
 
     if (!user.mfaEnabled) {
       this.logger.log(`resetMfa: no second factor to remove userId=${userId} context=${context}`)
@@ -1271,7 +1329,7 @@ export class MfaService {
 
     // Serialized against every other MFA transition, so a challenge that read the record a
     // moment earlier cannot splice `mfaEnabled: true` and the old secret back on top of this.
-    await this.transitionMfaRecord(context, userId, () => ({
+    await this.transitionMfaRecord(context, userId, tenantId, () => ({
       mfaEnabled: false,
       mfaSecret: null,
       mfaRecoveryCodes: null
@@ -1348,8 +1406,10 @@ export class MfaService {
     totpCode: string,
     ip: string,
     userAgent: string,
-    context: 'dashboard' | 'platform' = 'dashboard'
+    context: 'dashboard' | 'platform' = 'dashboard',
+    tenantId?: string
   ): Promise<{ recoveryCodes: string[] }> {
+    this.assertPlaneTenant(context, tenantId)
     if (context === 'platform' && !this.platformUserRepo) {
       // See setup()/verifyAndEnable() — same misconfiguration guard.
       throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
@@ -1371,15 +1431,14 @@ export class MfaService {
     // read on every request from an already-authenticated session is
     // acceptable for that threat model. Future contributors: do NOT
     // "fix" this to match challenge() — the ordering is deliberate.
-    const user = await this.fetchUserForContext(context, userId)
+    const user = await this.fetchUserForContext(context, userId, tenantId)
     if (!user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     // Reuse the 'disable:' counter namespace — both flows are TOTP-gated MFA
     // changes from an authenticated user, so they share the same lockout pool.
     // The 'disable:' prefix already isolates this from the public 'challenge:'
     // counter exhaustion vector.
-    const bfIdentifier = hmacSha256(`disable:${context}:${userId}`, this.options.hmacKey)
-    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+    if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
       this.logger.warn(
         `regenerateRecoveryCodes: account locked userId=${userId} context=${context}`
       )
@@ -1399,17 +1458,18 @@ export class MfaService {
       userId,
       secretBase32,
       totpCode,
-      totpWindow
+      totpWindow,
+      tenantId
     )
     if (!codeValid) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordMfaFlowFailure('disable', context, userId, tenantId)
       this.logger.warn(
         `regenerateRecoveryCodes: invalid MFA code userId=${userId} context=${context}`
       )
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await this.resetMfaFlowFailures('disable', context, userId, tenantId)
 
     // Generate a fresh code set using the existing helper — same entropy, same
     // formatting, same keyed-MAC digesting as the initial setup() path.
@@ -1429,7 +1489,7 @@ export class MfaService {
     // Serialized against every other MFA transition. The doc above promises the prior set is
     // replaced wholesale so an old code can never coexist with the new one — which held only
     // until a challenge that had read the old list spliced it back after this write.
-    const replaced = await this.transitionMfaRecord(context, userId, (current) => {
+    const replaced = await this.transitionMfaRecord(context, userId, tenantId, (current) => {
       // MFA was disabled while the new codes were being derived. Writing them would re-enable
       // it with the pre-disable secret, so the caller is told the factor is gone instead.
       if (!current.mfaEnabled) return null
@@ -1479,19 +1539,27 @@ export class MfaService {
     userId: string,
     secretBase32: string,
     code: string,
-    window: number
+    window: number,
+    tenantId: string | undefined
   ): Promise<boolean> {
     if (!verifyTotp(secretBase32, code, window)) return false
 
-    // The HMAC ties the replay key to the identity plane, the user, and the specific code —
-    // preventing cross-user AND cross-plane replay, and avoiding plaintext code storage in
-    // Redis. Without the plane, a dashboard user and a platform admin sharing an id share the
-    // marker, so one burns the other's code.
-    const replayKey = `tu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
-    const isNew = await this.redis.setnx(replayKey, totpAntiReplayTtlSeconds(window))
-    if (!isNew) return false
-
-    return true
+    // The HMAC ties the replay key to the tenant-scoped subject and the specific code — preventing
+    // cross-tenant AND cross-plane replay, and avoiding plaintext code storage in Redis. Two
+    // tenants' user `1` no longer share a marker, so one cannot burn the other's code.
+    const ttl = totpAntiReplayTtlSeconds(window)
+    const scopedReplayKey = `tu:${hmacSha256(`${mfaSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
+    const legacyReplayKey = `tu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
+    // Fresh only when unclaimed on BOTH keys: during the rolling upgrade an old pod claims only the
+    // legacy key and a new pod only the scoped one, so consulting a single key would let the same
+    // code pass once on each side. Setting both and requiring both new closes the replay across the
+    // two code paths; a marker left by the losing conjunct expires on its own. On the platform
+    // plane the two keys coincide — claiming the scoped one a second time would always read as a
+    // replay and reject every code — so the legacy claim is skipped there.
+    const scopedIsNew = await this.redis.setnx(scopedReplayKey, ttl)
+    if (scopedReplayKey === legacyReplayKey) return scopedIsNew
+    const legacyIsNew = await this.redis.setnx(legacyReplayKey, ttl)
+    return scopedIsNew && legacyIsNew
   }
 
   /**
@@ -1522,7 +1590,8 @@ export class MfaService {
     context: 'dashboard' | 'platform',
     userId: string,
     passwordHash: string | null,
-    password?: string
+    password: string | undefined,
+    tenantId: string | undefined
   ): Promise<void> {
     if (passwordHash === null) {
       // No local password to re-prove — the account was provisioned through OAuth and its
@@ -1544,7 +1613,9 @@ export class MfaService {
       // rotate it indefinitely and never make the mark fresh again. Producing one requires
       // driving a real sign-in, which requires the provider credentials the theft did not
       // include.
-      const recent = await this.redis.get(recentAuthKey(context, userId, this.options.hmacKey))
+      const recent = await this.redis.get(
+        recentAuthKey(context, userId, this.options.hmacKey, tenantId)
+      )
       if (recent === null) {
         this.logger.warn(
           `reauthenticate: no recent authentication userId=${userId} context=${context}`
@@ -1554,8 +1625,7 @@ export class MfaService {
       return
     }
 
-    const bfIdentifier = hmacSha256(`reauth:${context}:${userId}`, this.options.hmacKey)
-    if (await this.bruteForce.isLockedOut(bfIdentifier)) {
+    if (await this.isMfaFlowLockedOut('reauth', context, userId, tenantId)) {
       this.logger.warn(`reauthenticate: account locked userId=${userId} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -1565,11 +1635,11 @@ export class MfaService {
     const supplied = password ?? ''
     const matches = await this.passwordService.compare(supplied, passwordHash)
     if (!matches) {
-      await this.bruteForce.recordFailure(bfIdentifier)
+      await this.recordMfaFlowFailure('reauth', context, userId, tenantId)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
-    await this.bruteForce.resetFailures(bfIdentifier)
+    await this.resetMfaFlowFailures('reauth', context, userId, tenantId)
   }
 
   /**
@@ -1598,12 +1668,125 @@ export class MfaService {
    * @throws `TOKEN_INVALID` if the user is not found.
    * @throws {@link AuthException} the status error when the account is blocked.
    */
+  /**
+   * A dashboard MFA flow MUST carry the tenant it was authenticated in; a platform flow MUST NOT.
+   *
+   * The controller sources the tenant from the verified JWT, which always carries a validated
+   * `tenantId`, so this never trips through the HTTP surface. It guards the OTHER caller:
+   * `MfaService` is a public API, and a host wiring it directly — or a future SSO path — could hand
+   * a dashboard `userId` with no tenant, which would silently reach the tenant-blind account read
+   * and key derivation. Refuse it here, naming the field, rather than let it degrade to the
+   * pre-tenant behaviour, which is exactly the fallback an attacker would aim for.
+   *
+   * @param context - The identity plane the call is on.
+   * @param tenantId - The tenant supplied by the caller, if any.
+   * @throws {@link AuthException} `VALIDATION` (400) when a dashboard call omits the tenant, or a
+   *   platform call supplies one.
+   */
+  private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
+    if (
+      (context === 'dashboard' && (tenantId === undefined || tenantId === '')) ||
+      (context === 'platform' && tenantId !== undefined)
+    ) {
+      // A dashboard call needs a non-EMPTY tenant, not merely a present one: a blank tenant builds
+      // `dashboard::{userId}`, a third keyspace distinct from every real tenant's — and an empty
+      // string is exactly what an unset environment variable becomes by the time it reaches this
+      // call site. The platform plane refuses any tenant at all, blank included.
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+        {
+          field: 'tenantId',
+          message:
+            'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
+        }
+      ])
+    }
+  }
+
+  /**
+   * The tenant-scoped brute-force identifier for one MFA flow, and the legacy plane-only one it
+   * replaces — equal on the platform plane, where the subject never carried a tenant, and distinct
+   * on the dashboard plane, where it now does.
+   *
+   * A rolling upgrade runs old and new code against one Redis at once: on the dashboard plane an
+   * old pod counts a failure under `{flow}:{plane}:{userId}` while a new pod counts it under
+   * `{flow}:{mfaSubject}`, and either alone leaves a hole — a lockout an old pod filled would not
+   * stop a new pod, and a success on one would not clear the other. For one release every read
+   * consults both and every write touches both, so the two move as one; a later release drops the
+   * legacy arm. On the platform plane the two ids are identical (no tenant ever entered the
+   * subject), so the legacy arm is skipped — operating it would just be the same key a second time,
+   * double-counting a failure and locking a platform admin out at half the threshold. `{flow}`
+   * (`challenge` / `disable` / `reauth`) keeps the three counters isolated, exactly as before.
+   */
+  private mfaFlowCounterIds(
+    flow: 'challenge' | 'disable' | 'reauth',
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined
+  ): { legacy: string; scoped: string } {
+    return {
+      legacy: hmacSha256(`${flow}:${context}:${userId}`, this.options.hmacKey),
+      scoped: hmacSha256(`${flow}:${mfaSubject(context, userId, tenantId)}`, this.options.hmacKey)
+    }
+  }
+
+  /**
+   * Locked out when EITHER the legacy or the tenant-scoped counter has reached the threshold, so
+   * neither a lockout an old pod recorded nor one a new pod recorded can be bypassed mid-migration.
+   */
+  private async isMfaFlowLockedOut(
+    flow: 'challenge' | 'disable' | 'reauth',
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined
+  ): Promise<boolean> {
+    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
+    if (await this.bruteForce.isLockedOut(scoped)) return true
+    return legacy !== scoped ? this.bruteForce.isLockedOut(legacy) : false
+  }
+
+  /**
+   * Records the failure under both counters so the budget an attacker spends is seen by old and
+   * new code alike — but under the scoped id ONCE when the two coincide (platform plane).
+   */
+  private async recordMfaFlowFailure(
+    flow: 'challenge' | 'disable' | 'reauth',
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined
+  ): Promise<void> {
+    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
+    await this.bruteForce.recordFailure(scoped)
+    if (legacy !== scoped) await this.bruteForce.recordFailure(legacy)
+  }
+
+  /**
+   * Clears both counters on success — resetting only one would leave the other to lock a
+   * legitimately authenticated user out on the next attempt — collapsing to one when they coincide.
+   */
+  private async resetMfaFlowFailures(
+    flow: 'challenge' | 'disable' | 'reauth',
+    context: 'dashboard' | 'platform',
+    userId: string,
+    tenantId: string | undefined
+  ): Promise<void> {
+    const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
+    await this.bruteForce.resetFailures(scoped)
+    if (legacy !== scoped) await this.bruteForce.resetFailures(legacy)
+  }
+
   private async fetchUserForContext(
     context: 'dashboard' | 'platform',
-    userId: string
+    userId: string,
+    tenantId?: string
   ): Promise<AuthUser | AuthPlatformUser> {
     if (context === 'dashboard') {
-      const user = await this.userRepo.findById(userId)
+      // Scoped to the tenant the caller was authenticated in — the JWT's `tenantId` on the
+      // dashboard-authenticated flows, the challenge token's on the MFA challenge. A repository id
+      // is unique only within a tenant, so an unscoped read could return, and this then decides
+      // status / secret / session against, a homonym in another tenant. On the dashboard plane the
+      // tenant is guaranteed present: the temp token and the public entry points both refuse a
+      // dashboard flow that lacks it, so this is never a tenant-blind read in practice.
+      const user = await this.userRepo.findById(userId, tenantId)
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)
       return user

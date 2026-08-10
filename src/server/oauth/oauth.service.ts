@@ -472,7 +472,13 @@ export class OAuthService {
     // `issueMfaTempToken` lives on `TokenManagerService`, which is always
     // registered.
     if (authUser.mfaEnabled) {
-      const mfaTempToken = await this.tokenManager.issueMfaTempToken(authUser.id, 'dashboard')
+      // OAuth is dashboard-only; bind the tenant so the challenge resolves this account
+      // tenant-scoped rather than by `sub` alone.
+      const mfaTempToken = await this.tokenManager.issueMfaTempToken(
+        authUser.id,
+        'dashboard',
+        authUser.tenantId
+      )
       this.logger.log(
         `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
       )

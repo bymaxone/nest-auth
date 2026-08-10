@@ -267,7 +267,7 @@ export class TokenManagerService {
     // not of a credential. That asymmetry is the whole value of the marker: an attacker holding
     // a stolen session can rotate it forever and never make this mark fresh again.
     await this.redis.set(
-      recentAuthKey('dashboard', user.id, this.options.hmacKey),
+      recentAuthKey('dashboard', user.id, this.options.hmacKey, user.tenantId),
       '1',
       RECENT_AUTH_TTL_SECONDS
     )
@@ -1086,15 +1086,25 @@ export class TokenManagerService {
    *
    * @param userId - The user (or admin) pending MFA completion.
    * @param context - Authentication context: `'dashboard'` or `'platform'`.
+   * @param tenantId - The tenant the account belongs to, on the dashboard plane only. Stamped
+   *   into the token so the challenge resolves the account tenant-scoped rather than by `sub`
+   *   alone. Omitted on the platform plane, which has no tenant.
    * @returns The signed MFA temp JWT.
    */
-  async issueMfaTempToken(userId: string, context: 'dashboard' | 'platform'): Promise<string> {
+  async issueMfaTempToken(
+    userId: string,
+    context: 'dashboard' | 'platform',
+    tenantId?: string
+  ): Promise<string> {
     const jti = randomUUID()
     const payload: Omit<MfaTempPayload, 'iat' | 'exp'> = {
       jti,
       sub: userId,
       type: 'mfa_challenge',
       context,
+      // Present only on the dashboard plane; a platform token carries no tenant claim, exactly
+      // as the platform arm of every other MFA key stays tenant-free.
+      ...(tenantId !== undefined ? { tenantId } : {}),
       // Stamped so the challenge token dies with the rest of the account's credentials. See
       // the claim's own documentation for what it was surviving.
       epoch: await this.redis.getUserTokenEpoch(userId, context)
@@ -1157,10 +1167,26 @@ export class TokenManagerService {
    * @throws {Error} When JWT signature or expiry validation fails (propagated
    *   directly from `JwtService.verify()` — not wrapped in {@link AuthException}).
    */
-  async verifyMfaTempToken(
-    token: string
-  ): Promise<{ userId: string; context: 'dashboard' | 'platform'; jti: string }> {
+  async verifyMfaTempToken(token: string): Promise<{
+    userId: string
+    context: 'dashboard' | 'platform'
+    jti: string
+    tenantId?: string
+  }> {
     const payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
+
+    // Plane/tenant binding is mandatory and mutually exclusive: a dashboard challenge MUST carry
+    // the tenant it was issued for; a platform challenge MUST NOT. A missing or misplaced claim is
+    // an invalid token, never a fallback to the tenant-blind lookup — that lookup is exactly the
+    // path an attacker would reach by dropping the field, so it is refused rather than degraded to.
+    // (RFC 8725 §3.9/§3.12; ASVS 6.6.2 — the out-of-band token must be bound to its originating
+    // request.) A token minted before the claim existed is refused, and the user redoes login.
+    if (
+      (payload.context === 'dashboard' && payload.tenantId === undefined) ||
+      (payload.context === 'platform' && payload.tenantId !== undefined)
+    ) {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
 
     // GET (not GETDEL): keep the entry alive so wrong-TOTP attempts can
     // retry under the same token. consumeMfaTempToken deletes it once
@@ -1193,7 +1219,14 @@ export class TokenManagerService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }
 
-    return { userId: payload.sub, context: payload.context, jti: payload.jti }
+    return {
+      userId: payload.sub,
+      context: payload.context,
+      jti: payload.jti,
+      // Absent on a platform token and on a dashboard token minted before this claim existed;
+      // the challenge falls back to the pre-tenant lookup in that case.
+      ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
+    }
   }
 
   /**

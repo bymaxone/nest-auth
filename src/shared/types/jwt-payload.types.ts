@@ -127,6 +127,15 @@ export interface MfaTempPayload {
   context: 'dashboard' | 'platform'
 
   /**
+   * The tenant the dashboard challenge belongs to. Present on the dashboard plane, absent on the
+   * platform plane. `verifyMfaTempToken` rejects a dashboard token that lacks it and a platform
+   * token that carries it, so the `?` expresses only that the two planes populate it differently —
+   * it is never a value the caller may omit and have honoured. It is what lets the challenge
+   * resolve the pending account tenant-scoped instead of by `sub` alone.
+   */
+  tenantId?: string
+
+  /**
    * The subject's token **epoch** at issuance, in the plane named by `context`.
    *
    * The challenge token is a credential like any other — half of one, held by a caller who has

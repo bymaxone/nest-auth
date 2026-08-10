@@ -1421,7 +1421,8 @@ describe('OAuthService', () => {
       // The temp token issuer is called with the user id and 'dashboard' context.
       expect(mockTokenManager.issueMfaTempToken).toHaveBeenCalledWith(
         mfaEnabledUser.id,
-        'dashboard'
+        'dashboard',
+        mfaEnabledUser.tenantId
       )
     })
 

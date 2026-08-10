@@ -137,9 +137,11 @@ export function createMockUserRepository(): MockUserRepository {
       if (user) users.set(id, { ...user, passwordHash })
     },
 
-    async updateMfa(id: string, data: UpdateMfaData): Promise<void> {
+    async updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void> {
       const user = users.get(id)
-      if (!user) return
+      // Scoped by tenant like `findById`: a write for the wrong tenant matches no row, exactly as a
+      // read would, so an id shared across tenants cannot cross the update onto the wrong account.
+      if (!user || (tenantId !== undefined && user.tenantId !== tenantId)) return
       // Strip the existing optional fields first, then re-add only when present —
       // exactOptionalPropertyTypes forbids assigning `undefined` to optional fields.
       const { mfaSecret: _s, mfaRecoveryCodes: _r, ...rest } = user
@@ -384,13 +386,29 @@ export function createMockEmailProvider(): MockEmailProvider {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a fresh ioredis-mock instance typed as the upstream `Redis` interface.
+ * Monotonic port used to isolate each ioredis-mock keyspace.
+ *
+ * `ioredis-mock` keys its in-memory store by connection, so every bare
+ * `new RedisMock()` in a worker shares ONE keyspace. The merged unit+E2E run
+ * (`test:cov:all`) spreads E2E files across parallel workers, and which files
+ * co-locate in a worker shifts with the file set — so two suites that both mint
+ * `user-1` in `tenant-1` (the in-memory repo restarts its id counter per
+ * bootstrap) would silently collide on the MFA subject-derived keys: a lockout
+ * counter one suite fills rejects the next suite's disable. Handing every
+ * instance a distinct port gives each bootstrap its own keyspace — the
+ * isolation the repo and email mocks already provide.
+ */
+let nextMockRedisPort = 6400
+
+/**
+ * Builds a fresh ioredis-mock instance, keyspace-isolated from every other, typed
+ * as the upstream `Redis` interface.
  *
  * The cast is safe — `ioredis-mock` is a drop-in replacement for `ioredis` and
  * implements every command surface used by the @bymax-one/nest-auth services.
  */
 export function createMockRedis(): Redis {
-  return new RedisMock() as unknown as Redis
+  return new RedisMock({ port: nextMockRedisPort++ }) as unknown as Redis
 }
 
 // ---------------------------------------------------------------------------
