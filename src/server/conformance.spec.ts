@@ -30,6 +30,7 @@ import { RegisterDto } from './dto/register.dto'
 import { VerifyEmailDto } from './dto/verify-email.dto'
 import { VerifyOtpDto } from './dto/verify-otp.dto'
 import { encrypt } from './crypto/aes-gcm'
+import { mfaSubject } from './constants/mfa-subject'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
@@ -57,6 +58,8 @@ interface WireContract {
   }
   redisKeyPrefixes: Record<string, string>
   identifierPreimages: Record<string, string>
+  mfaSubjectPreimages: Record<string, string>
+  mfaSubjectDerivedKeys: Record<string, string>
   requestFieldBounds: Record<string, { min?: number; max?: number }>
   sessionIndexMembers: Record<string, string>
   familyIndexMembers: Record<string, string>
@@ -191,6 +194,64 @@ describe('cross-implementation conformance', () => {
       expect(dashboard).toContain('dashboard:')
       expect(platform).toContain('platform:')
       expect(otpRecord).not.toContain('dashboard:')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // MFA subject preimages
+  // -------------------------------------------------------------------------
+
+  describe('MFA subject preimages', () => {
+    // Renders a contract preimage template (`dashboard:{tenantId}:{userId}`) against concrete
+    // values, so the expectation is derived from the contract rather than repeated here — a change
+    // on either side turns the test red.
+    const render = (template: string): string =>
+      template.replace('{tenantId}', 'T').replace('{userId}', 'U')
+
+    // The subject every MFA store key and failure counter is HMAC'd over. `mfaSubject` is the one
+    // place both libraries build it, so it must render exactly the two templates the contract pins.
+    it('builds the tenant-scoped subject the contract pins', () => {
+      const { dashboard, platform } = contract.mfaSubjectPreimages
+
+      expect(mfaSubject('dashboard', 'U', 'T')).toBe(render(dashboard!))
+      expect(mfaSubject('platform', 'U', undefined)).toBe(render(platform!))
+    })
+
+    // Driven by the plane, not by whether a tenant was supplied: a tenant passed on the platform
+    // plane cannot move the preimage off `platform:{userId}`. This is the half of the cross-library
+    // agreement that keeps a platform admin's keys where the contract says they are.
+    it('derives the platform subject from the plane, ignoring any tenant', () => {
+      const { platform } = contract.mfaSubjectPreimages
+
+      expect(mfaSubject('platform', 'U', 'T')).toBe(render(platform!))
+      expect(mfaSubject('platform', 'U', 'T')).toBe(mfaSubject('platform', 'U', undefined))
+    })
+
+    // The dashboard and platform subjects never collide for the same id, and two tenants never
+    // collide — the properties the whole block exists to guarantee.
+    it('keeps planes and tenants in separate subjects', () => {
+      const { dashboard, platform } = contract.mfaSubjectPreimages
+
+      expect(dashboard).toContain('{tenantId}')
+      expect(platform).not.toContain('{tenantId}')
+      expect(mfaSubject('dashboard', 'U', 'T')).not.toBe(mfaSubject('platform', 'U', undefined))
+      expect(mfaSubject('dashboard', 'U', 'tenant-a')).not.toBe(
+        mfaSubject('dashboard', 'U', 'tenant-b')
+      )
+    })
+
+    // Every subject-derived key names `mfaSubject` in the contract, so the block cannot list a key
+    // that silently derives from something else. Two of the eight share ONE preimage — the
+    // anti-replay marker and the recovery-code claim — and are separated only by their prefix.
+    it('derives all six named keys from the subject', () => {
+      const derived = Object.entries(contract.mfaSubjectDerivedKeys).filter(
+        ([name]) => name !== '$comment'
+      )
+
+      expect(derived.length).toBe(6)
+      for (const [, formula] of derived) {
+        expect(formula).toContain('mfaSubject')
+      }
     })
   })
 

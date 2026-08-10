@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The MFA challenge is bound to its tenant, and every MFA key is scoped by it.** The MFA temp
+  token carried no tenant, so the challenge resolved its subject by id across every tenant
+  (`findById(sub)` with no tenant) — and the status gate, the decrypted secret, the recovery
+  digests and the account the session was finally minted for all ran against whatever row the
+  repository returned. A library cannot assume a host's user ids are unique across tenants —
+  `findById` takes a tenant precisely because they may not be — so under a schema that numbers users
+  per tenant, every tenant has a user `1`. The token now carries `tenantId` (present on the
+  dashboard plane, absent on the platform plane), `verifyMfaTempToken` refuses a dashboard token
+  that lacks it and a platform token that carries it — a refusal, not a fallback (RFC 8725 §3.9 /
+  §3.12, ASVS 5.0 6.6.2) — and `assertPlaneTenant` enforces the same rule at the five public
+  `MfaService` entry points before any repository read.
+
+- **Eight MFA store keys and failure counters were scoped by plane but not by tenant**, so two
+  tenants' user `1` shared all of them. The three `lf:` counters were the worst: a shared lockout
+  counter is a credential-free cross-tenant lockout — failures against one tenant's user spend
+  another's budget, and a success on either clears the other — which is not the per-subscriber
+  rate limiting NIST SP 800-63B requires. All eight now derive from one tenant-scoped `mfaSubject`,
+  driven by the plane rather than by whether a tenant was supplied. The wire contract gains
+  `mfaSubjectPreimages` and `mfaSubjectDerivedKeys`, pinning the shape rust-auth mirrors byte-for-byte.
+
+**Apply to a derived backend:** upgrade and deploy this release **in full** before the one that
+follows it. For a rolling upgrade this release dual-writes the anti-replay marker and the three
+failure counters (every read consults both the old plane-only key and the new tenant-scoped key,
+every write touches both) and dual-acquires the transition lock, so old and new pods stay
+consistent while both are live. A later release drops the legacy arm; deploying it before this one
+has fully rolled out would split the anti-replay and lockout state across the two key shapes. No
+host code changes: the tenant is sourced from the authenticated account, never from the request.
+
 ## [1.3.1] - 2026-08-08
 
 Adds the revocation checker and the overridable default auth-email provider, carries the tenant
