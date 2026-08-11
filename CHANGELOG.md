@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`ioredis` peer range raised to `^6.0.0`** ([`package.json`](package.json)). A host that also
+  runs `@bymax-one/nest-queue` (which peers `ioredis ^6.0.0`) can now resolve a single copy of
+  `ioredis` across the workspace, which is what lets a queue `Redis` and the client injected here
+  as `BYMAX_AUTH_REDIS_CLIENT` be the same instance and typecheck as such. The bump is a peer
+  contract only: this package imports `ioredis` for its `Redis` type alone — it never constructs a
+  client — so no runtime path changed. ioredis 6 defaults to the RESP3 protocol but keeps its
+  legacy reply mapping, so every reply shape this library reads is byte-for-byte what it read under
+  ioredis 5; the wire contract with `rust-auth` is untouched. **Apply to a derived backend:** raise the
+  `ioredis` version your app installs to `^6.0.0` so it satisfies the new peer range.
+
+- **Mutation gate raised to a perfect score** ([`stryker.config.json`](stryker.config.json)). The
+  `break`, `high` and `low` thresholds are now 100, and the suite meets it: every mutant in
+  `src/` is killed or a documented equivalent, with no survivors. Six equivalent mutants in
+  `otp.service.ts` — the empty-code guard and the EXPIRED/MAX arms of `verify`, each of which
+  answers the same `OTP_INVALID` after the same padding as the constant-time comparison that
+  follows — are marked inline with their reason rather than being removed, keeping the verifier's
+  defense in depth and anti-enumeration structure intact. **Apply to a derived backend:** if your
+  backend runs the shared mutation gate, expect it to require 100 rather than 95.
+
 ## [1.3.2] - 2026-08-10
 
 Binds the MFA challenge to its tenant and scopes every MFA key, counter and write by it — the

@@ -1,7 +1,7 @@
 # Redis & ioredis Guidelines — @bymax-one/nest-auth
 
 > **Audience:** AI agents and developers working on this codebase.
-> **Stack:** ioredis ^5.x, Redis 7+, NestJS 11
+> **Stack:** ioredis ^6.x, Redis 7+, NestJS 11
 > **Rule:** Follow these guidelines for all Redis operations in this project.
 
 ---
@@ -91,7 +91,7 @@ export class AuthRedisService {
 | Never call `new Redis(...)` or `new Cluster(...)` inside library code | Connection lifecycle belongs to the host |
 | Never call `redis.quit()` or `redis.disconnect()` inside library code | The host manages shutdown                |
 | Never modify connection settings (e.g., `redis.options`)              | Respect the host's configuration         |
-| Always type the injected client as `Redis` from `ioredis`             | Ensures full type safety with ioredis ^5 |
+| Always type the injected client as `Redis` from `ioredis`             | Ensures full type safety with ioredis ^6 |
 | Never store the Redis client in a static/global variable              | Breaks testability and DI isolation      |
 
 ### 1.6 Testing with the Injection Token
