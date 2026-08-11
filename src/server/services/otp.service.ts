@@ -119,12 +119,12 @@ function parseOtpVerifyReply(raw: unknown): ['EXPIRED' | 'MAX' | 'PRESENT', stri
   // record; refusing the non-string closed the manufactured case and left the stored-empty one,
   // which is the same bug arriving by a different route. `store` only ever writes a generated
   // code of the configured digit length, so nothing legitimate is refused here.
-  // Stryker disable next-line ConditionalExpression,StringLiteral: the empty-code half is defense in
-  // depth, not an observable branch. `verify` compares the submitted fingerprint — a non-empty HMAC
-  // digest — against `storedCode`, so an empty stored code fails the length check and answers
-  // OTP_INVALID whether it is refused here or carried through as a PRESENT record. Neither dropping
-  // the check (=> false) nor swapping its literal is observable; the `typeof` refusal beside it and
-  // the `===` equality mutant both stay killable.
+  // The empty-code half is defense in depth, not an observable branch. `verify` compares the
+  // submitted fingerprint — a non-empty HMAC digest — against `storedCode`, so an empty stored code
+  // fails the length check and answers OTP_INVALID whether it is refused here or carried through as
+  // a PRESENT record. Neither dropping the check (=> false) nor swapping its literal is observable;
+  // the `typeof` refusal beside it and the `===` equality mutant both stay killable.
+  // Stryker disable next-line ConditionalExpression,StringLiteral: empty stored code is unobservable — verify answers OTP_INVALID regardless (see the comment above)
   if (typeof storedCode !== 'string' || storedCode === '') return expired()
   return ['PRESENT', storedCode]
 }
@@ -299,11 +299,11 @@ export class OtpService {
     // `OTP_EXPIRED` and `OTP_MAX_ATTEMPTS` stay in the catalog as internal, diagnostic codes —
     // the same treatment `TOKEN_REVOKED` and `TOKEN_EXPIRED` already get, for the same reason —
     // and the distinction is recorded in the logs rather than in the response.
-    // Stryker disable next-line ConditionalExpression,BlockStatement: EXPIRED is the script's own
-    // signal, kept a distinct fact rather than a distinct answer. An expired or corrupted record
-    // carries an empty code, and the constant-time comparison below rejects that against the
-    // non-empty fingerprint with the same OTP_INVALID after the same padding — so skipping this arm
-    // (=> false) or emptying it (=> {}) reaches the identical result and cannot be observed.
+    // EXPIRED is the script's own signal, kept a distinct fact rather than a distinct answer. An
+    // expired or corrupted record carries an empty code, and the constant-time comparison below
+    // rejects that against the non-empty fingerprint with the same OTP_INVALID after the same
+    // padding — so skipping this arm (=> false) or emptying it (=> {}) reaches the identical result.
+    // Stryker disable next-line ConditionalExpression,BlockStatement: EXPIRED arm is unobservable — the comparison below answers the same OTP_INVALID (see the comment above)
     if (tag === 'EXPIRED') {
       // Also the corrupted-record answer: the script's `cjson.decode` throws, the eval fails,
       // and the caller cannot distinguish corruption from natural expiry — which is the point.
@@ -311,10 +311,10 @@ export class OtpService {
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
-    // Stryker disable next-line ConditionalExpression,BlockStatement: the ceiling arm answers the
-    // same OTP_INVALID as the comparison below — a maxed record carries an empty code that never
-    // matches the non-empty fingerprint — so skipping it (=> false) or emptying it (=> {}) is
-    // unobservable. The `tag !== 'MAX'` equality mutant beside it stays killable.
+    // The ceiling arm answers the same OTP_INVALID as the comparison below — a maxed record carries
+    // an empty code that never matches the non-empty fingerprint — so skipping it (=> false) or
+    // emptying it (=> {}) is unobservable. The `tag !== 'MAX'` equality mutant beside it stays killable.
+    // Stryker disable next-line ConditionalExpression,BlockStatement: MAX arm is unobservable — the comparison below answers the same OTP_INVALID (see the comment above)
     if (tag === 'MAX') {
       await sleep(Math.max(0, MIN_VERIFY_MS - (Date.now() - start)))
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)

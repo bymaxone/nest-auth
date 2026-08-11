@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`ioredis` peer range raised to `^6.0.0`** ([`package.json`](package.json)). A host that also
+- **BREAKING: `ioredis` peer range raised to `^6.0.0`** ([`package.json`](package.json); the `^5`
+  and `^6` ranges are disjoint, so an existing ioredis 5 consumer no longer satisfies the peer
+  contract). A host that also
   runs `@bymax-one/nest-queue` (which peers `ioredis ^6.0.0`) can now resolve a single copy of
   `ioredis` across the workspace, which is what lets a queue `Redis` and the client injected here
   as `BYMAX_AUTH_REDIS_CLIENT` be the same instance and typecheck as such. The bump is a peer
