@@ -2835,7 +2835,7 @@ These dependencies must be installed in the host application that uses the serve
 | `@nestjs/throttler` | `^6.0.0`  | Rate limiting via decorators                       |
 | `class-transformer` | `^0.5.0`  | DTO transformation                                 |
 | `class-validator`   | `^0.14.0` | DTO validation                                     |
-| `ioredis`           | `^5.0.0`  | Redis client                                       |
+| `ioredis`           | `^6.0.0`  | Redis client                                       |
 | `reflect-metadata`  | `^0.2.0`  | Metadata reflection for decorators                 |
 
 ### 18.2 Dependencies
@@ -2852,7 +2852,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
 
 | Subpath      | Peer Dependencies                                                                                                                                                             |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.` (server) | `@nestjs/common ^11`, `@nestjs/core ^11`, `@nestjs/jwt ^11`, `@nestjs/throttler ^6`, `ioredis ^5`, `class-transformer ^0.5`, `class-validator ^0.14`, `reflect-metadata ^0.2` |
+| `.` (server) | `@nestjs/common ^11`, `@nestjs/core ^11`, `@nestjs/jwt ^11`, `@nestjs/throttler ^6`, `ioredis ^6`, `class-transformer ^0.5`, `class-validator ^0.14`, `reflect-metadata ^0.2` |
 | `./shared`   | None                                                                                                                                                                          |
 | `./client`   | None                                                                                                                                                                          |
 | `./react`    | `react ^19`                                                                                                                                                                   |
@@ -2908,7 +2908,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "@nestjs/websockets": "^11.0.0",
     "class-transformer": "^0.5.0",
     "class-validator": "^0.14.0",
-    "ioredis": "^5.0.0",
+    "ioredis": "^6.0.0",
     "react": "^19.0.0",
     "next": "^16.2.11",
     "reflect-metadata": "^0.2.0"
