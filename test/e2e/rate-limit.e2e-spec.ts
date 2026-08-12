@@ -13,7 +13,7 @@
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
-import { JWT_SECRET, bootstrapTestApp } from './setup'
+import { JWT_SECRET, bootstrapTestApp, expectAuthError } from './setup'
 
 describe('per-IP rate limiting (E2E)', () => {
   let app: INestApplication
@@ -47,7 +47,10 @@ describe('per-IP rate limiting (E2E)', () => {
   it('refuses the sixth login attempt from one address inside the window', async () => {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       const allowed = await attemptLogin('limited@example.com')
-      expect(allowed.status).not.toBe(429)
+      // The exact rejection, not merely "not 429": these five must reach the credential check
+      // and be refused on their merits. `not.toBe(429)` would also pass on a 500, which is a
+      // request that never got there at all.
+      expectAuthError(allowed, 'auth.invalid_credentials')
     }
 
     const refused = await attemptLogin('limited@example.com')
@@ -72,6 +75,9 @@ describe('per-IP rate limiting (E2E)', () => {
       .post('/password/forgot-password')
       .send({ email: 'separate@example.com', tenantId: 'tenant-1' })
 
-    expect(reset.status).not.toBe(429)
+    // 200 exactly. forgot-password answers 200 whether or not the address exists, so this
+    // pins the anti-enumeration answer as well as the separate budget — `not.toBe(429)` would
+    // have passed on any failure that happened to not be a rate limit.
+    expect(reset.status).toBe(200)
   })
 })
