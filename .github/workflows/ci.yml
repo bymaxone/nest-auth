@@ -27,8 +27,18 @@ permissions:
   contents: read
 
 jobs:
+  # The `bymaxone/.github` reusables are pinned to a commit SHA, not to `@v1`, for the same
+  # reason every third-party action here is: a moving tag means whoever can push that tag
+  # changes CI in every repository at once, silently and retroactively — including
+  # `release.yml`, which holds npm publish rights. That the upstream is our own organisation
+  # narrows who, not what. Scorecard's Pinned-Dependencies check is the gate that enforces it.
+  #
+  # The cost is that a fix to the shared pipeline no longer propagates on its own. Dependabot
+  # covers that: the `github-actions` ecosystem in `.github/dependabot.yml` bumps these refs
+  # weekly, so propagation becomes a reviewable PR instead of a silent change. Do not
+  # "simplify" these back to `@v1` — that trade is the point.
   ci:
-    uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@v1
+    uses: bymaxone/.github/.github/workflows/node-lib-ci.yml@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
     with:
       run-format-check: true # runs `pnpm format:check` (prettier --check .) as a hard gate
       run-build: false # build + integrity + size verified in the `verify` job below
@@ -57,7 +67,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@v1
+      - uses: bymaxone/.github/.github/actions/setup-node-pnpm@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
       - name: Build all subpaths
         run: pnpm build
       - name: Verify build output integrity
@@ -82,7 +92,7 @@ jobs:
 
   security:
     if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
-    uses: bymaxone/.github/.github/workflows/security.yml@v1
+    uses: bymaxone/.github/.github/workflows/security.yml@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
     with:
       fail-on-severity: high
 

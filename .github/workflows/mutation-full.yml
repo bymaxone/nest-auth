@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   full:
-    uses: bymaxone/.github/.github/workflows/mutation-full.yml@v1
+    uses: bymaxone/.github/.github/workflows/mutation-full.yml@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
     with:
       # Measured cold: 90 min. Generous on purpose — nothing blocks on this job, so an
       # over-wide ceiling costs only the minutes it uses, while an under-tight one costs the

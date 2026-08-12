@@ -40,7 +40,7 @@ jobs:
       contents: read
       security-events: write
       actions: read
-    uses: bymaxone/.github/.github/workflows/codeql.yml@v1
+    uses: bymaxone/.github/.github/workflows/codeql.yml@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
     with:
       # Added to match the rest of the libraries. On `audit` the policy records
       # the job's outbound calls and blocks none of them, so nothing fails for

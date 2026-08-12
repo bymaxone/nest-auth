@@ -19,4 +19,4 @@ permissions:
 
 jobs:
   scan:
-    uses: bymaxone/.github/.github/workflows/osv-scanner.yml@v1
+    uses: bymaxone/.github/.github/workflows/osv-scanner.yml@b5ef982025bcb45489a5208b41e2e5fc27dbfd77 # v1.2.0
