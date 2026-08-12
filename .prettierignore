@@ -13,3 +13,16 @@ reports/
 
 # Tool-managed lockfile — pnpm owns its formatting.
 pnpm-lock.yaml
+
+# Cross-repo contract — its bytes ARE the contract, so no formatter may rewrite them.
+#
+# This file must stay byte-identical with `rust-auth/conformance/wire-contract.json`; both
+# libraries can back the same deployment, and each asserts its own implementation against its
+# own copy. Nothing in either repo checks one copy against the other, so a reformat here breaks
+# the pairing with no signal at all — and the `lint-staged` glob `*.{json,md,yml,yaml}` runs
+# `prettier --write`, which means an ordinary commit was one formatting-default change away from
+# doing exactly that.
+#
+# Do not remove this entry to make `format:check` "consistent". The file's canonical form is
+# whatever both repos hold, not whatever Prettier would emit.
+conformance/wire-contract.json
