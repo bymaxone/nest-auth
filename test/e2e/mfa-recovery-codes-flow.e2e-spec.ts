@@ -58,8 +58,20 @@ const TOTP_STEP_SECONDS = 30
  */
 function unspentStepTime(base: number): number {
   const step = TOTP_STEP_SECONDS * 1000
-  const sameStep = Math.floor(Date.now() / step) === Math.floor(base / step)
-  return sameStep ? base - step : Date.now() + step
+  const spent = [Math.floor(base / step), Math.floor(base / step) + 1]
+  const current = Math.floor(Date.now() / step)
+
+  // Highest unspent counter first, and the order is the point. The `sameStep` form this
+  // replaces decided against `base` and then reached backwards, so a boundary crossing between
+  // the decision and the server's own clock read left the code either spent or below the
+  // window — the same defect `mfa-disable-flow` carried, guarded but not closed. Deciding
+  // against the CURRENT step drops the stale premise, and preferring a counter ABOVE it means
+  // a shift during the round trip moves the code into the window rather than out of it.
+  for (const counter of [current + 1, current, current - 1]) {
+    if (!spent.includes(counter)) return counter * step
+  }
+
+  throw new Error(`every counter in the window ${current - 1}..${current + 1} is spent`)
 }
 const TOTP_DIGITS = 6
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'

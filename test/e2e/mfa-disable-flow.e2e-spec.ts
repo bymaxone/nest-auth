@@ -68,6 +68,58 @@ function generateTotp(base32Secret: string, time: number = Date.now()): string {
   return (code % 10 ** TOTP_DIGITS).toString().padStart(TOTP_DIGITS, '0')
 }
 
+/** The TOTP counter covering a wall-clock instant. */
+function counterAt(time: number): number {
+  return Math.floor(time / 1000 / TOTP_STEP_SECONDS)
+}
+
+/**
+ * Renders the code for an explicit counter, and returns the counter with it so a caller can
+ * record what the anti-replay set has just consumed.
+ */
+function totpForCounter(secret: string, counter: number): { code: string; counter: number } {
+  return { code: generateTotp(secret, counter * TOTP_STEP_SECONDS * 1000), counter }
+}
+
+/**
+ * Picks a counter the server's ±1 window still accepts and the anti-replay set has NOT
+ * consumed, then renders its code.
+ *
+ * This replaces reaching one step BACKWARDS (`Date.now() - 30s`), which assumed the whole
+ * fixture — enable, challenge, disable — lands inside a single 30-second step. When the wall
+ * clock crossed a step boundary mid-fixture that assumption inverted: the slot it reached for
+ * was the one `verify-enable` had already burned, the anti-replay guard refused it, and
+ * `/mfa/disable` answered 401 `auth.mfa_invalid_code`. Every other failure in this file was
+ * downstream of that one — the pre-disable token still worked and login still challenged
+ * because the disable had not happened.
+ *
+ * The rate was the fixture's duration over the step length, so it reproduced about once in
+ * fifteen runs and never twice in a row, which reads like an infrastructure flake and is not.
+ *
+ * Candidates are tried HIGHEST first, and that order is the point rather than a detail. A
+ * boundary can still cross between deriving the code here and the server verifying it, which
+ * shifts the accepted window up by one: a counter above the current step survives that shift,
+ * one below falls out of the window. Preferring the highest unconsumed counter therefore keeps
+ * the code valid in the case that used to break it.
+ *
+ * **This narrows the race rather than closing it.** With a ±1 window and two adjacent consumed
+ * steps there is exactly one usable counter, and when the fixture is still inside the enrolment
+ * step that counter is necessarily the one below — fragile by construction, not by choice. What
+ * remains exposed is the few milliseconds between deriving the code and the server reading its
+ * clock, against the ~2 seconds the old arithmetic exposed. Closing it completely would mean
+ * freezing the clock for the in-process server (`jest.setSystemTime` with `Date` faked), which
+ * is a larger change than this defect warrants.
+ */
+function unconsumedTotp(secret: string, consumed: readonly number[]): string {
+  const current = counterAt(Date.now())
+  for (const counter of [current + 1, current, current - 1]) {
+    if (!consumed.includes(counter)) return totpForCounter(secret, counter).code
+  }
+  // Unreachable while the fixture consumes two counters and the window offers three; thrown
+  // rather than returning a code that is certain to 401, so the cause is named at the failure.
+  throw new Error(`every counter in the window ${current - 1}..${current + 1} is consumed`)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -76,6 +128,8 @@ interface MfaEnabledFixture {
   app: INestApplication
   secret: string
   accessToken: string
+  /** Counters the anti-replay set already holds, so a later step can avoid them. */
+  consumed: number[]
 }
 
 /**
@@ -103,10 +157,11 @@ async function enableMfa(): Promise<MfaEnabledFixture> {
   expect([200, 201]).toContain(setup.status)
   const secret = (setup.body as { secret: string }).secret
 
+  const enableCode = totpForCounter(secret, counterAt(Date.now()))
   const enable = await request(boot.app.getHttpServer())
     .post('/mfa/verify-enable')
     .set('Authorization', `Bearer ${registerAccess}`)
-    .send({ code: generateTotp(secret) })
+    .send({ code: enableCode.code })
   expect(enable.status).toBe(204)
 
   // verify-enable returns 204 No Content — no fresh tokens are issued.
@@ -118,18 +173,24 @@ async function enableMfa(): Promise<MfaEnabledFixture> {
   const mfaTempToken = (login.body as { mfaTempToken?: string }).mfaTempToken
   expect(mfaTempToken).toBeTruthy()
 
-  // Use a TOTP one step ahead of the enable code — the enable step persisted
-  // an anti-replay key against the current step, so a fresh code is needed.
-  // ±1-step window keeps the server-side validation happy.
-  const nextStepTime = Date.now() + TOTP_STEP_SECONDS * 1000
+  // One step ahead of the enable code: that counter is in the ±1 window and the anti-replay
+  // set does not hold it. Reaching FORWARD is safe across a step boundary — if the clock rolls
+  // over before the server verifies, the code is for the new current step, which is still
+  // accepted and still unconsumed. Reaching backwards is what was not safe; see unconsumedTotp.
+  const challengeCode = totpForCounter(secret, counterAt(Date.now()) + 1)
   const challenge = await request(boot.app.getHttpServer())
     .post('/mfa/challenge')
-    .send({ mfaTempToken, code: generateTotp(secret, nextStepTime) })
+    .send({ mfaTempToken, code: challengeCode.code })
   expect(challenge.status).toBe(200)
   const accessToken = (challenge.body as { accessToken: string }).accessToken
   expect(accessToken).toBeTruthy()
 
-  return { app: boot.app, secret, accessToken }
+  return {
+    app: boot.app,
+    secret,
+    accessToken,
+    consumed: [enableCode.counter, challengeCode.counter]
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,14 +204,10 @@ describe('mfa disable flow (E2E)', () => {
 
     beforeAll(async () => {
       fixture = await enableMfa()
-      // After enableMfa() the anti-replay set holds counters T (enable) and
-      // T+1 (challenge). The ±1 window accepts T-1, T, T+1, so only T-1 is
-      // still available — use it for the disable code.
-      const disableStepTime = Date.now() - TOTP_STEP_SECONDS * 1000
       const disable = await request(fixture.app.getHttpServer())
         .post('/mfa/disable')
         .set('Authorization', `Bearer ${fixture.accessToken}`)
-        .send({ code: generateTotp(fixture.secret, disableStepTime) })
+        .send({ code: unconsumedTotp(fixture.secret, fixture.consumed) })
       disableStatus = disable.status
     })
 
@@ -199,29 +256,32 @@ describe('mfa disable flow (E2E)', () => {
         .set('Authorization', `Bearer ${registerAccess}`)
         .send({ password: password })
       const secret = (setup.body as { secret: string }).secret
+      const enableCode = totpForCounter(secret, counterAt(Date.now()))
       await request(boot.app.getHttpServer())
         .post('/mfa/verify-enable')
         .set('Authorization', `Bearer ${registerAccess}`)
-        .send({ code: generateTotp(secret) })
+        .send({ code: enableCode.code })
 
       const loginChallenge = await request(boot.app.getHttpServer())
         .post('/login')
         .send({ email, password, tenantId: 'tenant-1' })
       const mfaTempToken = (loginChallenge.body as { mfaTempToken: string }).mfaTempToken
       // Step ahead so the challenge code is not the same as the enable code.
-      const nextStepTime = Date.now() + TOTP_STEP_SECONDS * 1000
+      const challengeCode = totpForCounter(secret, counterAt(Date.now()) + 1)
       const challenge = await request(boot.app.getHttpServer())
         .post('/mfa/challenge')
-        .send({ mfaTempToken, code: generateTotp(secret, nextStepTime) })
+        .send({ mfaTempToken, code: challengeCode.code })
       const mfaVerifiedAccess = (challenge.body as { accessToken: string }).accessToken
 
-      // Anti-replay holds enable + challenge counters; use T-1 from the ±1
-      // window for the disable code.
-      const disableStepTime = Date.now() - TOTP_STEP_SECONDS * 1000
-      await request(boot.app.getHttpServer())
+      const disable = await request(boot.app.getHttpServer())
         .post('/mfa/disable')
         .set('Authorization', `Bearer ${mfaVerifiedAccess}`)
-        .send({ code: generateTotp(secret, disableStepTime) })
+        .send({ code: unconsumedTotp(secret, [enableCode.counter, challengeCode.counter]) })
+
+      // Asserted rather than assumed. Without this the disable could answer 401 and the test
+      // would fail three lines down on `mfaRequired`, describing a login defect that is not
+      // there — a precondition left unchecked reports the symptom and hides the cause.
+      expect(disable.status).toBe(204)
 
       // Now login should succeed without an MFA challenge.
       const login = await request(boot.app.getHttpServer())
