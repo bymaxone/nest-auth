@@ -33,7 +33,8 @@ import {
   createMockEmailProvider,
   createMockPlatformUserRepository,
   createMockRedis,
-  createMockUserRepository
+  createMockUserRepository,
+  expectAuthError
 } from './setup'
 
 // ---------------------------------------------------------------------------
@@ -186,10 +187,7 @@ describe('email verification flow (E2E)', () => {
         .post('/refresh')
         .send({ refreshToken })
 
-      expect(rotated.status).toBeGreaterThanOrEqual(400)
-      expect((rotated.body as { error?: { code?: string } }).error?.code).toBe(
-        'auth.email_not_verified'
-      )
+      expectAuthError(rotated, 'auth.email_not_verified')
     })
 
     // The same rotation succeeds once the address is proven — the gate must bound the
@@ -225,10 +223,7 @@ describe('email verification flow (E2E)', () => {
         .post('/verify-email')
         .send({ email, otp: '000000', tenantId: 'tenant-1' })
 
-      expect(res.status).toBeGreaterThanOrEqual(400)
-      expect(res.status).toBeLessThan(500)
-      const body = res.body as { error?: { code?: string } }
-      expect(body.error?.code).toBe('auth.otp_invalid')
+      expectAuthError(res, 'auth.otp_invalid')
     })
   })
 

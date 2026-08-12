@@ -19,7 +19,7 @@ import * as crypto from 'node:crypto'
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, expectAuthError } from './setup'
 
 // ---------------------------------------------------------------------------
 // TOTP helper — mirrors src/server/crypto/totp.ts
@@ -247,11 +247,8 @@ describe('mfa disable flow (E2E)', () => {
           .set('Authorization', `Bearer ${fixture.accessToken}`)
           .send({ code: '000000' }) // overwhelmingly likely to be wrong
 
-        expect(res.status).toBeGreaterThanOrEqual(400)
-        expect(res.status).toBeLessThan(500)
         // AuthExceptionFilter envelopes the error under `body.error.code`.
-        const body = res.body as { error?: { code?: string } }
-        expect(body.error?.code).toBe('auth.mfa_invalid_code')
+        expectAuthError(res, 'auth.mfa_invalid_code')
 
         // The mfaEnabled flag is unchanged.
         const me = await request(fixture.app.getHttpServer())
@@ -283,10 +280,7 @@ describe('mfa disable flow (E2E)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .send({ code: '123456' })
 
-        expect(res.status).toBeGreaterThanOrEqual(400)
-        expect(res.status).toBeLessThan(500)
-        const body = res.body as { error?: { code?: string } }
-        expect(body.error?.code).toBe('auth.mfa_not_enabled')
+        expectAuthError(res, 'auth.mfa_not_enabled')
       } finally {
         await boot.app.close()
       }

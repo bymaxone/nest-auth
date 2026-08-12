@@ -268,6 +268,71 @@ export const AUTH_ERROR_CODES = {
 export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]
 
 /**
+ * HTTP status answered for each error code.
+ *
+ * The status is a property of the CODE, not of the call site: `AuthException` derives it from
+ * this table and takes no status argument. That is deliberate, and it is the fix for a real
+ * defect — the constructor used to default to `401`, so omitting the argument was neither a
+ * type error nor a lint error but a plausible-looking wrong answer. Thirteen codes drifted
+ * that way, and five answered *different* statuses at different throw sites (`auth.account_locked`
+ * was `429` on login and `401` on the MFA and password-reset lockouts, so a client backing off
+ * on `429` did not back off on the others).
+ *
+ * Pinned by `conformance/wire-contract.json` (`errorCatalog.statuses`) and asserted against it
+ * by `conformance.spec.ts`, because rust-auth answers the same codes for the same deployment:
+ * a client switching on `error.code` and `response.status` must see one contract whichever
+ * implementation is behind it. Changing a value here is a breaking change to that contract —
+ * make it in both repos in the same change.
+ *
+ * @remarks
+ * These are WIRE statuses. An internal-only code carries the status of the public code it
+ * collapses onto rather than one of its own — `auth.otp_max_attempts` is 401 because it reaches
+ * a caller as `auth.otp_invalid`, and a 429 would hand back through the status line exactly what
+ * the collapse removes from the body: only a record that exists can reach an attempt ceiling, so
+ * a 429 says the address was registered.
+ */
+export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
+  'auth.invalid_credentials': 401,
+  'auth.account_locked': 429,
+  'auth.account_inactive': 403,
+  'auth.account_suspended': 403,
+  'auth.account_banned': 403,
+  'auth.pending_approval': 403,
+  'auth.token_expired': 401,
+  'auth.token_revoked': 401,
+  'auth.token_invalid': 401,
+  'auth.token_missing': 401,
+  'auth.refresh_token_invalid': 401,
+  'auth.session_not_found': 404,
+  'auth.email_already_exists': 409,
+  'auth.email_not_verified': 403,
+  'auth.email_change_token_invalid': 400,
+  'auth.mfa_required': 403,
+  'auth.mfa_invalid_code': 401,
+  'auth.mfa_already_enabled': 409,
+  'auth.mfa_not_enabled': 400,
+  'auth.mfa_setup_required': 400,
+  'auth.mfa_temp_token_invalid': 401,
+  'auth.mfa_state_conflict': 409,
+  'auth.password_compromised': 400,
+  'auth.password_reset_token_invalid': 400,
+  'auth.otp_invalid': 401,
+  'auth.otp_expired': 401,
+  'auth.otp_max_attempts': 401,
+  'auth.insufficient_role': 403,
+  'auth.forbidden': 403,
+  'auth.validation': 400,
+  'auth.too_many_requests': 429,
+  'auth.untrusted_origin': 403,
+  'auth.reauthentication_required': 403,
+  'auth.invalid_invitation_token': 400,
+  'auth.oauth_failed': 401,
+  'auth.oauth_email_mismatch': 409,
+  'auth.platform_auth_required': 401,
+  'auth.internal': 500
+}
+
+/**
  * Human-readable message for each error code.
  *
  * Looked up automatically by `AuthException` to populate the `message` field

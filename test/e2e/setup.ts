@@ -27,6 +27,8 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../../src/server/bymax-auth.constants'
 import { BymaxAuthModule } from '../../src/server/bymax-auth.module'
+import type { AuthErrorCode } from '../../src/server/errors/auth-error-codes'
+import { AUTH_ERROR_STATUS } from '../../src/server/errors/auth-error-codes'
 import type { BymaxAuthModuleOptions } from '../../src/server/interfaces/auth-module-options.interface'
 import type {
   IEmailProvider,
@@ -563,4 +565,24 @@ export async function bootstrapTestApp(
   await app.init()
 
   return { app, repo, platformRepo, email, redis, options }
+}
+
+/**
+ * Asserts a response carries the library's error envelope for `code`, at the EXACT HTTP status
+ * the shared wire contract declares for that code.
+ *
+ * Replaces the `status >= 400 && status < 500` pattern these suites used to assert. That range
+ * is why thirteen wrong statuses survived the e2e suite: 401 where the contract says 404 is
+ * still a 4xx, so the check was satisfied by the right answer and the wrong one alike. The same
+ * goes for the negated form (`not.toBe(401)`), which accepts everything but one point and reads
+ * like a deliberate assertion about a specific status.
+ *
+ * Pinning the `(code, status)` pair against `AUTH_ERROR_STATUS` — which `conformance.spec.ts`
+ * binds to `conformance/wire-contract.json`, which rust-auth asserts against too — is what makes
+ * these wire tests rather than smoke tests.
+ */
+export function expectAuthError(res: { status: number; body: unknown }, code: AuthErrorCode): void {
+  const body = res.body as { error?: { code?: string } }
+  expect(body.error?.code).toBe(code)
+  expect(res.status).toBe(AUTH_ERROR_STATUS[code])
 }

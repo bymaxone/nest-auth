@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -151,7 +151,7 @@ export class InvitationService {
 
     // Validate that the requested role exists in the configured hierarchy.
     if (!Object.hasOwn(hierarchy, role)) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     // Fetch the inviter to validate their role authorization.
@@ -168,12 +168,12 @@ export class InvitationService {
     // claims, which hides it — but this is a library whose service layer consumers call
     // directly, and the authorization contract belongs here rather than in one caller.
     if (inviter.tenantId !== tenantId) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     // The inviter must hold a role >= the role being invited.
     if (!hasRole(inviter.role, role, hierarchy)) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     // Generate a cryptographically secure single-use token (64 hex chars).
@@ -361,7 +361,7 @@ export class InvitationService {
         `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
           `inviterRole=${logSafe(inviter.role)} — outranked by the pending invitation`
       )
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
     return tokenHash
   }
@@ -406,7 +406,7 @@ export class InvitationService {
       `create: refused email=${maskEmail(email)} tenantId=${logSafe(tenantId)} ` +
         `— the pending invitation kept changing under the rank check`
     )
-    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
   }
 
   /**
@@ -483,14 +483,14 @@ export class InvitationService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     if (revoker.tenantId !== tenantId) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
     // Standing is a fact about the CALLER, so refusing out loud describes nobody else — and it
     // is settled before any lookup, so a suspended account cannot use this door to ask
     // questions at all. The rank comparison below is the opposite kind of check, and is
     // answered the opposite way.
     if (!this.inGoodStanding(revoker)) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     const indexKey = this.inviteeKey(normalizedEmail, tenantId)

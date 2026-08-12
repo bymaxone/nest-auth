@@ -28,7 +28,7 @@ import request from 'supertest'
 
 import { PasswordService } from '../../src/server/services/password.service'
 import type { BootstrappedTestApp } from './setup'
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, expectAuthError } from './setup'
 
 // ---------------------------------------------------------------------------
 // TOTP helper — mirrors src/server/crypto/totp.ts
@@ -319,10 +319,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
         const oldRes = await request(fixture.app.getHttpServer())
           .post('/mfa/challenge')
           .send({ mfaTempToken: mfaTempTokenForOld, code: oldCode })
-        expect(oldRes.status).toBeGreaterThanOrEqual(400)
-        expect(oldRes.status).toBeLessThan(500)
-        const oldBody = oldRes.body as { error?: { code?: string } }
-        expect(oldBody.error?.code).toBe('auth.mfa_invalid_code')
+        expectAuthError(oldRes, 'auth.mfa_invalid_code')
 
         // The new code MUST authenticate. Need a fresh mfaTempToken for each
         // challenge attempt since the previous one was consumed.
@@ -353,10 +350,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
           .set('Authorization', `Bearer ${fixture.accessToken}`)
           .send({ code: '000000' })
 
-        expect(res.status).toBeGreaterThanOrEqual(400)
-        expect(res.status).toBeLessThan(500)
-        const body = res.body as { error?: { code?: string } }
-        expect(body.error?.code).toBe('auth.mfa_invalid_code')
+        expectAuthError(res, 'auth.mfa_invalid_code')
       } finally {
         await fixture.app.close()
       }
@@ -383,10 +377,7 @@ describe('dashboard regenerate recovery codes flow (E2E)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .send({ code: '123456' })
 
-        expect(res.status).toBeGreaterThanOrEqual(400)
-        expect(res.status).toBeLessThan(500)
-        const body = res.body as { error?: { code?: string } }
-        expect(body.error?.code).toBe('auth.mfa_not_enabled')
+        expectAuthError(res, 'auth.mfa_not_enabled')
       } finally {
         await boot.app.close()
       }
@@ -619,10 +610,7 @@ describe('platform MFA flow (E2E)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .send({ code: '123456' })
 
-        expect(res.status).toBeGreaterThanOrEqual(400)
-        expect(res.status).toBeLessThan(500)
-        const body = res.body as { error?: { code?: string } }
-        expect(body.error?.code).toBe('auth.mfa_not_enabled')
+        expectAuthError(res, 'auth.mfa_not_enabled')
       } finally {
         await boot.app.close()
       }

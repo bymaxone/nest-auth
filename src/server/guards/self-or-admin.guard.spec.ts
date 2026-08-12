@@ -169,7 +169,11 @@ describe('SelfOrAdminGuard', () => {
   // ----------------- SHA-256 format gate -----------------
 
   describe('SHA-256 format gate', () => {
-    // Verifies that a 64-char param containing uppercase hex letters is rejected with TOKEN_INVALID/BAD_REQUEST.
+    // Verifies that a 64-char param containing uppercase hex letters is rejected with
+    // TOKEN_INVALID at 401 — the status the code carries everywhere else. This site used to
+    // answer 400 for the same code, which is one of the five self-disagreements the status
+    // table removed: a caller could tell this rejection from every other TOKEN_INVALID by the
+    // status line alone.
     it('should reject a 64-char hex param with uppercase letters (not strict lowercase SHA-256)', () => {
       // 64 chars, hex-looking but uppercase — fails STRICT_SHA256_RE
       const upperHex = 'A'.repeat(64)
@@ -181,7 +185,7 @@ describe('SelfOrAdminGuard', () => {
         guard.canActivate(ctx as never)
       } catch (e) {
         expect(e).toBeInstanceOf(AuthException)
-        expect((e as AuthException).getStatus()).toBe(HttpStatus.BAD_REQUEST)
+        expect((e as AuthException).getStatus()).toBe(HttpStatus.UNAUTHORIZED)
         const body = (e as AuthException).getResponse() as { error: { code: string } }
         expect(body.error.code).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
       }

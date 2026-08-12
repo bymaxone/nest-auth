@@ -3,7 +3,7 @@
  *
  * @layer Pipe
  */
-import { HttpStatus, ValidationPipe } from '@nestjs/common'
+import { ValidationPipe } from '@nestjs/common'
 import type { ValidationError, ValidationPipeOptions } from '@nestjs/common'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -74,10 +74,6 @@ export function createAuthValidationPipe(options: ValidationPipeOptions = {}): V
     forbidNonWhitelisted: true,
     ...options,
     exceptionFactory: (errors: ValidationError[]) =>
-      new AuthException(
-        AUTH_ERROR_CODES.VALIDATION,
-        HttpStatus.BAD_REQUEST,
-        flattenValidationErrors(errors)
-      )
+      new AuthException(AUTH_ERROR_CODES.VALIDATION, flattenValidationErrors(errors))
   })
 }

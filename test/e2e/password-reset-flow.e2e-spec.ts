@@ -20,7 +20,7 @@ import type { Redis } from 'ioredis'
 import request from 'supertest'
 
 import type { CapturedEmail, MockEmailProvider } from './setup'
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, expectAuthError } from './setup'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -317,7 +317,7 @@ describe('password reset flow (E2E)', () => {
         token: first,
         newPassword: 'AttackerChosen789!'
       })
-      expect(replayed.status).toBeGreaterThanOrEqual(400)
+      expectAuthError(replayed, 'auth.password_reset_token_invalid')
 
       // And the victim's password is the one that stands.
       const login = await request(app.getHttpServer())
@@ -446,7 +446,7 @@ describe('password reset flow (E2E)', () => {
       const otherRotates = await request(app.getHttpServer())
         .post('/refresh')
         .send({ refreshToken: otherRefresh })
-      expect(otherRotates.status).toBeGreaterThanOrEqual(400)
+      expectAuthError(otherRotates, 'auth.refresh_token_invalid')
 
       // The caller's own session survives, so its client silently re-mints an access token.
       const mine = await request(app.getHttpServer())

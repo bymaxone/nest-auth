@@ -49,7 +49,7 @@ export {
 // Errors
 // ---------------------------------------------------------------------------
 
-export { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from './errors'
+export { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './errors'
 export type { AuthErrorCode } from './errors'
 export { AuthException } from './errors'
 

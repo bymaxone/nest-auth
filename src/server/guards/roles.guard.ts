@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import type { Request } from 'express'
@@ -57,14 +57,14 @@ export class RolesGuard implements CanActivate {
     const userRole = request.user?.role
 
     if (!userRole) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     const hierarchy = this.options.roles.hierarchy
     const allowed = requiredRoles.some((required) => hasRole(userRole, required, hierarchy))
 
     if (!allowed) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     return true

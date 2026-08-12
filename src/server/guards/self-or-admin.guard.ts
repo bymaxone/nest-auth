@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import type { Request } from 'express'
 
@@ -59,13 +59,13 @@ export class SelfOrAdminGuard implements CanActivate {
 
     // Defensive — JwtAuthGuard should always run before this guard.
     if (request.user == null) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID, HttpStatus.UNAUTHORIZED)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     const rawParam = request.params['userId'] ?? request.params['id']
 
     if (rawParam === undefined) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     // Express types params as string | string[]. Route params are always plain strings;
@@ -74,21 +74,21 @@ export class SelfOrAdminGuard implements CanActivate {
     const paramValue = resolveParamString(rawParam)
 
     if (paramValue === undefined) {
-      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     // When the value is 64 hex-looking characters, treat it as a SHA-256 session
     // hash and require strictly lowercase format. Uppercase hex is an unexpected
     // source — reject it early to prevent silent normalization masking comparison errors.
     if (isHexLooking(paramValue) && !STRICT_SHA256_RE.test(paramValue)) {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID, HttpStatus.BAD_REQUEST)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     if (request.user.sub === paramValue) return true
 
     if (hasRole(request.user.role, 'admin', this.options.roles.hierarchy)) return true
 
-    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE, HttpStatus.FORBIDDEN)
+    throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
   }
 }
 

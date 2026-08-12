@@ -22,7 +22,7 @@ import request from 'supertest'
 
 import { PasswordService } from '../../src/server/services/password.service'
 import type { BootstrappedTestApp } from './setup'
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, expectAuthError } from './setup'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -256,14 +256,12 @@ describe('platform auth flow (E2E)', () => {
       const tryA = await request(boot.app.getHttpServer())
         .post('/platform/refresh')
         .send({ refreshToken: sessionA.refreshToken })
-      expect(tryA.status).toBeGreaterThanOrEqual(400)
-      expect(tryA.status).toBeLessThan(500)
+      expectAuthError(tryA, 'auth.refresh_token_invalid')
 
       const tryB = await request(boot.app.getHttpServer())
         .post('/platform/refresh')
         .send({ refreshToken: sessionB.refreshToken })
-      expect(tryB.status).toBeGreaterThanOrEqual(400)
-      expect(tryB.status).toBeLessThan(500)
+      expectAuthError(tryB, 'auth.refresh_token_invalid')
     })
   })
 

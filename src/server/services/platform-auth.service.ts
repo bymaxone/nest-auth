@@ -92,7 +92,7 @@ export class PlatformAuthService {
     if (locked) {
       this.logger.warn(`login: account locked email=${maskEmail(dto.email)}`)
       const retryAfterSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
-      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, { retryAfterSeconds })
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, { retryAfterSeconds })
     }
 
     const admin = await this.platformUserRepo.findByEmail(dto.email)

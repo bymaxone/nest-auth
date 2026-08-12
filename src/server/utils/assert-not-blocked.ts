@@ -55,8 +55,5 @@ export function assertNotBlocked(status: string, blockedStatuses: readonly strin
     return
   }
 
-  throw new AuthException(
-    BLOCKED_STATUS_CODES.get(canonical) ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
-    403
-  )
+  throw new AuthException(BLOCKED_STATUS_CODES.get(canonical) ?? AUTH_ERROR_CODES.ACCOUNT_INACTIVE)
 }
