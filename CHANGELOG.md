@@ -82,6 +82,48 @@ the status half is not, and will surface as failing assertions in any suite that
   `auth.otp_invalid`, and a `429` would say the address was registered, since only a record
   that exists can reach an attempt ceiling.
 
+### Tests
+
+- **27 end-to-end assertions tightened from a status range to an exact `(code, status)` pair**,
+  across six spec files, via a shared `expectAuthError` helper. The `status >= 400 && status < 500`
+  form they used is why the drift above survived the suite: `401` where the contract says `404`
+  is still a 4xx, so the check was satisfied by the right answer and the wrong one alike. Four of
+  them asserted no error code at all and now do. The same reasoning removed two negated
+  assertions (`not.toBe(429)`) in the rate-limit spec, which accepted every wrong answer but one.
+
+- **The internal-only code list is now pinned by name.** Every other assertion about those codes
+  lives inside a `for … of contract.errorCatalog.internalOnly` loop, so an empty or shortened
+  list did not fail them — it stopped them running, and they reported success for having checked
+  nothing. Unlike `codes` and `statuses`, nothing had pinned that array's contents.
+
+- **MFA specs derive TOTP codes from the live step rather than a remembered one**
+  ([`mfa-disable-flow`](test/e2e/mfa-disable-flow.e2e-spec.ts),
+  [`mfa-recovery-codes-flow`](test/e2e/mfa-recovery-codes-flow.e2e-spec.ts)). The fixtures spend
+  two adjacent TOTP counters and then reached one step backwards for a free slot, assuming the
+  whole fixture lands inside a single 30-second step. Crossing a step boundary inverted that
+  assumption: the slot reached for was the one `verify-enable` had burned, the anti-replay guard
+  refused it, and `/mfa/disable` answered `401`, which surfaced as a pre-disable token still
+  being accepted. A test defect, not a library one — the guard and the ±1 window behaved as
+  designed.
+
+- **`AuthException` is now tested against inherited `Object` members** (`constructor`,
+  `toString`, `__proto__`, `hasOwnProperty`) and against a code absent from the catalog.
+
+### Internal / CI
+
+- **OSV-Scanner workflow** ([`.github/workflows/osv-scanner.yml`](.github/workflows/osv-scanner.yml)),
+  a thin caller of the shared reusable. It scans the full resolved dependency tree on push, pull
+  request and a weekly schedule — coverage neither `dependency-review` (pull-request diff only)
+  nor `peer-advisory-drift` (declared ranges only) provides, since an already-installed
+  transitive package can turn vulnerable between releases.
+
+- **`conformance/wire-contract.json` excluded from Prettier**
+  ([`.prettierignore`](.prettierignore)). Its bytes are the contract — the file must stay
+  byte-identical with `rust-auth`'s copy, and the `lint-staged` glob `*.{json,md,yml,yaml}` runs
+  `prettier --write` over it, so an ordinary commit was one formatting-default change away from
+  breaking the pairing with no signal at all. Nothing in either repository compares one copy to
+  the other, which is what makes a silent reformat unrecoverable rather than merely wrong.
+
 ## [1.4.0] - 2026-08-11
 
 ### Changed
