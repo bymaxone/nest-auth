@@ -84,12 +84,19 @@ the status half is not, and will surface as failing assertions in any suite that
 
 ### Tests
 
-- **27 end-to-end assertions tightened from a status range to an exact `(code, status)` pair**,
-  across six spec files, via a shared `expectAuthError` helper. The `status >= 400 && status < 500`
-  form they used is why the drift above survived the suite: `401` where the contract says `404`
-  is still a 4xx, so the check was satisfied by the right answer and the wrong one alike. Four of
-  them asserted no error code at all and now do. The same reasoning removed two negated
-  assertions (`not.toBe(429)`) in the rate-limit spec, which accepted every wrong answer but one.
+- **19 end-to-end status-window assertions replaced with an exact `(code, status)` pair**, across
+  six spec files, via a shared `expectAuthError` helper: 16 were a bounded `status >= 400 &&
+status < 500`, and 3 asserted only the `>= 400` lower bound, which is looser still. That form
+  is why the drift above survived the suite — `401` where the contract says `404` is still a 4xx,
+  so the check was satisfied by the right answer and the wrong one alike. Four of them asserted
+  no error code at all and now do.
+
+- **Two negated status assertions replaced in the rate-limit spec.** `expect(status).not.toBe(429)`
+  accepts every wrong answer but one: the allowed login attempts now assert
+  `auth.invalid_credentials` at the contract's status, and the separate-budget reset asserts
+  `200` exactly, which also pins the anti-enumeration answer. Same defect as the range, one
+  shape further out — and harder to spot, because a negation reads like a deliberate claim
+  about a specific status.
 
 - **The internal-only code list is now pinned by name.** Every other assertion about those codes
   lives inside a `for … of contract.errorCatalog.internalOnly` loop, so an empty or shortened
