@@ -2,8 +2,19 @@
 
 All notable changes to `@bymax-one/nest-auth` will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+**Versioning, while the library is pre-adoption.** [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+is the target, not yet the practice. Until the API settles, breaking changes ship in **minor and
+patch** releases rather than driving the major, deliberately: the library has no production
+dependant, the surface is still being corrected as audits land, and a major per breaking change
+would put a young library in double digits while saying nothing useful about its stability.
+Strict SemVer starts when the API is declared stable, and that transition will be announced here.
+
+**What this means for you:** do not infer compatibility from the version number in the `1.x` line
+— `^1.4.0` and `~1.4.0` both resolve to releases that may break you. Read the entry before
+upgrading. Every breaking change carries an **Apply to a derived backend** note saying exactly
+what moves, and that note is the compatibility contract until strict SemVer begins.
 
 ## [1.4.1] - 2026-08-12
 
