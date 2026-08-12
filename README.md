@@ -1024,9 +1024,12 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 
 Validated by `createAuthValidationPipe()` with `whitelist` and `forbidNonWhitelisted`, so an
 unknown property is a `400 auth.validation` rather than a silently ignored field. `tenantId` is
-optional on every body below (≤128 chars, no control characters) and scopes the operation to one
-organization. Email fields are trimmed and lowercased before they reach the service, so the
-stored identity matches the case-insensitive lookup and every email-keyed control.
+optional on every **unauthenticated** body below (≤128 chars, no control characters) and scopes
+the operation to one organization. `POST /password/change` is the exception: it is behind
+`JwtAuthGuard`, takes its tenant from the JWT, and declares no `tenantId` — so sending one is an
+unknown property, and `forbidNonWhitelisted` answers `400 auth.validation`. Email fields are
+trimmed and lowercased before they reach the service, so the stored identity matches the
+case-insensitive lookup and every email-keyed control.
 
 | Endpoint                         | Body                                                                             |
 | -------------------------------- | -------------------------------------------------------------------------------- |

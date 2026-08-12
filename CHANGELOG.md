@@ -34,9 +34,15 @@ the status half is not, and will surface as failing assertions in any suite that
   nor a lint error but a plausible-looking wrong answer. Both libraries' suites were green
   throughout — each side was self-consistent, and neither read the other.
 
-  **Apply to a derived backend:** if you assert on HTTP statuses, the eight codes above move,
-  and `auth.account_locked` becomes `429` on every path. Statuses only — no code string, message
-  or envelope shape changed.
+  **Apply to a derived backend:** if you assert on HTTP statuses, thirteen codes move. The eight
+  above take their new value everywhere. The five that answered two statuses now answer one, and
+  a route-level assertion can fail on any of them even where the code itself is unchanged:
+  `auth.account_locked` is `429` on every path (it was `401` on the MFA and password-reset
+  lockouts), `auth.email_not_verified` is `403` (it was `401` on login and in `UserStatusGuard`),
+  `auth.mfa_required` is `403` (it was `401` on the login MFA gate), `auth.forbidden` is `403`
+  (it was `401` at every throw site), and `auth.token_invalid` is `401` (it was `400` in
+  `SelfOrAdminGuard`'s hash-format rejection). Statuses only — no code string, message or
+  envelope shape changed.
 
 ### Changed
 
@@ -1402,7 +1408,7 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.1...HEAD
 [1.4.1]: https://github.com/bymaxone/nest-auth/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...v1.3.2

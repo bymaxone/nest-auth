@@ -421,9 +421,18 @@ describe('cross-implementation conformance', () => {
 
       for (const internal of contract.errorCatalog.internalOnly) {
         const target = collapse[internal]
-        expect(target).toBeDefined()
+
+        // An explicit guard rather than `expect(target).toBeDefined()` plus `target!`. The
+        // matcher does not narrow the type, so the assertion would need a non-null assertion
+        // the project forbids — and a missing mapping would surface as a confusing lookup of
+        // `statuses[undefined]` rather than as the real failure, which is that this collapse
+        // map has fallen behind the contract's internal-only list.
+        if (target === undefined) {
+          throw new Error(`no collapse target declared for internal-only code ${internal}`)
+        }
+
         expect(contract.errorCatalog.statuses[internal]).toBe(
-          contract.errorCatalog.statuses[target!]
+          contract.errorCatalog.statuses[target]
         )
       }
     })
