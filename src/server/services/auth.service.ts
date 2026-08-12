@@ -306,7 +306,7 @@ export class AuthService {
       )
       const remainingSeconds = await this.bruteForce.getRemainingLockoutSeconds(bfIdentifier)
       this.emitLoginFailed({ email: dto.email, tenantId, reason: 'locked_out' }, context)
-      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
         retryAfterSeconds: remainingSeconds
       })
     }

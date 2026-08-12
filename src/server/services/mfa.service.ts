@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -379,7 +379,7 @@ export class MfaService {
     if (
       !(await this.redis.setIfAbsent(scopedLockKey, lockToken, MFA_TRANSITION_LOCK_TTL_SECONDS))
     ) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT)
     }
     if (
       acquireLegacy &&
@@ -389,7 +389,7 @@ export class MfaService {
       // bare DEL, so a scoped lock whose TTL lapsed and was retaken by another caller is left
       // alone rather than stolen.
       await this.redis.eval(RELEASE_LOCK_LUA, [scopedLockKey], [lockToken])
-      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT, HttpStatus.CONFLICT)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_STATE_CONFLICT)
     }
     try {
       // Re-read inside the lock. The caller's copy was read before the lock existed and may
@@ -1620,7 +1620,7 @@ export class MfaService {
         this.logger.warn(
           `reauthenticate: no recent authentication userId=${userId} context=${context}`
         )
-        throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED, 403)
+        throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED)
       }
       return
     }
@@ -1692,7 +1692,7 @@ export class MfaService {
       // `dashboard::{userId}`, a third keyspace distinct from every real tenant's — and an empty
       // string is exactly what an unset environment variable becomes by the time it reaches this
       // call site. The platform plane refuses any tenant at all, blank included.
-      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
         {
           field: 'tenantId',
           message:

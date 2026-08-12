@@ -6,7 +6,7 @@ import {
 } from 'node:crypto'
 import { promisify } from 'node:util'
 
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { BYMAX_AUTH_BREACH_CHECKER, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { MAX_KDF_BYTES_PER_DERIVATION } from '../config/resolved-options'
@@ -348,7 +348,7 @@ export class PasswordService {
   assertLongEnough(plain: string, field: string): void {
     if (plain.length >= this.minLength) return
 
-    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
       { field, message: `${field} must be at least ${String(this.minLength)} characters` }
     ])
   }
@@ -389,7 +389,7 @@ export class PasswordService {
       return
     }
     if (breached) {
-      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED, HttpStatus.BAD_REQUEST)
+      throw new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
     }
   }
 

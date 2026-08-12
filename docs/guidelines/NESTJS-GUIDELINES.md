@@ -1518,31 +1518,19 @@ export class AuthService {
     if (!user) {
       // Use constant-time flow — do not reveal if the email exists
       await this.passwordService.fakeCompare()
-      throw new AuthException(
-        AUTH_ERROR_CODES.INVALID_CREDENTIALS,
-        'Invalid email or password',
-        HttpStatus.UNAUTHORIZED
-      )
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
     const isLocked = await this.bruteForce.isLocked(dto.email)
     if (isLocked) {
-      throw new AuthException(
-        AUTH_ERROR_CODES.ACCOUNT_LOCKED,
-        'Account temporarily locked due to too many failed attempts',
-        HttpStatus.TOO_MANY_REQUESTS
-      )
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const passwordValid = await this.passwordService.compare(dto.password, user.passwordHash)
 
     if (!passwordValid) {
       await this.bruteForce.recordFailure(dto.email)
-      throw new AuthException(
-        AUTH_ERROR_CODES.INVALID_CREDENTIALS,
-        'Invalid email or password',
-        HttpStatus.UNAUTHORIZED
-      )
+      throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
     // ... continue with token generation
@@ -1599,21 +1587,32 @@ All error responses from this package follow a consistent shape:
 
 ### 7.6 Never Leak Implementation Details
 
-```typescript
-// WRONG: Leaking internal details to the client
-throw new AuthException(
-  AUTH_ERROR_CODES.INVALID_CREDENTIALS,
-  `User with email ${dto.email} not found in PostgreSQL users table`,
-  HttpStatus.UNAUTHORIZED
-)
+`AuthException` takes no message and no status — both come from the code, via
+`AUTH_ERROR_MESSAGES` and `AUTH_ERROR_STATUS`. A thrown string cannot reach a client because
+there is nowhere to put one. What is left to get wrong is `details`, which **is** serialized:
 
-// CORRECT: Generic, safe error message
-throw new AuthException(
-  AUTH_ERROR_CODES.INVALID_CREDENTIALS,
-  'Invalid email or password',
-  HttpStatus.UNAUTHORIZED
-)
+```typescript
+// WRONG: `details` is part of the response body — this ships the query, the table name,
+// and the fact that the address is not registered, all under a code that exists to hide it.
+throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS, {
+  reason: `no row in users where email = ${dto.email}`
+})
+
+// CORRECT: the code carries everything the caller is allowed to learn. Log the cause;
+// answer with the code.
+this.logger.warn(`login failed: no user for ${maskEmail(dto.email)}`)
+throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
 ```
+
+Reserve `details` for structured data the caller is meant to act on — the per-field list under
+`auth.validation`, `retryAfterSeconds` under `auth.account_locked`. If a payload would let a
+caller distinguish two outcomes that share a code, it re-opens by `details` exactly what the
+shared code closes.
+
+The same applies to the status line. Because the status is derived from the code, two outcomes
+that share a code necessarily share a status — which is the point. `auth.otp_invalid` answers
+`401` whether the code was wrong, the record expired, or the attempt ceiling was hit; answering
+`429` on the ceiling would say the record existed, since only a record that exists can reach one.
 
 ### 7.7 Rules for Error Handling in This Project
 
@@ -2379,11 +2378,7 @@ async login(dto: any): Promise<any> {
 async login(dto: LoginDto): Promise<AuthResult> {
   const user = await this.userRepository.findByEmail(dto.email);
   if (!user) {
-    throw new AuthException(
-      AUTH_ERROR_CODES.INVALID_CREDENTIALS,
-      'Invalid email or password',
-      HttpStatus.UNAUTHORIZED,
-    );
+    throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS);
   }
   // ...
 }

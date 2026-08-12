@@ -55,7 +55,7 @@ describe('AuthExceptionFilter', () => {
     const { host, status, json } = makeHost()
 
     filter.catch(
-      new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, HttpStatus.TOO_MANY_REQUESTS, {
+      new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
         retryAfterSeconds: 300
       }),
       host

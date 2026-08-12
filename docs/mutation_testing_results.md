@@ -8,7 +8,7 @@ suite detects. This document reports the hardening pass that took the library fr
 mutation score to **99.10%**, the five configuration corrections that made the run trustworthy,
 and an honest accounting of every mutant that remains. Later passes
 ([Where the score stands since](#where-the-score-stands-since)) closed the rest and have held it
-there as the library grew: the most recent cold run — **2026-08-08**, 4 870 valid mutants — is
+there as the library grew: the most recent cold run — **2026-08-12**, 4 989 valid mutants — is
 **100.00%**, with no surviving mutants and none without coverage. All numbers below come from the
 recorded Stryker runs; nothing is estimated.
 
@@ -296,13 +296,14 @@ The 99.10% above is the snapshot at the end of that hardening pass. The number m
 library grows: new code arrives with survivors, and each subsequent pass drives them out. Every
 figure here is from a recorded run; none is estimated.
 
-| Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                                                        |
-| ---------- | ----------- | -----: | -------: | ----------: | ------: | -------------------------------------------------------------------------------------------------------------------- |
-| 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors                                    |
-| 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                                                          |
-| 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below                                                 |
-| 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs                                       |
-| 2026-08-08 | **100.00%** |  4 849 |    **0** |       **0** |      21 | Re-measured cold with the 1.3.1 additions folded in (revocation service, default email provider, tenant on the port) |
+| Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                                                                                            |
+| ---------- | ----------- | -----: | -------: | ----------: | ------: | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors                                                                        |
+| 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                                                                                              |
+| 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below                                                                                     |
+| 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs                                                                           |
+| 2026-08-08 | **100.00%** |  4 849 |    **0** |       **0** |      21 | Re-measured cold with the 1.3.1 additions folded in (revocation service, default email provider, tenant on the port)                                     |
+| 2026-08-12 | **100.00%** |  4 968 |    **0** |       **0** |      21 | Re-measured cold for the 1.4.1 wire-status alignment: the status derives from the code, and both catalog lookups became `Map`s with an explicit fallback |
 
 The 2026-07-28 pair is one day's work read twice: the cross-implementation parity fixes landed
 with a single survivor of their own, and the second row is that survivor recorded rather than
@@ -355,6 +356,45 @@ Two of those directives were **silently inert** before this pass, which is worth
 
 If a mutant you documented keeps showing up as a survivor, check that the directive lands on the
 line you think it does — it fails quietly, in the direction of reporting more work, not less.
+
+### Re-measured cold — 2026-08-12
+
+The `1.4.1` wire-status alignment: the HTTP status became a property of the error code rather than
+a constructor argument, 34 throw sites lost their status argument, and both catalog lookups inside
+`AuthException` became `Map`s with an explicit fallback. Run cold with the incremental baseline
+deleted, in **35 minutes 39 seconds**, over **102 instrumented files with 7 886 mutants**.
+
+| Outcome                          |   Mutants |
+| -------------------------------- | --------: |
+| Killed                           |     4 968 |
+| Timed out (counts as detected)   |        21 |
+| **Survived**                     |     **0** |
+| **No coverage**                  |     **0** |
+| Discarded — compile error        |     2 530 |
+| Discarded — runtime error        |         8 |
+| Ignored — documented equivalents |       359 |
+| **Instrumented, total**          | **7 886** |
+
+**4 989 detected out of 4 989 valid mutants — 100.00%.** The suite behind it is the **unit suite
+only — 3 483 tests across 119 files** at the moment the run started. Stryker is pointed at
+`jest.stryker.config.ts`, which wraps `jest.config.ts`; the 127 end-to-end tests run under a
+separate config and **no mutant is ever exposed to them**. That is worth stating rather than
+folding the two counts together, because it is exactly what let the drift this release fixes
+survive: the e2e assertions that exercised the wrong statuses were outside the gate that would
+have noticed they were too weak to see it. A weak assertion is only as dangerous as the gates that
+do not cover it.
+
+(One test was added after this run started — the count is 3 484 now. It pins the contract's
+internal-only list and asserts nothing about `src/`, so it cannot change the score.)
+
+Two of the mutants are worth naming, because the change that introduced them is the reason this
+row exists. `STATUS_BY_CODE.get(code) ?? HttpStatus.INTERNAL_SERVER_ERROR` puts a fallback on a
+path no catalog code reaches, so nothing in ordinary use covers it; it is killed by tests that
+pass a cast non-catalog code and an inherited `Object` member (`constructor`, `toString`,
+`__proto__`, `hasOwnProperty`). Before the `Map`, indexing the object literal resolved those from
+the prototype chain and handed a **function** to `HttpException` as the status. The fallback is
+not defensive dressing — it is the branch that makes the lookup total, and the mutation gate is
+what forces it to carry a test rather than an assumption.
 
 ### Re-measured cold — 2026-08-08
 

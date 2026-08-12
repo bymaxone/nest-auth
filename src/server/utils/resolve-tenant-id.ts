@@ -1,4 +1,3 @@
-import { HttpStatus } from '@nestjs/common'
 import type { Request } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -48,7 +47,7 @@ export async function resolveTenantId(
     return await resolver(req)
   }
   if (dtoTenantId === undefined || dtoTenantId === null) {
-    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, HttpStatus.BAD_REQUEST, [
+    throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
       {
         field: 'tenantId',
         message: 'tenantId is required unless the deployment configures tenantIdResolver'

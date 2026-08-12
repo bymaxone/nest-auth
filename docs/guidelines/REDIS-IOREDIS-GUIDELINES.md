@@ -275,7 +275,10 @@ async canActivate(context: ExecutionContext): Promise<boolean> {
 
   const isRevoked = await this.redis.exists(blacklistKey);
   if (isRevoked) {
-    throw new AuthException(AUTH_ERROR_CODES.TOKEN_REVOKED);
+    // TOKEN_REVOKED is internal-only — never throw it. A caller must not be able to tell
+    // "valid until revoked" from "never a token", so the blacklist hit answers TOKEN_INVALID
+    // like every other token failure.
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID);
   }
 
   // ... continue with request ...

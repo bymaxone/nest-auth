@@ -3,7 +3,7 @@
  *
  * @layer Guard
  */
-import { HttpStatus, Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import type { Request, Response } from 'express'
@@ -81,7 +81,7 @@ export class AuthRateLimitGuard implements CanActivate {
     // `Retry-After` is the window length, not the remaining time: the remaining time would
     // tell a caller exactly when the window opened, which is one bit more than it needs.
     context.switchToHttp().getResponse<Response>().setHeader('Retry-After', windowSeconds)
-    throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS, HttpStatus.TOO_MANY_REQUESTS)
+    throw new AuthException(AUTH_ERROR_CODES.TOO_MANY_REQUESTS)
   }
 
   /**

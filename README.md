@@ -958,7 +958,7 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 4,870 seeded faults detected (4,849 killed, 21 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-08](./docs/mutation_testing_results.md#re-measured-cold--2026-08-08))
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 4,989 seeded faults detected (4,968 killed, 21 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-12](./docs/mutation_testing_results.md#re-measured-cold--2026-08-12))
 - ✅ **3,547 tests** — 3,420 unit and 127 end-to-end, spanning all five subpaths
 - ✅ **Every equivalent mutant documented** — the 350 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
@@ -1019,6 +1019,44 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 > does not send it back — the binding RFC 6749 §10.12 requires, without which an attacker can
 > hand a victim a callback URL and have the victim's browser complete the attacker's login.
 > Mount `app.use(cookieParser())` before the module's routes or every callback answers 401.
+
+### Request bodies
+
+Validated by `createAuthValidationPipe()` with `whitelist` and `forbidNonWhitelisted`, so an
+unknown property is a `400 auth.validation` rather than a silently ignored field. `tenantId` is
+optional on every body below (≤128 chars, no control characters) and scopes the operation to one
+organization. Email fields are trimmed and lowercased before they reach the service, so the
+stored identity matches the case-insensitive lookup and every email-keyed control.
+
+| Endpoint                         | Body                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| `POST /register`                 | `{ email, password, name }` — `name` 2–128                                       |
+| `POST /login`                    | `{ email, password }`                                                            |
+| `POST /verify-email`             | `{ email, otp }` — `otp` is **exactly 6 digits**                                 |
+| `POST /resend-verification`      | `{ email }`                                                                      |
+| `POST /password/forgot-password` | `{ email }`                                                                      |
+| `POST /password/verify-otp`      | `{ email, otp }`                                                                 |
+| `POST /password/resend-otp`      | `{ email }`                                                                      |
+| `POST /password/reset-password`  | `{ email, newPassword }` **plus exactly one** of `token`, `otp`, `verifiedToken` |
+| `POST /password/change`          | `{ currentPassword, newPassword }`                                               |
+
+Three constraints are worth stating because they are not visible from the field names:
+
+- **`reset-password` carries exactly one proof.** `token` is the emailed URL parameter, `otp` the
+  emailed 4–8 character code, and `verifiedToken` the 64-character handle `POST
+/password/verify-otp` returns (5-minute TTL) so the OTP need not be re-submitted. All three are
+  optional at the validation boundary and the mutual exclusivity is enforced in the service — a
+  body carrying none or more than one is rejected there, not by the DTO.
+- **The password length the DTO enforces is not your policy.** `@MinLength(8)` is structural: it
+  is the floor NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and it is what a
+  decorator can express, since decorators evaluate before any configuration exists. The real
+  floor is `password.minLength` — **default 15** — enforced by `PasswordService`, which answers
+  the same `auth.validation` code and `details` shape. A client that validates against 8 will see
+  a `400` from the service.
+- **`login` deliberately floors `password` at 1 character.** Rejecting only the empty string
+  stops a caller from spending a full scrypt derivation for free; enforcing the configured policy
+  length here would leak it as a pre-KDF timing signal, because a request failing validation
+  returns before the hash runs.
 
 ### Administrative operations — methods, deliberately not routes
 
@@ -1091,6 +1129,36 @@ app.useGlobalFilters(new AuthExceptionFilter())
 It passes an `AuthException` through untouched, keeps the status any other `HttpException`
 chose, and answers an unhandled throw with `auth.internal` and a generic message — never the
 thrown one.
+
+#### The HTTP status belongs to the code
+
+Every code answers exactly one status, and the status is derived from the code rather than
+chosen at the throw site — `AuthException` takes no status argument. A client can switch on
+`error.code` and the status line together and get the same answer from either implementation:
+`@bymax-one/nest-auth` and `rust-auth` read the same table, pinned in
+[`conformance/wire-contract.json`](./conformance/wire-contract.json) under
+`errorCatalog.statuses` and asserted by both suites against that file.
+
+| Status | Codes                                                                                                                                                                                                                                                             |
+| -----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  `400` | `auth.validation` · `auth.password_compromised` · `auth.password_reset_token_invalid` · `auth.email_change_token_invalid` · `auth.invalid_invitation_token` · `auth.mfa_not_enabled` · `auth.mfa_setup_required`                                                  |
+|  `401` | `auth.invalid_credentials` · `auth.token_invalid` · `auth.refresh_token_invalid` · `auth.mfa_invalid_code` · `auth.mfa_temp_token_invalid` · `auth.otp_invalid` · `auth.oauth_failed` · `auth.platform_auth_required`                                             |
+|  `403` | `auth.account_inactive` · `auth.account_suspended` · `auth.account_banned` · `auth.pending_approval` · `auth.email_not_verified` · `auth.mfa_required` · `auth.insufficient_role` · `auth.forbidden` · `auth.untrusted_origin` · `auth.reauthentication_required` |
+|  `404` | `auth.session_not_found`                                                                                                                                                                                                                                          |
+|  `409` | `auth.email_already_exists` · `auth.mfa_already_enabled` · `auth.mfa_state_conflict` · `auth.oauth_email_mismatch`                                                                                                                                                |
+|  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                  |
+|  `500` | `auth.internal`                                                                                                                                                                                                                                                   |
+
+`AUTH_ERROR_STATUS` is exported if you need the mapping at runtime — for a typed client, an
+API document, or a test that asserts against it.
+
+> **Anti-enumeration reads through the status too.** `POST /forgot-password` answers `200` and
+> `POST /verify-email` / the resend endpoints answer `204` **whether or not the address exists**.
+> A `200` there does not mean an email was sent, and treating it as confirmation re-introduces
+> the account enumeration the endpoints exist to prevent. For the same reason the OTP failures
+> collapse: a wrong code, a record that expired, and an exhausted attempt ceiling are one code
+> (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
+> registered, since only a record that exists can reach one.
 
 ### Server Decorators
 

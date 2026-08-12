@@ -5,6 +5,66 @@ All notable changes to `@bymax-one/nest-auth` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-08-12
+
+Aligns every HTTP status with `rust-auth` and makes the pairing structural rather than
+conventional. **Two breaking changes ride along in a patch release** — the `AuthException`
+signature and thirteen HTTP status codes — matching how this line has shipped breaking changes
+before (see `1.3.2`). Both `^1.4.0` and `~1.4.0` resolve to it, so a routine update picks it up:
+read the migration notes below before upgrading. The `AuthException` half is compiler-guided;
+the status half is not, and will surface as failing assertions in any suite that pins statuses.
+
+### Fixed
+
+- **BREAKING: thirteen error codes answered the wrong HTTP status, and five answered two.**
+  A consumer's OpenAPI audit surfaced `auth.email_already_exists` answering `401` here and `409`
+  in `rust-auth`. It was not one code. `auth.session_not_found` answered `401` instead of `404`;
+  `auth.mfa_already_enabled` `401` instead of `409`; `auth.mfa_not_enabled`,
+  `auth.mfa_setup_required`, `auth.password_reset_token_invalid`,
+  `auth.email_change_token_invalid` and `auth.invalid_invitation_token` `401` instead of `400`.
+  Five more disagreed with _themselves_ depending on the throw site: `auth.account_locked` was
+  `429` on login but `401` on the MFA and password-reset lockouts — so a client backing off on
+  `429` did not back off on the others — and `auth.email_not_verified`, `auth.mfa_required`,
+  `auth.forbidden` and `auth.token_invalid` each answered two statuses across the codebase.
+  Every value now matches `rust-auth`, which was the correct side throughout.
+
+  **Root cause, and why no gate caught it.** `conformance/wire-contract.json` pinned the code
+  _vocabulary_ and not the status per code, so the field had no gate at all; and
+  `AuthException`'s status argument defaulted to `401`, making an omission neither a type error
+  nor a lint error but a plausible-looking wrong answer. Both libraries' suites were green
+  throughout — each side was self-consistent, and neither read the other.
+
+  **Apply to a derived backend:** if you assert on HTTP statuses, the eight codes above move,
+  and `auth.account_locked` becomes `429` on every path. Statuses only — no code string, message
+  or envelope shape changed.
+
+### Changed
+
+- **BREAKING: `AuthException` no longer takes a status argument.** The signature is now
+  `new AuthException(code, details?)`; the status is derived from the code via the new
+  `AUTH_ERROR_STATUS` table. One code answering two statuses is no longer expressible, which is
+  what the defaulted argument allowed. **Apply to a derived backend:** drop the second argument
+  where you passed a status — `new AuthException(CODE, HttpStatus.FORBIDDEN)` becomes
+  `new AuthException(CODE)`, and `new AuthException(CODE, status, details)` becomes
+  `new AuthException(CODE, details)`. TypeScript flags the old three-argument form and any
+  numeric status passed where `details` is now expected, so the migration is compiler-guided
+  rather than silent.
+
+### Added
+
+- **`AUTH_ERROR_STATUS`** ([`src/server/errors/auth-error-codes.ts`](src/server/errors/auth-error-codes.ts)),
+  exported from the package root: the `code → HTTP status` map every error answers by. Useful
+  for a generated client, an API document, or a test asserting against the wire contract.
+
+- **`errorCatalog.statuses` in [`conformance/wire-contract.json`](conformance/wire-contract.json)**,
+  byte-identical with `rust-auth` like the rest of that file, plus conformance tests asserting
+  `AUTH_ERROR_STATUS` against it, that the table covers the catalog exactly, and that each
+  internal-only code carries the status of the public code it collapses onto — a differing
+  status would hand back through the status line what the collapse removes from the body.
+  These are wire statuses: `auth.otp_max_attempts` is `401` because a caller receives it as
+  `auth.otp_invalid`, and a `429` would say the address was registered, since only a record
+  that exists can reach an attempt ceiling.
+
 ## [1.4.0] - 2026-08-11
 
 ### Changed
@@ -1343,6 +1403,7 @@ ever installable.
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
 [Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...HEAD
+[1.4.1]: https://github.com/bymaxone/nest-auth/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/bymaxone/nest-auth/compare/v1.3.0...v1.3.1

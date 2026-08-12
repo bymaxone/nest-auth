@@ -19,7 +19,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 import type { Request, Response } from 'express'
 
 import { OAUTH_PLUGINS } from './oauth.constants'
@@ -406,7 +406,7 @@ export class OAuthService {
           this.logger.warn(
             `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${tenantId}`
           )
-          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH, HttpStatus.CONFLICT)
+          throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
         }
 
         authUser = await this.userRepo.createWithOAuth({
@@ -458,7 +458,7 @@ export class OAuthService {
     // branch above records what the provider actually asserted, so an unverified provider
     // profile stays unverified here rather than being promoted by the act of signing in.
     if (this.options.emailVerification.required && !authUser.emailVerified) {
-      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     }
 
     // MFA branch: when the resolved user has MFA enabled, the OAuth flow has only

@@ -1,4 +1,4 @@
-import { Inject, HttpStatus, Injectable } from '@nestjs/common'
+import { Inject, Injectable } from '@nestjs/common'
 import type { CanActivate, ExecutionContext } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import type { Request } from 'express'
@@ -82,7 +82,7 @@ export class MfaRequiredGuard implements CanActivate {
     // If MFA is enabled on this account but the current JWT was not issued after
     // a successful MFA challenge, the request must be rejected.
     if (user.mfaEnabled === true && user.mfaVerified !== true) {
-      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
     return true

@@ -36,7 +36,7 @@ import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
 import type { ResolvedOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
-import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from './errors/auth-error-codes'
+import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
@@ -83,7 +83,11 @@ interface WireContract {
   }
   accessTokenClaims: Record<string, unknown>
   rateLimits: Record<string, string>
-  errorCatalog: { codes: string[]; internalOnly: string[] }
+  errorCatalog: {
+    codes: string[]
+    internalOnly: string[]
+    statuses: Record<string, number>
+  }
   errorEnvelope: { shape: { error: Record<string, string> } }
   responseBodies: {
     login: { cookie: string[]; bearer: string[] }
@@ -359,11 +363,68 @@ describe('cross-implementation conformance', () => {
       )
     })
 
+    // Verifies the internal-only list is exactly these five, by name.
+    //
+    // Every other assertion about internal-only codes in this file lives inside a
+    // `for (… of contract.errorCatalog.internalOnly)` loop, so an empty or shortened list does
+    // not fail them — it stops them running, and they report success for having checked
+    // nothing. Unlike `codes` and `statuses`, that array had nothing pinning its contents, and
+    // nothing else could catch it: Stryker mutates `src/`, never the contract JSON.
+    //
+    // The general shape is worth naming, because it is the inverse of the one this whole change
+    // was about. A range assertion accepts the wrong answer; this accepts the absence of the
+    // question. Both report green.
+    it('marks exactly the five internal-only codes the contract names', () => {
+      expect([...contract.errorCatalog.internalOnly].sort()).toEqual([
+        'auth.otp_expired',
+        'auth.otp_max_attempts',
+        'auth.token_expired',
+        'auth.token_missing',
+        'auth.token_revoked'
+      ])
+    })
+
     // Verifies every code carries a default end-user message. A code with no message would
     // answer with its own identifier, which is a developer string reaching a user.
     it('gives every code a default message', () => {
       for (const code of contract.errorCatalog.codes) {
         expect(AUTH_ERROR_MESSAGES[code as keyof typeof AUTH_ERROR_MESSAGES]).toBeTruthy()
+      }
+    })
+
+    // Verifies every code answers the HTTP status the shared contract declares. This is the
+    // assertion whose absence let thirteen codes drift: the contract pinned the code strings
+    // and not their statuses, so nest-auth answering 401 where rust-auth answered 409, 404 or
+    // 400 was invisible to both suites — each side was self-consistent and neither read the
+    // other. Reading the shared file is what makes it a parity test rather than a restatement.
+    it('answers the status the contract declares for every code', () => {
+      expect(AUTH_ERROR_STATUS).toEqual(contract.errorCatalog.statuses)
+    })
+
+    // Verifies the table covers the catalog exactly — no code without a status (which would
+    // reach `HttpException` as `undefined`), and no status for a code that no longer exists.
+    it('declares a status for exactly the codes in the catalog', () => {
+      expect(Object.keys(AUTH_ERROR_STATUS).sort()).toEqual([...contract.errorCatalog.codes].sort())
+    })
+
+    // Verifies each internal-only code carries the status of the public code it collapses onto.
+    // The collapse hides which of the two happened; a differing status would give it back
+    // through the status line, which is the same disclosure by another route.
+    it('gives every internal-only code the status of the code it collapses onto', () => {
+      const collapse: Record<string, string> = {
+        'auth.token_expired': 'auth.token_invalid',
+        'auth.token_revoked': 'auth.token_invalid',
+        'auth.token_missing': 'auth.token_invalid',
+        'auth.otp_expired': 'auth.otp_invalid',
+        'auth.otp_max_attempts': 'auth.otp_invalid'
+      }
+
+      for (const internal of contract.errorCatalog.internalOnly) {
+        const target = collapse[internal]
+        expect(target).toBeDefined()
+        expect(contract.errorCatalog.statuses[internal]).toBe(
+          contract.errorCatalog.statuses[target!]
+        )
       }
     })
 
@@ -1051,7 +1112,7 @@ describe('cross-implementation conformance', () => {
     // Scenario: an error that does carry details. Expected: an object under the same key, so
     // the declared union is pinned in both directions.
     it('serializes structured details as an object under the same key', () => {
-      const body = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, 429, {
+      const body = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
         retryAfterSeconds: 300
       }).getResponse() as { error: { details: unknown } }
 

@@ -15,7 +15,7 @@
  * @layer Service
  */
 
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
@@ -60,7 +60,7 @@ export class WsTicketService {
     }
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
       this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${payload.sub}`)
-      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED, HttpStatus.FORBIDDEN)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
     // The snapshot is read from the ACCOUNT, not from the token.

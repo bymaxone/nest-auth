@@ -115,14 +115,14 @@ export class TrustedOriginGuard implements CanActivate {
       // documented on the class; the alternative refuses every same-origin POST from those
       // browsers, which is a broken deployment rather than a hardened one.
       if (sawFetchSite || this.options.cookies.trustedOrigins.length > 0) {
-        throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN, 403)
+        throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN)
       }
       return true
     }
 
     // A browser that sent `Sec-Fetch-Site` would also have sent `Origin` here.
     if (sawFetchSite) {
-      throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN, 403)
+      throw new AuthException(AUTH_ERROR_CODES.UNTRUSTED_ORIGIN)
     }
 
     return true

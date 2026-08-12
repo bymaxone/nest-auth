@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus } from '@nestjs/common'
 
-import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from './auth-error-codes'
+import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './auth-error-codes'
 import type { AuthErrorCode } from './auth-error-codes'
 import { AuthException } from './auth-exception'
 
@@ -107,27 +107,42 @@ describe('AuthException — response format', () => {
     expect(response.error.message).toBe('Invalid email or password')
   })
 
-  // Verifies that the default HTTP status is 401 Unauthorized when no status is provided.
-  it('should default to HTTP 401 Unauthorized', () => {
+  // Verifies the status comes from AUTH_ERROR_STATUS rather than a constructor default, for a
+  // code whose status is 401 — so passing the table is what produces the answer, not a
+  // coincidence between the table and the old default.
+  it('should take the HTTP status from AUTH_ERROR_STATUS', () => {
     const ex = new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    expect(ex.getStatus()).toBe(AUTH_ERROR_STATUS['auth.token_invalid'])
     expect(ex.getStatus()).toBe(HttpStatus.UNAUTHORIZED)
   })
 
-  // Verifies that a custom HTTP status code is reflected in getStatus().
-  it('should accept a custom HTTP status code', () => {
-    const ex = new AuthException(AUTH_ERROR_CODES.FORBIDDEN, HttpStatus.FORBIDDEN)
-    expect(ex.getStatus()).toBe(HttpStatus.FORBIDDEN)
+  // Verifies every catalog code answers exactly the status the table declares. Exhaustive on
+  // purpose: this is the assertion that would have caught the drift that motivated deriving
+  // the status from the code — thirteen codes answering a defaulted 401 instead of their own.
+  it('should answer the table status for every code in the catalog', () => {
+    for (const code of Object.values(AUTH_ERROR_CODES)) {
+      expect(new AuthException(code).getStatus()).toBe(AUTH_ERROR_STATUS[code])
+    }
   })
 
-  // Verifies that HTTP 429 TOO_MANY_REQUESTS can be used for rate-limit errors.
-  it('should accept a custom HTTP status code for 429', () => {
-    const ex = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, HttpStatus.TOO_MANY_REQUESTS)
-    expect(ex.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS)
+  // Verifies a non-401 code answers its own status, so the derivation is exercised in the
+  // direction the old default could not produce.
+  it('should answer 403 for a code the table maps to 403', () => {
+    expect(new AuthException(AUTH_ERROR_CODES.FORBIDDEN).getStatus()).toBe(HttpStatus.FORBIDDEN)
+  })
+
+  // Verifies the rate-limit lockout answers 429 wherever it is thrown. It used to answer 429
+  // on login and 401 on the MFA and password-reset lockouts, so a client backing off on 429
+  // did not back off on the others.
+  it('should answer 429 for the brute-force lockout', () => {
+    expect(new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED).getStatus()).toBe(
+      HttpStatus.TOO_MANY_REQUESTS
+    )
   })
 
   // Verifies that optional details are included in the response body when provided.
   it('should include details in the response when provided', () => {
-    const ex = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, HttpStatus.TOO_MANY_REQUESTS, {
+    const ex = new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED, {
       retryAfterSeconds: 300
     })
     const response = ex.getResponse() as { error: { details: Record<string, unknown> } }
@@ -151,6 +166,29 @@ describe('AuthException — response format', () => {
     expect(response.error.code).toBe(unknownCode)
     expect(response.error.message).toBe(unknownCode)
   })
+
+  // Verifies an unknown code answers 500 rather than the `undefined` an unguarded table lookup
+  // produced. A code with no entry is a fault on the throwing side, and Express cannot write a
+  // status line from `undefined`.
+  it('should answer 500 when the code has no entry in AUTH_ERROR_STATUS', () => {
+    const ex = new AuthException('auth.some_future_code' as AuthErrorCode)
+    expect(ex.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR)
+  })
+
+  // Verifies a code naming an inherited Object member resolves nothing. Indexing the catalogs
+  // as plain objects returned the prototype member — truthy, so it defeated the `?? code`
+  // message fallback and put a FUNCTION where the HTTP status belongs. The Map lookups have no
+  // prototype chain, so both fall back cleanly.
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'should not resolve %s from the prototype chain',
+    (inherited) => {
+      const ex = new AuthException(inherited as AuthErrorCode)
+      const response = ex.getResponse() as { error: { message: unknown } }
+
+      expect(ex.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR)
+      expect(response.error.message).toBe(inherited)
+    }
+  )
 
   // Verifies that AuthException is a subclass of NestJS HttpException for proper filter handling.
   it('should extend HttpException', () => {

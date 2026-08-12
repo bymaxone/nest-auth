@@ -21,7 +21,7 @@ import request from 'supertest'
 import { BYMAX_AUTH_HOOKS } from '../../src/server/bymax-auth.constants'
 import type { IAuthHooks, OAuthLoginResult } from '../../src/server/interfaces/auth-hooks.interface'
 import { OAUTH_PLUGINS } from '../../src/server/oauth/oauth.constants'
-import { bootstrapTestApp } from './setup'
+import { bootstrapTestApp, expectAuthError } from './setup'
 import type { BootstrappedTestApp, MockUserRepository } from './setup'
 
 // ---------------------------------------------------------------------------
@@ -80,10 +80,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
         name: 'Recipient Name'
       })
 
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(res.status).toBeLessThan(500)
-    const body = res.body as { error?: { code?: string } }
-    expect(body.error?.code).toBe('auth.invalid_invitation_token')
+    expectAuthError(res, 'auth.invalid_invitation_token')
   })
 
   // Verifies that a token can only be accepted ONCE. The second attempt with
@@ -163,11 +160,7 @@ describe('/invitations/accept negative paths (E2E)', () => {
       password: 'AcceptPass2!-xyz',
       name: 'Replay'
     })
-    expect(accept2.status).toBeGreaterThanOrEqual(400)
-    expect(accept2.status).toBeLessThan(500)
-    expect((accept2.body as { error?: { code?: string } }).error?.code).toBe(
-      'auth.invalid_invitation_token'
-    )
+    expectAuthError(accept2, 'auth.invalid_invitation_token')
   })
 })
 
@@ -213,10 +206,7 @@ describe('sessions negative paths (E2E)', () => {
       .delete(`/sessions/${targetId}`)
       .set('Authorization', `Bearer ${userA.accessToken}`)
 
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(res.status).toBeLessThan(500)
-    const body = res.body as { error?: { code?: string } }
-    expect(body.error?.code).toBe('auth.session_not_found')
+    expectAuthError(res, 'auth.session_not_found')
   })
 
   // Verifies that DELETE /sessions/all without a refresh token in the request
@@ -235,10 +225,7 @@ describe('sessions negative paths (E2E)', () => {
       .set('Authorization', `Bearer ${user.accessToken}`)
     // intentionally no body
 
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(res.status).toBeLessThan(500)
-    const body = res.body as { error?: { code?: string } }
-    expect(body.error?.code).toBe('auth.session_not_found')
+    expectAuthError(res, 'auth.session_not_found')
   })
 })
 
@@ -263,10 +250,7 @@ describe('password reset negative paths (E2E)', () => {
           tenantId: 'tenant-1'
         })
 
-      expect(res.status).toBeGreaterThanOrEqual(400)
-      expect(res.status).toBeLessThan(500)
-      const body = res.body as { error?: { code?: string } }
-      expect(body.error?.code).toBe('auth.password_reset_token_invalid')
+      expectAuthError(res, 'auth.password_reset_token_invalid')
     } finally {
       await boot.app.close()
     }
@@ -290,12 +274,9 @@ describe('password reset negative paths (E2E)', () => {
         .post('/password/verify-otp')
         .send({ email, otp: '000000', tenantId: 'tenant-1' })
 
-      expect(res.status).toBeGreaterThanOrEqual(400)
-      expect(res.status).toBeLessThan(500)
-      const body = res.body as { error?: { code?: string } }
       // OTP_INVALID on first wrong attempt — OTP_MAX_ATTEMPTS only appears
       // after exceeding the lib's attempt budget.
-      expect(body.error?.code).toBe('auth.otp_invalid')
+      expectAuthError(res, 'auth.otp_invalid')
     } finally {
       await boot.app.close()
     }
@@ -367,10 +348,7 @@ describe('OAuth negative paths (E2E)', () => {
       .get('/oauth/unknownprov')
       .query({ tenantId: 'tenant-1' })
 
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(res.status).toBeLessThan(500)
-    const body = res.body as { error?: { code?: string } }
-    expect(body.error?.code).toBe('auth.oauth_failed')
+    expectAuthError(res, 'auth.oauth_failed')
   })
 
   // Verifies that omitting `tenantId` from /oauth/:provider is rejected by
