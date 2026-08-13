@@ -20,22 +20,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **The shared wire contract is now pinned by hash, on both sides.**
+- **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
   `conformance/wire-contract.json` is the one artifact `rust-auth` and this library are supposed
-  to hold **byte-identically** — it is the source on both sides rather than a derivation of one,
-  which is why it is shared at all. Its identity held **by memory**: both implementations checked
-  it by hand when they remembered to, and nothing failed when nobody did.
+  to hold **byte-identically** — it is the source on both sides rather than a derivation of one.
+  Nothing asserted it had not moved. The conformance suite now pins its SHA-256.
 
-  The conformance suite now asserts its SHA-256 against a pinned constant, and `rust-auth` pins
-  the same one. A change to the contract turns **both** suites red until both are advanced to the
-  same new value, so moving it on one side alone is what breaks — which is the failure mode this
-  exists for. Stated so nobody reads more into it: this compares each repository against a
-  constant, not against the other, and it would not catch both being advanced to the same wrong
-  value.
+  **What it catches:** an _unaccompanied_ byte change — an edit that forgets to advance the
+  constant, a formatter rewriting the file, a merge resolving it differently. Falsified by
+  re-serialising the file with identical data and different bytes.
 
-  Reformatting counts as a change, deliberately — falsified by re-serialising the file with
-  identical data and watching it go red. The last unclosed instance of the drift incident this
-  conformance work came out of.
+  **What it does not catch, stated because the first draft of this note claimed otherwise:**
+  cross-implementation divergence. Changing the file _and_ the constant in one commit leaves this
+  suite green while `rust-auth`'s untouched pair leaves theirs green too — both green, bytes
+  divergent. Two independent local hashes cannot enforce agreement between two repositories,
+  because neither reads the other. Closing that needs a real cross-repository comparison (one
+  side fetching the other's committed blob in CI, or both consuming an immutable versioned
+  artifact); it is proposed and unbuilt.
 
 ## [1.4.3] - 2026-08-13
 

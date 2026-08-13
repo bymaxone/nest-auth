@@ -103,32 +103,31 @@ const contractSource = readFileSync(CONTRACT_PATH, 'utf8')
 const contract = JSON.parse(contractSource) as WireContract
 
 /**
- * The SHA-256 of `conformance/wire-contract.json`, pinned so the two implementations cannot
- * drift apart silently.
+ * The SHA-256 of `conformance/wire-contract.json`, pinned so the file cannot change unnoticed.
  *
- * The file is the ONE artifact rust-auth and nest-auth are supposed to hold byte-identically —
- * it is the source on both sides rather than a derivation of one, which is why it is shared at
- * all. Until now that identity held **by memory**: both sides checked it by hand when they
- * remembered to, and nothing failed when nobody did. That is the last unclosed instance of the
- * incident this whole conformance effort came out of.
+ * **What this catches, stated narrowly because the obvious wider claim is false.** It fails on an
+ * *unaccompanied* byte change: an edit that forgets to advance the constant, a formatter
+ * rewriting the file (`lint-staged` runs Prettier over `*.json` here), a merge resolving it
+ * differently. That is a real class — the shared file must not move by accident on either side.
  *
- * rust-auth pins this same constant. So a change to the contract turns both suites red until
- * both are updated to the same new value, and updating one side alone is what breaks — which is
- * the property that matters, because the failure mode is one implementation moving the contract
- * and the other not noticing.
+ * **What it does NOT catch: cross-implementation divergence.** Changing the file *and* this
+ * constant in one commit leaves this suite green, while rust-auth's untouched file and untouched
+ * constant leave theirs green too. Both green, bytes divergent. Two independent local hashes
+ * cannot enforce agreement between two repositories — nothing here reads the other side.
  *
- * What it does NOT prove, stated so nobody reads more into it: this compares bytes against a
- * constant a human copied into two repositories, not one repository against the other. It
- * catches divergence because the constant can only be advanced deliberately and in both places;
- * it would not catch two people advancing both to the same wrong value.
+ * That limitation is written down because the first version of this comment claimed the opposite
+ * and named a *lesser* limitation ("would not catch both being advanced to the same wrong
+ * value"), which read as thorough while missing the one that mattered. A limitations note that
+ * gives false comfort is worse than none.
  *
- * Hashed from the working tree, which is what CI and a clean checkout see. The authoritative
- * form is the committed blob (`git show HEAD:conformance/wire-contract.json`) — a commit hook
- * can rewrite a file between the two measurements, and `lint-staged` runs Prettier over
- * `*.json` here — but `git` is not available in the Stryker sandbox, and a check that skipped
- * itself there would be a check that passes on the broken state in the place the mutation gate
- * runs. Reformatting the shared file changes this hash and fails the suite, which is the
- * correct outcome: it must not be reformatted unilaterally either.
+ * Closing it for real needs a cross-repository comparison — one side fetching the other's
+ * committed blob in CI, or both consuming one immutable versioned artifact. That is proposed and
+ * unbuilt; until it exists, the contract's identity between repositories still rests on both
+ * maintainers changing it deliberately and together.
+ *
+ * Hashed from the working tree, not `git show HEAD:`, which would be authoritative: `git` is
+ * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
+ * broken state in the place the mutation gate runs.
  */
 const CONTRACT_SHA256 = 'd7d0bdf3080946eac8bc79bba989091c6358c18d9489c3e1b7df611b692c0396'
 
@@ -143,13 +142,14 @@ const MINIMAL_OPTIONS = {
 }
 
 describe('cross-implementation conformance', () => {
-  // Verifies the shared contract is byte-for-byte what both implementations agreed on.
+  // Verifies the shared contract has not changed without the change being declared here.
   //
-  // Everything else in this suite checks that THIS library matches the contract. Nothing checked
-  // that the contract itself had not moved — so the one file the two repositories are supposed to
-  // hold identically was held identical by memory. rust-auth pins the same constant; advancing it
-  // on one side alone is what goes red, which is the divergence this exists to catch.
-  it('holds the shared wire contract at the byte the other implementation pins', () => {
+  // Everything else in this suite checks that THIS library matches the contract; nothing checked
+  // that the contract itself had not moved. This catches an unaccompanied byte change — a
+  // forgotten constant, a reformat, a merge resolving it differently. It does NOT catch
+  // divergence from rust-auth: see the constant's own doc comment for why two local hashes
+  // cannot, and what would.
+  it('holds the shared wire contract at its declared bytes', () => {
     expect(createHash('sha256').update(contractSource).digest('hex')).toBe(CONTRACT_SHA256)
   })
 
