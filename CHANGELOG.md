@@ -41,6 +41,50 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **A composition suite: the first tests in this repository to observe the shape a consumer
+  actually receives.** Measured from the consumer seat and confirmed here — this suite carried
+  **3** assertions on the raw `AuthException` body and **0** on the flat envelope every derived
+  backend serves. Neither library's own suite can see it: nest-auth's sees its own exception,
+  `@bymax-one/nest-core`'s sees its own filter, and the shape a client parses exists only where
+  the two are wired together. That is where `POST {prefix}/password/change` was broken, and why a
+  consumer found it rather than this repository.
+
+  `test/e2e/composition.e2e-spec.ts` boots both modules and pins, over HTTP: `auth.validation`
+  arriving flat with `details[].field` intact, a domain code surviving the filter unchanged (a
+  composition broken until nest-core 1.2.0 that neither repo pinned), the **status** a code
+  declares surviving as well as the code, the bearer-mode `refreshToken` body flow that produced
+  the defect, and a failure neither library raised composing into one envelope.
+
+  `@bymax-one/nest-core` is a **devDependency** — the same one the OpenAPI contributor's contract
+  types will need. Nothing reaches the published bundle.
+
+- **The framework-fed layers are now proven by a suite that goes through the framework.**
+  Per-layer measurement, which the aggregate 100% hides: filters were at **0%** e2e coverage and
+  guards at **30.4% of branches**. A unit test on a controller, guard or filter _invents_ its
+  input — it proves the code runs, never that it is reachable.
+
+  `AuthExceptionFilter` reached 100% on every axis, and was found never to have been registered in
+  the harness at all while three specs carried comments crediting it for envelopes it was not
+  producing. The guard work drove the **refusals** — every prior e2e exercised guards admitting a
+  valid caller on the way somewhere else — including every refusal branch of the CSRF guard, a
+  token whose account was deleted after issue, and `/ws-ticket`, which had no e2e of its own.
+
+### Fixed
+
+- **`AuthExceptionFilter` silently displaces `@bymax-one/nest-core`'s envelope filter.**
+  Documented rather than code-changed: the behaviour is correct and only the advice was
+  incomplete. `useGlobalFilters` binds ahead of an `APP_FILTER` provider and this filter is
+  `@Catch()` with no argument, so registering it in a nest-core application means nest-core's
+  never runs. Measured — the same request answers `{error: {code, message, details}}` with it and
+  the flat `{statusCode, code, message, timestamp, path, details}` without it.
+
+  **Apply to a derived backend.** Building on `@bymax-one/nest-core`? **Do not register
+  `AuthExceptionFilter`.** Take theirs — it already recognises this library's envelope and passes
+  the code, message and per-field details through unchanged. Registering both loses `statusCode`,
+  `timestamp`, `path` and the correlation id, which is the opposite of what adding a filter looks
+  like it should do. The symptom is a body nested under `error` where your other endpoints answer
+  flat.
+
 - **The declared structural overlay**
   ([`conformance/openapi-declared-structures.json`](conformance/openapi-declared-structures.json)).
   The 1.4.2 schema artifact named three contracts in its own header that it could not express,

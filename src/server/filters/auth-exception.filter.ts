@@ -37,8 +37,22 @@ function isAuthEnvelope(body: unknown): body is AuthErrorEnvelope {
  * stack detail or a connection string reaches a response body, so the answer carries the
  * generic code and nothing else.
  *
+ * **Do not register this alongside `@bymax-one/nest-core`'s envelope filter.** They are mutually
+ * exclusive in practice and this one wins: `useGlobalFilters` binds ahead of an `APP_FILTER`
+ * provider, and `@Catch()` with no argument catches everything, so nest-core's filter never runs.
+ * Measured on a composed application — the same request answers
+ * `{error: {code, message, details}}` with this filter registered and the flat
+ * `{statusCode, code, message, timestamp, path, details}` without it. A derived backend that
+ * registers both therefore loses `statusCode`, `timestamp`, `path` and the correlation id, which
+ * is the opposite of what registering an extra filter looks like it should do.
+ *
+ * Pick one. On a backend built on nest-core, take theirs: it already recognises this library's
+ * envelope and passes the code, message and per-field details through unchanged, which is what
+ * `test/e2e/composition.e2e-spec.ts` pins.
+ *
  * @example
  * ```typescript
+ * // Only when nest-core's envelope filter is NOT in the application.
  * app.useGlobalFilters(new AuthExceptionFilter())
  * ```
  *
