@@ -18,6 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **The shared wire contract is now pinned by hash, on both sides.**
+  `conformance/wire-contract.json` is the one artifact `rust-auth` and this library are supposed
+  to hold **byte-identically** — it is the source on both sides rather than a derivation of one,
+  which is why it is shared at all. Its identity held **by memory**: both implementations checked
+  it by hand when they remembered to, and nothing failed when nobody did.
+
+  The conformance suite now asserts its SHA-256 against a pinned constant, and `rust-auth` pins
+  the same one. A change to the contract turns **both** suites red until both are advanced to the
+  same new value, so moving it on one side alone is what breaks — which is the failure mode this
+  exists for. Stated so nobody reads more into it: this compares each repository against a
+  constant, not against the other, and it would not catch both being advanced to the same wrong
+  value.
+
+  Reformatting counts as a change, deliberately — falsified by re-serialising the file with
+  identical data and watching it go red. The last unclosed instance of the drift incident this
+  conformance work came out of.
+
 ## [1.4.3] - 2026-08-13
 
 ### Added
