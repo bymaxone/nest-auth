@@ -54,6 +54,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **`POST {prefix}/password/change` refused the `refreshToken` it reads.**
+  The handler takes the caller's own refresh token through
+  `TokenDeliveryService.extractRefreshToken`, which reads **the request body** under
+  `tokenDelivery: 'bearer'` and body-after-cookie under `'both'` — but `ChangePasswordDto` never
+  declared the field, and the controller pipe runs `forbidNonWhitelisted: true`. So a bearer-mode
+  caller sending it was answered `auth.validation` naming `refreshToken`, and the only way to
+  change a password was to lose every other session. `refreshToken?: string` is now declared, and
+  appears in the generated request schema.
+
+  Found by the harness fix below: the global `ValidationPipe` stripped the property before the
+  controller's own pipe could refuse it, so every E2E exercised a request production never sees.
+
 - **The E2E harness shadowed the library's own validation pipe, so no E2E had ever seen
   `auth.validation`.** `test/e2e/setup.ts` installed a global `ValidationPipe`, and global pipes
   run **before** the controller-scoped `@UsePipes(createAuthValidationPipe())` every auth
@@ -66,8 +78,13 @@ Request","statusCode":400}`.
   The suite would have stayed green if `createAuthValidationPipe` had stopped producing the
   envelope entirely. The one E2E touching the path asserted `status === 400`, which the
   framework's shape satisfies exactly as well as the library's — the same range-assertion
-  blindness that let thirteen wrong statuses survive. The harness now installs the library's own
-  pipe, and that assertion now names the code and the field.
+  blindness that let thirteen wrong statuses survive.
+
+  The harness now installs **no** global pipe at all, so each auth controller's own runs first.
+  Installing the library's pipe globally was not enough: with `whitelist: true` it strips unknown
+  properties before the controller's `forbidNonWhitelisted: true` can refuse them, so the harness
+  still would not have exercised the production contract — which is how the `refreshToken` defect
+  above stayed invisible. That assertion now names the code and the field.
 
   **Apply to a derived backend.** This is a test-harness fix, but it names a real deployment
   hazard: **if your application registers `app.useGlobalPipes(new ValidationPipe(...))`, it

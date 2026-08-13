@@ -41,7 +41,12 @@ describe('satisfiesStructure', () => {
   it.each([
     { body: { state: 'nonce' }, expected: true, why: 'present' },
     { body: {}, expected: false, why: 'absent' },
-    { body: { state: null }, expected: false, why: 'null, which this server reads as absent' }
+    { body: { state: null }, expected: false, why: 'null, which this server reads as absent' },
+    {
+      body: { state: undefined },
+      expected: false,
+      why: 'an own property explicitly set to undefined, which `@IsOptional()` also reads as absent'
+    }
   ])('required: $why → $expected', ({ body, expected }) => {
     expect(satisfiesStructure(body, { required: ['state'] })).toBe(expected)
   })

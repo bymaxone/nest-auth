@@ -133,6 +133,32 @@ function byDeployment<T extends { deployment: Deployment }>(
   return [...groups.values()]
 }
 
+/**
+ * Asserts the harness precondition the whole-body comparisons depend on.
+ *
+ * A `documents` pair and an anti-enumeration pair both assert two responses are EQUAL, and that
+ * is only literally true while the bodies carry nothing per-request. This application registers
+ * no envelope filter, so a failure comes back as `AuthException`'s own
+ * `{error: {code, message, details}}` — stable across requests. A derived backend running
+ * `@bymax-one/nest-core` gets the flat `BymaxErrorEnvelope` instead, which carries `timestamp`
+ * and `correlationId`, and two responses are then never byte-equal.
+ *
+ * The security property is untouched — those fields vary per REQUEST, not per configuration, so
+ * nothing about the deployment leaks through them. But the day this harness composes both
+ * libraries, the equality assertions would go red on `correlationId` and read as the
+ * indistinguishability having broken rather than the harness having changed — and the natural
+ * repair at that moment is to strip whatever differs, one careless step from an assertion that
+ * strips the difference it exists to detect.
+ *
+ * So the precondition is asserted where it is relied on, and it distinguishes the two worlds:
+ * `correlationId` present versus absent separates envelope-on from envelope-off.
+ */
+function expectEnvelopeFreeHarness(body: unknown): void {
+  if (typeof body === 'object' && body !== null) {
+    expect(Object.keys(body)).not.toContain('correlationId')
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Request structures enforced by the service
 // ---------------------------------------------------------------------------
@@ -188,6 +214,8 @@ describe.each(httpStructures.filter(([, entry]) => entry.narrowing !== undefined
       }
 
       const [first, ...rest] = responses
+
+      expectEnvelopeFreeHarness(first?.body)
 
       for (const other of rest) {
         if (pair.role === 'documents') {
@@ -263,6 +291,8 @@ describe.each(indistinguishables)('declared anti-enumeration — %s', (_name, en
   it('answers a registered address and an unknown one identically', async () => {
     const registered = await post(app, entry.path, entry.registeredBody)
     const unknown = await post(app, entry.path, entry.unknownBody)
+
+    expectEnvelopeFreeHarness(registered.body)
 
     expect(registered.status).toBe(entry.expect.status)
     expect(unknown.status).toBe(registered.status)

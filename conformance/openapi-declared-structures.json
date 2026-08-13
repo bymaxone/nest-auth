@@ -12,6 +12,8 @@
     "",
     "The oneOf branches are `required`-only, and the minimal form is load-bearing — though not for the reason it first appears. Three rewrites look like tightenings and end in three different places, all measured across the eight subsets of the three proofs. SYMMETRIC exclusivity (every branch `not`s the others) is redundant, not inverting: a two-proof body then satisfies zero branches instead of two and oneOf refuses it either way — the verdict is identical to the minimal form on every input. What it does do is make oneOf and anyOf agree everywhere, so the keyword stops carrying visible weight; DROPPING the now-redundant-looking `not` clauses afterwards leaves an anyOf that ACCEPTS two proofs, which is the inversion, two steps out. ASYMMETRIC exclusivity — only the later branches excluding the earlier ones, i.e. what a half-finished edit looks like — inverts in ONE step: every multi-proof body satisfies exactly one branch and passes, on four of the eight subsets, while the server refuses all four. That is the likely accident. Both guards are in declared-structure.spec.ts and they compose: the anyOf end state is asserted so no route reaches it silently, and the census refuses `not` at load so neither exclusivity form can enter this file at all.",
     "",
+    "Every probe body carries a literal tenantId, which makes this whole set implicitly a NO-RESOLVER deployment artifact: since 1.4.2 a deployment configuring a tenantIdResolver refuses a body-named tenant outright. That is safe rather than hidden — adding a resolver to a probe deployment fails every probe loudly with auth.validation naming tenantId, not silently — but it is worth naming, because it is an option-derived assumption living inside the artifact whose subject is option-derived truth.",
+    "",
     "Known limit, stated rather than hidden: a structure is a NECESSARY condition on a request, never a sufficient one. A body satisfying the exactly-one-of still has to carry a proof the server can verify, and — see `narrowing` on ResetPasswordDto — which of the three proofs is even eligible depends on the deployment's `passwordReset.method`. That narrowing is option-derived and therefore cannot live in committed data at all; it is declared here with its probes so the runtime contributor has something to be checked against, not so a client can generate from it."
   ],
   "openapi": "3.0",
@@ -198,7 +200,7 @@
       "codegenNote": "Root-level oneOf on a request body is where OpenAPI client generators are weakest — support is patchy across the ecosystem and several flatten or mis-model it. The oneOf stays anyway: a document that under-declares to please a generator is the defect this artifact exists to remove, and correctness at the contract layer outranks convenience at the tooling layer. The `description` above states the same rule in prose so the constraint survives a generator that drops the composition."
     },
     "OAuthCallbackQueryDto": {
-      "description": "`state` is always required. `code` is required only when `error` is absent: the error callback RFC 6749 §4.1.2.1 defines carries `error` instead of `code`, and a user who declined consent must reach the library's OAuth error handling rather than a validation envelope. A callback carrying neither is the malformed request it has always been.",
+      "description": "`state` is always required. `code` is required only when `error` is absent: the error callback that RFC 6749 §4.1.2.1 defines carries `error` instead of `code`, and a user who declined consent must reach the library's OAuth error handling rather than a validation envelope. A callback carrying neither is the malformed request it has always been.",
       "structure": {
         "required": ["state"],
         "anyOf": [
@@ -293,6 +295,18 @@
           "expect": {
             "accepted": false,
             "field": "state"
+          }
+        },
+        {
+          "note": "`error: null` is absent by the same predicate `@IsOptional()` uses, so `code` is required and its absence is refused. A query string cannot carry `null`, so this body cannot arrive over HTTP — it is here because the pipe is reachable with a hand-built object, and an overlay whose presence rule disagreed with the DTO on any value it can be handed would be describing a different server.",
+          "body": {
+            "state": "0123456789abcdef",
+            "error": null
+          },
+          "satisfies": false,
+          "expect": {
+            "accepted": false,
+            "field": "code"
           }
         }
       ]
@@ -434,18 +448,18 @@
     },
     "AuthController.verifyEmail": {
       "kind": "indistinguishable",
-      "description": "A wrong code against a real account and any code against an address with no account answer the same `auth.otp_invalid`. The OTP catalogue collapses a wrong code, a missing record and an exhausted attempt ceiling onto that one code for this reason — telling them apart would hand back through the failure exactly what the identical success responses withhold.",
+      "description": "A wrong code against a real account and any code against an address with no account answer the same `auth.otp_invalid`. The OTP catalogue collapses a wrong code, a missing record and an exhausted attempt ceiling onto that one code for this reason — telling them apart would hand back through the failure exactly what the identical success responses withhold. The submitted code is six NON-NUMERIC characters on purpose: it satisfies the DTO's `@Length(6, 6)` and can never equal a real one, because OtpService generates them with `String(randomInt(...)).padStart(6, '0')` — digits only. A plausible-looking `123456` would verify the seeded account roughly once in a million runs and answer 204, which is a flake that reads as a broken security property.",
       "handler": "AuthController.verifyEmail",
       "method": "post",
       "path": "/verify-email",
       "registeredBody": {
         "email": "registered@example.com",
-        "otp": "123456",
+        "otp": "ABCDEF",
         "tenantId": "probe-tenant"
       },
       "unknownBody": {
         "email": "never-registered@example.com",
-        "otp": "123456",
+        "otp": "ABCDEF",
         "tenantId": "probe-tenant"
       },
       "expect": {

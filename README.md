@@ -1099,12 +1099,12 @@ A third file,
 [`openapi-declared-structures.json`](./conformance/openapi-declared-structures.json), carries the
 contracts the generated header names and no decorator can express — as **structure**, not prose:
 
-| Declared                                                                                                         | As                                                         |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                    |
-| The OAuth callback needs `code` unless it carries `error`                                                        | `required` + `anyOf`                                       |
-| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accept what the deployment refuses |
-| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**           |
+| Declared                                                                                                         | As                                                            |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                       |
+| The OAuth callback needs `code` unless it carries `error`                                                        | `required` + `anyOf`                                          |
+| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accepting what the deployment refuses |
+| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**              |
 
 Three rules keep it honest. Only `required`, `oneOf` and `anyOf` may appear — `allOf` and `not`
 are valid OpenAPI 3.0 and are **refused at load**, because a keyword nothing evaluates publishes

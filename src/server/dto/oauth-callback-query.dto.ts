@@ -31,7 +31,13 @@ export class OAuthCallbackQueryDto {
    * when the user declines consent. Required whenever `error` is absent, so a callback
    * carrying neither is still the malformed request it always was.
    */
-  @ValidateIf((query: OAuthCallbackQueryDto) => query.error === undefined)
+  // `null` as well as `undefined`, so this conditional excludes exactly what `@IsOptional()`
+  // excludes everywhere else in this library — its predicate is
+  // `value !== null && value !== undefined`. A query string cannot carry `null`, so no callback
+  // reaches this with one and the wire behaviour is unchanged; the alignment matters because the
+  // declared overlay models presence with one rule for every DTO, and a predicate that read
+  // `null` as *present* would make this the single field the overlay describes wrongly.
+  @ValidateIf((query: OAuthCallbackQueryDto) => query.error === undefined || query.error === null)
   @IsString()
   @IsNotEmpty()
   @MaxLength(2048)

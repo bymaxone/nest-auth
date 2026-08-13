@@ -63,9 +63,15 @@ export interface DeclaredStructure {
  * @returns `true` when the body carries that property with a non-`null` value.
  */
 function isPresent(body: Readonly<Record<string, unknown>>, property: string): boolean {
-  const descriptor = Object.getOwnPropertyDescriptor(body, property)
+  const value = Object.getOwnPropertyDescriptor(body, property)?.value
 
-  return descriptor !== undefined && descriptor.value !== null
+  // Both, not just `null`. An own property explicitly set to `undefined` is absent by the same
+  // predicate — reading it excludes exactly what `@IsOptional()` excludes. JSON cannot carry
+  // `undefined`, so no request body reaches this with one; the evaluator is also run against
+  // hand-built objects in tests and by anything that composes it, and an evaluator that
+  // contradicts its own documented rule on a value it can be handed is wrong wherever it is
+  // handed one.
+  return value !== null && value !== undefined
 }
 
 /**

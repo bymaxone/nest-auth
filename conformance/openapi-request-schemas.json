@@ -77,6 +77,10 @@
           "type": "string",
           "maxLength": 128,
           "minLength": 8
+        },
+        "refreshToken": {
+          "type": "string",
+          "maxLength": 512
         }
       },
       "required": ["currentPassword", "newPassword"]

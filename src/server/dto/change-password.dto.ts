@@ -1,4 +1,4 @@
-import { IsString, MaxLength, MinLength } from 'class-validator'
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
 
 /**
  * Data Transfer Object for changing the password of an already-authenticated account.
@@ -45,4 +45,25 @@ export class ChangePasswordDto {
   @MinLength(8)
   @MaxLength(128)
   newPassword!: string
+
+  /**
+   * The caller's own refresh token, so the device making the change stays signed in.
+   *
+   * Declared because the handler reads it. `TokenDeliveryService.extractRefreshToken` takes it
+   * from the refresh cookie under `tokenDelivery: 'cookie'` and from **this body field** under
+   * `'bearer'`, cookie-first-then-body under `'both'` — and the controller pipe runs
+   * `forbidNonWhitelisted: true`, so an undeclared property is refused. A bearer-mode caller
+   * therefore could not send the field the endpoint needs: the request was answered
+   * `auth.validation` naming `refreshToken`, and the only way to change a password was to give
+   * up every other session.
+   *
+   * It stayed invisible because the E2E harness installed a global `ValidationPipe` with
+   * `whitelist: true`, which STRIPPED the property before the controller's own pipe could refuse
+   * it — so the suite exercised a request production never sees. Optional, because under cookie
+   * delivery the credential arrives in the cookie and no body field exists to declare.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  refreshToken?: string
 }
