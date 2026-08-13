@@ -534,10 +534,48 @@ describe('AuthService', () => {
 
       const svc = tenantResolverModule.get(AuthService)
 
-      await svc.register(dto, mockReq)
+      // The body must stay silent: naming a tenant under a configured resolver is refused, and
+      // the assertion below is about which tenant scopes the lookup, not about that refusal.
+      // The key is omitted rather than set to `undefined`, which `exactOptionalPropertyTypes`
+      // refuses — and rightly, since "absent" and "present but undefined" are different requests.
+      const { tenantId: _named, ...bodyWithoutTenant } = dto
+      await svc.register(bodyWithoutTenant, mockReq)
 
       // The resolved tenantId from the resolver ('resolved-tenant') should be used in findByEmail.
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(dto.email, 'resolved-tenant')
+    })
+
+    // Verifies the refusal itself on the flow the audit found it on. A caller that named a tenant
+    // which a configured resolver would not honour used to get `201`, with the account created
+    // elsewhere — the caller's belief and the server's state diverging on the tenancy boundary,
+    // silently.
+    it('should refuse a body-named tenant on register when a resolver is configured', async () => {
+      const tenantResolverModule = await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: { ...mockOptions, tenantIdResolver: () => 'resolved-tenant' }
+          },
+          { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+          { provide: BYMAX_AUTH_EMAIL_PROVIDER, useValue: mockEmailProvider },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks },
+          { provide: PasswordService, useValue: mockPasswordService },
+          { provide: TokenManagerService, useValue: mockTokenManager },
+          { provide: BruteForceService, useValue: mockBruteForce },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: OtpService, useValue: mockOtpService },
+          { provide: SessionService, useValue: mockSessionService }
+        ]
+      }).compile()
+
+      const svc = tenantResolverModule.get<AuthService>(AuthService)
+      mockUserRepo.create.mockClear()
+
+      await expect(svc.register(dto, mockReq)).rejects.toBeInstanceOf(AuthException)
+
+      // Refused before the account exists, so the divergence the audit reported cannot occur.
+      expect(mockUserRepo.create).not.toHaveBeenCalled()
     })
 
     // Verifies that ip and userAgent default to empty strings when the request provides neither.
@@ -2116,14 +2154,29 @@ describe('AuthService', () => {
     // body verbatim, so a caller could probe for accounts in a tenant they have no
     // relationship with, and a verification issued under the resolved tenant could never be
     // completed because the two steps derived different identifiers.
-    it('should resolve the tenant on verifyEmail rather than trusting the body', async () => {
+    it('should refuse a body-named tenant on verifyEmail when a resolver is configured', async () => {
       const svc = await serviceWithResolver()
       mockOtpService.verify.mockResolvedValue(undefined)
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
-      await svc
-        .verifyEmail('attacker-tenant', 'user@example.com', '123456', mockReq)
-        .catch(() => undefined)
+      await expect(
+        svc.verifyEmail('attacker-tenant', 'user@example.com', '123456', mockReq)
+      ).rejects.toBeInstanceOf(AuthException)
+
+      // Refused before anything tenant-scoped ran, so the probe cannot be used to learn whether
+      // an OTP exists under the resolved tenant either.
+      expect(mockOtpService.verify).not.toHaveBeenCalled()
+    })
+
+    // The other half of the same guarantee, and the reason the refusal is not the whole test:
+    // with the body silent, the RESOLVED tenant is what derives the identifier. Asserting only
+    // the refusal would leave the resolver's value unpinned.
+    it('should derive the verifyEmail identifier from the resolved tenant', async () => {
+      const svc = await serviceWithResolver()
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await svc.verifyEmail(undefined, 'user@example.com', '123456', mockReq).catch(() => undefined)
 
       expect(mockOtpService.verify).toHaveBeenCalledWith(
         expect.any(String),
@@ -2134,13 +2187,29 @@ describe('AuthService', () => {
 
     // Scenario: the same, for the resend path — the one an attacker can drive without any
     // credential at all.
-    it('should resolve the tenant on resendVerificationEmail rather than trusting the body', async () => {
+    it('should refuse a body-named tenant on resendVerificationEmail under a resolver', async () => {
+      const svc = await serviceWithResolver()
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue(null)
+
+      await expect(
+        svc.resendVerificationEmail('attacker-tenant', 'user@example.com', mockReq)
+      ).rejects.toBeInstanceOf(AuthException)
+
+      // No cooldown key was written, so the refused request cannot consume the resolved tenant's
+      // resend budget for an address the caller does not control.
+      expect(mockRedis.setnx).not.toHaveBeenCalled()
+    })
+
+    // As above: the refusal is only half. With the body silent, the cooldown must key off the
+    // RESOLVED tenant, which is what stops the two steps deriving different identifiers.
+    it('should key the resend cooldown by the resolved tenant', async () => {
       const svc = await serviceWithResolver()
       mockRedis.setnx.mockResolvedValue(true)
       mockUserRepo.findByEmail.mockResolvedValue(null)
 
       await svc
-        .resendVerificationEmail('attacker-tenant', 'user@example.com', mockReq)
+        .resendVerificationEmail(undefined, 'user@example.com', mockReq)
         .catch(() => undefined)
 
       const cooldownKey = `resend:email_verification:${hmacSha256('resolved-tenant:user@example.com', HMAC_KEY)}`

@@ -167,10 +167,11 @@ export class OAuthService {
    * 5. Issues a 302 redirect via the Express `res` object.
    *
    * @param provider - Provider name matching a registered {@link OAuthProviderPlugin}.
-   * @param tenantId - Tenant the user will join on successful login, as named by the caller.
-   *   Superseded by the configured `tenantIdResolver` when there is one, and never validated
-   *   against the database — implement `onOAuthLogin` to enforce tenant membership. Without
-   *   the hook, OAuth sign-in is disabled.
+   * @param tenantId - Tenant the user will join on successful login, as named by the caller in
+   *   the query string. **Refused** with `auth.validation` when a `tenantIdResolver` is
+   *   configured, since the deployment decides the tenant and a value it discards would only
+   *   mislead the caller. Never validated against the database — implement `onOAuthLogin` to
+   *   enforce tenant membership. Without the hook, OAuth sign-in is disabled.
    * @param req - Incoming Express request, read by the configured `tenantIdResolver`.
    * @param res - Express response in passthrough mode (used for the 302 redirect).
    * @throws `AuthException(OAUTH_FAILED)` when no plugin is registered for `provider`.

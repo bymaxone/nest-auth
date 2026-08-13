@@ -55,6 +55,36 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   both checks. The rejected alternative — reading class-transformer's `cjs/storage` internals —
   has no type declarations and is an unpublished path that can move between minors.
 
+### Fixed
+
+- **BREAKING: a request body naming `tenantId` is now refused when the deployment configures a
+  `tenantIdResolver`**, instead of being accepted and silently discarded. A security audit of a
+  derived backend found `POST /register` answering `201` for
+  `{"tenantId": "attacker-chosen-tenant", ...}` while creating the account under the resolved
+  tenant — the caller's belief about which tenant it registered into diverging from server state,
+  on the boundary the resolver exists to defend, with nothing in the response saying so. No
+  privilege crossed, and that is why it survived: accept-and-ignore is the worst of the three
+  available answers precisely because it looks like success.
+
+  The refusal is **conditional, and the asymmetry is the point**. Without a resolver the field is
+  the only thing that can name a tenant — `resolveTenantId` already answers `400` when it is
+  absent — so rejecting it outright would break every deployment that relies on it. With a
+  resolver configured it does not participate at all, and whitelist validation already refuses
+  `role` and `status` on exactly that principle. This makes the principle config-aware rather
+  than carving an exception out of it.
+
+  `null` and an omitted field are not refused: the caller asserted nothing, so there is nothing
+  to contradict.
+
+  **Apply to a derived backend:** if you configure `tenantIdResolver`, stop sending `tenantId` on
+  the nine endpoints that accept it. Eight read it from the **request body** — `register`,
+  `login`, `verify-email`, `resend-verification`, `forgot-password`, `reset-password`,
+  `verify-otp`, `resend-otp` — and one reads it from the **query string**:
+  `GET /oauth/:provider?tenantId=…`, so dropping a body field is not the change to make there.
+  All nine answered `201`/`200` while discarding the value and now answer `400 auth.validation`
+  with `field: "tenantId"`. Deployments without a resolver are unaffected — the field remains
+  required there.
+
 ## [1.4.1] - 2026-08-12
 
 Aligns every HTTP status with `rust-auth` and makes the pairing structural rather than

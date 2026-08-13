@@ -360,3 +360,54 @@ describe('OAuth negative paths (E2E)', () => {
     expect(res.status).toBe(400)
   })
 })
+
+// ---------------------------------------------------------------------------
+// tenantId under a configured resolver — refused, not discarded
+// ---------------------------------------------------------------------------
+
+describe('body tenantId under a configured resolver (E2E)', () => {
+  let boot: BootstrappedTestApp
+
+  beforeAll(async () => {
+    boot = await bootstrapTestApp({ tenantIdResolver: () => 'from-resolver' })
+  })
+
+  afterAll(async () => {
+    await boot.app.close()
+  })
+
+  // Verifies the refusal over real HTTP, on the flow a security audit of a derived backend
+  // reported. It used to answer 201 with the account created under the resolved tenant while the
+  // caller believed it had chosen `attacker-chosen-tenant` — the caller's belief and the server's
+  // state diverging on the tenancy boundary the resolver exists to defend, with nothing in the
+  // response saying so.
+  it('refuses a register whose body names a tenant', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/register')
+      .send({
+        email: `tenant-probe-${Math.random().toString(36).slice(2)}@example.com`,
+        password: 'ProbePass123!-xyz',
+        name: 'Tenant Probe',
+        tenantId: 'attacker-chosen-tenant'
+      })
+
+    expectAuthError(res, 'auth.validation')
+    expect((res.body as { error: { details: { field: string }[] } }).error.details).toEqual([
+      { field: 'tenantId', message: expect.stringContaining('must not be sent') }
+    ])
+  })
+
+  // Verifies the same body without the field still registers, so the refusal is about the
+  // caller naming a tenant rather than about the endpoint being unusable under a resolver.
+  it('accepts the same register once the body stops naming a tenant', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/register')
+      .send({
+        email: `tenant-ok-${Math.random().toString(36).slice(2)}@example.com`,
+        password: 'ProbePass123!-xyz',
+        name: 'Tenant Probe'
+      })
+
+    expect(res.status).toBe(201)
+  })
+})
