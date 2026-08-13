@@ -16,6 +16,8 @@ Strict SemVer starts when the API is declared stable, and that transition will b
 upgrading. Every breaking change carries an **Apply to a derived backend** note saying exactly
 what moves, and that note is the compatibility contract until strict SemVer begins.
 
+## [Unreleased]
+
 ## [1.4.2] - 2026-08-13
 
 Closes the two findings that came out of auditing this library from the outside: every DTO it
