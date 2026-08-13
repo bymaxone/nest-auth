@@ -7,18 +7,23 @@
     "fragment merged into a 3.0 document validates as neither.",
     "",
     "Three contracts are deliberately NOT here, because a decorator cannot express them and a",
-    "schema derived faithfully would document them wrong:",
-    "  - ResetPasswordDto takes email + newPassword plus EXACTLY ONE of token | otp |",
+    "schema derived faithfully would document them wrong. They are declared, with probes, in",
+    "conformance/openapi-declared-structures.json:",
+    "  - ResetPasswordDto takes email + newPassword plus exactly one of token | otp |",
     "    verifiedToken; all three are optional at the DTO layer and the service enforces the",
-    "    exclusivity, so `required` cannot say it.",
+    "    exclusivity, so `required` cannot say it. That exactly-one-of is NECESSARY, not",
+    "    sufficient: which proof is eligible depends on passwordReset.method, and an ineligible",
+    "    one is refused with the same code a structural violation gets.",
     "  - The 8-character password floor is structural (the lowest NIST SP 800-63B-4 permits, and",
     "    what a decorator can express before configuration exists). The deployment floor is",
     "    password.minLength, default 15, enforced in PasswordService.",
     "  - OAuthCallbackQueryDto.code is required unless `error` is present. 3.0 cannot express a",
-    "    conditional requirement, so it appears optional here.",
+    "    conditional requirement per-property, so it appears optional here; the overlay declares",
+    "    it as an anyOf over the pair.",
     "",
     "Normalisation is invisible too: email fields are trimmed and lowercased before the service",
-    "sees them, which no keyword expresses and every client should know."
+    "sees them, which no keyword expresses and every client should know. It is declared in",
+    "conformance/openapi-request-descriptions.json, each sentence carrying its own probe."
   ],
   "openapi": "3.0",
   "schemas": {
@@ -72,6 +77,10 @@
           "type": "string",
           "maxLength": 128,
           "minLength": 8
+        },
+        "refreshToken": {
+          "type": "string",
+          "maxLength": 512
         }
       },
       "required": ["currentPassword", "newPassword"]

@@ -44,6 +44,53 @@ async function registerAndLogin(
 }
 
 // ---------------------------------------------------------------------------
+// Harness fidelity — the controller's own pipe must reach the wire
+// ---------------------------------------------------------------------------
+
+describe('the published validation contract reaches the wire (E2E)', () => {
+  let boot: BootstrappedTestApp
+
+  beforeAll(async () => {
+    boot = await bootstrapTestApp()
+  })
+
+  afterAll(async () => {
+    await boot.app.close()
+  })
+
+  // Verifies an undeclared property is REFUSED, not stripped — which is what
+  // `createAuthValidationPipe`'s `forbidNonWhitelisted: true` publishes.
+  //
+  // This guards the harness against itself. Installing any global pipe with `whitelist: true`
+  // strips unknown properties before the controller-scoped pipe can refuse them, so the suite
+  // exercises a request production never sees. That is not hypothetical: it hid a real defect —
+  // `POST /password/change` refused the `refreshToken` its own handler reads, because
+  // `ChangePasswordDto` did not declare it and the stripping pipe removed the field before the
+  // refusal could happen. Every E2E passed over it, and a consumer running no global pipe met the
+  // 400 in production.
+  //
+  // Asserted as BEHAVIOUR rather than as the absence of `useGlobalPipes` in this file. A source
+  // check would be defeated by moving the registration; this one fails whatever re-introduces the
+  // stripping, including a dependency that registers a pipe of its own.
+  it('refuses an undeclared property instead of stripping it', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/register')
+      .send({
+        email: `whitelist-probe-${Math.random().toString(36).slice(2)}@example.com`,
+        password: 'ProbePass123!-xyz',
+        name: 'Whitelist Probe',
+        tenantId: 'tenant-1',
+        undeclaredProperty: 'x'
+      })
+
+    expectAuthError(res, 'auth.validation')
+    expect((res.body as { error: { details: { field: string }[] } }).error.details).toContainEqual(
+      expect.objectContaining({ field: 'undeclaredProperty' })
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Invitations — INVALID_INVITATION_TOKEN
 // ---------------------------------------------------------------------------
 
@@ -351,13 +398,20 @@ describe('OAuth negative paths (E2E)', () => {
     expectAuthError(res, 'auth.oauth_failed')
   })
 
-  // Verifies that omitting `tenantId` from /oauth/:provider is rejected by
-  // the DTO pipe with a 400 — protects against accidentally initiating OAuth
-  // without a tenant scope.
-  it('should reject /oauth/google with 400 when tenantId is missing', async () => {
+  // Verifies that omitting `tenantId` from /oauth/:provider is rejected by the DTO pipe — so an
+  // OAuth flow cannot start without a tenant scope.
+  //
+  // Asserts the envelope, not just the status. `status === 400` was satisfied by the framework's
+  // own `{ statusCode, message, error }` shape just as well as by the library's, which is how the
+  // global pipe in `setup.ts` shadowed `createAuthValidationPipe` unnoticed: this was the only
+  // E2E touching a DTO failure, and it could not see which pipe answered.
+  it('should reject /oauth/google with auth.validation when tenantId is missing', async () => {
     const res = await request(boot.app.getHttpServer()).get('/oauth/google')
 
-    expect(res.status).toBe(400)
+    expectAuthError(res, 'auth.validation')
+    expect((res.body as { error: { details: { field: string }[] } }).error.details).toContainEqual(
+      expect.objectContaining({ field: 'tenantId' })
+    )
   })
 })
 

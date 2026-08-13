@@ -1095,9 +1095,33 @@ OpenAPI 3.0 schemas for all 22 DTOs, generated from the decorators themselves an
 facts no keyword expresses: the twelve e-mail fields that are **trimmed and lowercased before
 validation**, each entry shipping the probe that verifies its own sentence.
 
-Both are development artifacts — they are not in the published tarball, and nothing reads them at
-runtime yet. They exist so the schemas are a function of the decorators rather than a second
-description maintained by hand, and so the same file can be asserted from `rust-auth`.
+A third file,
+[`openapi-declared-structures.json`](./conformance/openapi-declared-structures.json), carries the
+contracts the generated header names and no decorator can express — as **structure**, not prose:
+
+| Declared                                                                                                         | As                                                            |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                       |
+| The OAuth callback needs `code` unless it carries `error`                                                        | `required` + `anyOf`                                          |
+| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accepting what the deployment refuses |
+| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**              |
+
+Three rules keep it honest. Only `required`, `oneOf` and `anyOf` may appear — `allOf` and `not`
+are valid OpenAPI 3.0 and are **refused at load**, because a keyword nothing evaluates publishes
+a claim nothing checks. Every entry carries probes, and both suites run them: the unit suite
+evaluates each body against its own structure and enforces the pipe-refused ones, the e2e suite
+answers the rest with a real application. And presence means _present and not `null`_ — this
+server's rule rather than JSON Schema's, because `@IsOptional()` treats `null` as absent, so a
+body sending `null` and one omitting the key are the same request.
+
+A structure is a **necessary** condition, never a sufficient one, and `reset-password` shows why:
+which of the three proofs is eligible depends on `passwordReset.method`, and an ineligible proof
+is refused with the same code a structural violation gets. That narrowing is declared with its
+own probes and is deliberately not something a client can generate against.
+
+All three are development artifacts — they are not in the published tarball, and nothing reads
+them at runtime yet. They exist so the schemas are a function of the decorators rather than a
+second description maintained by hand, and so the same file can be asserted from `rust-auth`.
 
 ### Administrative operations — methods, deliberately not routes
 

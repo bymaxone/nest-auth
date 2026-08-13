@@ -12,7 +12,6 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
-import { ValidationPipe } from '@nestjs/common'
 import type { Provider } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TestingModuleBuilder } from '@nestjs/testing'
@@ -47,6 +46,7 @@ import type {
   IUserRepository,
   UpdateMfaData
 } from '../../src/server/interfaces/user-repository.interface'
+import { createAuthValidationPipe } from '../../src/server/pipes/auth-validation.pipe'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -455,7 +455,7 @@ export function applyTestMiddleware(app: INestApplication): void {
     ;(req as Request & { cookies: Record<string, string> }).cookies = jar
     next()
   })
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }))
+  // NO global pipe — each auth controller's own `@UsePipes(createAuthValidationPipe())` runs.
 }
 
 /**
