@@ -11,9 +11,14 @@
  * invisible to a decorator, and a schema derived faithfully would document them wrong —
  * `ResetPasswordDto`'s exactly-one-of proof, the structural `@MinLength(8)` that is not the
  * deployment's `password.minLength` floor, and the conditional requirement on the OAuth
- * callback. Those live in the declared half of the artifact and are exempt here by name, so
- * "derivation disagrees with this on purpose" is data rather than a special case someone
- * deletes later.
+ * callback query.
+ *
+ * Those three are **named in the generated artifact's own header and nowhere else yet**. The
+ * declared overlay that exists today (`openapi-request-descriptions.json`) covers only the
+ * e-mail normalisation; expressing the three as structures — the `oneOf`, the `anyOf`, the
+ * policy floor — is follow-up work on the same files. Stating it that way rather than as
+ * settled is the point: a comment describing an intended state as a present one is how a reader
+ * ends up trusting something that is not there.
  *
  * @layer OpenAPI
  */
@@ -194,8 +199,10 @@ function applyValidator(
  * @param read - How to obtain the entries. Defaults to class-validator's storage; overridden in
  *   tests to reach the guards that decorator-produced metadata cannot.
  * @returns The object schema, with properties in declaration order and `required` sorted.
- * @throws Never — a DTO with no metadata yields an empty schema, which the conformance test
- *   surfaces as a mismatch rather than silently accepting.
+ * @throws `Error` when a mapped `@Matches()` carries regex flags, which OpenAPI 3.0 `pattern`
+ *   cannot express — see `applyValidator`. A DTO with no metadata does NOT throw: it yields an
+ *   empty schema, which the conformance suite surfaces as a mismatch against the committed
+ *   artifact rather than silently accepting.
  */
 export function deriveRequestSchema(
   dto: DtoClass,

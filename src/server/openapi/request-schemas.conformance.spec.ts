@@ -11,7 +11,7 @@
  * SILENT — it yields a schema missing that constraint — so a new one must fail here and force a
  * mapping decision instead of thinning the published schema unnoticed.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getMetadataStorage } from 'class-validator'
@@ -73,7 +73,14 @@ describe('OpenAPI request schemas — generated artifact', () => {
   // silently stops covering a DTO added later — the same shape as a loop over a collection
   // nothing pins.
   it('covers every DTO the library declares', () => {
-    expect(REQUEST_SCHEMA_DTOS.length).toBe(22)
+    // Counted from the directory, not asserted as a literal. A hard-coded 22 would stay true
+    // when a 23rd DTO file arrives without an entry, which is the case this test exists to
+    // catch — a check whose title claims more than it verifies.
+    const declared = readdirSync(join(__dirname, '../dto'))
+      .filter((file) => file.endsWith('.dto.ts'))
+      .map((file) => file.replace(/\.dto\.ts$/, ''))
+
+    expect(REQUEST_SCHEMA_DTOS).toHaveLength(declared.length)
     expect(new Set(REQUEST_SCHEMA_DTOS.map((d) => d.name)).size).toBe(REQUEST_SCHEMA_DTOS.length)
   })
 
@@ -91,9 +98,16 @@ describe('OpenAPI request schemas — generated artifact', () => {
     }
 
     const committed = JSON.parse(readFileSync(ARTIFACT, 'utf8')) as {
+      $comment: string[]
       openapi: string
       schemas: Record<string, DerivedObjectSchema>
     }
+
+    // The provenance block is compared too. It carries the "generated, do not edit" instruction
+    // and the three contracts deliberately left out — the parts a reader relies on to know what
+    // the file does NOT say. Left unasserted it could be edited or go stale while this test
+    // stayed green, which is the failure this artifact exists to prevent, in its own header.
+    expect(committed.$comment).toEqual(ARTIFACT_COMMENT)
 
     // The dialect is pinned in the data, so a future 3.1 migration is one coordinated change
     // rather than a mixture: a 3.1 fragment merged into `DocumentBuilder`'s 3.0 document
