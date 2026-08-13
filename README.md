@@ -1051,7 +1051,12 @@ unknown property is a `400 auth.validation` rather than a silently ignored field
 optional on every **unauthenticated** body below (≤128 chars, no control characters) and scopes
 the operation to one organization. `POST /password/change` is the exception: it is behind
 `JwtAuthGuard`, takes its tenant from the JWT, and declares no `tenantId` — so sending one is an
-unknown property, and `forbidNonWhitelisted` answers `400 auth.validation`. Email fields are
+unknown property, and `forbidNonWhitelisted` answers `400 auth.validation`. That same rule is why
+it **declares** `refreshToken`: under `tokenDelivery: 'bearer'` (and body-after-cookie under
+`'both'`) the caller's own refresh token arrives in the body, and an undeclared field would be
+refused rather than read. Send it to keep the device that changed the password signed in; omit it
+and every session ends, which is the correct answer when you are rotating a credential you believe
+was stolen. Under `'cookie'` delivery the token comes from the cookie and the field has no use. Email fields are
 trimmed and lowercased before they reach the service, so the stored identity matches the
 case-insensitive lookup and every email-keyed control.
 
@@ -1065,7 +1070,7 @@ case-insensitive lookup and every email-keyed control.
 | `POST /password/verify-otp`      | `{ email, otp }`                                                                 |
 | `POST /password/resend-otp`      | `{ email }`                                                                      |
 | `POST /password/reset-password`  | `{ email, newPassword }` **plus exactly one** of `token`, `otp`, `verifiedToken` |
-| `POST /password/change`          | `{ currentPassword, newPassword }`                                               |
+| `POST /password/change`          | `{ currentPassword, newPassword }` **plus** `refreshToken` under bearer delivery |
 
 Three constraints are worth stating because they are not visible from the field names:
 

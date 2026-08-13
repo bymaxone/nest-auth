@@ -18,6 +18,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **The request-body table documented `POST {prefix}/password/change` without `refreshToken`.**
+  1.4.3 declared the field so a bearer-mode caller can send the credential its handler reads, but
+  the README's API reference still listed the old body — stale about the exact surface the release
+  fixed, and shipped in the tarball. The table now names it, and the paragraph above explains the
+  rule it turns on: `forbidNonWhitelisted` refuses an undeclared property, so the field has to be
+  declared to be readable, and omitting it ends every session rather than keeping the caller's.
+
+  Not reachable by `check:published`, which compares exported types against the docs and cannot
+  see a prose table drift from a DTO.
+
 ## [1.4.3] - 2026-08-13
 
 ### Added
