@@ -283,7 +283,14 @@ async function performRefresh(endpoint: string, credentials: RequestCredentials)
       headers: { 'Content-Type': 'application/json' }
     })
     const ok = response.ok
-    await response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
+    // Deliberately NOT awaited. Draining releases the connection in runtimes that hold it
+    // open until the stream ends, and nothing downstream needs the drain to have COMPLETED —
+    // the status has already been read. Under request interception (MSW, undici in jsdom)
+    // the promise this returns never settles, so awaiting it deadlocks every call whose
+    // response carries a body. `/auth/refresh` carries one on success as well as on failure,
+    // which put the deadlock on the happy path at every rotation and made the refresh path
+    // untestable.
+    void response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
     return ok
   } catch {
     return false

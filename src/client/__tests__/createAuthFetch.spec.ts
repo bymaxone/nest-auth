@@ -325,6 +325,36 @@ describe('createAuthFetch — refresh on 401', () => {
     expect(spy.mock.calls[1]?.[0]).toBe('/api/auth/client-refresh')
   })
 
+  // Verifies the refresh completes when the refresh response's drain never settles.
+  //
+  // This is the path the PR is about and the one the client-side test does NOT reach: the drain in
+  // `performRefresh` is a second call site, and the `createAuthClient` test only exercises
+  // `expectNoContent`. Restoring the `await` there leaves this red and that one green, which is
+  // why both exist.
+  //
+  // `/auth/refresh` answers 200 **with a body** — the rotated `{accessToken, refreshToken}` or the
+  // `{user}` shape depending on delivery mode — so the drain runs on every successful rotation,
+  // not on an error edge. Under request interception (MSW, undici in jsdom) `body.cancel()` never
+  // settles, so awaiting it hung the refresh and, with it, every request waiting on the
+  // single-flight slot. With the `await` restored this times out rather than failing an
+  // assertion, which is exactly how the defect presented to the consumer who found it.
+  it('completes the refresh when the refresh response drain never settles', async () => {
+    const refreshResponse = makeResponse(200, { accessToken: 'rotated' })
+    Object.defineProperty(refreshResponse, 'body', {
+      value: { cancel: () => new Promise<void>(() => undefined) }
+    })
+
+    spy.mockResolvedValueOnce(makeResponse(401)) // original
+    spy.mockResolvedValueOnce(refreshResponse) // refresh — its drain never settles
+    spy.mockResolvedValueOnce(makeResponse(200, { ok: true })) // retry
+
+    const authFetch = createAuthFetch()
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(200)
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
+
   // A10: when the 401 comes from an auth-issuing endpoint (e.g.
   // /auth/login with bad credentials), refreshing would mask the
   // real error and infinite-loop. The skip-list prevents this.
