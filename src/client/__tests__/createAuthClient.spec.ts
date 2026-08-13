@@ -1345,3 +1345,128 @@ describe('createAuthClient — built-in authFetch fallback', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// tenantId — omitted, never sent as an empty key
+// ---------------------------------------------------------------------------
+
+describe('createAuthClient — tenantId is the deployment’s answer', () => {
+  // Verifies a caller can name no tenant at all, and that the request carries no `tenantId` key
+  // when they do not.
+  //
+  // **What actually discriminates here is compilation, not the assertion.** The defect was
+  // type-level: the client never sent a bogus tenant — `JSON.stringify` drops an `undefined`
+  // property, so the wire body was always right — it made omission *unrepresentable in
+  // TypeScript*, which is a compile-time wall, and since 1.4.2 a deployment with a configured
+  // `tenantIdResolver` REFUSES a body-named tenant with `auth.validation`. A consumer on such a
+  // deployment could not call this client at all, and bypassed it. Restore `tenantId: string` and
+  // this suite stops compiling; that is the guard, and it is a real one, it simply fires earlier
+  // than an assertion does.
+  //
+  // The key-list assertion is kept for the neighbouring regression it does catch: a payload
+  // builder that starts INTRODUCING the field — a defaulted `'default'`, say — which would be
+  // invisible to the types and refused by every resolver deployment. Measured rather than assumed:
+  // reverting the payload code alone leaves these four green, which is why the comment says so
+  // instead of letting a reader credit them with more than they check.
+  it.each([
+    {
+      what: 'login',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.login({ email: 'a@example.com', password: 'pw' }),
+      expected: ['email', 'password']
+    },
+    {
+      what: 'register',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.register({ email: 'a@example.com', password: 'pw', name: 'A' }),
+      expected: ['email', 'password', 'name']
+    },
+    {
+      what: 'forgotPassword',
+      call: (client: ReturnType<typeof createAuthClient>) => client.forgotPassword('a@example.com'),
+      expected: ['email']
+    },
+    {
+      what: 'resetPassword',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.resetPassword({ email: 'a@example.com', newPassword: 'pw', token: 't' }),
+      expected: ['email', 'newPassword', 'token']
+    }
+  ])('$what omits the tenantId key when the caller names no tenant', async ({ call, expected }) => {
+    const { authFetch, calls } = makeAuthFetchMock(() => jsonResponse(200, { user: { id: '1' } }))
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await call(client)
+
+    expect(Object.keys(calls[0]!.body as Record<string, unknown>).sort()).toEqual(
+      [...expected].sort()
+    )
+  })
+
+  // Verifies the other direction — a caller who DOES name a tenant still sends it. Without this the
+  // assertions above are satisfied by a client that dropped the field entirely, which would break
+  // every deployment without a resolver.
+  it.each([
+    {
+      what: 'login',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.login({ email: 'a@example.com', password: 'pw', tenantId: 'acme' })
+    },
+    {
+      what: 'register',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.register({ email: 'a@example.com', password: 'pw', name: 'A', tenantId: 'acme' })
+    },
+    {
+      what: 'forgotPassword',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.forgotPassword('a@example.com', 'acme')
+    },
+    {
+      what: 'resetPassword',
+      call: (client: ReturnType<typeof createAuthClient>) =>
+        client.resetPassword({
+          email: 'a@example.com',
+          newPassword: 'pw',
+          token: 't',
+          tenantId: 'acme'
+        })
+    }
+  ])('$what sends the tenantId when the caller names one', async ({ call }) => {
+    const { authFetch, calls } = makeAuthFetchMock(() => jsonResponse(200, { user: { id: '1' } }))
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await call(client)
+
+    expect(calls[0]!.body).toMatchObject({ tenantId: 'acme' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The body drain must not be awaited
+// ---------------------------------------------------------------------------
+
+describe('createAuthClient — draining the response body', () => {
+  // Verifies a call completes even when the drain never settles.
+  //
+  // `response.body.cancel()` was awaited. In a real browser it resolves, so this was never a
+  // production bug — but under request interception (MSW, undici in jsdom) it does not, and the
+  // await deadlocked every call whose response carries a body. `/auth/refresh` carries one on
+  // success as well as on failure, so the deadlock sat on the happy path at every rotation and
+  // made the refresh path untestable from a consumer's suite.
+  //
+  // The never-settling promise is the whole test: with the `await` restored this times out rather
+  // than failing an assertion, which is exactly how the defect presented to the consumer who
+  // found it.
+  it('resolves when the drain promise never settles', async () => {
+    const response = jsonResponse(204, undefined)
+    Object.defineProperty(response, 'body', {
+      value: { cancel: () => new Promise<void>(() => undefined) }
+    })
+
+    const { authFetch } = makeAuthFetchMock(() => response)
+    const client = createAuthClient({ baseUrl: 'https://api.example.com', authFetch })
+
+    await expect(client.logout()).resolves.toBeUndefined()
+  })
+})

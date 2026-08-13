@@ -553,6 +553,30 @@ export function Profile() {
 }
 ```
 
+#### Plain SPAs — set `refreshEndpoint`
+
+The example above is a Next.js app, where the default works. **A Vite/CRA SPA talking straight to
+a Nest backend must set `refreshEndpoint`**, because it defaults to `/api/auth/client-refresh` —
+a Next.js proxy route this library ships for that framework, and a path a plain SPA serves
+nothing at.
+
+```ts
+const authClient = createAuthClient({
+  baseUrl: 'https://api.example.com',
+  // Without this, refresh POSTs to the Next proxy route and 404s.
+  refreshEndpoint: 'https://api.example.com/auth/refresh'
+})
+```
+
+**The symptom, because it does not look like a configuration problem:** _if every access-token
+expiry logs the user out, check `refreshEndpoint` before looking at cookies._ The 404 is silent —
+refresh fails, the session ends, and it presents as a session bug rather than as a missing route.
+
+Also note `tenantId` is **optional** on every client input. Whether the server wants it is the
+deployment's answer, not the type's: it is required when no `tenantIdResolver` is configured and
+**refused** when one is, answering `auth.validation` with a `tenantId` field detail either way.
+Send it, or do not, according to the deployment you talk to.
+
 ### 7. Frontend Integration (Next.js 16)
 
 Mount the Edge-Runtime auth proxy at the project root and expose the

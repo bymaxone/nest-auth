@@ -18,6 +18,47 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/client` required a `tenantId` the server refuses, so a consumer had to bypass it.**
+  `LoginInput`, `RegisterInput`, `ResetPasswordInput` and `forgotPassword(email, tenantId)` all
+  demanded the field. On a deployment with a configured `tenantIdResolver` — the case 1.4.2 made
+  breaking — sending it answers `400 auth.validation` with a `tenantId` field detail, so the
+  library's own typed client could not talk to the library's own server. A consumer building an
+  SPA rejected `createAuthClient` and `AuthProvider` over exactly this and hand-wrote the request
+  shapes.
+
+  All four are now `tenantId?: string`. The defect was type-level rather than on the wire —
+  `JSON.stringify` already dropped an `undefined` property — which is why the guard is that the
+  client suite now calls `login`/`register`/`forgotPassword`/`resetPassword` **without** a tenant
+  and would stop compiling if the field went back to required.
+
+  The JSDoc was the worse half. It read _"`tenantId` is required because the server-side
+  `LoginDto` enforces it with `@IsNotEmpty()`"_ — and that was never true: `@IsNotEmpty()` sits
+  under `@IsOptional()`, so it rejects an empty string when the field is present and says nothing
+  about absence. `LoginDto.tenantId` has been optional since **1.3.0**; the comment misread its own
+  decorator stack and survived three minors, because a comment is checked by nobody. The
+  replacements state the consequence and name where the mechanism is asserted, rather than
+  restating decorators they cannot see.
+
+- **Draining the response body deadlocked under request interception.**
+  `await response.body?.cancel()` in `createAuthFetch` and `createAuthClient`. In a browser it
+  resolves; under MSW or undici-in-jsdom the promise never settles, so every call whose response
+  carries a body hung. `/auth/refresh` carries one on success as well as on failure, which put it
+  on the happy path at every token rotation and made the refresh path untestable from a consumer's
+  suite. The drain is no longer awaited — nothing downstream needs it to have completed, the
+  status has already been read. Regression test: a response whose `cancel()` never settles.
+
+- **`refreshEndpoint` was undocumented, and its default 404s in a plain SPA.**
+  It defaults to `/api/auth/client-refresh`, a Next.js proxy route, and a Vite/CRA app serves
+  nothing there — refresh silently fails and every access-token expiry presents as a session bug.
+  The README now covers it, with the symptom: _if every expiry logs the user out, check
+  `refreshEndpoint` before looking at cookies._
+
+  **Apply to a derived backend.** Nothing changes server-side. Frontends on a non-Next stack
+  should set `refreshEndpoint` explicitly, and frontends on a resolver deployment should now stop
+  passing `tenantId` — the client no longer forces them to.
+
 ## [1.4.2] - 2026-08-13
 
 Closes the two findings that came out of auditing this library from the outside: every DTO it

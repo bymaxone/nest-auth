@@ -67,25 +67,33 @@ export interface RegisterInput {
   password: string
   /** Display name. */
   name: string
-  /** Tenant identifier scoping the new account. */
-  tenantId: string
+  /**
+   * Tenant identifier scoping the new account.
+   *
+   * Optional here because whether it is required is the DEPLOYMENT's answer, not this type's:
+   * the server requires it when no `tenantIdResolver` is configured and **refuses** it when one
+   * is, answering `auth.validation` with a `tenantId` field detail in both directions. A static
+   * shape cannot be right for both, and a type that guessed would contradict the server with more
+   * authority than the server has. Send it, or do not, according to the deployment you talk to.
+   */
+  tenantId?: string
 }
 
 /**
  * Payload accepted by {@link AuthClient.login}.
- *
- * `tenantId` is required because the server-side `LoginDto` enforces it
- * with `@IsNotEmpty()`. Multi-tenant deployments use it to scope the
- * credential lookup; single-tenant deployments must still supply a
- * stable identifier (commonly `'default'`).
  */
 export interface LoginInput {
   /** User's primary email address. */
   email: string
   /** Plaintext password — server hashes immediately on receipt. */
   password: string
-  /** Tenant identifier the login attempt is scoped to. */
-  tenantId: string
+  /**
+   * Tenant identifier the login attempt is scoped to.
+   *
+   * Optional for the reason {@link RegisterInput.tenantId} gives: whether it is required is the
+   * deployment's answer, not this type's.
+   */
+  tenantId?: string
 }
 
 /**
@@ -98,8 +106,13 @@ export interface LoginInput {
 interface ResetPasswordBase {
   /** Email address of the account being reset. */
   email: string
-  /** Tenant the account belongs to. */
-  tenantId: string
+  /**
+   * Tenant the account belongs to.
+   *
+   * Optional for the reason {@link RegisterInput.tenantId} gives: whether it is required is the
+   * deployment's answer, not this type's.
+   */
+  tenantId?: string
   /** New plaintext password — server hashes immediately. Min 8 chars, max 128. */
   newPassword: string
 }
@@ -161,10 +174,13 @@ export interface AuthClient {
   /**
    * Initiate a password reset. The server returns 200 regardless of
    * whether the email is registered — the response carries no signal
-   * either way (anti-enumeration design). Both `email` and `tenantId`
-   * are required by the server DTO.
+   * either way (anti-enumeration design).
+   *
+   * `tenantId` is optional for the reason {@link RegisterInput.tenantId} gives. It stays a
+   * positional parameter rather than moving into an object so the widening breaks no caller:
+   * it is last, so every existing two-argument call still compiles.
    */
-  forgotPassword(email: string, tenantId: string): Promise<void>
+  forgotPassword(email: string, tenantId?: string): Promise<void>
 
   /**
    * Submit a new password using one of the three reset flows:
@@ -309,9 +325,14 @@ async function expectNoContent(response: Response): Promise<void> {
     const text = await response.text()
     throwAuthError(response, text)
   }
-  // Drain the body so the underlying connection is released in
-  // runtimes that hold it open until the stream ends.
-  await response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
+  // Deliberately NOT awaited. Draining releases the connection in runtimes that hold it
+  // open until the stream ends, and nothing downstream needs the drain to have COMPLETED —
+  // the status has already been read. Under request interception (MSW, undici in jsdom)
+  // the promise this returns never settles, so awaiting it deadlocks every call whose
+  // response carries a body. `/auth/refresh` carries one on success as well as on failure,
+  // which put the deadlock on the happy path at every rotation and made the refresh path
+  // untestable.
+  void response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
 }
 
 /**
@@ -529,7 +550,14 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
     },
 
     async forgotPassword(email, tenantId): Promise<void> {
-      return postNoContent(AUTH_ROUTES.password.forgotPassword, { email, tenantId })
+      // Spread rather than assign, so an absent tenant is an absent KEY. `JSON.stringify` already
+      // drops an `undefined` value, but a reader cannot see that from the call site — and the
+      // difference matters here: the server distinguishes "the caller named no tenant" from "the
+      // caller named one", and refuses the second under a resolver.
+      return postNoContent(AUTH_ROUTES.password.forgotPassword, {
+        email,
+        ...(tenantId !== undefined ? { tenantId } : {})
+      })
     },
 
     async resetPassword(input): Promise<void> {
@@ -539,9 +567,10 @@ export function createAuthClient(config: AuthClientConfig): AuthClient {
       // surfaced as an AuthClientError when violated.
       const payload: Record<string, string> = {
         email: input.email,
-        tenantId: input.tenantId,
         newPassword: input.newPassword
       }
+      // Same rule as `forgotPassword`: an absent tenant must not become a present key.
+      if (input.tenantId !== undefined) payload['tenantId'] = input.tenantId
       if (input.token !== undefined) payload['token'] = input.token
       if (input.otp !== undefined) payload['otp'] = input.otp
       if (input.verifiedToken !== undefined) payload['verifiedToken'] = input.verifiedToken
