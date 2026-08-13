@@ -193,10 +193,16 @@ describe.each(httpStructures.filter(([, entry]) => entry.narrowing !== undefined
     //
     // Each pair sends ONE body to two applications differing in a single option. `demonstrates`
     // must come back with different codes; `documents` must come back **equal** — the same status
-    // and the same body, asserted the way the anti-enumeration pairs are, rather than merely both
-    // being refusals. That stronger form is the point: an ineligible proof answering its own code
-    // (a plausible "better diagnostics" refactor) would let any caller learn the deployment's
-    // configured method by probing, and two separate `expectAuthError` calls would not notice.
+    // and the same payload, asserted the way the anti-enumeration pairs are, rather than merely
+    // both being refusals, because two separate `expectAuthError` calls compare each response to
+    // its own expectation and never to each other.
+    //
+    // Payload equality, and NOT caller-visible indistinguishability — the deployments do not have
+    // that and this file proves it: the `demonstrates` pair reveals the configured method through
+    // the response code. Timing does not hide it either (a token proof reaches `redis.getdel`
+    // under the token method and throws with no I/O under the OTP one). What the `documents` pair
+    // guards is narrower and real: an ineligible proof must not acquire its own error code, which
+    // is a plausible "better diagnostics" refactor and would widen a gap that is already open.
     it.each(entry.narrowing!.pairs)('$role — $note', async (pair) => {
       const responses: { status: number; body: unknown }[] = []
 
