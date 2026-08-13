@@ -18,6 +18,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-13
+
+Closes the two findings that came out of auditing this library from the outside: every DTO it
+ships published an empty schema, and a request naming a tenant a configured resolver would not
+honour was answered `201` with the account created elsewhere. **One breaking change rides along
+in a patch** — the tenant refusal — so `^1.4.0` and `~1.4.1` both pick it up on a routine update.
+Read the `Apply to a derived backend` note before upgrading.
+
 ### Added
 
 - **Request-body schemas, generated from the DTOs' own decorators**
@@ -1537,7 +1545,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/bymaxone/nest-auth/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/bymaxone/nest-auth/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/bymaxone/nest-auth/compare/v1.3.1...v1.3.2
