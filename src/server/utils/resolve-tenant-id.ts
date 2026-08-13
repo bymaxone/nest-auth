@@ -9,9 +9,9 @@ import { AuthException } from '../errors/auth-exception'
  *
  * When `cookies`-style multi-tenancy is driven by the request itself — a subdomain, a header,
  * a mapped hostname — the deployment configures `tenantIdResolver` and the option promises
- * that the resolved value wins and the body's `tenantId` is ignored. That promise is what
- * prevents tenant spoofing: without it, any caller can name any tenant and every tenant-scoped
- * lookup below runs against a scope they chose.
+ * that the resolved value decides and a `tenantId` the caller named is refused. That promise is
+ * what prevents tenant spoofing: without it, any caller can name any tenant and every
+ * tenant-scoped lookup below runs against a scope they chose.
  *
  * Because a configured resolver makes the body's value dead weight, the DTOs mark `tenantId`
  * optional and a caller may omit it. The two states the request can arrive in therefore differ:

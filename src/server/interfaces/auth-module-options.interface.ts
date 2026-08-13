@@ -850,15 +850,18 @@ export interface BymaxAuthModuleOptions {
   /**
    * Tenant ID resolver function.
    *
-   * When provided, the module resolves the tenant ID from the request object and
-   * **ignores** any `tenantId` field in the request body. This prevents tenant
-   * spoofing where a client sends a different tenant's ID.
+   * When provided, the module resolves the tenant ID from the request object and **refuses** any
+   * `tenantId` the request names — with `400 auth.validation` on the `tenantId` field. This
+   * prevents tenant spoofing where a client sends a different tenant's ID, and it refuses rather
+   * than ignoring on purpose: a discarded value answers `201` while putting the account
+   * somewhere else, so the caller's belief and the server's state diverge on the tenancy
+   * boundary with nothing saying so.
    *
-   * Because a configured resolver makes the body's value dead weight, `tenantId` is optional on
-   * every DTO that carries it and a client may omit it entirely. With no resolver configured the
-   * body is the only thing that can name a tenant, and a request naming none is refused with
-   * `auth.validation` — the deployment has to choose one of the two, and neither choice is
-   * guessed on its behalf.
+   * A client under a resolver must therefore **omit the field**; `null` and an absent field are
+   * both accepted, since neither asserts anything to contradict. With no resolver configured the
+   * body is the only thing that can name a tenant, so there it is honoured, and a request naming
+   * none is refused with the same `auth.validation` — the deployment has to choose one of the
+   * two, and neither choice is guessed on its behalf.
    *
    * @param req - The Express request object
    * @returns The tenant ID string, or a Promise resolving to it

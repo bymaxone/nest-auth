@@ -54,6 +54,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   limit, in the artifact itself: a future transform that is the identity on that canary escapes
   both checks. The rejected alternative — reading class-transformer's `cjs/storage` internals —
   has no type declarations and is an unpublished path that can move between minors.
+
 ### Fixed
 
 - **BREAKING: a request body naming `tenantId` is now refused when the deployment configures a
@@ -75,12 +76,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `null` and an omitted field are not refused: the caller asserted nothing, so there is nothing
   to contradict.
 
-  **Apply to a derived backend:** if you configure `tenantIdResolver`, stop sending `tenantId` in
-  the body on the nine endpoints that accept it — `register`, `login`, `verify-email`,
-  `resend-verification`, `forgot-password`, `reset-password`, `verify-otp`, `resend-otp`, and
-  `GET /oauth/:provider`. Those requests answered `201`/`200` while discarding the value and now
-  answer `400 auth.validation` with `field: "tenantId"`. Deployments without a resolver are
-  unaffected — the field remains required there.
+  **Apply to a derived backend:** if you configure `tenantIdResolver`, stop sending `tenantId` on
+  the nine endpoints that accept it. Eight read it from the **request body** — `register`,
+  `login`, `verify-email`, `resend-verification`, `forgot-password`, `reset-password`,
+  `verify-otp`, `resend-otp` — and one reads it from the **query string**:
+  `GET /oauth/:provider?tenantId=…`, so dropping a body field is not the change to make there.
+  All nine answered `201`/`200` while discarding the value and now answer `400 auth.validation`
+  with `field: "tenantId"`. Deployments without a resolver are unaffected — the field remains
+  required there.
 
 ## [1.4.1] - 2026-08-12
 

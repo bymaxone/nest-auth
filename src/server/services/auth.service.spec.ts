@@ -545,9 +545,10 @@ describe('AuthService', () => {
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(dto.email, 'resolved-tenant')
     })
 
-    // Verifies the refusal itself on the flow the audit found it on. A caller naming a tenant a
-    // configured resolver will not honour used to get `201` with the account created elsewhere —
-    // the caller's belief and the server's state diverging on the tenancy boundary, silently.
+    // Verifies the refusal itself on the flow the audit found it on. A caller that named a tenant
+    // which a configured resolver would not honour used to get `201`, with the account created
+    // elsewhere — the caller's belief and the server's state diverging on the tenancy boundary,
+    // silently.
     it('should refuse a body-named tenant on register when a resolver is configured', async () => {
       const tenantResolverModule = await Test.createTestingModule({
         providers: [
