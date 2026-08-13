@@ -245,17 +245,34 @@ describe('OAuthService', () => {
     // deployment deriving the tenant from the request has said the caller's value is not to be
     // trusted. This was the one door that took it verbatim — and it is the door that decides
     // which tenant an account gets provisioned into, which is more than the others protect.
-    it('lets a configured resolver override the tenant the caller named', async () => {
+    it('refuses a caller-named tenant when a resolver is configured', async () => {
       const svc = await buildServiceWithOptions({
         ...MOCK_OPTIONS,
         tenantIdResolver: () => 'tenant-from-request'
       })
       mockPlugin.authorizeUrl.mockReturnValue('https://provider.example/authorize')
 
-      await svc.initiateOAuth('google', 'tenant-the-caller-asked-for', mockReq, mockRes)
+      await expect(
+        svc.initiateOAuth('google', 'tenant-the-caller-asked-for', mockReq, mockRes)
+      ).rejects.toBeInstanceOf(AuthException)
 
-      // The RESOLVED tenant is what lands in the state record, so the callback — which reads
-      // the account's tenant from there and nowhere else — cannot be talked into the other one.
+      // No state record was written, so a refused initiate cannot leave a nonce behind that a
+      // callback could later redeem.
+      expect(mockRedis.set).not.toHaveBeenCalled()
+    })
+
+    // The other half: with the caller silent, the RESOLVED tenant is what lands in the state
+    // record — which is what stops the callback, reading the tenant from there and nowhere else,
+    // being talked into a different one.
+    it('writes the resolved tenant into the state record', async () => {
+      const svc = await buildServiceWithOptions({
+        ...MOCK_OPTIONS,
+        tenantIdResolver: () => 'tenant-from-request'
+      })
+      mockPlugin.authorizeUrl.mockReturnValue('https://provider.example/authorize')
+
+      await svc.initiateOAuth('google', undefined, mockReq, mockRes)
+
       const [, payload] = mockRedis.set.mock.calls[0] as [string, string, number]
       expect(JSON.parse(payload)).toMatchObject({ tenantId: 'tenant-from-request' })
     })

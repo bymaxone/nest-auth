@@ -17,12 +17,28 @@ import { AuthException } from '../errors/auth-exception'
 const REQUEST = { hostname: 'acme.example.com' } as Request
 
 describe('resolveTenantId', () => {
-  // The anti-spoofing promise the option documents: configured, the resolver decides, and a
-  // caller that names a different tenant in the body changes nothing.
-  it('prefers the resolver over the tenant named in the body', async () => {
-    await expect(resolveTenantId('attacker-chosen', REQUEST, () => 'resolved')).resolves.toBe(
-      'resolved'
-    )
+  // The anti-spoofing promise the option documents, and the shape of the refusal. The caller
+  // naming a tenant under a configured resolver is refused rather than overridden: overriding
+  // still answered 201 while putting the account somewhere else, so the caller's belief about
+  // which tenant it registered into diverged from server state with nothing saying so.
+  it('refuses a body that names a tenant when a resolver is configured', async () => {
+    const call = resolveTenantId('attacker-chosen', REQUEST, () => 'resolved')
+
+    await expect(call).rejects.toBeInstanceOf(AuthException)
+    await expect(call).rejects.toMatchObject({
+      response: {
+        error: {
+          code: AUTH_ERROR_CODES.VALIDATION,
+          details: [{ field: 'tenantId', message: expect.stringContaining('must not be sent') }]
+        }
+      }
+    })
+  })
+
+  // `null` is not a caller naming a tenant, and `@IsOptional()` lets it through the DTO. It
+  // asserts nothing, so there is nothing to contradict and the resolver simply decides.
+  it('accepts a null tenantId under a resolver rather than refusing it', async () => {
+    await expect(resolveTenantId(null, REQUEST, () => 'resolved')).resolves.toBe('resolved')
   })
 
   // The same promise when the caller sends nothing, which is the shape the DTOs now permit.
