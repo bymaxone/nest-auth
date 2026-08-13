@@ -1051,9 +1051,17 @@ unknown property is a `400 auth.validation` rather than a silently ignored field
 optional on every **unauthenticated** body below (≤128 chars, no control characters) and scopes
 the operation to one organization. `POST /password/change` is the exception: it is behind
 `JwtAuthGuard`, takes its tenant from the JWT, and declares no `tenantId` — so sending one is an
-unknown property, and `forbidNonWhitelisted` answers `400 auth.validation`. Email fields are
-trimmed and lowercased before they reach the service, so the stored identity matches the
-case-insensitive lookup and every email-keyed control.
+unknown property, and `forbidNonWhitelisted` answers `400 auth.validation`. That same rule is why
+it **declares** `refreshToken`: an undeclared field would be refused rather than read. Email
+fields are trimmed and lowercased before they reach the service, so the stored identity matches
+the case-insensitive lookup and every email-keyed control.
+
+`refreshToken` is **optional, and both answers are valid requests.** Send it and the device making
+the change stays signed in; omit it and every session ends — which is the right answer when you are
+rotating a credential you believe was stolen. Where the server looks for it follows
+`tokenDelivery`: the refresh cookie under `'cookie'`, this body field under `'bearer'`, and the
+cookie first then this field under `'both'` — so a `'both'` caller with no refresh cookie must send
+it here to keep its session.
 
 | Endpoint                         | Body                                                                             |
 | -------------------------------- | -------------------------------------------------------------------------------- |
@@ -1065,7 +1073,7 @@ case-insensitive lookup and every email-keyed control.
 | `POST /password/verify-otp`      | `{ email, otp }`                                                                 |
 | `POST /password/resend-otp`      | `{ email }`                                                                      |
 | `POST /password/reset-password`  | `{ email, newPassword }` **plus exactly one** of `token`, `otp`, `verifiedToken` |
-| `POST /password/change`          | `{ currentPassword, newPassword }`                                               |
+| `POST /password/change`          | `{ currentPassword, newPassword }` — optional `refreshToken`, see below          |
 
 Three constraints are worth stating because they are not visible from the field names:
 
