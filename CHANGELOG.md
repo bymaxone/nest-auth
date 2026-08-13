@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-13
+
 ### Added
 
 - **The declared structural overlay**
@@ -1684,6 +1686,7 @@ ever installable.
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
 [Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.2...HEAD
+[1.4.3]: https://github.com/bymaxone/nest-auth/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/bymaxone/nest-auth/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/bymaxone/nest-auth/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/bymaxone/nest-auth/compare/v1.3.2...v1.4.0
