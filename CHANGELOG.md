@@ -18,7 +18,80 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **The declared structural overlay**
+  ([`conformance/openapi-declared-structures.json`](conformance/openapi-declared-structures.json)).
+  The 1.4.2 schema artifact named three contracts in its own header that it could not express,
+  plus the anti-enumeration semantics that are a property of two responses rather than of either
+  one. They are now **structure** — `oneOf` for `reset-password`'s exactly-one-of proof set,
+  `required` + `anyOf` for the OAuth callback's conditional requirement — and executable probes
+  for the two that are not structural at all: the 8-vs-15 password floor and the four endpoints
+  that answer identically for an address with no account.
+
+  Kept honest by three rules. The evaluator understands `required`, `oneOf` and `anyOf` and
+  nothing else, and a structure using `allOf` or `not` — both valid OpenAPI 3.0 — is **refused at
+  load** rather than skipped, because a keyword nothing evaluates publishes a claim nothing
+  checks. Every entry ships probes, split across the two suites that can actually answer them:
+  the unit suite evaluates each body against its own structure and enforces the pipe-refused
+  ones, the e2e suite answers the service-enforced and response-level ones against a real
+  application. And each entry must **discriminate** — a probe set that all expected the same
+  refusal would be satisfied by a server that refuses everything, so at least one accepted body
+  must be answered differently.
+
+  Presence, for `required`, means present **and not `null`** — this server's rule rather than
+  JSON Schema's. Measured, not assumed: `@IsOptional()` registers a conditional whose predicate is
+  `value !== null && value !== undefined`, so `{"token": null, "otp": "…"}` carries one proof, not
+  two. The probes carrying an explicit `null` are what prove it.
+
+  One correction to how the exactly-one-of had been described, including in the 1.4.2 header: it
+  is **necessary but not sufficient**. Which of `token`, `otp`, `verifiedToken` is eligible
+  depends on the deployment's `passwordReset.method`, and an ineligible proof is refused with the
+  same `auth.password_reset_token_invalid` a structural violation gets — indistinguishable to the
+  client, and inexpressible in any committed document because it is option-derived. It is declared
+  with its own probes, under its own name, so a reader is not left inferring a symmetry that is
+  not there.
+
 ### Fixed
+
+- **The E2E harness shadowed the library's own validation pipe, so no E2E had ever seen
+  `auth.validation`.** `test/e2e/setup.ts` installed a global `ValidationPipe`, and global pipes
+  run **before** the controller-scoped `@UsePipes(createAuthValidationPipe())` every auth
+  controller declares. A DTO failure therefore answered with the framework's
+  `{ statusCode, message, error }` instead of `{ error: { code: 'auth.validation', details:
+[{ field, message }] } }` — measured: a seven-character `newPassword` came back as
+  `{"message":["newPassword must be longer than or equal to 8 characters"],"error":"Bad
+Request","statusCode":400}`.
+
+  The suite would have stayed green if `createAuthValidationPipe` had stopped producing the
+  envelope entirely. The one E2E touching the path asserted `status === 400`, which the
+  framework's shape satisfies exactly as well as the library's — the same range-assertion
+  blindness that let thirteen wrong statuses survive. The harness now installs the library's own
+  pipe, and that assertion now names the code and the field.
+
+  **Apply to a derived backend.** This is a test-harness fix, but it names a real deployment
+  hazard: **if your application registers `app.useGlobalPipes(new ValidationPipe(...))`, it
+  shadows this library's pipe on every auth route.** DTO failures then answer the framework's
+  shape rather than `auth.validation`, and a client switching on `error.code` never sees it. With
+  `@bymax-one/nest-core`'s envelope filter in front, the failure is re-shaped again and surfaces
+  as `BYMAX_VALIDATION_FAILED` with `details: [{ issue }]` — a different code **and** a different
+  details shape from the `auth.validation` / `[{ field, message }]` this library and `rust-auth`
+  both document.
+
+  **How to tell in one query:** you have it if a DTO failure on an auth route answers
+  `BYMAX_VALIDATION_FAILED` with `details[].issue`; you do not if it answers `auth.validation`
+  with `details[].field`. Grep your own error logs for the first pair rather than auditing where
+  pipes are registered.
+
+  **The fix:** scope your global pipe away from the auth routes, or build it with
+  `createAuthValidationPipe()`, which is exported for exactly this.
+
+  **The durable guard — assert the composed envelope in your application's E2E**, because neither
+  library can. This library's suite sees its own pipe; `nest-core`'s suite sees its own filter;
+  the shape a client actually receives exists only where the two are wired together, which is your
+  application. A consumer who fixes the pipe today and adds a global one next quarter is back here
+  otherwise. One scenario is enough: drive a real request that fails validation and shape-match
+  both `code: 'auth.validation'` and `details: [{ field, … }]`.
 
 - **`/client` required a `tenantId` the server refuses, so a consumer had to bypass it.**
   `LoginInput`, `RegisterInput`, `ResetPasswordInput` and `forgotPassword(email, tenantId)` all

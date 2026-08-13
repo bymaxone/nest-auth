@@ -351,13 +351,20 @@ describe('OAuth negative paths (E2E)', () => {
     expectAuthError(res, 'auth.oauth_failed')
   })
 
-  // Verifies that omitting `tenantId` from /oauth/:provider is rejected by
-  // the DTO pipe with a 400 — protects against accidentally initiating OAuth
-  // without a tenant scope.
-  it('should reject /oauth/google with 400 when tenantId is missing', async () => {
+  // Verifies that omitting `tenantId` from /oauth/:provider is rejected by the DTO pipe — so an
+  // OAuth flow cannot start without a tenant scope.
+  //
+  // Asserts the envelope, not just the status. `status === 400` was satisfied by the framework's
+  // own `{ statusCode, message, error }` shape just as well as by the library's, which is how the
+  // global pipe in `setup.ts` shadowed `createAuthValidationPipe` unnoticed: this was the only
+  // E2E touching a DTO failure, and it could not see which pipe answered.
+  it('should reject /oauth/google with auth.validation when tenantId is missing', async () => {
     const res = await request(boot.app.getHttpServer()).get('/oauth/google')
 
-    expect(res.status).toBe(400)
+    expectAuthError(res, 'auth.validation')
+    expect((res.body as { error: { details: { field: string }[] } }).error.details).toContainEqual(
+      expect.objectContaining({ field: 'tenantId' })
+    )
   })
 })
 

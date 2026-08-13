@@ -12,7 +12,6 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
-import { ValidationPipe } from '@nestjs/common'
 import type { Provider } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TestingModuleBuilder } from '@nestjs/testing'
@@ -47,6 +46,7 @@ import type {
   IUserRepository,
   UpdateMfaData
 } from '../../src/server/interfaces/user-repository.interface'
+import { createAuthValidationPipe } from '../../src/server/pipes/auth-validation.pipe'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -455,7 +455,26 @@ export function applyTestMiddleware(app: INestApplication): void {
     ;(req as Request & { cookies: Record<string, string> }).cookies = jar
     next()
   })
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }))
+  // The library's own pipe, not a bare `ValidationPipe`.
+  //
+  // Global pipes run BEFORE controller-scoped ones, so the plain `ValidationPipe` this used to
+  // install shadowed the `@UsePipes(createAuthValidationPipe())` every auth controller declares:
+  // a DTO failure answered with the framework's `{ statusCode, message, error }` instead of the
+  // library's `{ error: { code: 'auth.validation', details: [{ field, message }] } }`. Measured,
+  // not reasoned about — a seven-character `newPassword` came back as
+  // `{"message":["newPassword must be longer than or equal to 8 characters"],"error":"Bad
+  // Request","statusCode":400}`.
+  //
+  // Which means no E2E in this repository had ever seen the library's validation envelope: the
+  // suite would have stayed green if `createAuthValidationPipe` stopped producing it entirely.
+  // The one assertion that touched the path checked `status === 400`, which the framework's shape
+  // satisfies just as well as the library's — the same range-assertion blindness that let thirteen
+  // wrong statuses survive.
+  //
+  // `forbidNonWhitelisted: false` preserves what the previous global pipe did (strip unknown
+  // properties, do not reject for them); only the error shape changes, and it changes to the one
+  // production actually serves.
+  app.useGlobalPipes(createAuthValidationPipe({ transform: true, forbidNonWhitelisted: false }))
 }
 
 /**

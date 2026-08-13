@@ -13,12 +13,11 @@
  * deployment's `password.minLength` floor, and the conditional requirement on the OAuth
  * callback query.
  *
- * Those three are **named in the generated artifact's own header and nowhere else yet**. The
- * declared overlay that exists today (`openapi-request-descriptions.json`) covers only the
- * e-mail normalisation; expressing the three as structures — the `oneOf`, the `anyOf`, the
- * policy floor — is follow-up work on the same files. Stating it that way rather than as
- * settled is the point: a comment describing an intended state as a present one is how a reader
- * ends up trusting something that is not there.
+ * All three are declared, with probes, in `conformance/openapi-declared-structures.json` — the
+ * `oneOf`, the `anyOf`, and the policy floor as a pair of probes showing the pipe accepting what
+ * the deployment refuses. `openapi-request-descriptions.json` covers the e-mail normalisation
+ * beside them. What the declared overlay adds beyond the header it replaces is that a reader can
+ * run it: the header was prose, and prose is checked by nobody.
  *
  * @layer OpenAPI
  */
