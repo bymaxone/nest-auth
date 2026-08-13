@@ -63,6 +63,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   change a password was to lose every other session. `refreshToken?: string` is now declared, and
   appears in the generated request schema.
 
+  **A `tokenDelivery: 'cookie'` deployment was never affected** — the credential arrives in the
+  cookie and no body field exists — which is why this survived: the default hides it. Confirmed
+  live on a derived backend against the published 1.4.2, in both modes: `bearer` answers
+  `400 auth.validation` with `details: [{ field: 'refreshToken', message: 'property refreshToken
+should not exist' }]`, and the same call without the field answers `204` while ending every
+  other session; `cookie` answers `204` clean.
+
   Found by the harness fix below: the global `ValidationPipe` stripped the property before the
   controller's own pipe could refuse it, so every E2E exercised a request production never sees.
 
