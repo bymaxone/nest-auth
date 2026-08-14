@@ -419,11 +419,6 @@ export function createMockRedis(): Redis {
 // ---------------------------------------------------------------------------
 
 /**
- * Applies the minimal cookie-parser middleware and global ValidationPipe to a
- * NestJS application instance. Called from every E2E bootstrap to ensure
- * consistent request parsing across all test suites.
- */
-/**
  * The cookie shim, WITHOUT this library's exception filter.
  *
  * For the composed deployment, which does not register it — and cannot usefully. `useGlobalFilters`

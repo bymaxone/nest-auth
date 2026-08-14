@@ -137,10 +137,17 @@ describe('composed with @bymax-one/nest-core (E2E)', () => {
     expect(body.details).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: expect.any(String) })])
     )
-    // Flat, not nested — the shape a consumer parses. Asserting the absence of the nested form is
-    // what proves the filter ran at all; every other spec in this repository sees the nested one.
+    // Flat, not nested — and the flat fields asserted BY NAME, not merely the absence of `error`.
+    //
+    // The documented incompatibility is precise about what is lost when the wrong filter wins:
+    // `statusCode`, `timestamp`, `path` and the correlation id. An absence-only assertion passes
+    // if all of them vanish, so it would not have caught the regression it exists for. Naming
+    // them is what makes this suite pin the consumer-visible envelope rather than pin that one
+    // key is missing.
     expect(body).not.toHaveProperty('error')
     expect(body.statusCode).toBe(400)
+    expect(body.path).toBe('/register')
+    expect(typeof body.timestamp).toBe('string')
   })
 
   // Verifies a domain code survives the filter unchanged.
@@ -156,7 +163,11 @@ describe('composed with @bymax-one/nest-core (E2E)', () => {
     const body = res.body as ComposedEnvelope
     expect(res.status).toBe(401)
     expect(body.code).toBe('auth.invalid_credentials')
+    // Same reason as above: the flat fields by name, because their disappearance is the symptom.
     expect(body).not.toHaveProperty('error')
+    expect(body.statusCode).toBe(401)
+    expect(body.path).toBe('/login')
+    expect(typeof body.timestamp).toBe('string')
   })
 
   // Verifies the status a code carries survives too, not only the code.
@@ -230,5 +241,7 @@ describe('composed with @bymax-one/nest-core (E2E)', () => {
     expect(res.status).toBe(404)
     expect(typeof body.code).toBe('string')
     expect(body).not.toHaveProperty('error')
+    expect(body.statusCode).toBe(404)
+    expect(body.path).toBe('/no-such-route')
   })
 })

@@ -103,9 +103,14 @@ describe('UserStatusGuard — the account behind a live token (E2E)', () => {
         .post('/ws-ticket')
         .set('Authorization', `Bearer ${accessToken}`)
       expect(before.status).toBe(200)
+      // The TTL is asserted as the VALUE the shared contract fixes, not as `any(Number)`.
+      // `wire-contract.json` describes the ticket as "64 lowercase hex characters (32 CSPRNG
+      // bytes), single-use, 30 s lifetime", and `expect.any(Number)` passes on every regression
+      // that could reach it — a ticket that lived an hour, or zero seconds, would both be green.
+      // That is the exact defect this suite exists to stop, arriving in the suite itself.
       expect(before.body).toEqual({
         ticket: expect.stringMatching(/^[0-9a-f]{64}$/),
-        expiresIn: expect.any(Number)
+        expiresIn: 30
       })
 
       const repo = boot.repo as MockUserRepository

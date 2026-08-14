@@ -1203,6 +1203,18 @@ It passes an `AuthException` through untouched, keeps the status any other `Http
 chose, and answers an unhandled throw with `auth.internal` and a generic message — never the
 thrown one.
 
+> **Do not register it on a `@bymax-one/nest-core` application.** The two filters are mutually
+> exclusive and this one wins: `useGlobalFilters` binds ahead of an `APP_FILTER` provider, and
+> `@Catch()` with no argument catches everything, so nest-core's envelope filter never runs.
+> Measured — the same request answers `{ error: { code, message, details } }` with this filter
+> registered and the flat `{ statusCode, code, message, timestamp, path, details }` without it.
+> Registering both therefore **loses** `statusCode`, `timestamp`, `path` and the correlation id,
+> which is the opposite of what adding a filter looks like it should do.
+>
+> On nest-core, take theirs: it already recognises this library's envelope and passes the code,
+> message and per-field details through unchanged. The symptom of getting it wrong is a body
+> nested under `error` where the rest of your application answers flat.
+
 #### The HTTP status belongs to the code
 
 Every code answers exactly one status, and the status is derived from the code rather than
