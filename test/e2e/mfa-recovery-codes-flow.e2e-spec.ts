@@ -629,3 +629,155 @@ describe('platform MFA flow (E2E)', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Suite — the two challenge routes, crossed
+//
+// `/mfa/challenge` and `/platform/mfa/challenge` both hand their temp token to the same
+// `MfaService.challenge`, and each then decides whether the RESULT belongs on its route. Those
+// decisions had no e2e: the dashboard route's platform branch and the platform route's
+// dashboard refusal were proven by unit tests constructing the result object directly, which
+// cannot show that a temp token from one surface reaches the other route at all.
+//
+// Both directions are driven here, from one application with both surfaces enrolled, because
+// the property is about two routes and one service — and a suite that only ever posts a token
+// to its own route is measuring the composition it never questions.
+// ---------------------------------------------------------------------------
+
+describe('MFA challenge across the two surfaces (E2E)', () => {
+  let boot: BootstrappedTestApp & { adminId: string }
+  let platformSecret: string
+  let dashboardSecret: string
+  let dashboardEmail: string
+  let base: number
+
+  const DASHBOARD_PASSWORD = 'CrossSurface1!-passphrase'
+
+  beforeAll(async () => {
+    boot = await bootstrapWithPlatform()
+    base = Date.now()
+
+    // Enrol the platform admin.
+    const platformAccess = (await platformLogin(boot.app)).accessToken
+    const platformSetup = await request(boot.app.getHttpServer())
+      .post('/platform/mfa/setup')
+      .set('Authorization', `Bearer ${platformAccess}`)
+      .send({ password: PLATFORM_PASSWORD })
+    platformSecret = (platformSetup.body as { secret: string }).secret
+
+    const platformEnable = await request(boot.app.getHttpServer())
+      .post('/platform/mfa/verify-enable')
+      .set('Authorization', `Bearer ${platformAccess}`)
+      .send({ code: generateTotp(platformSecret, base) })
+    expect(platformEnable.status).toBe(204)
+
+    // Enrol a dashboard user in the SAME application.
+    dashboardEmail = `cross-surface-${Math.random().toString(36).slice(2)}@example.com`
+    const register = await request(boot.app.getHttpServer()).post('/register').send({
+      email: dashboardEmail,
+      password: DASHBOARD_PASSWORD,
+      name: 'Cross Surface',
+      tenantId: 'tenant-1'
+    })
+    const dashboardAccess = (register.body as { accessToken: string }).accessToken
+
+    const dashboardSetup = await request(boot.app.getHttpServer())
+      .post('/mfa/setup')
+      .set('Authorization', `Bearer ${dashboardAccess}`)
+      .send({ password: DASHBOARD_PASSWORD })
+    dashboardSecret = (dashboardSetup.body as { secret: string }).secret
+
+    const dashboardEnable = await request(boot.app.getHttpServer())
+      .post('/mfa/verify-enable')
+      .set('Authorization', `Bearer ${dashboardAccess}`)
+      .send({ code: generateTotp(dashboardSecret, base) })
+    expect(dashboardEnable.status).toBe(204)
+  })
+
+  afterAll(async () => {
+    await boot.app.close()
+  })
+
+  /** Logs in and returns the temp token the surface hands back instead of a session. */
+  async function tempTokenFor(surface: 'dashboard' | 'platform'): Promise<string> {
+    const res =
+      surface === 'platform'
+        ? await request(boot.app.getHttpServer())
+            .post('/platform/login')
+            .send({ email: PLATFORM_EMAIL, password: PLATFORM_PASSWORD })
+        : await request(boot.app.getHttpServer())
+            .post('/login')
+            .send({ email: dashboardEmail, password: DASHBOARD_PASSWORD, tenantId: 'tenant-1' })
+
+    const token = (res.body as { mfaTempToken?: string }).mfaTempToken
+    expect(token).toBeTruthy()
+    return token as string
+  }
+
+  // Verifies a PLATFORM temp token submitted to the DASHBOARD route is honoured and answered
+  // with a platform session — the branch that discriminates on the result's shape. The two
+  // routes are not interchangeable in what they return, so a dashboard route that serialised
+  // this as a dashboard response would hand back a body with `user` for an account that has
+  // none, and cookie delivery for a session cookies do not apply to.
+  it('answers a platform temp token on the dashboard route with a platform session', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/mfa/challenge')
+      .send({
+        mfaTempToken: await tempTokenFor('platform'),
+        code: generateTotp(platformSecret, base + TOTP_STEP_SECONDS * 1000)
+      })
+
+    expect(res.status).toBe(200)
+
+    const body = res.body as { admin?: unknown; user?: unknown; accessToken?: string }
+    expect(body.admin).toBeDefined()
+    expect(body.user).toBeUndefined()
+    expect(body.accessToken).toEqual(expect.any(String))
+    // No cookies: platform sessions are bearer-only, whichever route minted them.
+    expect(res.headers['set-cookie']).toBeUndefined()
+  })
+
+  // The other direction, and the one that must NOT be honoured: a dashboard temp token at the
+  // platform route. The code is correct and the challenge itself succeeds — the refusal is the
+  // controller's, on the result's context, which is what stops a dashboard credential from
+  // being upgraded into a platform session by posting it to a different URL.
+  it('refuses a dashboard temp token on the platform route', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/platform/mfa/challenge')
+      .send({
+        mfaTempToken: await tempTokenFor('dashboard'),
+        code: generateTotp(dashboardSecret, base + TOTP_STEP_SECONDS * 1000)
+      })
+
+    expectAuthError(res, 'auth.platform_auth_required')
+  })
+
+  // Verifies each route refuses a body carrying no temp token at all. Both check explicitly for
+  // undefined-or-empty rather than falling through to the service, so that the service always
+  // receives a non-empty string — and both answer the same code, which is what keeps a caller
+  // from learning anything by omitting the field on one route rather than the other.
+  it.each([
+    ['the dashboard route', '/mfa/challenge'],
+    ['the platform route', '/platform/mfa/challenge']
+  ])('refuses a challenge with no temp token on %s', async (_where, path) => {
+    const res = await request(boot.app.getHttpServer()).post(path).send({ code: '123456' })
+
+    expectAuthError(res, 'auth.mfa_temp_token_invalid')
+  })
+
+  // Verifies the cookie path: when the temp token came from the HttpOnly cookie the OAuth
+  // callback plants, a failed challenge CLEARS it. Leaving it would let a browser retry the
+  // same dead token on every subsequent request, and the user would see the challenge fail
+  // repeatedly with no way to restart the flow short of clearing cookies by hand.
+  it('clears the mfa_temp_token cookie when a cookie-sourced challenge fails', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/mfa/challenge')
+      .set('Cookie', 'mfa_temp_token=not-a-real-temp-token')
+      .send({ code: '123456' })
+
+    expectAuthError(res, 'auth.mfa_temp_token_invalid')
+
+    const cleared = res.headers['set-cookie'] as unknown as string[] | undefined
+    expect(cleared?.some((cookie) => cookie.startsWith('mfa_temp_token=;'))).toBe(true)
+  })
+})

@@ -44,6 +44,133 @@ async function registerAndLogin(
 }
 
 // ---------------------------------------------------------------------------
+// The two @Public token routes, reached with no token at all
+// ---------------------------------------------------------------------------
+
+describe('logout and refresh with no credential (E2E)', () => {
+  let boot: BootstrappedTestApp
+
+  beforeAll(async () => {
+    boot = await bootstrapTestApp()
+  })
+
+  afterAll(async () => {
+    await boot.app.close()
+  })
+
+  // Both handlers read their credential through `extractAccessToken(req) ?? ''` /
+  // `extractRefreshToken(req) ?? ''`, and the `?? ''` arm — the request that carries neither a
+  // header nor a cookie — had never been driven over HTTP. It is the ordinary shape of both
+  // routes in the wild: a browser whose cookies expired, a client that lost its token, a bot.
+  //
+  // The two answer DIFFERENTLY on purpose, and that is the pair worth asserting together.
+
+  // Logout is idempotent: signing out with nothing to sign out of is success, not an error.
+  // Answering 401 here would leave a client that lost its tokens unable to complete a logout it
+  // has already, in every sense that matters, completed — and would tell an unauthenticated
+  // caller whether a credential was recognised.
+  it('answers a logout with no credential 204, and clears nothing it was not sent', async () => {
+    const res = await request(boot.app.getHttpServer()).post('/logout').send({})
+
+    expect(res.status).toBe(204)
+    expect(res.body).toEqual({})
+  })
+
+  // Refresh is the opposite: with no refresh token there is nothing to rotate, and the answer is
+  // the same refusal a wrong token gets. Identical on purpose — a caller must not learn from the
+  // response whether the token they sent was recognised, only that they have no session.
+  // The platform twins of the two above, on a surface that reads its credential from a
+  // different place: `extractPlatformAccessToken` / `extractPlatformRefreshToken` always take
+  // the header and the body, never a cookie, whatever `tokenDelivery` says. So "no credential"
+  // is a different code path here, and it had the same untested `?? ''` arm.
+  it('answers a platform logout with no credential 204 and a platform refresh 401', async () => {
+    const platform = await bootstrapTestApp(
+      { platform: { enabled: true } },
+      {
+        controllers: { auth: true, mfa: true, passwordReset: true, sessions: true, platform: true }
+      }
+    )
+
+    try {
+      const logout = await request(platform.app.getHttpServer()).post('/platform/logout').send({})
+      expect(logout.status).toBe(204)
+
+      const refresh = await request(platform.app.getHttpServer()).post('/platform/refresh').send({})
+      expectAuthError(refresh, 'auth.refresh_token_invalid')
+    } finally {
+      await platform.app.close()
+    }
+  })
+
+  it('answers a refresh with no credential exactly as it answers a wrong one', async () => {
+    const missing = await request(boot.app.getHttpServer()).post('/refresh').send({})
+    const wrong = await request(boot.app.getHttpServer())
+      .post('/refresh')
+      .send({ refreshToken: 'a'.repeat(64) })
+
+    expectAuthError(missing, 'auth.refresh_token_invalid')
+    expect(missing.body).toEqual(wrong.body)
+    expect(missing.status).toBe(wrong.status)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A host that never mounted a cookie parser
+// ---------------------------------------------------------------------------
+
+describe('cookie readers on a host with no cookie parser (E2E)', () => {
+  let boot: BootstrappedTestApp
+
+  beforeAll(async () => {
+    boot = await bootstrapTestApp({}, { withoutCookieParser: true })
+  })
+
+  afterAll(async () => {
+    await boot.app.close()
+  })
+
+  // `cookie-parser` is the consumer's to mount — this library takes no dependency on it and a
+  // bearer-only deployment has no reason to add one. Every cookie reader here therefore has to
+  // survive `req.cookies` being **undefined**, and until now nothing proved it: the harness
+  // mounts a shim for every other suite, so the branch was reachable only through a unit test
+  // handing the reader an object Express would not have built.
+  //
+  // The failure it guards against is not subtle and is not confined to cookies: a reader that
+  // assumed the object exists throws a TypeError, which the exception filter turns into a 500 on
+  // a route the caller drove with a perfectly good bearer token.
+  it('refuses the MFA challenge instead of failing on the missing cookie jar', async () => {
+    const res = await request(boot.app.getHttpServer())
+      .post('/mfa/challenge')
+      .set('Cookie', 'mfa_temp_token=whatever')
+      .send({ code: '123456' })
+
+    // The header was sent and there is no parser to read it, so the request arrives with no
+    // token from either source — which is the controller's own refusal, not an error.
+    expectAuthError(res, 'auth.mfa_temp_token_invalid')
+  })
+
+  // The same property on the credential path: a bearer login works normally on a host with no
+  // cookie parser. Without this the case above would also pass on an application that refused
+  // everything.
+  it('still signs a user in over bearer', async () => {
+    const registered = await request(boot.app.getHttpServer()).post('/register').send({
+      email: 'no-cookie-parser@example.com',
+      password: 'NoCookieParser123!-xyz',
+      name: 'No Parser',
+      tenantId: 'tenant-1'
+    })
+
+    expect(registered.status).toBe(201)
+
+    const me = await request(boot.app.getHttpServer())
+      .get('/me')
+      .set('Authorization', `Bearer ${(registered.body as { accessToken: string }).accessToken}`)
+
+    expect(me.status).toBe(200)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Harness fidelity — the controller's own pipe must reach the wire
 // ---------------------------------------------------------------------------
 

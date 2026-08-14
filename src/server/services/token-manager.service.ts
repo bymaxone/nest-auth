@@ -1162,10 +1162,9 @@ export class TokenManagerService {
    * @param token - The MFA temp JWT issued by {@link issueMfaTempToken}.
    * @returns The `userId`, `context`, and `jti` from the token. Pass the
    *   `jti` to {@link consumeMfaTempToken} after TOTP validation succeeds.
-   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` if the
-   *   Redis entry is missing (already consumed, expired, or never issued).
-   * @throws {Error} When JWT signature or expiry validation fails (propagated
-   *   directly from `JwtService.verify()` — not wrapped in {@link AuthException}).
+   * @throws {@link AuthException} with `MFA_TEMP_TOKEN_INVALID` for every way the token can be
+   *   unusable — a bad signature, an expired one, a shape no secret accepts, or a missing Redis
+   *   entry (already consumed, expired, or never issued).
    */
   async verifyMfaTempToken(token: string): Promise<{
     userId: string
@@ -1173,7 +1172,29 @@ export class TokenManagerService {
     jti: string
     tenantId?: string
   }> {
-    const payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
+    // The verifier's own error is wrapped rather than propagated. It used to travel out of here
+    // unchanged, and since nothing above catches it, a malformed `mfaTempToken` — from the body
+    // or from the `mfa_temp_token` cookie an OAuth callback plants — answered **500
+    // `auth.internal`** instead of 401. Three consequences, none of them visible from a unit
+    // test that only ever passed this a token it had just minted:
+    //
+    //   - an attacker-controlled input produced a 5xx, which is free noise in an operator's
+    //     error budget and hides the 500s that mean something;
+    //   - `MfaController` clears the temp cookie only for an `AuthException` it recognises, so
+    //     a browser holding a malformed cookie was never told to drop it and retried the same
+    //     dead value on every attempt;
+    //   - rust-auth maps the same failure to `MfaTempTokenInvalid`
+    //     (`token_manager.rs`, `verify_rotating(...).map_err(|_| AuthError::MfaTempTokenInvalid)`),
+    //     so the two backends answered one request differently.
+    //
+    // Every other failure below already answers `MFA_TEMP_TOKEN_INVALID`; this makes the
+    // verification failure say the same thing, which is also all a caller may be told.
+    let payload: MfaTempPayload
+    try {
+      payload = verifyWithRotation<MfaTempPayload>(this.jwtService, this.options, token)
+    } catch {
+      throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
+    }
 
     // Plane/tenant binding is mandatory and mutually exclusive: a dashboard challenge MUST carry
     // the tenant it was issued for; a platform challenge MUST NOT. A missing or misplaced claim is
