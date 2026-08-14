@@ -17,17 +17,19 @@
  * internal is one a consumer cannot apply at all, and no test living inside the library would
  * ever notice.
  *
- * Two branches are unreachable from here, and are stated rather than skipped. Both are covered
- * by their guard's unit spec, and both carry the same note in their source:
+ * One branch is out of reach of the compositions this library supports, and it is stated rather
+ * than skipped: `PlatformRolesGuard`'s missing `platformHierarchy`. Reaching it needs a
+ * platform-typed `request.user`, which needs `JwtPlatformGuard`, which is only registered when
+ * `platform.enabled` — and `resolveOptions` refuses that configuration without a
+ * `platformHierarchy`. A consumer's own guard populating `request.user` with a platform payload
+ * reaches it, over HTTP, which is what the arm defends; nothing this library mounts does. It is
+ * covered by the guard's unit spec.
  *
- *  - `SelfOrAdminGuard`'s array-valued route param. Express builds `req.params` from the path,
- *    where a name cannot repeat, so the value is always a string. Only a query string produces
- *    arrays, and this reads params.
- *  - `PlatformRolesGuard`'s missing `platformHierarchy`. Reaching it needs a platform-typed
- *    `request.user`, which needs `JwtPlatformGuard`, which is only registered when
- *    `platform.enabled` — and `resolveOptions` refuses that configuration without a
- *    `platformHierarchy`. No supported composition reaches the branch; a consumer's own guard
- *    populating `request.user` with a platform payload could, which is what it defends.
+ * `SelfOrAdminGuard`'s array-valued param was described the same way in the first draft of this
+ * suite, and that was **wrong**. Express 5 (path-to-regexp 8) fills a named wildcard's param with
+ * an array of segments — measured, `['abc']` for one segment — so the arm is reachable by any
+ * consumer who writes `@Get('files/*path')` behind the guard. The fixture now declares such a
+ * route and the case below drives it.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -125,6 +127,20 @@ class HostController {
   @Get('self-unauthenticated/:userId')
   @UseGuards(SelfOrAdminGuard)
   selfWithoutAuth(): typeof ADMITTED {
+    return ADMITTED
+  }
+
+  /**
+   * The same guard over a NAMED WILDCARD, which is where its array arm lives.
+   *
+   * Express 5 (path-to-regexp 8) fills `req.params.userId` with an array of path segments for
+   * `*userId` — `['abc']` for one segment, `['a','b','c']` for three. So the arm is not the
+   * defensive dead code it reads as: a consumer writes this route the moment they want
+   * `/files/*path` behind an ownership check.
+   */
+  @Get('self-wildcard/*userId')
+  @UseGuards(JwtAuthGuard, SelfOrAdminGuard)
+  selfWildcard(): typeof ADMITTED {
     return ADMITTED
   }
 
@@ -238,12 +254,13 @@ async function register(
  */
 async function registerAdmin(
   boot: BootstrappedTestApp,
-  email: string
+  email: string,
+  role = 'ADMIN'
 ): Promise<{ accessToken: string; userId: string }> {
   const { userId } = await register(boot.app, email)
   const stored = boot.repo.users.get(userId)!
 
-  boot.repo.users.set(userId, { ...stored, role: 'ADMIN' })
+  boot.repo.users.set(userId, { ...stored, role })
 
   const login = await request(boot.app.getHttpServer())
     .post('/login')
@@ -409,6 +426,49 @@ describe('host-mounted guards (E2E)', () => {
         .set('Authorization', `Bearer ${member.accessToken}`)
 
       expectAuthError(res, 'auth.insufficient_role')
+    })
+
+    // Verifies the array arm, over a real wildcard route. Express 5 hands `req.params.userId` an
+    // ARRAY of path segments for `*userId` — `['abc']` even for a single one — and the guard
+    // refuses rather than picking an element, because an identity check against one segment of a
+    // path the caller chose is not the check it claims to be. A consumer reaches this the moment
+    // they put an ownership guard on `/files/*path`.
+    //
+    // Both shapes are driven: one segment and three. The single-segment case is the one that
+    // matters, because it is the shape that LOOKS like a plain param and is not.
+    it.each([
+      ['a single segment', 'abc'],
+      ['several segments', 'abc/def/ghi']
+    ])('refuses a wildcard param carrying %s', async (_why, path) => {
+      const res = await request(app.getHttpServer())
+        .get(`/host/self-wildcard/${path}`)
+        .set('Authorization', `Bearer ${member.accessToken}`)
+
+      expectAuthError(res, 'auth.insufficient_role')
+    })
+
+    // The positive half of the convention above, and the guard's last reachable branch: on a
+    // deployment whose hierarchy really does carry the literal `admin`, a non-owner passes.
+    // Its own application, because the hierarchy is what varies — a second route on the shared
+    // one could not express it.
+    it('admits a non-owner whose hierarchy grants the literal admin role', async () => {
+      const boot = await bootstrapTestApp(
+        { roles: { hierarchy: { admin: ['MEMBER'], MEMBER: [] } } },
+        { hostControllers: [HostController] }
+      )
+
+      try {
+        const owner = await register(boot.app, 'owned@example.com')
+        const elevated = await registerAdmin(boot, 'literal-admin@example.com', 'admin')
+
+        const res = await request(boot.app.getHttpServer())
+          .get(`/host/self/${owner.userId}`)
+          .set('Authorization', `Bearer ${elevated.accessToken}`)
+
+        expect(res.status).toBe(200)
+      } finally {
+        await boot.app.close()
+      }
     })
 
     // Verifies the defensive branch: mounted without `JwtAuthGuard`, it refuses with

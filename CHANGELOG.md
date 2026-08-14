@@ -42,12 +42,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   dropping the `mfaEnabled` type check in `MfaRequiredGuard` each turn exactly the case that
   names them red.
 
-  **Two branches are unreachable over HTTP and now say so in their own source**, rather than
-  being quietly missing from the report: `SelfOrAdminGuard`'s array-valued route param (Express
-  builds `req.params` from the path, where a name cannot repeat) and `PlatformRolesGuard`'s
-  missing `platformHierarchy` (reaching it needs `JwtPlatformGuard`, which needs
-  `platform.enabled`, which `resolveOptions` refuses without that map). Both stay — each defends
-  a composition a consumer can build — and both are covered by their unit specs.
+  With the wildcard route and the literal-`admin` deployment both driven, `SelfOrAdminGuard`
+  reaches **100% on every axis from e2e alone**, and `RolesGuard`, `OptionalAuthGuard` and
+  `MfaRequiredGuard` were already there.
+
+  **`SelfOrAdminGuard`'s array-valued param is reachable, and is now driven.** The first draft of
+  this work called it impossible — Express builds `req.params` from the path, where a name cannot
+  repeat — and that was wrong: Express 5 (path-to-regexp 8) fills a **named wildcard**'s param
+  with an array of segments, `['abc']` even for a single one. Any consumer writing
+  `@Get('files/*path')` behind the guard reaches it on every request, including the URLs that
+  look exactly like a plain param. Measured, then covered: the fixture declares a wildcard route
+  and the suite drives one segment and three. Refusing is deliberate — picking an element would
+  compare an identity against one segment of a caller-chosen path and admit the rest unlooked-at.
+
+  **One branch is out of reach of the compositions this library supports**, and says so in its own
+  source rather than being quietly missing from the report: `PlatformRolesGuard`'s missing
+  `platformHierarchy`. Reaching it needs `JwtPlatformGuard`, which needs `platform.enabled`, which
+  `resolveOptions` refuses without that map — so nothing this library mounts gets there, while a
+  consumer's own guard populating `request.user` does, over HTTP, which is what the arm defends.
+  Covered by its unit spec.
 
 - **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
   `conformance/wire-contract.json` is the one artifact `rust-auth` and this library are supposed

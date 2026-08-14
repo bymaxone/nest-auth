@@ -97,14 +97,18 @@ export class SelfOrAdminGuard implements CanActivate {
 const STRICT_SHA256_RE = /^[a-f0-9]{64}$/
 
 /**
- * Returns the param string when it is a plain string, or `undefined` when the
- * value is an array (which should never occur for route params in Express).
+ * Returns the param string when it is a plain string, or `undefined` when the value is an array.
  *
- * The array arm is unreachable over HTTP: Express builds `req.params` from the path, where a
- * name cannot repeat, so only a query string produces arrays and this reads params. It is kept
- * because the alternative — picking an element — would silently compare against a value the
- * router never produced. Proven by this guard's unit spec;
- * `test/e2e/host-mounted-guards.e2e-spec.ts` records why no e2e can reach it.
+ * **An array is not the impossible case it looks like.** Express 5 (path-to-regexp 8) fills a
+ * NAMED WILDCARD's param with an array of path segments — `['abc']` for one segment, measured,
+ * and `['a','b','c']` for three. So any consumer who writes `@Get('files/*path')` behind this
+ * guard reaches this arm on every request, including the single-segment URLs that look exactly
+ * like a plain param.
+ *
+ * Refusing is deliberate, not defensive. The alternative is picking an element — comparing an
+ * identity against one segment of a path the caller chose, which is not the check this guard
+ * claims to be, and which would ADMIT a request whose remaining segments nobody looked at.
+ * Driven over both shapes in `test/e2e/host-mounted-guards.e2e-spec.ts`.
  */
 function resolveParamString(param: string | string[]): string | undefined {
   return typeof param === 'string' ? param : undefined
