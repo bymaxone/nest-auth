@@ -148,6 +148,7 @@ export { WsJwtGuard } from './guards/ws-jwt.guard'
 // ---------------------------------------------------------------------------
 
 export { AuthExceptionFilter } from './filters/auth-exception.filter'
+export { WsAuthExceptionFilter } from './filters/ws-auth-exception.filter'
 
 // ---------------------------------------------------------------------------
 // Pipes

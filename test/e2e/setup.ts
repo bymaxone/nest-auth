@@ -527,6 +527,15 @@ export interface ExtraBootstrapOptions {
   /** Optional callback to mutate the `TestingModuleBuilder` before compile (e.g. for `.overrideProvider()`). */
   mutateBuilder?: (builder: TestingModuleBuilder) => TestingModuleBuilder
   /**
+   * Runs against the application after it is created and BEFORE `init()`.
+   *
+   * For the choices a host has to make in that window, which is not a detail of this harness but
+   * of Nest: `useWebSocketAdapter` is the one here — an adapter installed after `init()` serves
+   * requests but leaves the framework's own bookkeeping behind it, and the application then
+   * throws on shutdown rather than at the point of the mistake.
+   */
+  beforeInit?: (app: INestApplication) => void
+  /**
    * Skips the cookie-parser shim, modelling a host that never mounted one.
    *
    * A supported deployment rather than a broken one: `cookie-parser` is the consumer's to mount
@@ -619,6 +628,7 @@ export async function bootstrapTestApp(
 
   const app = moduleRef.createNestApplication()
   applyTestMiddleware(app, extra.withoutCookieParser !== true)
+  extra.beforeInit?.(app)
   await app.init()
 
   return { app, repo, platformRepo, email, redis, options }

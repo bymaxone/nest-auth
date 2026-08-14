@@ -18,6 +18,8 @@
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
+import type { ExecutionContext } from '@nestjs/common'
+
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -136,6 +138,26 @@ describe('WsJwtGuard', () => {
     }).compile()
 
     guard = module.get(WsJwtGuard)
+  })
+
+  // The transport this guard cannot authenticate on, measured rather than assumed: with
+  // `@nestjs/platform-ws` the client handed to a gateway is the raw `ws` WebSocket, which carries
+  // no `handshake` — and `ws` does not retain the upgrade request either, so both credential
+  // channels are simply absent.
+  //
+  // Before this refusal existed, the first property access threw a `TypeError`. That is not an
+  // `AuthException`, so no auth filter could answer it: the socket died with no close frame and
+  // the caller learned nothing. Refused with the same code a missing credential gets, because a
+  // caller must not learn from the code which of the two happened. Driven over a real native
+  // adapter in `test/e2e/ws-guard.e2e-spec.ts`.
+  it('refuses a client with no handshake instead of throwing on it', async () => {
+    const context = {
+      switchToWs: () => ({ getClient: () => ({ data: {} }) })
+    } as unknown as ExecutionContext
+
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+    })
   })
 
   // ----------------- Peer-dependency check -----------------
