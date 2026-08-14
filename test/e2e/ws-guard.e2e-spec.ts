@@ -47,6 +47,9 @@ import { io } from 'socket.io-client'
 import type { Socket as ClientSocket } from 'socket.io-client'
 
 import { sha256 } from '../../src/server/crypto/secure-token'
+import { WsAdapter } from '@nestjs/platform-ws'
+import WebSocket from 'ws'
+
 import { WsAuthExceptionFilter } from '../../src/server/filters/ws-auth-exception.filter'
 import { WsJwtGuard } from '../../src/server/guards/ws-jwt.guard'
 import type { BootstrappedTestApp } from './setup'
@@ -92,6 +95,23 @@ class ProbeGateway {
 @WebSocketGateway({ namespace: 'filtered', transports: ['websocket'] })
 @UseFilters(new WsAuthExceptionFilter())
 class FilteredGateway {
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('whoami')
+  whoami(@ConnectedSocket() client: { data: { user?: WhoAmI } }, @MessageBody() _body: unknown) {
+    return client.data.user ?? null
+  }
+}
+
+/**
+ * The same gateway again, for the NATIVE `ws` adapter.
+ *
+ * A native client also extends `EventEmitter`, so a filter that only emits succeeds on it and
+ * sends nothing — the peer is told nothing while the code path looks taken. That failure is
+ * invisible from a Socket.IO suite, which is why this one exists.
+ */
+@WebSocketGateway({ path: '/native' })
+@UseFilters(new WsAuthExceptionFilter())
+class NativeGateway {
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('whoami')
   whoami(@ConnectedSocket() client: { data: { user?: WhoAmI } }, @MessageBody() _body: unknown) {
@@ -237,6 +257,70 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     expect(result.ok && result.user).toEqual(
       expect.objectContaining({ sub: userId, tenantId: 'tenant-1', type: 'dashboard' })
     )
+  })
+
+  // ---------------------------------------------------------------------------
+  // The native `ws` adapter
+  // ---------------------------------------------------------------------------
+
+  // Its own application, because the adapter is per-application: `useWebSocketAdapter` replaces
+  // the Socket.IO one, and the two cannot serve the same process.
+  //
+  // The case is the one a Socket.IO suite structurally cannot reach. A native client extends
+  // `EventEmitter`, so `emit('exception', …)` on it SUCCEEDS and delivers nothing — the filter
+  // would look correct in code, pass every unit test written against an emitter, and tell the
+  // peer nothing. `@nestjs/platform-ws` delivers with `send(JSON.stringify(...))`, and this
+  // asserts the frame arrives.
+  it('delivers the library code over the native ws adapter too', async () => {
+    const native = await bootstrapTestApp(
+      {},
+      {
+        hostProviders: [NativeGateway],
+        // Before `init()`, which is where a host has to make this choice: an adapter installed
+        // afterwards serves requests and then throws on shutdown, far from the mistake.
+        beforeInit: (app) => app.useWebSocketAdapter(new WsAdapter(app))
+      }
+    )
+
+    try {
+      await native.app.listen(0)
+
+      const nativePort = (
+        native.app.getHttpServer() as { address: () => { port: number } }
+      ).address().port
+
+      const socket = new WebSocket(`ws://127.0.0.1:${String(nativePort)}/native`)
+
+      const frame = await new Promise<{ event: string; data: { error?: { code?: string } } }>(
+        (resolve, reject) => {
+          const timer = setTimeout(() => {
+            reject(new Error('the native gateway sent no frame'))
+          }, 5_000)
+
+          socket.on('open', () => {
+            socket.send(JSON.stringify({ event: 'whoami', data: {} }))
+          })
+          socket.on('close', (code: number) => {
+            clearTimeout(timer)
+            reject(new Error(`socket closed with ${String(code)}`))
+          })
+          socket.on('message', (raw: Buffer) => {
+            clearTimeout(timer)
+            resolve(
+              JSON.parse(raw.toString()) as { event: string; data: { error?: { code?: string } } }
+            )
+          })
+          socket.on('error', reject)
+        }
+      )
+
+      socket.close()
+
+      expect(frame.event).toBe('exception')
+      expect(frame.data.error?.code).toBe('auth.token_invalid')
+    } finally {
+      await native.app.close()
+    }
   })
 
   // ---------------------------------------------------------------------------

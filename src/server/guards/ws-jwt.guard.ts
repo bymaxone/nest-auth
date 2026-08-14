@@ -15,7 +15,11 @@ import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
 /** Minimal shape of a WebSocket client as seen during the handshake. */
 type WsClient = {
-  handshake: {
+  /**
+   * Present on a Socket.IO client and ABSENT on a native `ws` one — see the check in
+   * `canActivate`, which is where that difference is handled.
+   */
+  handshake?: {
     headers: Record<string, string | undefined>
     /** Parsed upgrade query string, when the transport exposes one (Socket.IO does). */
     query?: Record<string, string | string[] | undefined>
@@ -98,9 +102,25 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const client = context.switchToWs().getClient<WsClient>()
 
+    // Both credential channels live on `handshake`, and only a Socket.IO client has one.
+    // Measured against `@nestjs/platform-ws`: the client handed to a gateway there is the raw
+    // `ws` WebSocket, which carries no `handshake` at all — and `ws` does not retain the upgrade
+    // request either, so there is nothing for this guard to read. Without this check the first
+    // property access threw a `TypeError`, which is not an `AuthException`, so no auth filter
+    // could answer it: the socket died with no close frame and the caller learned nothing.
+    //
+    // Refusing is the honest answer for a transport this guard cannot authenticate on, and it
+    // is the same refusal a missing credential gets — a caller must not learn from the code
+    // which of the two happened. Supporting that adapter needs the consumer to stash the
+    // upgrade request in `handleConnection`, which is a contract this library does not have.
+    const handshake = client.handshake
+    if (handshake === undefined || handshake === null) {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
     // The ticket path first: a client that presents one has no header to fall back to, and a
     // client that presents both is authenticated by the stronger, single-use credential.
-    const ticket = readUpgradeTicket(client)
+    const ticket = readUpgradeTicket(handshake)
     if (ticket !== undefined) {
       const snapshot = await this.wsTickets.redeem(ticket)
       assertDashboardSnapshot(snapshot)
@@ -112,7 +132,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       return true
     }
 
-    const authHeader = client.handshake.headers['authorization']
+    const authHeader = handshake.headers['authorization']
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined
     if (!token) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
@@ -188,18 +208,18 @@ function assertDashboardSnapshot(snapshot: WsTicketSnapshot): void {
  * is a one-shot ~30-second opaque ticket, never a JWT. Two shapes are accepted because
  * transports differ: Socket.IO parses the query for you, a raw `ws` server hands over the URL.
  *
- * @param client - The connecting client as seen during the handshake.
+ * @param handshake - The connecting client's handshake, already known to exist.
  * @returns The ticket, or `undefined` when the upgrade carries none.
  */
-function readUpgradeTicket(client: WsClient): string | undefined {
-  const fromQuery = client.handshake.query?.['ticket']
+function readUpgradeTicket(handshake: NonNullable<WsClient['handshake']>): string | undefined {
+  const fromQuery = handshake.query?.['ticket']
   // A repeated parameter arrives as an array. Taking the first would let a caller smuggle a
   // second value past whatever inspected the first, so the whole request is treated as
   // ticketless and falls through to the header path.
   if (typeof fromQuery === 'string' && fromQuery !== '') return fromQuery
   if (fromQuery !== undefined) return undefined
 
-  const url = client.handshake.url
+  const url = handshake.url
   if (typeof url !== 'string') return undefined
   // Split so the suppression covers the empty case alone — the `typeof` arm is killable and stays
   // live.

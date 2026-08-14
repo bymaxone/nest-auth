@@ -42,6 +42,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   carrying no `jti`, and a ticket redeeming to a snapshot with **no tenant**, which is the shape
   `rust-auth` writes for a platform ticket into the `wst:` keyspace both libraries share.
 
+  **A second finding, from taking a review question seriously enough to measure it: the guard
+  crashed the socket on the native `ws` adapter.** `WsJwtGuard` reads both credential channels
+  from `client.handshake`, and `@nestjs/platform-ws` hands a gateway the raw `ws` socket, which
+  has none — so the first property access threw a `TypeError`. Not an `AuthException`, so no
+  filter could answer it: the connection dropped with no close frame and the caller learned
+  nothing at all. It now **refuses** with `auth.token_invalid`, the same code a missing
+  credential gets, and the filter delivers it. The guard still cannot authenticate on that
+  adapter — `ws` does not retain the upgrade request — and the README says so where a consumer
+  chooses an adapter.
+
   **The finding this surfaced, and its fix — `WsAuthExceptionFilter`, exported.** The library's
   error catalogue did not reach the socket: `WsJwtGuard` throws `AuthException`, which extends
   `HttpException`, and Nest's WebSocket exception layer understands only `WsException` — so a

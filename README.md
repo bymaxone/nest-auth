@@ -1289,6 +1289,15 @@ could act on. A reconnect policy cannot tell a dead credential from a crashed ha
 sensible default for an unknown error is to retry — so an expired token becomes a reconnect loop
 against an endpoint that will refuse it forever.
 
+> **Socket.IO only, measured.** `WsJwtGuard` reads both credential channels from the client's
+> `handshake`, and only a Socket.IO client has one: with `@nestjs/platform-ws` the gateway
+> receives the raw `ws` socket, which carries no `handshake` — and `ws` does not retain the
+> upgrade request either, so there is nothing to read. Such a connection is **refused** with
+> `auth.token_invalid` rather than crashing the socket, and the filter below delivers that
+> refusal, but the guard cannot authenticate anyone on that adapter. Supporting it needs the
+> gateway to stash the upgrade request in `handleConnection`, which is a contract this library
+> does not have today.
+
 Register the filter on any gateway that applies the guard:
 
 ```typescript
