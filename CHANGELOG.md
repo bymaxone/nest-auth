@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-13
+
 ### Added
 
 - **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
@@ -36,10 +38,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   because neither reads the other. Closing that needs a real cross-repository comparison (one
   side fetching the other's committed blob in CI, or both consuming an immutable versioned
   artifact); it is proposed and unbuilt.
-
-## [1.4.3] - 2026-08-13
-
-### Added
 
 - **A composition suite: the first tests in this repository to observe the shape a consumer
   actually receives.** Measured from the consumer seat and confirmed here — this suite carried
@@ -116,8 +114,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   client, and inexpressible in any committed document because it is option-derived. It is declared
   with its own probes, under its own name, so a reader is not left inferring a symmetry that is
   not there.
-
-### Fixed
 
 - **`POST {prefix}/password/change` refused the `refreshToken` it reads.**
   The handler takes the caller's own refresh token through
