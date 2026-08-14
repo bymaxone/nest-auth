@@ -65,3 +65,15 @@ export const BYMAX_AUTH_BREACH_CHECKER = Symbol('BYMAX_AUTH_BREACH_CHECKER')
  * Bound to an `ioredis` `Redis` instance configured for the host environment.
  */
 export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
+
+/**
+ * Token carrying which of this library's controllers the module actually registered.
+ *
+ * Internal, and it exists for one reader: the OpenAPI contributor. Registration is decided
+ * synchronously, from the `controllers` argument to `registerAsync()`, before any factory runs —
+ * `BymaxAuthModule` refuses a `controllers` key inside the factory's return value for exactly
+ * that reason. So the resolved options cannot carry it, and a contributor that guessed would
+ * name handlers the document does not contain, which fails a consumer's document build rather
+ * than degrading.
+ */
+export const BYMAX_AUTH_REGISTERED_CONTROLLERS = Symbol('BYMAX_AUTH_REGISTERED_CONTROLLERS')

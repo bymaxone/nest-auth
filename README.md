@@ -1146,6 +1146,43 @@ Three constraints are worth stating because they are not visible from the field 
   length here would leak it as a pre-KDF timing signal, because a request failing validation
   returns before the hash runs.
 
+#### On `@bymax-one/nest-core`, the security posture writes itself
+
+A deployment that builds its OpenAPI document with `@bymax-one/nest-core` **1.4.0 or later** gets
+this library's operations described automatically — which schemes exist, which operation requires
+which, and which are reachable unauthenticated. Nothing to enable and nothing to import: the
+module registers a contributor, nest-core discovers it while building the document, and the
+fragments are merged.
+
+It has to be derived at your boot rather than shipped as a static file, because the answer
+depends on your configuration:
+
+| your options                   | what the document says                                                                                                                          |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tokenDelivery: 'cookie'`      | `bymaxAuthAccessCookie` and `bymaxAuthRefreshCookie`, **carrying your cookie names**                                                            |
+| `tokenDelivery: 'bearer'`      | `bymaxAuthAccessBearer` only — no refresh scheme exists, and `logout`/`refresh` instead carry a documented `{ refreshToken }` body              |
+| `tokenDelivery: 'both'`        | both access schemes as **alternatives** (`security: [{cookie}, {bearer}]`, which OpenAPI reads as OR)                                           |
+| `platform.enabled`             | `bymaxPlatformAccessBearer` — always bearer, in every mode, because platform credentials are read from the header whatever `tokenDelivery` says |
+| a controller you did not mount | nothing at all: no operation, and no scheme only it would have referenced                                                                       |
+
+A scheme the resolved options cannot satisfy is **absent**, never defined-and-unreferenced — a
+document that defines a credential the server will not read tells a generated client to offer it.
+
+The four names — `bymaxAuthAccessCookie`, `bymaxAuthAccessBearer`, `bymaxAuthRefreshCookie`,
+`bymaxPlatformAccessBearer` — are stable identifiers. Renaming one is a break a generated client
+feels, so they will not change; their **definitions** are config-derived.
+
+> **On nest-core older than 1.4.0 the fragments are silently ignored.** There is no contributor
+> lane to discover them, so the document renders exactly as before — no error, no warning, no
+> failed boot. If you add a document and the auth schemes do not appear, check in this order:
+> whether this library is new enough to contribute them at all, and only then your nest-core
+> version. The two states look identical from the document.
+
+**If you already wrote these by hand, delete them.** A consumer's own declaration outranks a
+library's, so a stale `securitySchemes` entry or an `openapi.operationSecurity` override for an
+auth route keeps winning and the contributed one never lands — the document goes on describing
+whatever you wrote when you wrote it, including cookie names you have since changed.
+
 #### Machine-readable schemas
 
 The same contracts are published as data in

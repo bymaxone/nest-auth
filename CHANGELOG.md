@@ -100,6 +100,61 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **The OpenAPI security posture is contributed at the consumer's boot, not shipped as a file.**
+  A deployment building its document with `@bymax-one/nest-core` >= 1.4.0 now gets this library's
+  operations described automatically: which schemes exist, which operation requires which, and
+  which are reachable unauthenticated. The module registers a contributor; nest-core discovers it
+  while building the document. Nothing to enable, nothing to import.
+
+  It cannot be a static file, and that is the whole reason the contract exists. The same build
+  serves `/auth/login` here and `/api/v2/identity/login` there, with the credential in a cookie
+  on one deployment and an `Authorization` header on the next, under cookie names the consumer
+  chose. So the fragment is derived from the options that actually resolved, and keyed by handler
+  identity — which survives every prefix, version and mount point.
+
+  | resolved options          | contributed                                                                                                     |
+  | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+  | `tokenDelivery: 'cookie'` | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                         |
+  | `tokenDelivery: 'bearer'` | `bymaxAuthAccessBearer` only; `logout`/`refresh` get `security: []` and a documented `{refreshToken}` body      |
+  | `tokenDelivery: 'both'`   | both access schemes as a two-entry requirement list, which OpenAPI reads as OR                                  |
+  | `platform.enabled`        | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says |
+  | a controller not mounted  | no operation, and no scheme only it would have referenced                                                       |
+
+  **A scheme the options cannot satisfy is absent**, never defined-and-unreferenced: nest-core
+  fails a boot on a requirement naming an undefined scheme, and a document defining a credential
+  the server will not read tells a generated client to offer it. Both directions are asserted —
+  no dangling reference, and no unreferenced definition — under all three delivery modes.
+
+  **Coupling: `devDependency` only.** The contributor class is not exported, the contract version
+  is inlined, and the marker is the documented string literal — so nothing in the published
+  bundle or its `.d.ts` names `@bymax-one/nest-core`. What keeps that honest is a conformance
+  spec that imports nest-core's constants **as values** (test files do not ship) and a gate that
+  fails if any file outside a spec imports that package at all. Falsified by adding such an
+  import: it goes red naming the file.
+
+  Two acceptance checks run in both directions over the handler table: every declared key names a
+  method that exists on the controller it names, and every route handler on every controller is
+  declared. The first matters because a key nest-core cannot resolve **fails a consumer's
+  document build** — a renamed handler here would break their repository on upgrade, not ours.
+  The second is what stops the table falling quietly behind: a new endpoint that nobody described
+  would inherit the consumer's document-level default, which is the wrong answer for a public
+  route and an unenforced promise for a protected one.
+
+  **On nest-core older than 1.4.0 the fragments are silently ignored** — no contributor lane, so
+  the document renders exactly as before with no error and no warning. Documented symptom-first
+  in the README, with the diagnosis order, because "the contributor has not shipped yet" and "the
+  nest-core version is too old" are indistinguishable from the document.
+
+  **Apply to a derived backend.** If you wrote `securitySchemes` or `openapi.operationSecurity`
+  entries for this library's routes by hand, **delete them**. A consumer's declaration outranks a
+  library's, so the stale vocabulary keeps winning and the contributed one never lands — your
+  document goes on describing whatever you wrote when you wrote it, including cookie names you
+  have since changed.
+
+  **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
+  read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
+  contributor and are next; the security posture is the half a consumer asserts today.
+
 - **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:
   every other guard here is reached by an HTTP request, this one by a socket upgrade, and no
   suite spoke that protocol — so its only proof was unit tests handing it an `ExecutionContext`

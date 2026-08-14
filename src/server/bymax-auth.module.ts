@@ -10,6 +10,7 @@ import { DynamicModule, Module, type Provider } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 
 import {
+  BYMAX_AUTH_REGISTERED_CONTROLLERS,
   BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
@@ -42,6 +43,8 @@ import { OAUTH_PLUGINS } from './oauth/oauth.constants'
 import { OAuthController } from './oauth/oauth.controller'
 import { buildOAuthPlugins } from './oauth/oauth.module'
 import { OAuthService } from './oauth/oauth.service'
+import type { RegisteredControllers } from './openapi/auth-openapi-fragment'
+import { AuthOpenApiContributor } from './openapi/auth-openapi.contributor'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
@@ -406,6 +409,30 @@ export class BymaxAuthModule {
         ...extraProviders,
         // Resolved options (depends on consumer's inject tokens).
         resolvedOptionsProvider,
+        // Which controllers this registration mounted, and the contributor that reads it.
+        //
+        // The flags are computed above from the `controllers` argument, which Nest reads
+        // synchronously — before any factory runs — so they cannot travel inside the resolved
+        // options. The contributor needs them because a fragment naming a handler the document
+        // does not contain FAILS a consumer's document build: a library that described its
+        // platform routes on a deployment that never mounted them would break the build it was
+        // supposed to describe.
+        {
+          provide: BYMAX_AUTH_REGISTERED_CONTROLLERS,
+          useValue: {
+            auth: includeAuth,
+            passwordReset: includePasswordReset,
+            mfa: includeMfa,
+            sessions: includeSessions,
+            platform: includePlatform,
+            // One switch mounts both platform controllers, so they cannot disagree.
+            platformMfa: includePlatform,
+            invitations: includeInvitations,
+            emailChange: includeEmailChange,
+            oauth: includeOAuth
+          } satisfies RegisteredControllers
+        },
+        AuthOpenApiContributor,
         // Fallback NoOp providers (skipped if consumer already supplied them).
         ...emailProviders,
         ...breachCheckerProviders,
