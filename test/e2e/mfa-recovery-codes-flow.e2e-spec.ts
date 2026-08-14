@@ -724,13 +724,22 @@ describe('MFA challenge across the two surfaces (E2E)', () => {
       .post('/mfa/challenge')
       .send({
         mfaTempToken: await tempTokenFor('platform'),
-        code: generateTotp(platformSecret, base + TOTP_STEP_SECONDS * 1000)
+        code: generateTotp(platformSecret, unspentStepTime(base))
       })
 
     expect(res.status).toBe(200)
 
-    const body = res.body as { admin?: unknown; user?: unknown; accessToken?: string }
-    expect(body.admin).toBeDefined()
+    const body = res.body as {
+      admin?: { id?: unknown; email?: unknown; role?: unknown }
+      user?: unknown
+      accessToken?: string
+    }
+    // The identity, not merely its presence: `toBeDefined()` passes on `null` and on any
+    // unrelated object, so it would not have shown that crossing the route returned the SEEDED
+    // platform admin rather than something else shaped like one.
+    expect(body.admin).toEqual(
+      expect.objectContaining({ id: boot.adminId, email: PLATFORM_EMAIL.toLowerCase() })
+    )
     expect(body.user).toBeUndefined()
     expect(body.accessToken).toEqual(expect.any(String))
     // No cookies: platform sessions are bearer-only, whichever route minted them.
@@ -746,7 +755,7 @@ describe('MFA challenge across the two surfaces (E2E)', () => {
       .post('/platform/mfa/challenge')
       .send({
         mfaTempToken: await tempTokenFor('dashboard'),
-        code: generateTotp(dashboardSecret, base + TOTP_STEP_SECONDS * 1000)
+        code: generateTotp(dashboardSecret, unspentStepTime(base))
       })
 
     expectAuthError(res, 'auth.platform_auth_required')

@@ -266,14 +266,24 @@ describe('invitations flow (E2E)', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Scenario — admin invites → admin revokes → the token is dead
+  // Scenario — two invitations at different ranks, one revoker who outranks only one
   //
   // `POST /invitations/revoke` had no E2E of its own: the handler was proven by a unit test
-  // calling the method directly, so nothing established that the route is mounted, that the
-  // guards in front of it refuse a non-admin, or — the property that matters — that revoking
-  // actually makes the mailed token unusable. A revoke that answers 204 and leaves the token
-  // spendable is indistinguishable from a working one at the response, and the difference is a
-  // stranger holding an account.
+  // calling the method directly, so nothing established that the route is mounted, that a
+  // caller with no credential is refused, or — the property that matters — that revoking
+  // actually makes the mailed token unusable.
+  //
+  // Authorization here is by RANK, not by an admin flag: a MEMBER may withdraw an invitation it
+  // outranks, and is refused one it does not. The first draft of this suite asserted
+  // "non-admin → 403" and was corrected by the code, which answers **204 either way** —
+  // deliberately, because a 403 would tell any member that a pending invitation exists for an
+  // address and roughly at what authority, which is the disclosure hashing the address in the
+  // index exists to prevent.
+  //
+  // So the responses are asserted against EACH OTHER, and the effect is read where the invitee's
+  // token is spent. A revoke that answers 204 and leaves the token spendable is
+  // indistinguishable from a working one at the response, and the difference is a stranger
+  // holding an account.
   // ---------------------------------------------------------------------------
 
   describe('revoking a pending invitation', () => {
