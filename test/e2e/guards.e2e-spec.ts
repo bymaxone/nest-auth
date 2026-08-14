@@ -12,15 +12,29 @@
  * property that matters about them.
  */
 
+import { randomBytes } from 'node:crypto'
+
+import { JwtService } from '@nestjs/jwt'
 import request from 'supertest'
 
 import { BYMAX_AUTH_USER_REPOSITORY } from '../../src/server/bymax-auth.constants'
 import { bootstrapTestApp, createMockUserRepository, expectAuthError } from './setup'
 import type { BootstrappedTestApp, MockUserRepository } from './setup'
 
-/** A syntactically valid JWT this deployment did not sign. */
-const FOREIGN_JWT =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTEiLCJpYXQiOjF9.not-a-valid-signature'
+/**
+ * A well-formed JWT this deployment did not sign, minted under a key generated per run.
+ *
+ * It used to be a literal with a stub signature, and that was weaker on both counts. A string
+ * that is not really signed is rejected by the parser as much as by the verifier, so it could
+ * not tell "the signature check works" from "this is not a JWT" — which is what the case beside
+ * it already covers. And a JWT-shaped literal next to the word `Bearer` is exactly what GitHub's
+ * secret scanner matches: the value carried nothing, but an alert nobody can distinguish from a
+ * real leak at a glance is how an alert stream stops being read.
+ */
+const FOREIGN_JWT = new JwtService({}).sign(
+  { sub: 'user-1', tenantId: 'tenant-1', type: 'dashboard' },
+  { secret: randomBytes(32).toString('hex'), expiresIn: '5m' }
+)
 
 describe('JwtAuthGuard refusals (E2E)', () => {
   let boot: BootstrappedTestApp

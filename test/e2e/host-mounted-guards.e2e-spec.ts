@@ -30,7 +30,7 @@
  *    populating `request.user` with a platform payload could, which is what it defends.
  */
 
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 
 import { Controller, Get, UseGuards } from '@nestjs/common'
 import type { INestApplication } from '@nestjs/common'
@@ -187,6 +187,29 @@ class HostController {
 
 /** The password every account in this suite is registered with. */
 const PASSWORD = 'Host-Mounted-Guard-Passphrase'
+
+/**
+ * Mints a well-formed token this deployment did not sign.
+ *
+ * Signed at runtime under a key generated per run, rather than pasted in as a literal. Two
+ * reasons, and the second is why the literal had to go:
+ *
+ *  - It is a stronger fixture. A hand-typed string with a stub signature is rejected by the
+ *    parser as much as by the verifier, so it cannot tell "signature check works" from "this is
+ *    not a JWT" — which is what the case beside it already tests. A properly signed token
+ *    reaches the signature comparison and fails there, which is the claim.
+ *  - A JWT-shaped literal beside the word `Bearer` is what GitHub's secret scanner matches. The
+ *    string carried nothing (`sub: user-1`, a stub signature) but the alert is indistinguishable
+ *    at a glance from a real leak, and an alert stream people learn to dismiss is worse than no
+ *    alert stream. Nothing that looks like a credential belongs in the tree when the runtime can
+ *    mint one.
+ */
+function foreignToken(): string {
+  return new JwtService({}).sign(
+    { sub: 'user-1', tenantId: 'tenant-1', type: 'dashboard' },
+    { secret: randomBytes(32).toString('hex'), expiresIn: '5m' }
+  )
+}
 
 /** Registers an account and returns its access token and id. */
 async function register(
@@ -425,15 +448,12 @@ describe('host-mounted guards (E2E)', () => {
     })
 
     it.each([
-      ['a syntactically invalid token', 'Bearer not-a-jwt'],
-      [
-        'a well-formed token this deployment did not sign',
-        'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTEiLCJpYXQiOjF9.nope'
-      ]
-    ])('refuses %s exactly as JwtAuthGuard does', async (_why, header) => {
+      ['a syntactically invalid token', (): string => 'not-a-jwt'],
+      ['a well-formed token this deployment did not sign', foreignToken]
+    ])('refuses %s exactly as JwtAuthGuard does', async (_why, token) => {
       const res = await request(app.getHttpServer())
         .get('/host/optional')
-        .set('Authorization', header)
+        .set('Authorization', `Bearer ${token()}`)
 
       expectAuthError(res, 'auth.token_invalid')
     })
