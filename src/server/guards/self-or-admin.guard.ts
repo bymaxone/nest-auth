@@ -99,6 +99,12 @@ const STRICT_SHA256_RE = /^[a-f0-9]{64}$/
 /**
  * Returns the param string when it is a plain string, or `undefined` when the
  * value is an array (which should never occur for route params in Express).
+ *
+ * The array arm is unreachable over HTTP: Express builds `req.params` from the path, where a
+ * name cannot repeat, so only a query string produces arrays and this reads params. It is kept
+ * because the alternative — picking an element — would silently compare against a value the
+ * router never produced. Proven by this guard's unit spec;
+ * `test/e2e/host-mounted-guards.e2e-spec.ts` records why no e2e can reach it.
  */
 function resolveParamString(param: string | string[]): string | undefined {
   return typeof param === 'string' ? param : undefined
