@@ -820,6 +820,46 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > rather than letting it fail open, and rejects an unreadable time span or a non-positive
 > lifetime on the same pass.
 
+> [!WARNING]
+> **Do not gate on the access token's `status` claim.** It is **point-in-time, never
+> authoritative**, and which of its three states you get depends on things a client cannot see:
+>
+> | how the token was minted                                                   | `status`                                                                                  |
+> | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+> | login, register, OAuth, MFA challenge                                      | the account's value **at that moment**                                                    |
+> | an ordinary refresh rotation                                               | **empty string** — the session record carries no live status, so there is nothing to copy |
+> | a refresh that re-signs because `role`, `tenantId` or `mfaEnabled` changed | the account's value **at that moment**, read during that request                          |
+>
+> `rust-auth` stamps the same empty string on its rotation path, deliberately and with a test
+> pinning it, so the middle row is a shared contract rather than a defect in either library.
+>
+> Every populated value is stale the instant the account changes, because status can change under
+> an unexpired token and nothing re-stamps it. So a route that reads the claim is wrong in **both**
+> directions: `status !== 'active'` refuses everyone whose session has been refreshed ordinarily,
+> and `status === 'suspended'` refuses nobody, ever. Both fail quietly and hours from the code
+> that caused them — the first looks like a broken login, the second like nothing at all.
+>
+> The exceptional re-stamp is the worst of the three for a reader, not the best: it makes the
+> claim _usually_ wrong instead of _reliably_ empty, which is the failure mode that survives
+> testing.
+>
+> Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and for
+> anything richer read the account **tenant-scoped**, the way that guard does —
+> `findById(request.user.sub, request.user.tenantId)`. The tenant argument is not optional in
+> practice: ids may collide across tenants, and `findById` accepts an absent tenant only for
+> flows that are deliberately cross-tenant, so dropping it here can resolve another tenant's
+> account. That is what the library's own guards do, which
+> is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same
+> reason — it is always `false` after a rotation, so step-up does not survive a refresh and a
+> user re-acquires it through the MFA challenge.
+>
+> One consequence worth planning for: the guard reads a status cache with a
+> `userStatusCacheTtlSeconds` window (default **60**), so a suspension takes up to that long to
+> bite on a guarded route, and a reactivation the same to restore. Nothing exported invalidates
+> that key for one user today — the only immediate lever is `bumpUserTokenEpoch`, which ends
+> every session the user has rather than refreshing one cached string. Lower the TTL if a faster
+> answer matters more than the repository reads it costs.
+
 `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
 **on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a
 SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refreshing every

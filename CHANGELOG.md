@@ -22,6 +22,51 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AuthService.refresh` read the account without its tenant.** `findById(session.userId)` with
+  no tenant argument, in the path that re-validates the account on every rotation — while the
+  interface documents that ids may collide across tenants, and `UserStatusGuard` passes both for
+  that reason. On a deployment whose ids are per-tenant, a homonym in another tenant could pass
+  the status gate on the caller's behalf, and the re-stamp path a line below would sign **that
+  account's tenant and role** into the token handed back. Now scoped to the tenant the session
+  already carries, with a test that goes red without it.
+
+  Found in review of the documentation change below, which was recommending tenant-scoped reads
+  to consumers while the library's own refresh path did not do one.
+
+- **The access token's `status` claim is documented as point-in-time and never authoritative.**
+  Three states, and a client can tell them apart from nothing: minted at login it carries the
+  account's value _at that moment_; an ordinary refresh rotation stamps an **empty string**,
+  because the session record holds no live status; and a refresh that re-signs — which
+  `AuthService.refresh` does when `role`, `tenantId` or `mfaEnabled` changed — stamps the value
+  read during _that_ request. `rust-auth` stamps the same empty string on its rotation path, with
+  a test pinning it, so the middle state is a shared contract rather than a defect in either
+  library.
+
+  Reported by a consumer seat that measured it on a live boot: `"pending"` before the first
+  refresh, `""` after. Nothing in this library's own enforcement reads the claim — `UserStatusGuard`
+  resolves status from the cache and the repository — so it is not a bypass. The exposure is a
+  derived backend reading `request.user.status`, which is wrong in **both** directions:
+  `!== 'active'` refuses everyone once a session has been refreshed, `=== 'suspended'` refuses
+  nobody, ever. Both fail quietly, hours from the code that caused them.
+
+  Every populated value is stale the instant the account changes, because nothing re-stamps a live
+  token — so the exceptional re-stamp is the worst of the three for a reader, not the best: it
+  makes the claim _usually_ wrong rather than reliably empty. That is also why backfilling the
+  rotation path was considered and rejected: it would extend the failure mode that survives
+  testing. The empty string is the one state that cannot be mistaken for an answer.
+
+  Stated in the README as a three-row table and at the call site, with `mfaVerified: false` on
+  rotation beside it, and the `userStatusCacheTtlSeconds` window (default 60) that decides how
+  quickly a suspension bites.
+
+  **Apply to a derived backend.** Read status per request — `UserStatusGuard` on the route, and
+  for anything richer `findById(request.user.sub, request.user.tenantId)`, **tenant-scoped**, the
+  way that guard reads it — and never from the token. The tenant argument matters: ids may collide
+  across tenants and `findById` accepts an absent tenant only for deliberately cross-tenant flows,
+  so an unscoped read can resolve another tenant's account. If you already gate
+  on the claim, that gate is either refusing everyone or nobody depending on which way you wrote
+  the comparison.
+
 - **The controller layer is now measured by the suite that goes through the framework.** E2E-only
   branch coverage of `src/server/controllers` was **75%**, and the shortfall was mostly whole
   endpoints nobody drove over HTTP. It is now **87%**, and everything still uncovered is named
