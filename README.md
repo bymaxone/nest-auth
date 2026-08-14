@@ -1339,6 +1339,21 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 `AUTH_ERROR_STATUS` is exported if you need the mapping at runtime — for a typed client, an
 API document, or a test that asserts against it.
 
+> **Assert your fixtures against the catalogue, not against string literals.** `AUTH_ERROR_CODES`
+> is exported from `@bymax-one/nest-auth/shared` so a suite can check that every code it branches
+> on is one the server can actually produce. A frontend seat found three invented codes this way —
+> `auth.unauthorized` among them, which does not exist — and a branch on a code the server never
+> sends is silent forever: it simply never runs, and the handler it replaces is the one that
+> matters. The check is one test over your own source, and it is worth having standing rather than
+> as a one-off audit.
+>
+> **Five codes are internal-only and never reach a client**: `auth.token_expired`,
+> `auth.token_revoked`, `auth.token_missing` (all collapsed onto `auth.token_invalid`) and
+> `auth.otp_expired`, `auth.otp_max_attempts` (onto `auth.otp_invalid`). Each says so in its own
+> JSDoc. They are in the catalogue because both implementations share it and both use them
+> internally for logs and control flow — branching on them client-side is the same dead branch as
+> an invented code, for a subtler reason.
+
 > **Anti-enumeration reads through the status too.** `POST /forgot-password` answers `200` and
 > `POST /verify-email` / the resend endpoints answer `204` **whether or not the address exists**.
 > A `200` there does not mean an email was sent, and treating it as confirmation re-introduces

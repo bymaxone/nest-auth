@@ -22,8 +22,12 @@ export const AUTH_ERROR_CODES = {
   PENDING_APPROVAL: 'auth.pending_approval',
 
   // Tokens and sessions
+  /** Internal-only: expiry. Never on the wire — collapsed onto TOKEN_INVALID, to deny an oracle
+   *  separating a token that WAS valid from one that never was. */
   TOKEN_EXPIRED: 'auth.token_expired',
+  /** Internal-only: logout or epoch bump. Never on the wire — see TOKEN_EXPIRED. */
   TOKEN_REVOKED: 'auth.token_revoked',
+  /** What a client receives for EVERY unusable credential: expired, revoked, malformed, absent. */
   TOKEN_INVALID: 'auth.token_invalid',
   /** Internal-only: the request carried no credential. Never on the wire — see TOKEN_INVALID. */
   TOKEN_MISSING: 'auth.token_missing',

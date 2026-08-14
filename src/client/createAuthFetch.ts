@@ -14,7 +14,11 @@
  * stable constants exported from `@bymax-one/nest-auth/shared`.
  */
 
-import { AUTH_PROXY_ROUTES, buildAuthRefreshSkipSuffixes } from '@bymax-one/nest-auth/shared'
+import {
+  AUTH_ERROR_CODES,
+  AUTH_PROXY_ROUTES,
+  buildAuthRefreshSkipSuffixes
+} from '@bymax-one/nest-auth/shared'
 
 /**
  * Configuration options for {@link createAuthFetch}.
@@ -154,6 +158,78 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
     }
   }
   return false
+}
+
+/**
+ * How long the 401 classification may wait for the error body.
+ *
+ * Not the consumer's `timeout`: that one belongs to the request, whose timer is already cleared
+ * by the time this runs, and a deployment disabling it (`0`) for long-polling must not thereby
+ * let a 401 hang the wrapper. An auth error body is a few hundred bytes, so anything slower is
+ * pathological. On expiry the pre-existing behaviour applies — this step may narrow what
+ * refreshes, never suspend the wrapper.
+ */
+const ERROR_BODY_READ_TIMEOUT_MS = 2_000
+
+/**
+ * Whether a 401 means the access token expired — the only case a refresh can fix.
+ *
+ * The path skip list cannot answer this where one route carries both meanings:
+ * `POST {prefix}/password/change` is JWT-guarded, so an expired token 401s there and so does a
+ * wrong `currentPassword`. Refreshing on the second cost a consumer one refresh per typo, and
+ * ten typos in a minute exhausted the refresh limiter — whose 429 the client then read as an
+ * expiry, discarding a session the server still honoured.
+ *
+ * So the code decides. `auth.token_invalid` is the expiry: every guard collapses expired,
+ * revoked, malformed and absent onto it deliberately. Any other code is the server answering
+ * about something else, which a new token would not change.
+ *
+ * **A response this cannot read still refreshes** — no envelope, empty, non-JSON — so the
+ * wrapper stays usable against an application's own API. Both envelope shapes are read: this
+ * library's `{error: {code}}` and the flat `{statusCode, code}` a `@bymax-one/nest-core` backend
+ * answers with, since the client cannot tell which it is talking to.
+ *
+ * Read from a CLONE, so the caller still receives an unconsumed body and a retry still has a
+ * request to send.
+ *
+ * @param response - The 401 response, unconsumed.
+ * @returns `true` when a refresh could plausibly help.
+ */
+async function isExpiredSessionResponse(response: Response): Promise<boolean> {
+  const clone = response.clone()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let body: unknown
+
+  try {
+    // `undefined` is the give-up sentinel and needs no symbol: `json()` cannot resolve to it,
+    // because JSON has no such value.
+    //
+    // The abandoned read is NOT cancelled, and that is measured rather than assumed: `json()`
+    // locks the body, so `cancel()` on it rejects with
+    // `TypeError: Invalid state: ReadableStream is locked`. An earlier draft called it inside a
+    // `.catch(() => undefined)`, which meant the cleanup that comment promised never happened
+    // and the rejection was swallowed. Owning a reader to make the read genuinely abortable
+    // would cost more bundle than the case is worth — a 401 whose body never arrives — so the
+    // read is left to the collector, and this says so instead of claiming otherwise.
+    body = await Promise.race([
+      clone.json(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ERROR_BODY_READ_TIMEOUT_MS)
+      })
+    ])
+  } catch {
+    // Not JSON, empty, or a body the runtime would not parse twice.
+    return true
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (typeof body !== 'object' || body === null) return true
+
+  const envelope = body as { code?: unknown; error?: { code?: unknown } }
+  const code = envelope.error?.code ?? envelope.code
+
+  return typeof code !== 'string' || code === AUTH_ERROR_CODES.TOKEN_INVALID
 }
 
 /**
@@ -376,6 +452,13 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     // mfa challenge, etc.) where a 401 means "wrong credentials" rather
     // than "session expired".
     if (response.status !== 401 || shouldSkipRefreshOnUrl(url, skipRefreshSuffixes)) {
+      return response
+    }
+
+    // And then the same question the path cannot answer: a route can be behind the JWT guard
+    // AND verify a second credential, so an expired token and a wrong password 401 from the
+    // same URL. The code separates them; the path never could.
+    if (!(await isExpiredSessionResponse(response))) {
       return response
     }
 

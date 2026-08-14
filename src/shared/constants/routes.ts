@@ -169,12 +169,18 @@ export const AUTH_PROXY_ROUTES = {
 } as const
 
 /**
- * Controller-relative path fragments that must NEVER trigger an
- * automatic refresh when they return 401.
+ * Controller-relative path fragments where a refresh can NEVER help, whatever the 401 says: the
+ * token endpoints (recursion), the credential-issuing ones (no session yet), and the platform
+ * surface (another plane — a dashboard refresh cannot fix a platform token).
  *
- * Used by {@link buildAuthRefreshSkipSuffixes} together with the
- * consumer's `routePrefix` to produce the absolute skip list at
- * `createAuthFetch` time.
+ * NOT how a credential failure is recognised: `createAuthFetch` reads the error code first, and
+ * only `auth.token_invalid` means "expired". That also covers routes a path list never could —
+ * `password/change` is JWT-guarded, so an expired token and a wrong password 401 from one path.
+ *
+ * The dashboard MFA endpoints are deliberately absent for that reason: they are JWT-guarded, so
+ * skipping them would refuse to refresh a session that only needed refreshing.
+ *
+ * Used by {@link buildAuthRefreshSkipSuffixes} with the consumer's `routePrefix`.
  */
 const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   // Dashboard auth-issuing endpoints
@@ -189,22 +195,30 @@ const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   'password/reset-password',
   'password/verify-otp',
   'password/resend-otp',
-  // MFA endpoints
-  'mfa/setup',
-  'mfa/verify-enable',
+  // The MFA challenge issues the session — there is none to refresh. Its siblings
+  // (`mfa/setup`, `mfa/verify-enable`, `mfa/disable`) are NOT here: they are JWT-guarded, so a
+  // 401 there can be a genuine expiry, and their credential failures are recognised by code.
   'mfa/challenge',
-  'mfa/disable',
   // Invitation acceptance issues tokens
   'invitations/accept',
   // The address-change confirmation is public: the holder is proving control of a mailbox,
   // not of a session.
   'email/change/confirm',
-  // Platform endpoints
+  // The platform surface, ALL of it. Every protected route here is JWT-PLATFORM-guarded, so an
+  // expired platform token answers `auth.token_invalid` — the code the client reads as "expired"
+  // — and a dashboard refresh cannot fix another plane's credential. Listing only some of them
+  // left the rest launching a refresh that spends the budget and can call `onSessionExpired` for
+  // a dashboard session that is perfectly healthy.
   'platform/login',
   'platform/refresh',
   'platform/logout',
+  'platform/me',
+  'platform/sessions',
   'platform/mfa/challenge',
-  'platform/sessions'
+  'platform/mfa/setup',
+  'platform/mfa/verify-enable',
+  'platform/mfa/disable',
+  'platform/mfa/recovery-codes'
 ] as const
 
 /**

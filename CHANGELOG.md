@@ -20,6 +20,84 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.4.3] - 2026-08-13
 
+### Fixed
+
+- **A wrong password no longer spends a refresh — and ten of them no longer sign the user out.**
+  `createAuthFetch` treated every 401 outside its path skip list as an expired session. A consumer
+  measured what that costs on a live instance: a wrong `currentPassword` on
+  `POST {prefix}/password/change` answers `401 auth.invalid_credentials`, the client refreshed,
+  and the retry then surfaced the real error — one refresh per typo. Ten typos inside a minute
+  exhaust the refresh limiter (`429 auth.too_many_requests`), the client read **that** as an
+  irrecoverable expiry and called `onSessionExpired`.
+
+  The session was never revoked: `GET {prefix}/me` answered `200` throughout. The sign-out was
+  entirely client-side — the wrapper discarding a session the server still honoured, triggered by
+  a rate limit that exists for something else. Behind a proxy with `clientIpSource: 'peer'` the
+  bucket is shared, so the ten are the whole deployment's.
+
+  **The skip list could not fix it, which is the finding under the finding.** That route is behind
+  the JWT guard: an expired token 401s there too. One path, two meanings — so the decision moved
+  to the error **code**, the only thing that separates them. `auth.token_invalid` is the expiry
+  (every guard collapses expired, revoked, malformed and absent onto it deliberately); every other
+  code is the server answering about something else, and a new token would not change its mind.
+
+  Measured across the family rather than fixing the one route reported: `password/change`,
+  `mfa/recovery-codes` and `email/change` all answer a non-expiry 401 and none was on the list,
+  while `mfa/setup` and `mfa/disable` answer the same codes and were. The list was three entries
+  short, not one — which is why the mechanism changed instead of the data.
+
+  **And the whole platform surface joined it.** The list carried five platform routes and left
+  out `platform/me` and all four `platform/mfa/*` — every one of them JWT-**platform**-guarded, so
+  an expired platform token answers `auth.token_invalid`, the code that means "refresh me" on the
+  dashboard plane. A dashboard refresh cannot fix another plane's credential: it spends the
+  budget and can call `onSessionExpired` for a session that is perfectly healthy. Found in review
+  of the paragraph claiming the list already covered the plane.
+
+  **Three routes left the path skip list**: `mfa/setup`, `mfa/verify-enable` and `mfa/disable`.
+  They were there because a wrong password or a wrong TOTP code 401s from them — which the code
+  check now recognises — but all three are **JWT-guarded**, so an expired token 401s from them
+  too, and skipping the refresh would have left the exact inverse of the defect above: a client
+  refusing to refresh a session that only needed refreshing. Found in review, and it is the same
+  one-path-two-meanings shape as `password/change`.
+
+  What remains on the list is the narrower set where a refresh cannot help **whatever** the code
+  says: the token endpoints themselves (recursion), the credential-issuing endpoints (no session
+  to refresh yet), and the **platform** surface — a dashboard refresh cannot fix a platform
+  credential, so attempting one spends the refresh budget and can call `onSessionExpired` for a
+  dashboard session that is perfectly healthy.
+
+  **The classification is time-bounded.** Reading the error body waits at most two seconds; on
+  expiry the pre-existing behaviour applies and a refresh is attempted. The request itself has
+  already completed and its timeout has already been cleared, so an unbounded read would hang the
+  wrapper on a 401 whose body never terminates — including on deployments that disable `timeout`
+  for long-polling. This step may narrow what refreshes; it may never suspend the wrapper.
+
+  **A 401 the client cannot read still refreshes.** No envelope, an empty body, a non-JSON body, a
+  code that is not a string — every one behaves exactly as before, so this wrapper stays usable as
+  a general fetch against an application's own API. Both envelope shapes are read: this library's
+  `{error: {code}}` and the flat `{statusCode, code, …}` a `@bymax-one/nest-core` backend answers
+  with. The body is read from a **clone**, so the caller still receives an unconsumed response —
+  otherwise every consumer parsing the error body would meet `TypeError: body already used`.
+
+  **Apply to a derived backend.** No server change. If your frontend relied on the old behaviour —
+  a 401 from any endpoint eventually reaching `onSessionExpired` — note that only
+  `auth.token_invalid` does now. A 401 your own API answers with no auth envelope is unaffected.
+
+- **Two internal-only error codes now say so in the shared catalogue.** `auth.token_expired` and
+  `auth.token_revoked` are never on the wire — both implementations collapse them onto
+  `auth.token_invalid`, deliberately, because telling a caller "expired" rather than "invalid"
+  separates a token that WAS valid from one that never was, which is what an attacker holding a
+  captured value wants to learn. `rust-auth` maps them through `AuthErrorCode::to_wire`; this
+  library never throws them at all.
+
+  Three of the five internal-only codes already carried that note (`auth.token_missing`,
+  `auth.otp_expired`, `auth.otp_max_attempts`) and these two did not — so a reader concluded,
+  reasonably, that the unmarked ones do appear. A consumer seat did exactly that while reviewing
+  the refresh fix above, and asked whether it had a hole for `auth.token_expired`. It does not,
+  and now the catalogue answers the question without anyone reading the emit sites. **A code in a
+  published catalogue is something a consumer will write a branch for**, so an unreachable one has
+  to say it is unreachable.
+
 ### Added
 
 - **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:

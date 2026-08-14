@@ -88,12 +88,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     replaced a regex CodeQL reports as a polynomial ReDoS. Both are small and both are
 //     load-bearing; the budget was at ~28% headroom and is back to ~16%.
 //   client   2.64 KiB →  3.5 KiB (~33% headroom; fetch client may grow with auth flows)
+//     Raised to 4.25 KiB: the 401 interceptor stopped deciding by path alone and now reads the
+//     error code, because a path list cannot separate the two meanings a single JWT-guarded
+//     route carries — an expired token and a wrong current password both 401 from
+//     `password/change`. A consumer measured what the old behaviour cost: one refresh per typo,
+//     ten typos inside a minute exhausting the refresh limiter, and the client reading that 429
+//     as an expiry and discarding a session the server still honoured. The bytes are the
+//     classification plus the bounded body read that keeps it from hanging the wrapper on a 401
+//     whose body never terminates. Measured 3.40 → 3.62 KiB, so +0.22 against 0.10 of headroom.
+//     A shipped control with a red-checked test behind it, which is the distinction this budget
+//     exists to force. Back to ~17% headroom.
+//     NOTE, since it is not obvious from the numbers: unlike `server` and `shared`, the client
+//     bundle carries NO prose — tsup emits it without comments — so every byte here is code.
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
   { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 108 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3.5 * 1024 },
-  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 3.5 * 1024 },
+  { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },
   { name: 'nextjs  (proxy + handlers)', path: 'dist/nextjs/index.mjs', brotli: 10 * 1024 }
 ]

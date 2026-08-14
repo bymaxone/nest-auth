@@ -456,6 +456,159 @@ describe('createAuthFetch — refresh on 401', () => {
 // createAuthFetch — single-flight refresh dedup
 // ---------------------------------------------------------------------------
 
+describe('createAuthFetch — a 401 that is not an expiry', () => {
+  let spy: FetchSpy
+
+  beforeEach(() => {
+    spy = installFetchSpy()
+  })
+
+  // The defect this exists for, measured by a consumer against a live instance: a wrong
+  // `currentPassword` on `POST {prefix}/password/change` answers 401, the client read that as an
+  // expiry and refreshed, and ten typos inside a minute exhausted the refresh limiter. The client
+  // then read the 429 as an irrecoverable expiry and called `onSessionExpired` — discarding a
+  // session the server still honoured (`GET {prefix}/me` answered 200 throughout).
+  //
+  // The path could not fix it: that route is behind the JWT guard, so an expired token 401s there
+  // too. Only the code separates them.
+  it('does not refresh when the 401 names a credential failure', async () => {
+    spy.mockResolvedValue(
+      makeResponse(401, { error: { code: 'auth.invalid_credentials', message: 'Invalid' } })
+    )
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+
+    const res = await authFetch('/auth/password/change')
+
+    expect(res.status).toBe(401)
+    // One call: the original. No refresh, no retry.
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  // The other half of the same pair, on the SAME kind of route. Without it, the case above is
+  // also satisfied by a client that stopped refreshing on 401 altogether.
+  it('still refreshes when the 401 names an unusable token', async () => {
+    spy.mockResolvedValueOnce(makeResponse(401, { error: { code: 'auth.token_invalid' } }))
+    spy.mockResolvedValueOnce(makeResponse(200))
+    spy.mockResolvedValueOnce(makeResponse(200, { ok: true }))
+
+    const res = await createAuthFetch()('/auth/password/change')
+
+    expect(res.status).toBe(200)
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
+
+  // A derived backend on `@bymax-one/nest-core` answers the flat envelope, so the code sits at
+  // the top level rather than under `error`. The client cannot tell which backend it is talking
+  // to, so it reads both — and a consumer whose backend composes the two libraries would
+  // otherwise get the pre-fix behaviour with no way to notice.
+  it('reads the code from the flat envelope a nest-core backend answers', async () => {
+    spy.mockResolvedValue(
+      makeResponse(401, {
+        statusCode: 401,
+        code: 'auth.mfa_invalid_code',
+        path: '/auth/mfa/disable'
+      })
+    )
+
+    const res = await createAuthFetch()('/auth/mfa/disable')
+
+    expect(res.status).toBe(401)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  // Compatibility, and the reason the narrowing is safe to ship: this wrapper is a general fetch,
+  // and an application's own API answering a bare 401 must behave exactly as it did before. Every
+  // shape that carries no readable code still refreshes.
+  it.each([
+    ['an empty body', undefined],
+    ['a JSON body that is not an object', 'nope'],
+    ['a null body', null],
+    ['an envelope whose code is not a string', { error: { code: 42 } }],
+    ['an object with no code at all', { message: 'Unauthorized' }]
+  ])('still refreshes on a 401 carrying %s', async (_why, body) => {
+    spy.mockResolvedValueOnce(makeResponse(401, body))
+    spy.mockResolvedValueOnce(makeResponse(200))
+    spy.mockResolvedValueOnce(makeResponse(200, { ok: true }))
+
+    const res = await createAuthFetch()('/api/users')
+
+    expect(res.status).toBe(200)
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
+
+  // The bound. A 401 whose body never terminates must not hang the wrapper: the request has
+  // already completed and its timeout has already been cleared, so without a bound here the
+  // caller waits forever — and a deployment that disables `timeout` for long-polling would have
+  // no protection at all. On expiry the classification gives up and the pre-existing behaviour
+  // applies, which is the safe direction: this step may narrow what refreshes, never suspend it.
+  it('gives up on a body that never arrives and refreshes as before', async () => {
+    jest.useFakeTimers()
+
+    try {
+      // A body that never closes: `json()` on it never settles.
+      const hanging = new Response(
+        new ReadableStream({
+          start() {
+            /* deliberately never enqueues and never closes */
+          }
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+
+      spy.mockResolvedValueOnce(hanging)
+      spy.mockResolvedValueOnce(makeResponse(200))
+      spy.mockResolvedValueOnce(makeResponse(200, { ok: true }))
+
+      const pending = createAuthFetch()('/api/users')
+
+      await jest.advanceTimersByTimeAsync(2_000)
+
+      const res = await pending
+
+      expect(res.status).toBe(200)
+      expect(spy).toHaveBeenCalledTimes(3)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  // A platform route, which is the case the code check must NOT be allowed to answer. Every
+  // protected platform endpoint is JWT-PLATFORM-guarded, so an expired platform token answers
+  // `auth.token_invalid` — the very code that means "refresh me" on the dashboard plane. A
+  // dashboard refresh cannot fix another plane's credential: it spends the budget and can call
+  // `onSessionExpired` for a session that is perfectly healthy.
+  //
+  // `platform/mfa/setup` specifically, because it was one of the five protected platform routes
+  // the first draft of the skip list left out while claiming the list covered the plane.
+  it('does not refresh on a platform route, even for auth.token_invalid', async () => {
+    spy.mockResolvedValue(makeResponse(401, { error: { code: 'auth.token_invalid' } }))
+    const onSessionExpired = jest.fn()
+
+    const res = await createAuthFetch({ onSessionExpired })('/auth/platform/mfa/setup')
+
+    expect(res.status).toBe(401)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  // Verifies the check does not consume the response the caller receives. It reads a CLONE, and
+  // if it read the original instead every consumer parsing the error body would get
+  // `TypeError: body already used` — trading one defect for a worse one, on the path that
+  // reports failures.
+  it('leaves the response body readable by the caller', async () => {
+    spy.mockResolvedValue(
+      makeResponse(401, { error: { code: 'auth.invalid_credentials', message: 'Invalid' } })
+    )
+
+    const res = await createAuthFetch()('/auth/password/change')
+    const body = (await res.json()) as { error: { message: string } }
+
+    expect(body.error.message).toBe('Invalid')
+  })
+})
+
 describe('createAuthFetch — single-flight refresh dedup', () => {
   let spy: FetchSpy
 
