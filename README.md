@@ -1178,10 +1178,24 @@ feels, so they will not change; their **definitions** are config-derived.
 > whether this library is new enough to contribute them at all, and only then your nest-core
 > version. The two states look identical from the document.
 
-**If you already wrote these by hand, delete them.** A consumer's own declaration outranks a
-library's, so a stale `securitySchemes` entry or an `openapi.operationSecurity` override for an
-auth route keeps winning and the contributed one never lands — the document goes on describing
-whatever you wrote when you wrote it, including cookie names you have since changed.
+**If you already wrote these by hand, delete them.** Precedence, read from nest-core's
+`augmentOperation` rather than summarised: the generated operation's own `security` outranks
+everything, then your `openapi.operationSecurity` override, then this library's fragment, then
+nest-core's policy. So a stale scheme name or an override for an auth route keeps winning and the
+contributed one never lands — the document goes on describing whatever you wrote when you wrote
+it, including cookie names you have since changed.
+
+> **Your own document test will not catch this.** A consumer seat measured it on their own
+> repository: ten `operationSecurity` entries, all for this library's routes, and a suite
+> asserting the operation-to-posture map with `toEqual`. On adoption, every contributed fragment
+> loses to those entries, the old scheme names survive — and the suite stays **green**, because
+> it is asserting the old answer that is still being served. A test that pins your document
+> confirms the staleness rather than finding it. The deletion is the step; nothing downstream
+> will remind you.
+
+Do it as one change: delete the literals, update whatever pins your document to the four-name
+vocabulary, rebuild it, and regenerate any typed client — the operation ids do not move, but the
+scheme names and the per-operation requirements do.
 
 #### Machine-readable schemas
 

@@ -146,10 +146,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   nest-core version is too old" are indistinguishable from the document.
 
   **Apply to a derived backend.** If you wrote `securitySchemes` or `openapi.operationSecurity`
-  entries for this library's routes by hand, **delete them**. A consumer's declaration outranks a
-  library's, so the stale vocabulary keeps winning and the contributed one never lands — your
-  document goes on describing whatever you wrote when you wrote it, including cookie names you
-  have since changed.
+  entries for this library's routes by hand, **delete them**. Precedence — read from nest-core's
+  `augmentOperation`, not summarised — is: the generated operation's own `security`, then your
+  override, then this library's fragment. So the stale vocabulary keeps winning and the
+  contributed one never lands.
+
+  **And your own document test will not catch it.** A consumer seat measured their case: ten
+  `operationSecurity` entries, all for this library's routes, and a suite asserting the
+  operation-to-posture map with `toEqual`. On adoption every fragment loses to those entries, the
+  old scheme names survive, and the suite stays **green** — it is asserting the old answer that is
+  still being served. A test that pins your document confirms the staleness instead of finding
+  it, so nothing downstream will remind you. Delete the literals, update whatever pins the
+  document to the four-name vocabulary, rebuild, and regenerate any typed client.
 
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
