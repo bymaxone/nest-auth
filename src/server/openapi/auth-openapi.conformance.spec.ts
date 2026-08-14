@@ -1,27 +1,24 @@
 /**
- * @fileoverview Binds this library's inlined OpenAPI contract values to `@bymax-one/nest-core`'s
- * real ones, and the declared handler keys to the real controllers.
+ * @fileoverview Binds the contributor's claims to this repository — and to nothing outside it.
  *
- * The coupling decision is that nest-core is a **devDependency** and nothing in the published
- * bundle names it: the contract version is inlined, the contributor marker is the documented
- * string literal, and the fragment type is written out rather than imported. That buys a
- * zero-runtime bundle and costs the compile-time check — a fragment written against a contract
- * that has moved would compile here and fail at the consumer's boot.
+ * **This package imports no other Bymax library, anywhere, including in tests.** The OpenAPI
+ * contract version is inlined, the contributor marker is the documented string literal, and the
+ * fragment type is written out rather than imported, so nothing here names `@bymax-one/nest-core`
+ * — and the gate below fails on an import of ANY `@bymax-one/*` package other than this one's own
+ * subpaths.
  *
- * This file is where the check comes back. It imports nest-core's constants **as values** and
- * its types **as types**, in a file that never ships (`files` excludes specs), so the assertion
- * is real and the bundle is unchanged. A revision of the contract that this library has not
- * followed turns this suite red in the change that installed it, instead of turning a consumer's
- * document build red after publish.
+ * What that costs is a compile-time check that the fragment still matches nest-core's contract.
+ * What it buys is the rule this repository already applies to the envelope filter: a library does
+ * not take a dependency on its consumers' stack in order to assert a composition. **The consumer
+ * owns that assertion**, and they can make it better than we can — their suite has both packages
+ * installed at the versions they actually run.
+ *
+ * Everything below is checkable without anyone else's code: the handler table against the real
+ * controllers in both directions, the scheme vocabulary, and the invariant that no requirement
+ * names a scheme the fragment does not define.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-
-import {
-  BYMAX_OPENAPI_CONTRACT_VERSION,
-  BYMAX_OPENAPI_CONTRIBUTOR_METADATA
-} from '@bymax-one/nest-core/openapi'
-import type { IOpenApiContributor, OpenApiFragment } from '@bymax-one/nest-core/openapi'
 
 import {
   AUTH_SECURITY_SCHEMES,
@@ -76,35 +73,29 @@ function optionsFor(tokenDelivery: ResolvedOptions['tokenDelivery']): ResolvedOp
   } as unknown as ResolvedOptions
 }
 
-describe('OpenAPI contributor — conformance with @bymax-one/nest-core', () => {
-  // Verifies the inlined contract version is the one nest-core speaks. A fragment self-describes
-  // because compile-time types protect nothing across a package boundary: the library compiled
-  // against one revision runs inside an application that installed another. Inlining the value
-  // is what keeps nest-core out of the runtime graph; this is what keeps the inlined value true.
-  it('inlines the contract version nest-core publishes', () => {
-    expect(OPENAPI_CONTRACT_VERSION).toBe(BYMAX_OPENAPI_CONTRACT_VERSION)
+describe('OpenAPI contributor — conformance', () => {
+  // Verifies the two values a consumer's document build depends on, and that they are STABLE.
+  // Neither is compared against nest-core here — that would mean depending on it — so what this
+  // pins is that they cannot drift silently on our side. The comparison against their constants
+  // is the CONSUMER's to make, in the one place both packages exist at their installed versions.
+  it('publishes a stable contract version and marker', () => {
+    expect(OPENAPI_CONTRACT_VERSION).toBe(1)
+    expect(OPENAPI_CONTRIBUTOR_METADATA).toBe('bymax-one:openapi-contributor')
   })
 
-  // Verifies the marker string is theirs. nest-core documents it as a literal precisely so a
-  // library can write it without importing the decorator — and a typo here is invisible: the
-  // provider simply is never discovered, the document renders without the fragments, and nothing
-  // fails.
-  it('marks the contributor with the metadata key nest-core scans for', () => {
-    expect(OPENAPI_CONTRIBUTOR_METADATA).toBe(BYMAX_OPENAPI_CONTRIBUTOR_METADATA)
-  })
-
-  // Verifies the contributor satisfies nest-core's interface, and the fragment its fragment type.
-  // Both are assignments rather than assertions: they fail at COMPILE time, which is the only
-  // moment a shape mismatch can be caught before a consumer's boot. The runtime expectation
-  // below is there so the case is not an empty test body.
-  it('produces a value assignable to nest-core’s own types', () => {
-    const contributor: IOpenApiContributor = new AuthOpenApiContributor(
+  // Verifies the contributor produces a fragment of the shape the contract describes: a version,
+  // operations keyed by handler, and components carrying the security schemes. Structural rather
+  // than a type assignment, because the type it would be assigned to lives in a package this
+  // repository does not install.
+  it('produces a fragment shaped the way the contract describes', () => {
+    const fragment = new AuthOpenApiContributor(
       optionsFor('cookie'),
       EVERYTHING
-    )
-    const fragment: OpenApiFragment = contributor.contributeOpenApi()
+    ).contributeOpenApi()
 
-    expect(fragment.contractVersion).toBe(BYMAX_OPENAPI_CONTRACT_VERSION)
+    expect(fragment.contractVersion).toBe(OPENAPI_CONTRACT_VERSION)
+    expect(Object.keys(fragment.operations).length).toBeGreaterThan(0)
+    expect(fragment.components.securitySchemes).toEqual(expect.any(Object))
   })
 
   // Verifies every declared handler key names a method that really exists on the controller it
@@ -152,19 +143,25 @@ describe('OpenAPI contributor — conformance with @bymax-one/nest-core', () => 
     }
   )
 
-  // Verifies the coupling itself: no file that SHIPS imports `@bymax-one/nest-core`. This is the
-  // invariant every other decision here rests on — the contract version is inlined and the
-  // marker is a string literal precisely so the published bundle never names that package, and
-  // an `import type` added in a hurry would undo it silently. TypeScript erases type-only
-  // imports, so the bundle would still look clean while the emitted `.d.ts` referenced a package
-  // no consumer installed, and their build would fail on a name they never wrote.
+  // Verifies the coupling: **no file in this repository imports another Bymax library**, test
+  // files included. This is the invariant every other decision here rests on — the contract
+  // version is inlined and the marker is a string literal precisely so nothing, published or not,
+  // names another package in the family.
   //
-  // Asserted over the source rather than over `dist`, so it fails before a build has to happen —
-  // and over the whole tree rather than this directory, because the next import would not
-  // necessarily be here. Prose in a comment is fine and is what the exclusion below allows: the
-  // envelope-filter JSDoc names nest-core deliberately, and a reader is not an importer.
-  it('imports @bymax-one/nest-core from test files only', () => {
+  // An earlier draft imported nest-core's constants to compare against, reasoning that test files
+  // do not ship. True, and not the point: a library does not take a dependency on its consumers'
+  // stack in order to assert a composition. That is the rule this repository already applies to
+  // the envelope filter, and the consumer is better placed to make the assertion anyway — their
+  // suite runs both packages at the versions they installed.
+  //
+  // This package's OWN subpaths are excluded: `@bymax-one/nest-auth/shared` inside `src/client`
+  // is a self-reference the build maps back into this tree, not a dependency on anyone.
+  //
+  // Prose is fine, and the exclusion is deliberate: the envelope-filter JSDoc names nest-core on
+  // purpose, and a reader is not an importer.
+  it('imports no other Bymax library, in any file', () => {
     const offenders: string[] = []
+    const foreign = /(?:from|import\()\s*['"]@bymax-one\/(?!nest-auth)/
 
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -173,10 +170,8 @@ describe('OpenAPI contributor — conformance with @bymax-one/nest-core', () => 
           if (entry.name !== 'coverage') walk(path)
           continue
         }
-        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts')) continue
-        if (/(?:from|import\()\s*['"]@bymax-one\/nest-core/.test(readFileSync(path, 'utf8'))) {
-          offenders.push(path)
-        }
+        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue
+        if (foreign.test(readFileSync(path, 'utf8'))) offenders.push(path)
       }
     }
 

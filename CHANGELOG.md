@@ -125,12 +125,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the server will not read tells a generated client to offer it. Both directions are asserted —
   no dangling reference, and no unreferenced definition — under all three delivery modes.
 
-  **Coupling: `devDependency` only.** The contributor class is not exported, the contract version
-  is inlined, and the marker is the documented string literal — so nothing in the published
-  bundle or its `.d.ts` names `@bymax-one/nest-core`. What keeps that honest is a conformance
-  spec that imports nest-core's constants **as values** (test files do not ship) and a gate that
-  fails if any file outside a spec imports that package at all. Falsified by adding such an
-  import: it goes red naming the file.
+  **No coupling at all** — not a dependency, not a peer, not a devDependency, and no import even
+  in tests. The contributor class is unexported, the contract revision is inlined and the marker
+  is the documented string literal, so nothing published or unpublished names
+  `@bymax-one/nest-core`. A conformance gate walks the whole tree and fails on an import of any
+  other `@bymax-one/*` package, this package's own subpaths excepted; falsified from both a
+  production file and a test file.
+
+  An earlier draft of this work took nest-core as a devDependency so the conformance suite could
+  compare its constants as values, on the reasoning that test files do not ship. That reasoning
+  is true and beside the point: **a library does not take a dependency on its consumers' stack in
+  order to assert a composition** — the rule this repository already applies to
+  `AuthExceptionFilter`. The check moves to the consumer, who can make it better anyway, because
+  their suite runs both packages at the versions they installed. The README carries the two
+  expectations to write, and says which of the two failures is silent.
 
   Two acceptance checks run in both directions over the handler table: every declared key names a
   method that exists on the controller it names, and every route handler on every controller is

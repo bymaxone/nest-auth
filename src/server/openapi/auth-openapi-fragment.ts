@@ -20,22 +20,22 @@ import type { ResolvedOptions } from '../config/resolved-options'
 /**
  * The contract revision this library writes fragments against.
  *
- * Inlined rather than imported from `@bymax-one/nest-core`, and that is the coupling decision:
- * a `devDependency` gives the TYPES a compile-time check while nothing at runtime — and no
- * published `.d.ts` — names that package. What keeps the inlined value honest is
- * `auth-openapi.conformance.spec.ts`, which imports nest-core's constant as a VALUE and
- * compares. Test files do not ship, so the check is real and the bundle stays zero-runtime.
+ * Inlined rather than imported, because this package depends on no other Bymax library — not
+ * even in tests. A fragment carrying the wrong revision fails the consumer's document build
+ * loudly and names this contributor, which is the failure mode the self-describing version
+ * exists for; and the consumer's own suite is where the two constants can be compared at the
+ * versions actually installed. See the conformance spec's gate.
  */
 export const OPENAPI_CONTRACT_VERSION = 1
 
 /**
  * The metadata key that marks a provider as a contributor.
  *
- * The documented string literal rather than nest-core's `BymaxOpenApiContributor()` decorator,
- * for the same reason: importing the decorator would put `@bymax-one/nest-core` in this
- * library's runtime graph. nest-core documents the key as a literal precisely so a library can
- * do this — it mints no random key per module load, and the conformance spec pins the two
- * together.
+ * The documented string literal rather than nest-core's `BymaxOpenApiContributor()` decorator:
+ * importing the decorator would make that package a dependency of this one. nest-core documents
+ * the key as a literal precisely so a library can do this — it mints no random key per module
+ * load. A typo here is silent (the provider is simply never discovered), which is why the
+ * consumer's suite should assert it against `BYMAX_OPENAPI_CONTRIBUTOR_METADATA`.
  */
 export const OPENAPI_CONTRIBUTOR_METADATA = 'bymax-one:openapi-contributor'
 

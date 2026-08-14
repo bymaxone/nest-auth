@@ -1172,6 +1172,28 @@ The four names — `bymaxAuthAccessCookie`, `bymaxAuthAccessBearer`, `bymaxAuthR
 `bymaxPlatformAccessBearer` — are stable identifiers. Renaming one is a break a generated client
 feels, so they will not change; their **definitions** are config-derived.
 
+> **This package does not depend on `@bymax-one/nest-core`** — not as a dependency, a peer, or a
+> devDependency. The contract revision is inlined, the discovery marker is the documented string
+> literal, and a gate fails the build if any file here imports another Bymax library. That keeps
+> your install graph free of a package you may not use, and it moves one check to your side:
+>
+> ```typescript
+> // in your suite, where both packages are installed at the versions you run
+> import {
+>   BYMAX_OPENAPI_CONTRACT_VERSION,
+>   BYMAX_OPENAPI_CONTRIBUTOR_METADATA
+> } from '@bymax-one/nest-core/openapi'
+>
+> expect(fragment.contractVersion).toBe(BYMAX_OPENAPI_CONTRACT_VERSION)
+> expect(Reflect.getMetadata(BYMAX_OPENAPI_CONTRIBUTOR_METADATA, contributor.constructor)).toBe(
+>   true
+> )
+> ```
+>
+> Worth writing once. A revision mismatch fails your document build loudly and names the
+> contributor, but a **marker** mismatch is silent: the provider is simply never discovered and
+> the document renders without the fragments — the same symptom as running nest-core < 1.4.0.
+
 > **On nest-core older than 1.4.0 the fragments are silently ignored.** There is no contributor
 > lane to discover them, so the document renders exactly as before — no error, no warning, no
 > failed boot. If you add a document and the auth schemes do not appear, check in this order:

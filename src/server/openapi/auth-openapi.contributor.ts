@@ -3,9 +3,14 @@
  *
  * Deliberately **not exported** from `src/server/index.ts`. A consumer never names this class:
  * they enable OpenAPI on their side and the fragments appear, or they do not use nest-core and
- * this provider is one unread metadata entry. Keeping it internal is what lets the coupling be a
- * `devDependency` — no published `.d.ts` references `@bymax-one/nest-core`, and nothing at
- * runtime imports it.
+ * this provider is one unread metadata entry.
+ *
+ * **There is no coupling at all** — not a dependency, not a peer, not a devDependency. The
+ * contract version is inlined, the marker is the documented string literal, and the fragment type
+ * is written out; a conformance gate fails on an import of any other `@bymax-one/*` package, in
+ * any file including tests. What that gives up is a compile-time check that the fragment still
+ * matches nest-core's contract, and that check belongs to the consumer: their suite runs both
+ * packages at the versions they installed, which is the only place the question is real.
  *
  * @layer OpenAPI
  */
