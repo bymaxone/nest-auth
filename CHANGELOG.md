@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-13
+
 ### Added
 
 - **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
@@ -37,9 +39,65 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   side fetching the other's committed blob in CI, or both consuming an immutable versioned
   artifact); it is proposed and unbuilt.
 
-## [1.4.3] - 2026-08-13
+- **The E2E config was the one place the OOM bounds from #41 were never applied.**
+  `jest.config.ts` and `jest.coverage.config.ts` both carry `maxWorkers: '50%'` and
+  `workerIdleMemoryLimit: '1GB'` — added in #41, _"bound mutation and jest memory to stop OOM
+  restarts"_ — and `jest.e2e.config.ts` carried neither. E2E is where they matter most: every spec
+  boots a full Nest application with its own `ioredis-mock`, so per-worker memory grows with the
+  number of spec **files**, not with the number of tests.
 
-### Added
+  Found by adding spec files. Three unrelated suites began failing intermittently — password
+  reset, platform MFA, refresh-token reuse — alongside `Test suite failed to run`, which is a
+  worker dying rather than a test disagreeing. Which suites break depends on how Jest distributes
+  files across workers, so it presents as a flake in whatever spec was added last, and the first
+  diagnosis is always the new spec.
+
+- **The cookie flags are pinned, and the half no server-side suite can reach is stated as a
+  consumer contract.** Cookie delivery exists for one guarantee — the tokens are never readable
+  from JavaScript — and a leak into JS-readable storage is invisible from the server: the API
+  answers identically, the wire looks correct, and every test here passes. Only a browser
+  observes it.
+
+  This suite now asserts **its half**: `access_token` and `refresh_token` carry `HttpOnly` and
+  `Secure`, the refresh cookie is path-scoped to the auth prefix rather than origin-wide, and the
+  set of cookies is pinned so a new credential-bearing one cannot appear outside those checks.
+  Asserted **per cookie**, not as a blanket rule, because `has_session` is deliberately
+  JS-readable — it carries no credential and is what lets a SPA know a session probably exists
+  without touching a token. A blanket "everything is HttpOnly" assertion would fail on it, and the
+  obvious fix for that would remove the feature silently.
+
+  The README now states the other half as the consumer's: assert in a browser suite that
+  `localStorage` and `sessionStorage` are empty and that `document.cookie` carries neither token.
+
+- **The framework-fed layers are now proven by a suite that goes through the framework.**
+  Per-layer measurement, which the aggregate 100% hides: filters were at **0%** e2e coverage and
+  guards at **30.4% of branches**. A unit test on a controller, guard or filter _invents_ its
+  input — it proves the code runs, never that it is reachable.
+
+  `AuthExceptionFilter` reached 100% on every axis, and was found never to have been registered in
+  the harness at all while three specs carried comments crediting it for envelopes it was not
+  producing. The guard work drove the **refusals** — every prior e2e exercised guards admitting a
+  valid caller on the way somewhere else — including every refusal branch of the CSRF guard, a
+  token whose account was deleted after issue, and `/ws-ticket`, which had no e2e of its own.
+
+### Fixed
+
+- **`AuthExceptionFilter` silently displaces `@bymax-one/nest-core`'s envelope filter.**
+  Documented rather than code-changed: the behaviour is correct and only the advice was
+  incomplete. **Nothing in this repository verifies it** — doing so would mean depending on
+  `@bymax-one/nest-core`, and this library does not depend on its consumers' stack. The
+  measurement below was taken once, deliberately, and then the dependency was removed; a consumer
+  composing both libraries owns the standing assertion. `useGlobalFilters` binds ahead of an `APP_FILTER` provider and this filter is
+  `@Catch()` with no argument, so registering it in a nest-core application means nest-core's
+  never runs. Measured — the same request answers `{error: {code, message, details}}` with it and
+  the flat `{statusCode, code, message, timestamp, path, details}` without it.
+
+  **Apply to a derived backend.** Building on `@bymax-one/nest-core`? **Do not register
+  `AuthExceptionFilter`.** Take theirs — it already recognises this library's envelope and passes
+  the code, message and per-field details through unchanged. Registering both loses `statusCode`,
+  `timestamp`, `path` and the correlation id, which is the opposite of what adding a filter looks
+  like it should do. The symptom is a body nested under `error` where your other endpoints answer
+  flat.
 
 - **The declared structural overlay**
   ([`conformance/openapi-declared-structures.json`](conformance/openapi-declared-structures.json)).
@@ -72,8 +130,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   client, and inexpressible in any committed document because it is option-derived. It is declared
   with its own probes, under its own name, so a reader is not left inferring a symmetry that is
   not there.
-
-### Fixed
 
 - **`POST {prefix}/password/change` refused the `refreshToken` it reads.**
   The handler takes the caller's own refresh token through
@@ -167,12 +223,23 @@ Request","statusCode":400}`.
   restating decorators they cannot see.
 
 - **Draining the response body deadlocked under request interception.**
-  `await response.body?.cancel()` in `createAuthFetch` and `createAuthClient`. In a browser it
-  resolves; under MSW or undici-in-jsdom the promise never settles, so every call whose response
-  carries a body hung. `/auth/refresh` carries one on success as well as on failure, which put it
-  on the happy path at every token rotation and made the refresh path untestable from a consumer's
-  suite. The drain is no longer awaited — nothing downstream needs it to have completed, the
-  status has already been read. Regression test: a response whose `cancel()` never settles.
+  `await response.body?.cancel()` in `createAuthFetch` and `createAuthClient`. Under MSW or
+  undici-in-jsdom the promise never settles, so every call whose response carries a body hung.
+  `/auth/refresh` carries one on success as well as on failure, which put it on the happy path at
+  every token rotation.
+
+  **Production was never affected, and that is measured rather than assumed** — a real browser
+  cancels the stream cleanly, confirmed under Playwright by deleting only the `access_token`
+  cookie and watching a reload produce exactly one `POST /auth/refresh`, status 200, with no
+  bounce to sign-in. So this is a **testing defect**, and the cost is precise: every consumer
+  using request interception cannot test refresh-and-retry at all, and it is the _success_ path
+  that is untestable. A four-way probe established the body's construction is irrelevant —
+  `HttpResponse.json`, a raw string and a hand-built `ReadableStream` all hang while `.json()` on
+  the same response resolves — so it is the interceptor's stream teardown, and dropping the
+  `await` fixes it for every consumer without MSW changing anything.
+
+  The drain is no longer awaited; nothing downstream needs it to have completed, the status has
+  already been read. Regression test: a response whose `cancel()` never settles.
 
 - **`refreshEndpoint` was undocumented, and its default 404s in a plain SPA.**
   It defaults to `/api/auth/client-refresh`, a Next.js proxy route, and a Vite/CRA app serves

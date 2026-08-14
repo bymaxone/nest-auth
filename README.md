@@ -937,6 +937,19 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
   `cookies.sameSite: 'strict'`. CSRF does not rest on this setting — `TrustedOriginGuard` is
   applied to every controller and runs before authentication.
 
+**The tokens are never readable from JavaScript, and verifying that end-to-end is yours.** Under
+cookie delivery this library never writes a token to `localStorage`, `sessionStorage`, or a
+JS-readable cookie: `access_token` and `refresh_token` are `HttpOnly`, and the only readable
+cookie is `has_session=1`, a hint carrying no credential so a SPA can tell a session probably
+exists without touching a token.
+
+This library's suite asserts **its half** — that the `Set-Cookie` headers carry those flags — and
+it structurally cannot assert the other half. A token leaking into JS-readable storage is
+invisible from the server: the API answers identically, the wire looks correct, and every test
+here passes. Only a browser observes it. **If you run a browser suite, assert there that
+`localStorage` and `sessionStorage` are empty and that `document.cookie` carries neither token**;
+it is the one guarantee cookie delivery exists for and the one no server-side test can reach.
+
 ---
 
 ## 🛡️ Security Table
@@ -1202,6 +1215,22 @@ app.useGlobalFilters(new AuthExceptionFilter())
 It passes an `AuthException` through untouched, keeps the status any other `HttpException`
 chose, and answers an unhandled throw with `auth.internal` and a generic message — never the
 thrown one.
+
+> **Do not register it on a `@bymax-one/nest-core` application.** The two filters are mutually
+> exclusive and this one wins: `useGlobalFilters` binds ahead of an `APP_FILTER` provider, and
+> `@Catch()` with no argument catches everything, so nest-core's envelope filter never runs.
+> Measured — the same request answers `{ error: { code, message, details } }` with this filter
+> registered and the flat `{ statusCode, code, message, timestamp, path, details }` without it.
+> Registering both therefore **loses** `statusCode`, `timestamp`, `path` and the correlation id,
+> which is the opposite of what adding a filter looks like it should do.
+>
+> On nest-core, take theirs: it already recognises this library's envelope and passes the code,
+> message and per-field details through unchanged. The symptom of getting it wrong is a body
+> nested under `error` where the rest of your application answers flat.
+>
+> **This library does not test the composition** — it would have to depend on nest-core to do so,
+> and it depends on nothing. Assert it in your own suite: the code, the per-field details, and the
+> flat fields (`statusCode`, `timestamp`, `path`) surviving a real request.
 
 #### The HTTP status belongs to the code
 

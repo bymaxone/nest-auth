@@ -46,6 +46,7 @@ import type {
   IUserRepository,
   UpdateMfaData
 } from '../../src/server/interfaces/user-repository.interface'
+import { AuthExceptionFilter } from '../../src/server/filters/auth-exception.filter'
 import { createAuthValidationPipe } from '../../src/server/pipes/auth-validation.pipe'
 
 // ---------------------------------------------------------------------------
@@ -418,9 +419,7 @@ export function createMockRedis(): Redis {
 // ---------------------------------------------------------------------------
 
 /**
- * Applies the minimal cookie-parser middleware and global ValidationPipe to a
- * NestJS application instance. Called from every E2E bootstrap to ensure
- * consistent request parsing across all test suites.
+ * Applies the cookie-parser shim and the library's exception filter.
  */
 export function applyTestMiddleware(app: INestApplication): void {
   // Minimal cookie-parser shim. The library expects `req.cookies` to be
@@ -455,6 +454,21 @@ export function applyTestMiddleware(app: INestApplication): void {
     ;(req as Request & { cookies: Record<string, string> }).cookies = jar
     next()
   })
+
+  // The library's exception filter, which a host is told to register (`AuthExceptionFilter`'s own
+  // JSDoc shows `app.useGlobalFilters(new AuthExceptionFilter())`).
+  //
+  // It was absent, and the absence was invisible: three specs carried comments crediting the
+  // filter for the envelope they assert, while e2e-only coverage of `src/server/filters` sat at
+  // **0%**. Those envelopes came from Nest's default `HttpException` serialization — an
+  // `AuthException`'s response body IS the envelope, so it renders identically with or without
+  // the filter. The comments described a mechanism that was not running, and the assertions could
+  // not tell the difference.
+  //
+  // What only the filter does is the part nothing exercised: giving a NON-`AuthException` failure
+  // the same envelope. Registered here so the suite measures the deployment the library documents.
+  app.useGlobalFilters(new AuthExceptionFilter())
+
   // NO global pipe — each auth controller's own `@UsePipes(createAuthValidationPipe())` runs.
 }
 

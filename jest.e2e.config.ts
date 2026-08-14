@@ -33,6 +33,19 @@ const config: Config = {
     ]
   },
   testTimeout: 30_000,
+  // The same bounds `jest.config.ts` and `jest.coverage.config.ts` carry, from #41 ("bound
+  // mutation and jest memory to stop OOM restarts"). This config was the one place they were
+  // never applied, and E2E is where they matter most: every spec boots a full Nest application
+  // with its own ioredis-mock, so per-worker memory grows with the number of spec files rather
+  // than with the number of tests.
+  //
+  // The symptom is not an assertion failure. Adding E2E specs made three unrelated suites fail
+  // intermittently — password reset, platform MFA, refresh-token reuse — alongside `Test suite
+  // failed to run`, which is a worker dying rather than a test disagreeing. Which suites break
+  // depends on how Jest happens to distribute files across workers, so it reads as a flake in
+  // whatever spec was added last.
+  maxWorkers: '50%',
+  workerIdleMemoryLimit: '1GB',
   clearMocks: true,
   restoreMocks: true,
   passWithNoTests: process.env['CI'] !== 'true'
