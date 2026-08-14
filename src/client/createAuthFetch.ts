@@ -160,105 +160,72 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
   return false
 }
 
-/** Sentinel for a body that did not arrive inside {@link ERROR_BODY_READ_TIMEOUT_MS}. */
-const UNREAD = Symbol('unread')
-
 /**
  * How long the 401 classification may wait for the error body.
  *
- * The request itself has already completed — only the body is outstanding — and an auth error
- * body is a few hundred bytes by construction, so anything slower is pathological rather than
- * slow. It is deliberately NOT the consumer's `timeout`: that bound belongs to the request, its
- * timer has already been cleared by the time this runs, and a deployment that disables it (`0`)
- * for long-polling must not thereby allow a 401 to hang the wrapper forever.
- *
- * On expiry the classification gives up and the pre-existing behaviour applies — a refresh is
- * attempted. This step may narrow what refreshes; it may never suspend the wrapper.
+ * Not the consumer's `timeout`: that one belongs to the request, whose timer is already cleared
+ * by the time this runs, and a deployment disabling it (`0`) for long-polling must not thereby
+ * let a 401 hang the wrapper. An auth error body is a few hundred bytes, so anything slower is
+ * pathological. On expiry the pre-existing behaviour applies — this step may narrow what
+ * refreshes, never suspend the wrapper.
  */
 const ERROR_BODY_READ_TIMEOUT_MS = 2_000
 
 /**
- * Reads a cloned response's JSON within {@link ERROR_BODY_READ_TIMEOUT_MS}, or gives up.
- *
- * The clone's body is cancelled when the bound elapses so the connection is released rather than
- * held until garbage collection — and NOT awaited, for the reason `performRefresh` documents:
- * under request interception the cancel promise never settles, and awaiting it would reintroduce
- * the deadlock this bound exists to prevent.
- */
-async function withReadBound(clone: Response): Promise<unknown> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-
-  const bound = new Promise<typeof UNREAD>((resolve) => {
-    timer = setTimeout(() => {
-      void clone.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
-      resolve(UNREAD)
-    }, ERROR_BODY_READ_TIMEOUT_MS)
-  })
-
-  try {
-    return await Promise.race([clone.json(), bound])
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/**
  * Whether a 401 means the access token expired — the only case a refresh can fix.
  *
- * The skip list answers this by PATH, and a path cannot answer it where one route produces
- * both: `POST {prefix}/password/change` sits behind the JWT guard, so an expired token really
- * does 401 there, and so does a wrong `currentPassword`. Refreshing on the second is what a
- * consumer measured: one refresh per typo, ten typos inside a minute exhaust the refresh
- * limiter, the client reads that 429 as an expiry and calls `onSessionExpired` — discarding a
- * session the server still honours. `GET {prefix}/me` answered 200 throughout.
+ * The path skip list cannot answer this where one route carries both meanings:
+ * `POST {prefix}/password/change` is JWT-guarded, so an expired token 401s there and so does a
+ * wrong `currentPassword`. Refreshing on the second cost a consumer one refresh per typo, and
+ * ten typos in a minute exhausted the refresh limiter — whose 429 the client then read as an
+ * expiry, discarding a session the server still honoured.
  *
- * So the decision is made on the error CODE the response carries, which is the only thing that
- * separates the two on one route. `auth.token_invalid` is the expiry — every guard collapses an
- * expired, revoked, malformed or absent token onto it, deliberately, so that a caller learns
- * nothing from the difference. Every other code is the server answering about something else,
- * and a new token would not change its mind.
+ * So the code decides. `auth.token_invalid` is the expiry: every guard collapses expired,
+ * revoked, malformed and absent onto it deliberately. Any other code is the server answering
+ * about something else, which a new token would not change.
  *
- * **A response this cannot read still refreshes**, which keeps the wrapper usable as a general
- * fetch: an application's own API returning a bare 401 with no envelope, an empty body, or
- * anything that is not JSON behaves exactly as it did before. The narrowing applies only where
- * a code is actually present.
+ * **A response this cannot read still refreshes** — no envelope, empty, non-JSON — so the
+ * wrapper stays usable against an application's own API. Both envelope shapes are read: this
+ * library's `{error: {code}}` and the flat `{statusCode, code}` a `@bymax-one/nest-core` backend
+ * answers with, since the client cannot tell which it is talking to.
  *
- * Both envelope shapes are read — this library's `{error: {code}}` and the flat
- * `{statusCode, code, …}` a `@bymax-one/nest-core` application answers with — because a derived
- * backend serves the second and the client cannot tell which it is talking to.
- *
- * Read from a CLONE: the caller receives the original response with its body untouched, and a
- * retry after a successful refresh still has a request to send. Cloning rather than reading and
- * re-wrapping also keeps this off the deadlock the drain in `performRefresh` documents — the
- * clone is consumed, not cancelled.
+ * Read from a CLONE, so the caller still receives an unconsumed body and a retry still has a
+ * request to send.
  *
  * @param response - The 401 response, unconsumed.
  * @returns `true` when a refresh could plausibly help.
  */
 async function isExpiredSessionResponse(response: Response): Promise<boolean> {
   const clone = response.clone()
-
+  let timer: ReturnType<typeof setTimeout> | undefined
   let body: unknown
-  try {
-    body = await withReadBound(clone)
-  } catch {
-    // Not JSON, empty, or a body the runtime would not parse twice. No code to read, so the
-    // behaviour is the one that predates this check.
-    return true
-  }
 
-  // The bound elapsed. Same answer as an unreadable body, for the same reason: this step may
-  // narrow the behaviour, never suspend it.
-  if (body === UNREAD) return true
+  try {
+    // `undefined` is the give-up sentinel and needs no symbol: `json()` cannot resolve to it,
+    // because JSON has no such value. The clone's body is cancelled so the connection is
+    // released, and not awaited — under interception that promise never settles.
+    body = await Promise.race([
+      clone.json(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          void clone.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
+          resolve(undefined)
+        }, ERROR_BODY_READ_TIMEOUT_MS)
+      })
+    ])
+  } catch {
+    // Not JSON, empty, or a body the runtime would not parse twice.
+    return true
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (typeof body !== 'object' || body === null) return true
 
   const envelope = body as { code?: unknown; error?: { code?: unknown } }
   const code = envelope.error?.code ?? envelope.code
 
-  if (typeof code !== 'string') return true
-
-  return code === AUTH_ERROR_CODES.TOKEN_INVALID
+  return typeof code !== 'string' || code === AUTH_ERROR_CODES.TOKEN_INVALID
 }
 
 /**
