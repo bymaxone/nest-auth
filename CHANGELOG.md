@@ -207,12 +207,23 @@ Request","statusCode":400}`.
   restating decorators they cannot see.
 
 - **Draining the response body deadlocked under request interception.**
-  `await response.body?.cancel()` in `createAuthFetch` and `createAuthClient`. In a browser it
-  resolves; under MSW or undici-in-jsdom the promise never settles, so every call whose response
-  carries a body hung. `/auth/refresh` carries one on success as well as on failure, which put it
-  on the happy path at every token rotation and made the refresh path untestable from a consumer's
-  suite. The drain is no longer awaited — nothing downstream needs it to have completed, the
-  status has already been read. Regression test: a response whose `cancel()` never settles.
+  `await response.body?.cancel()` in `createAuthFetch` and `createAuthClient`. Under MSW or
+  undici-in-jsdom the promise never settles, so every call whose response carries a body hung.
+  `/auth/refresh` carries one on success as well as on failure, which put it on the happy path at
+  every token rotation.
+
+  **Production was never affected, and that is measured rather than assumed** — a real browser
+  cancels the stream cleanly, confirmed under Playwright by deleting only the `access_token`
+  cookie and watching a reload produce exactly one `POST /auth/refresh`, status 200, with no
+  bounce to sign-in. So this is a **testing defect**, and the cost is precise: every consumer
+  using request interception cannot test refresh-and-retry at all, and it is the _success_ path
+  that is untestable. A four-way probe established the body's construction is irrelevant —
+  `HttpResponse.json`, a raw string and a hand-built `ReadableStream` all hang while `.json()` on
+  the same response resolves — so it is the interceptor's stream teardown, and dropping the
+  `await` fixes it for every consumer without MSW changing anything.
+
+  The drain is no longer awaited; nothing downstream needs it to have completed, the status has
+  already been read. Regression test: a response whose `cancel()` never settles.
 
 - **`refreshEndpoint` was undocumented, and its default 404s in a plain SPA.**
   It defaults to `/api/auth/client-refresh`, a Next.js proxy route, and a Vite/CRA app serves
