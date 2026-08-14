@@ -36,7 +36,7 @@ const consumerDir = join(rootDir, '.consumer-runtime-check')
  * resolve, which is the part a gate here could meaningfully assert.
  */
 const SUBPATHS = {
-  '.': ['AuthException', 'AuthExceptionFilter', 'AUTH_ERROR_CODES'],
+  '.': ['AuthException', 'AuthExceptionFilter', 'WsAuthExceptionFilter', 'AUTH_ERROR_CODES'],
   './shared': ['AUTH_ERROR_CODES', 'AUTH_ACCESS_COOKIE_NAME', 'AUTH_DASHBOARD_ROUTES'],
   './client': ['createAuthClient', 'createAuthFetch', 'AuthClientError'],
   './react': ['AuthProvider', 'useAuth', 'useSession', 'useAuthStatus']
