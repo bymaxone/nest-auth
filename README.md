@@ -843,8 +843,12 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > claim _usually_ wrong instead of _reliably_ empty, which is the failure mode that survives
 > testing.
 >
-> Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and read
-> `IUserRepository.findById` for anything richer. That is what the library's own guards do, which
+> Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and for
+> anything richer read the account **tenant-scoped**, the way that guard does —
+> `findById(request.user.sub, request.user.tenantId)`. The tenant argument is not optional in
+> practice: ids may collide across tenants, and `findById` accepts an absent tenant only for
+> flows that are deliberately cross-tenant, so dropping it here can resolve another tenant's
+> account. That is what the library's own guards do, which
 > is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same
 > reason — it is always `false` after a rotation, so step-up does not survive a refresh and a
 > user re-acquires it through the MFA challenge.

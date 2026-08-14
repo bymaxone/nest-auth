@@ -48,8 +48,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   rotation beside it, and the `userStatusCacheTtlSeconds` window (default 60) that decides how
   quickly a suspension bites.
 
-  **Apply to a derived backend.** Read status per request — `UserStatusGuard` on the route,
-  `IUserRepository.findById` for anything richer — and never from the token. If you already gate
+  **Apply to a derived backend.** Read status per request — `UserStatusGuard` on the route, and
+  for anything richer `findById(request.user.sub, request.user.tenantId)`, **tenant-scoped**, the
+  way that guard reads it — and never from the token. The tenant argument matters: ids may collide
+  across tenants and `findById` accepts an absent tenant only for deliberately cross-tenant flows,
+  so an unscoped read can resolve another tenant's account. If you already gate
   on the claim, that gate is either refusing everyone or nobody depending on which way you wrote
   the comparison.
 
