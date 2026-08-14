@@ -177,7 +177,18 @@ export function createMockUserRepository(): MockUserRepository {
       // The address is proven before this runs, so the account stays verified across the
       // change — a store that cleared the flag here would sign the user out of a state they
       // had just proved.
-      if (user) users.set(id, { ...user, email })
+      if (!user) return
+
+      users.set(id, { ...user, email })
+
+      // Move the lookup index with the row. A real repository gets this from the unique index
+      // on the column; this one keeps a second Map, and leaving it behind is not a harmless
+      // shortcut — the account would sign in under its OLD address and be unreachable under the
+      // new one, which is the opposite of what the flow just did. Found by driving the
+      // address-change flow over HTTP: every unit test of `updateEmail` passed, because none of
+      // them looked the account up again afterwards.
+      emailIndex.delete(emailKey(user.email, user.tenantId))
+      emailIndex.set(emailKey(email, user.tenantId), id)
     },
 
     async findByOAuthId(
@@ -421,7 +432,14 @@ export function createMockRedis(): Redis {
 /**
  * Applies the cookie-parser shim and the library's exception filter.
  */
-export function applyTestMiddleware(app: INestApplication): void {
+export function applyTestMiddleware(app: INestApplication, withCookieParser = true): void {
+  if (!withCookieParser) {
+    // Only the exception filter. The cookie shim below is what a host mounts, not what this
+    // library ships, so a deployment without one is the state every cookie reader must survive.
+    app.useGlobalFilters(new AuthExceptionFilter())
+    return
+  }
+
   // Minimal cookie-parser shim. The library expects `req.cookies` to be
   // populated (TokenDeliveryService.readCookie() reads from it directly), but
   // NestJS does not bundle a cookie parser. Adding this here lets cookie-mode
@@ -508,6 +526,16 @@ export interface ExtraBootstrapOptions {
   hostProviders?: Provider[]
   /** Optional callback to mutate the `TestingModuleBuilder` before compile (e.g. for `.overrideProvider()`). */
   mutateBuilder?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+  /**
+   * Skips the cookie-parser shim, modelling a host that never mounted one.
+   *
+   * A supported deployment rather than a broken one: `cookie-parser` is the consumer's to mount
+   * and this library takes no dependency on it, so a bearer-only host reaches every
+   * cookie-reading path with `req.cookies` **undefined**. Every such reader here treats that as
+   * "no cookie" — and one that assumed the object exists would throw instead, turning an
+   * ordinary configuration into a 500 on a route that has nothing to do with cookies.
+   */
+  withoutCookieParser?: boolean
 }
 
 /**
@@ -590,7 +618,7 @@ export async function bootstrapTestApp(
     .compile()
 
   const app = moduleRef.createNestApplication()
-  applyTestMiddleware(app)
+  applyTestMiddleware(app, extra.withoutCookieParser !== true)
   await app.init()
 
   return { app, repo, platformRepo, email, redis, options }

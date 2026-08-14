@@ -22,6 +22,33 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **The controller layer is now measured by the suite that goes through the framework.** E2E-only
+  branch coverage of `src/server/controllers` was **75%**, and the shortfall was mostly whole
+  endpoints nobody drove over HTTP. It is now **87%**, and everything still uncovered is named
+  below rather than left as a number.
+
+  What had no e2e at all: the **address-change flow** (`EmailChangeController` sat at 0%
+  functions — request, mail, confirm, replay, and the boot-time refusal when the provider cannot
+  deliver the token), **invitation revocation**, the **two challenge routes crossed** (a platform
+  temp token on the dashboard route and a dashboard one on the platform route — the branches that
+  stop a credential from one surface becoming a session on the other), **logout and refresh with
+  no credential at all** on both surfaces, and a **host that never mounted a cookie parser**,
+  which is a supported deployment this library takes no dependency on.
+
+  Two of those found real defects: the MFA one is under _Fixed_ below, and the invitation case
+  corrected the test rather than the code — revocation is by **rank**, not admin-only, and an
+  outranked revoke answers the same `204` a permitted one does, on purpose. Asserting the two
+  responses **against each other** is what makes that an anti-enumeration property instead of two
+  endpoints agreeing because nothing happened in either; the effect is then read where the
+  invitee's token is spent.
+
+  **What remains, and why it stays uncovered:** eight occurrences of `req.ip ?? ''` and one
+  `err instanceof AuthException` fallback. Express sets `req.ip` for every request with a live
+  socket, so the fallback needs a socket that is already gone — real, and not producible over
+  supertest. They are one duplication rather than nine independent gaps, and folding them into a
+  single helper (which would also fix the User-Agent bound being applied by `OAuthController` and
+  by nobody else) is its own change.
+
 - **The five guards this library exports and never mounts are now driven from a host's own
   controller.** `RolesGuard`, `PlatformRolesGuard`, `MfaRequiredGuard`, `OptionalAuthGuard` and
   `SelfOrAdminGuard` exist for a consumer to apply to their routes, and nothing here applied them
@@ -156,6 +183,27 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `auth.oauth_failed`.
 
 ### Fixed
+
+- **A malformed `mfaTempToken` answered `500 auth.internal` instead of `401
+auth.mfa_temp_token_invalid`.** `TokenManagerService.verifyMfaTempToken` let the verifier's own
+  error propagate — its JSDoc said so — and nothing above catches it, so any garbage in the body's
+  `mfaTempToken` or in the `mfa_temp_token` cookie an OAuth callback plants produced a 5xx. Every
+  other failure in that method already answered `MFA_TEMP_TOKEN_INVALID`; the verification failure
+  now says the same thing.
+
+  Three consequences, none visible from a unit test that only ever passed it a token it had just
+  minted: an attacker-controlled input produced a 5xx (free noise in an operator's error budget,
+  and cover for the 500s that mean something); `MfaController` clears the temp cookie only for an
+  `AuthException` it recognises, so a browser holding a malformed cookie was never told to drop
+  it and replayed the same dead value on every attempt; and **`rust-auth` maps the same failure to
+  `MfaTempTokenInvalid`** (`token_manager.rs`,
+  `verify_rotating(...).map_err(|_| AuthError::MfaTempTokenInvalid)`), so the two backends
+  answered one request differently. Found by driving the cookie path over HTTP for the first
+  time.
+
+  **Apply to a derived backend.** No code change. A request that used to come back `500` now
+  comes back `401 auth.mfa_temp_token_invalid`. If you alert on 5xx from `/auth/mfa/challenge`,
+  that alert was firing on client input and will now go quiet.
 
 - **`AuthExceptionFilter` silently displaces `@bymax-one/nest-core`'s envelope filter.**
   Documented rather than code-changed: the behaviour is correct and only the advice was

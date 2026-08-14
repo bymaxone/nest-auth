@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
-import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { TokenManagerService } from './token-manager.service'
@@ -1465,6 +1465,33 @@ describe('TokenManagerService', () => {
         tenantId: 'tenant-1',
         jti: FIXED_UUID
       })
+    })
+
+    // A token no configured secret accepts is refused with the same code every other failure
+    // here answers. The verifier's own error used to travel out unchanged, and since no caller
+    // catches it, a malformed `mfaTempToken` answered 500 `auth.internal` over HTTP — an
+    // attacker-controlled input producing a 5xx, and a temp cookie the controller then never
+    // cleared because it only recognises `AuthException`. rust-auth maps the same failure to
+    // `MfaTempTokenInvalid`, so this is also the two backends agreeing again.
+    it('refuses a token the verifier rejects, without leaking its error', async () => {
+      mockJwtService.verify.mockImplementation(() => {
+        throw new Error('jwt malformed')
+      })
+
+      // The MESSAGE as well as the code. The claim in this test's name is that the verifier's
+      // error does not leak, and an implementation that surfaced `jwt malformed` as the public
+      // message would satisfy a code-only assertion while doing exactly the thing being ruled
+      // out — the catalogue's standard message is what a caller must see.
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID,
+            message: AUTH_ERROR_MESSAGES[AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID]
+          }
+        }
+      })
+      // Refused on the token alone — the Redis lookup is never reached.
+      expect(mockRedis.get).not.toHaveBeenCalled()
     })
 
     // Plane/tenant binding is mandatory and mutually exclusive: a dashboard token WITHOUT a tenant

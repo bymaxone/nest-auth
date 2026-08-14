@@ -265,6 +265,178 @@ describe('invitations flow (E2E)', () => {
     })
   })
 
+  // ---------------------------------------------------------------------------
+  // Scenario — two invitations at different ranks, one revoker who outranks only one
+  //
+  // `POST /invitations/revoke` had no E2E of its own: the handler was proven by a unit test
+  // calling the method directly, so nothing established that the route is mounted, that a
+  // caller with no credential is refused, or — the property that matters — that revoking
+  // actually makes the mailed token unusable.
+  //
+  // Authorization here is by RANK, not by an admin flag: a MEMBER may withdraw an invitation it
+  // outranks, and is refused one it does not. The first draft of this suite asserted
+  // "non-admin → 403" and was corrected by the code, which answers **204 either way** —
+  // deliberately, because a 403 would tell any member that a pending invitation exists for an
+  // address and roughly at what authority, which is the disclosure hashing the address in the
+  // index exists to prevent.
+  //
+  // So the responses are asserted against EACH OTHER, and the effect is read where the invitee's
+  // token is spent. A revoke that answers 204 and leaves the token spendable is
+  // indistinguishable from a working one at the response, and the difference is a stranger
+  // holding an account.
+  // ---------------------------------------------------------------------------
+
+  describe('revoking a pending invitation', () => {
+    let app: INestApplication
+    let adminAccessToken: string
+    let memberAccessToken: string
+
+    /** An ADMIN-level invitation — above the MEMBER who will try to withdraw it. */
+    let outrankingToken: string
+
+    /** A MEMBER-level invitation the admin withdraws. */
+    let withdrawnToken: string
+
+    /** The two responses, captured so they can be compared to each other rather than each to
+     * its own expectation. */
+    let refusedRevoke: { status: number; body: unknown }
+    let permittedRevoke: { status: number; body: unknown }
+
+    beforeAll(async () => {
+      const bootstrap = await bootstrapTestApp(
+        { invitations: { enabled: true, tokenTtlSeconds: 3_600 } },
+        {
+          controllers: {
+            auth: true,
+            mfa: true,
+            passwordReset: true,
+            sessions: true,
+            invitations: true
+          }
+        }
+      )
+      app = bootstrap.app
+      const sentEmails = instrumentInvitationEmails(bootstrap.email)
+
+      await request(app.getHttpServer()).post('/register').send({
+        email: 'revoker@example.com',
+        password: 'RevokerSecret123!',
+        name: 'Revoking Admin',
+        tenantId: 'tenant-1'
+      })
+      promoteToAdmin(bootstrap.repo, 'revoker@example.com')
+      adminAccessToken = (
+        await request(app.getHttpServer()).post('/login').send({
+          email: 'revoker@example.com',
+          password: 'RevokerSecret123!',
+          tenantId: 'tenant-1'
+        })
+      ).body.accessToken as string
+
+      await request(app.getHttpServer()).post('/register').send({
+        email: 'bystander@example.com',
+        password: 'BystanderSecret123!',
+        name: 'Bystander',
+        tenantId: 'tenant-1'
+      })
+      memberAccessToken = (
+        await request(app.getHttpServer()).post('/login').send({
+          email: 'bystander@example.com',
+          password: 'BystanderSecret123!',
+          tenantId: 'tenant-1'
+        })
+      ).body.accessToken as string
+
+      // Two invitations at different ranks. The MEMBER may withdraw one and not the other, and
+      // the whole point of the pair is that the RESPONSE cannot tell them apart.
+      for (const [email, role] of [
+        ['outranking-invitee@example.com', 'ADMIN'],
+        ['withdrawn-invitee@example.com', 'MEMBER']
+      ]) {
+        await request(app.getHttpServer())
+          .post('/invitations')
+          .set('Authorization', `Bearer ${adminAccessToken}`)
+          .send({ email, role })
+      }
+
+      const readToken = async (to: string): Promise<string> => {
+        const mail = await waitForEmail(
+          sentEmails,
+          (candidate) => candidate.to === to && candidate.subject === 'Invitation'
+        )
+        return /[?&]token=([a-f0-9]+)/i.exec(mail.html)?.[1] ?? ''
+      }
+
+      outrankingToken = await readToken('outranking-invitee@example.com')
+      withdrawnToken = await readToken('withdrawn-invitee@example.com')
+
+      // The MEMBER tries to withdraw the ADMIN-level invitation — outranked, so nothing is
+      // deleted. The admin withdraws the MEMBER-level one — permitted, so it is.
+      const refused = await request(app.getHttpServer())
+        .post('/invitations/revoke')
+        .set('Authorization', `Bearer ${memberAccessToken}`)
+        .send({ email: 'outranking-invitee@example.com' })
+      refusedRevoke = { status: refused.status, body: refused.body }
+
+      const permitted = await request(app.getHttpServer())
+        .post('/invitations/revoke')
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .send({ email: 'withdrawn-invitee@example.com' })
+      permittedRevoke = { status: permitted.status, body: permitted.body }
+    })
+
+    afterAll(async () => {
+      await app.close()
+    })
+
+    // Verifies both tokens were really minted. Without it, every refusal below is satisfied by
+    // an invitation that never existed — the vacuous shape where both halves of a before/after
+    // pair are the same failure.
+    it('starts from two live invitation tokens', () => {
+      expect(outrankingToken).toMatch(/^[a-f0-9]{64}$/)
+      expect(withdrawnToken).toMatch(/^[a-f0-9]{64}$/)
+    })
+
+    // Verifies the two revokes are INDISTINGUISHABLE to the caller — compared to each other,
+    // not each to its own expectation. `INSUFFICIENT_ROLE` here used to be an oracle: the caller
+    // names an address and nothing else, so a 403 would have said "there is a pending invitation
+    // for this address, at a rank above yours" while a 204 said "there is none" — letting any
+    // member enumerate a tenant's pending invitations and roughly at what authority. That is
+    // exactly the disclosure hashing the address in the index exists to prevent.
+    it('answers a permitted and an outranked revoke identically', () => {
+      expect(refusedRevoke.status).toBe(204)
+      expect(refusedRevoke).toEqual(permittedRevoke)
+    })
+
+    // The effect the response withholds, read where the invitee's copy of the token is spent.
+    // The permitted revoke killed its token; the outranked one left its own alone. This is the
+    // pair that makes the case above a security property rather than two endpoints answering
+    // 204 because nothing happened in either.
+    it('withdraws only the invitation the caller outranks', async () => {
+      const dead = await request(app.getHttpServer())
+        .post('/invitations/accept')
+        .send({ token: withdrawnToken, name: 'Too Late', password: 'StrongPass123!-xyz' })
+
+      expect(dead.status).toBe(400)
+
+      const alive = await request(app.getHttpServer())
+        .post('/invitations/accept')
+        .send({ token: outrankingToken, name: 'Still Invited', password: 'StrongPass123!-xyz' })
+
+      expect(alive.status).toBe(201)
+    })
+
+    // Verifies the route is behind a credential at all — the tenant and the caller both come
+    // from the JWT, so an unauthenticated request has nothing to name.
+    it('refuses a revoke with no credential', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/invitations/revoke')
+        .send({ email: 'outranking-invitee@example.com' })
+
+      expect(res.status).toBe(401)
+    })
+  })
+
   describe('non-admin cannot create invitations', () => {
     // Verifies that a MEMBER-role user receives 403 Forbidden when calling POST /invitations.
     it('should return 403 when a non-admin tries to create an invitation', async () => {
