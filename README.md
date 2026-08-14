@@ -821,15 +821,27 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > lifetime on the same pass.
 
 > [!WARNING]
-> **Do not gate on the access token's `status` claim.** It is stamped at issue and is an **empty
-> string** on every token a refresh rotation mints — the stored session record carries no live
-> status, so there is nothing to copy. `rust-auth` does the same, deliberately and with a test
-> pinning it; this is a shared contract rather than a defect in either.
+> **Do not gate on the access token's `status` claim.** It is **point-in-time, never
+> authoritative**, and which of its three states you get depends on things a client cannot see:
 >
-> The claim is therefore never authoritative, and a route that reads it is wrong in **both**
-> directions: `status !== 'active'` refuses everyone once a session has been refreshed, and
-> `status === 'suspended'` refuses nobody, ever. Both fail quietly and hours away from the code
+> | how the token was minted                                                   | `status`                                                                                  |
+> | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+> | login, register, OAuth, MFA challenge                                      | the account's value **at that moment**                                                    |
+> | an ordinary refresh rotation                                               | **empty string** — the session record carries no live status, so there is nothing to copy |
+> | a refresh that re-signs because `role`, `tenantId` or `mfaEnabled` changed | the account's value **at that moment**, read during that request                          |
+>
+> `rust-auth` stamps the same empty string on its rotation path, deliberately and with a test
+> pinning it, so the middle row is a shared contract rather than a defect in either library.
+>
+> Every populated value is stale the instant the account changes, because status can change under
+> an unexpired token and nothing re-stamps it. So a route that reads the claim is wrong in **both**
+> directions: `status !== 'active'` refuses everyone whose session has been refreshed ordinarily,
+> and `status === 'suspended'` refuses nobody, ever. Both fail quietly and hours from the code
 > that caused them — the first looks like a broken login, the second like nothing at all.
+>
+> The exceptional re-stamp is the worst of the three for a reader, not the best: it makes the
+> claim _usually_ wrong instead of _reliably_ empty, which is the failure mode that survives
+> testing.
 >
 > Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and read
 > `IUserRepository.findById` for anything richer. That is what the library's own guards do, which

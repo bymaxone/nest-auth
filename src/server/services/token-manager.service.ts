@@ -755,13 +755,17 @@ export class TokenManagerService {
    * test pinning it, so this is a shared contract rather than a local shortcut.
    *
    * **What that means for a consumer, which is where the cost lands.** `issueTokens` stamps the
-   * account's real value, so the claim is truthful until the first refresh and empty for the
-   * rest of the session's life. A derived backend reading `request.user.status` is therefore
-   * wrong in both directions: `!== 'active'` refuses everyone after fifteen minutes, and
-   * `=== 'suspended'` refuses nobody, ever. Backfilling it here would be worse than leaving it:
-   * the claim would be usually true, which is the failure mode that survives testing — status
-   * can still change under an unexpired token, so a consumer trusting it would be wrong more
-   * rarely and far later. The claim cannot be authoritative, so it is not made to look like it.
+   * account's value at that moment, this path stamps nothing, and `AuthService.refresh` re-stamps
+   * it from the account when `role`, `tenantId` or `mfaEnabled` changed — so a session's tokens
+   * carry a populated claim, then an empty one, then possibly a populated one again, with no
+   * signal a client can read. A derived backend reading `request.user.status` is wrong in both
+   * directions: `!== 'active'` refuses everyone whose session refreshed ordinarily, and
+   * `=== 'suspended'` refuses nobody, ever.
+   *
+   * Backfilling it here would be worse than leaving it empty: the claim would become *usually*
+   * true, which is the failure mode that survives testing, since status can still change under an
+   * unexpired token. The claim cannot be authoritative, so it is not made to look like it — and
+   * the empty string is the one state that cannot be mistaken for an answer.
    *
    * `mfaVerified` is always `false` after rotation because the Redis session does not
    * persist MFA verification state. A user who authenticated with MFA will lose the

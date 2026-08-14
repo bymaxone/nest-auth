@@ -22,11 +22,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **The access token's `status` claim is documented as never authoritative.** It is stamped at
-  issue and is an **empty string** on every token a refresh rotation mints — the stored session
-  record carries no live status, so there is nothing to copy. `rust-auth` stamps the same empty
-  string at the same point, with a test pinning it, so this is a shared contract rather than a
-  defect in either library.
+- **The access token's `status` claim is documented as point-in-time and never authoritative.**
+  Three states, and a client can tell them apart from nothing: minted at login it carries the
+  account's value _at that moment_; an ordinary refresh rotation stamps an **empty string**,
+  because the session record holds no live status; and a refresh that re-signs — which
+  `AuthService.refresh` does when `role`, `tenantId` or `mfaEnabled` changed — stamps the value
+  read during _that_ request. `rust-auth` stamps the same empty string on its rotation path, with
+  a test pinning it, so the middle state is a shared contract rather than a defect in either
+  library.
 
   Reported by a consumer seat that measured it on a live boot: `"pending"` before the first
   refresh, `""` after. Nothing in this library's own enforcement reads the claim — `UserStatusGuard`
