@@ -12,7 +12,7 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
-import type { Provider } from '@nestjs/common'
+import type { Provider, Type } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TestingModuleBuilder } from '@nestjs/testing'
 import type { NextFunction, Request, Response } from 'express'
@@ -493,6 +493,19 @@ export interface ExtraBootstrapOptions {
   controllers?: BymaxAuthModuleOptions['controllers']
   /** Additional providers merged into `registerAsync.extraProviders`. */
   extraModuleProviders?: Provider[]
+  /**
+   * Controllers the HOST declares, alongside the ones the library registers.
+   *
+   * These are declared in the test module rather than inside `BymaxAuthModule`, which is what
+   * makes them a consumer's controllers rather than more of the library's: a guard they apply
+   * with `@UseGuards(...)` is instantiated in THIS module's injector, so it resolves only what
+   * `BymaxAuthModule` actually exports. That is the property under test for the guards this
+   * library exports but never mounts — a guard whose dependencies are internal cannot be applied
+   * by a consumer at all, and nothing inside the library would ever notice.
+   */
+  hostControllers?: Type<unknown>[]
+  /** Providers the host declares beside {@link ExtraBootstrapOptions.hostControllers}. */
+  hostProviders?: Provider[]
   /** Optional callback to mutate the `TestingModuleBuilder` before compile (e.g. for `.overrideProvider()`). */
   mutateBuilder?: (builder: TestingModuleBuilder) => TestingModuleBuilder
 }
@@ -542,6 +555,8 @@ export async function bootstrapTestApp(
   const options: BymaxAuthModuleOptions = { ...baseOptions, ...overrides }
 
   let builder = Test.createTestingModule({
+    controllers: extra.hostControllers ?? [],
+    providers: extra.hostProviders ?? [],
     imports: [
       BymaxAuthModule.registerAsync({
         useFactory: () => options,

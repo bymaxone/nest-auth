@@ -22,6 +22,46 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **The five guards this library exports and never mounts are now driven from a host's own
+  controller.** `RolesGuard`, `PlatformRolesGuard`, `MfaRequiredGuard`, `OptionalAuthGuard` and
+  `SelfOrAdminGuard` exist for a consumer to apply to their routes, and nothing here applied them
+  — so their only proof was unit tests handing each guard an `ExecutionContext` no middleware
+  would build. E2E-only branch coverage of `src/server/guards` was **34.19%**; it is now
+  **65.16%**, and the five are at 100% apart from two branches named below.
+
+  The fixture controller is declared in the **test module**, not inside `BymaxAuthModule`, and
+  that is the point: `@UseGuards(...)` re-instantiates a guard in the declaring module's injector,
+  so it resolves only what this library actually **exports**. The module's export list has carried
+  comments claiming that works — `AuthRedisService`, `AuthRevocationService`,
+  `BYMAX_AUTH_USER_REPOSITORY`, `WsTicketService` and `JwtModule` are all exported for exactly
+  this reason — and nothing exercised the claim until now. It holds: every one of the five mounts
+  and runs from a consumer's controller.
+
+  Three of them are proven by falsification rather than by watching green: admitting a
+  user-less request in `RolesGuard`, swallowing an invalid token in `OptionalAuthGuard`, and
+  dropping the `mfaEnabled` type check in `MfaRequiredGuard` each turn exactly the case that
+  names them red.
+
+  With the wildcard route and the literal-`admin` deployment both driven, `SelfOrAdminGuard`
+  reaches **100% on every axis from e2e alone**, and `RolesGuard`, `OptionalAuthGuard` and
+  `MfaRequiredGuard` were already there.
+
+  **`SelfOrAdminGuard`'s array-valued param is reachable, and is now driven.** The first draft of
+  this work called it impossible — Express builds `req.params` from the path, where a name cannot
+  repeat — and that was wrong: Express 5 (path-to-regexp 8) fills a **named wildcard**'s param
+  with an array of segments, `['abc']` even for a single one. Any consumer writing
+  `@Get('files/*path')` behind the guard reaches it on every request, including the URLs that
+  look exactly like a plain param. Measured, then covered: the fixture declares a wildcard route
+  and the suite drives one segment and three. Refusing is deliberate — picking an element would
+  compare an identity against one segment of a caller-chosen path and admit the rest unlooked-at.
+
+  **One branch is out of reach of the compositions this library supports**, and says so in its own
+  source rather than being quietly missing from the report: `PlatformRolesGuard`'s missing
+  `platformHierarchy`. Reaching it needs `JwtPlatformGuard`, which needs `platform.enabled`, which
+  `resolveOptions` refuses without that map — so nothing this library mounts gets there, while a
+  consumer's own guard populating `request.user` does, over HTTP, which is what the arm defends.
+  Covered by its unit spec.
+
 - **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
   `conformance/wire-contract.json` is the one artifact `rust-auth` and this library are supposed
   to hold **byte-identically** — it is the source on both sides rather than a derivation of one.
