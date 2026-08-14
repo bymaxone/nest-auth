@@ -34,7 +34,7 @@
  */
 
 import type { INestApplication } from '@nestjs/common'
-import { UseGuards } from '@nestjs/common'
+import { UseFilters, UseGuards } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import {
   ConnectedSocket,
@@ -47,6 +47,7 @@ import { io } from 'socket.io-client'
 import type { Socket as ClientSocket } from 'socket.io-client'
 
 import { sha256 } from '../../src/server/crypto/secure-token'
+import { WsAuthExceptionFilter } from '../../src/server/filters/ws-auth-exception.filter'
 import { WsJwtGuard } from '../../src/server/guards/ws-jwt.guard'
 import type { BootstrappedTestApp } from './setup'
 import { bootstrapTestApp, JWT_SECRET } from './setup'
@@ -79,6 +80,25 @@ class ProbeGateway {
   }
 }
 
+/**
+ * The same gateway with `WsAuthExceptionFilter` registered — the deployment the README
+ * prescribes for a host that mounts WebSockets.
+ *
+ * It exists beside the unfiltered one on purpose: the filter's whole claim is that the two
+ * answer a refused client DIFFERENTLY, and one gateway can only ever show one of the two
+ * answers. Running both under the same application, the same guard and the same credential is
+ * what isolates the filter as the variable.
+ */
+@WebSocketGateway({ namespace: 'filtered', transports: ['websocket'] })
+@UseFilters(new WsAuthExceptionFilter())
+class FilteredGateway {
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('whoami')
+  whoami(@ConnectedSocket() client: { data: { user?: WhoAmI } }, @MessageBody() _body: unknown) {
+    return client.data.user ?? null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -88,9 +108,9 @@ const PASSWORD = 'Ws-Guard-Flow-Passphrase'
 /** One round trip: connect, send `whoami`, resolve with the answer or the refusal. */
 async function whoami(
   port: number,
-  options: { ticket?: string; token?: string }
+  options: { ticket?: string; token?: string; namespace?: string }
 ): Promise<{ ok: true; user: WhoAmI } | { ok: false; error: unknown }> {
-  const socket: ClientSocket = io(`http://127.0.0.1:${String(port)}`, {
+  const socket: ClientSocket = io(`http://127.0.0.1:${String(port)}${options.namespace ?? ''}`, {
     transports: ['websocket'],
     forceNew: true,
     reconnection: false,
@@ -156,7 +176,7 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
   let userId: string
 
   beforeAll(async () => {
-    boot = await bootstrapTestApp({}, { hostProviders: [ProbeGateway] })
+    boot = await bootstrapTestApp({}, { hostProviders: [ProbeGateway, FilteredGateway] })
     app = boot.app
 
     // A listening server, which no other e2e here needs: supertest drives the HTTP handler
@@ -261,13 +281,39 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
   // fell over, retry with backoff" — and the sensible default for an unknown error is to retry,
   // which turns every expired token into a reconnect loop against an endpoint that will refuse
   // it forever.
-  it('delivers a generic error rather than the code the guard names', async () => {
+  it('delivers a generic error on a gateway with no filter registered', async () => {
     const result = await whoami(port, { token: 'not-a-jwt' })
 
     expect(result.ok).toBe(false)
-    expect(result.ok).not.toBe(true)
     expect(!result.ok && result.error).toEqual(
       expect.objectContaining({ status: 'error', message: 'Internal server error' })
+    )
+  })
+
+  // The same refusal on the gateway that registers `WsAuthExceptionFilter`: same application,
+  // same guard, same credential, and now the client can read `error.code`. The pair is the
+  // filter's entire claim, and running it as a pair is what shows the filter is what changed —
+  // a single assertion on the filtered gateway would also pass if the guard had started
+  // answering differently.
+  it('delivers the library code once the filter is registered', async () => {
+    const result = await whoami(port, { token: 'not-a-jwt', namespace: '/filtered' })
+
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toEqual({
+      status: 'error',
+      error: expect.objectContaining({ code: 'auth.token_invalid' })
+    })
+  })
+
+  // The filter must not change who gets in — it is an answer-shaping layer, not an
+  // authorisation one. A valid ticket is admitted on the filtered gateway exactly as it is on
+  // the plain one, with the same identity attached.
+  it('admits a valid credential on the filtered gateway too', async () => {
+    const result = await whoami(port, { ticket: await mintTicket(), namespace: '/filtered' })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.user).toEqual(
+      expect.objectContaining({ sub: userId, tenantId: 'tenant-1' })
     )
   })
 

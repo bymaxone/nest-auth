@@ -42,14 +42,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   carrying no `jti`, and a ticket redeeming to a snapshot with **no tenant**, which is the shape
   `rust-auth` writes for a platform ticket into the `wst:` keyspace both libraries share.
 
-  **A finding this surfaced, reported rather than fixed:** the library's error catalogue does not
-  reach the socket. `WsJwtGuard` throws `AuthException`, which is an `HttpException`, and Nest's
-  WebSocket exception layer understands only `WsException` — so a refused client receives
-  `{status: 'error', message: 'Internal server error'}` and cannot tell a dead credential from a
-  crashed handler. The security property holds (the handler never runs), and the gap is now
-  pinned by a test so it cannot change unnoticed. Closing it means either a new exported WS
-  exception filter or changing what the guard throws; both are public surface, so both go through
-  the maintainer.
+  **The finding this surfaced, and its fix — `WsAuthExceptionFilter`, exported.** The library's
+  error catalogue did not reach the socket: `WsJwtGuard` throws `AuthException`, which extends
+  `HttpException`, and Nest's WebSocket exception layer understands only `WsException` — so a
+  refused client received `{status: 'error', message: 'Internal server error'}`. The refusal was
+  correct (the handler never runs); what was lost is everything the client could act on. A
+  reconnect policy cannot tell a dead credential from a crashed handler, and the sensible default
+  for an unknown error is to retry, so an expired token became a reconnect loop against an
+  endpoint that will refuse it forever.
+
+  Register it on a gateway that applies the guard (`@UseFilters(new WsAuthExceptionFilter())`) and
+  the client reads `error.code` instead. `status: 'error'` is kept — the field Nest itself sets
+  and the one socket.io clients branch on — with the envelope added beside it. An `AuthException`
+  travels whole, so a `details` payload survives; anything else is answered as `auth.internal`
+  with a generic message and logged, never forwarded.
+
+  Opt-in, like its HTTP twin: a library does not get to decide how an application answers
+  failures it did not raise. It imports neither `socket.io` nor `@nestjs/websockets` — the client
+  is typed structurally — so it costs a consumer with no gateway nothing. The e2e runs **two
+  gateways under one application**, one filtered and one not, because the claim is that the two
+  answer a refused client differently and one gateway can only show one of the two answers.
 
   Three branches remain unreachable through this transport and say so in the suite: the
   missing-`@nestjs/websockets` arm of `onModuleInit`, `assertDashboardSnapshot`'s non-string

@@ -1232,6 +1232,40 @@ thrown one.
 > and it depends on nothing. Assert it in your own suite: the code, the per-field details, and the
 > flat fields (`statusCode`, `timestamp`, `path`) surviving a real request.
 
+#### On a WebSocket, the envelope needs its own filter
+
+`WsJwtGuard` throws the same `AuthException` every HTTP guard throws — and `AuthException`
+extends `HttpException`, which Nest's **WebSocket** exception layer does not recognise. It
+understands `WsException` and nothing else, so without a filter a refused socket client receives:
+
+```json
+{ "status": "error", "message": "Internal server error" }
+```
+
+The refusal itself is correct: the handler never runs. What is lost is everything the client
+could act on. A reconnect policy cannot tell a dead credential from a crashed handler, and the
+sensible default for an unknown error is to retry — so an expired token becomes a reconnect loop
+against an endpoint that will refuse it forever.
+
+Register the filter on any gateway that applies the guard:
+
+```typescript
+@UseFilters(new WsAuthExceptionFilter())
+@UseGuards(WsJwtGuard)
+@WebSocketGateway()
+export class FeedGateway {}
+```
+
+```json
+{ "status": "error", "error": { "code": "auth.token_invalid", "message": "...", "details": null } }
+```
+
+`status: 'error'` is kept — it is the field Nest itself sets and the one socket.io clients
+already branch on — and the envelope is added beside it, so a client handling both shapes needs
+no second listener. An `AuthException` travels whole (a `details` payload survives); anything
+else the gateway threw is answered as `auth.internal` with a generic message and logged, never
+forwarded.
+
 #### The HTTP status belongs to the code
 
 Every code answers exactly one status, and the status is derived from the code rather than
