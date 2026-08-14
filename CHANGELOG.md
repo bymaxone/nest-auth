@@ -18,6 +18,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **The shared wire contract is pinned by hash, so it cannot change unnoticed.**
+  `conformance/wire-contract.json` is the one artifact `rust-auth` and this library are supposed
+  to hold **byte-identically** — it is the source on both sides rather than a derivation of one.
+  Nothing asserted it had not moved. The conformance suite now pins its SHA-256.
+
+  **What it catches:** an _unaccompanied_ byte change — an edit that forgets to advance the
+  constant, a formatter rewriting the file, a merge resolving it differently. Falsified by
+  re-serialising the file with identical data and different bytes.
+
+  **What it does not catch, stated because the first draft of this note claimed otherwise:**
+  cross-implementation divergence. Changing the file _and_ the constant in one commit leaves this
+  suite green while `rust-auth`'s untouched pair leaves theirs green too — both green, bytes
+  divergent. Two independent local hashes cannot enforce agreement between two repositories,
+  because neither reads the other. Closing that needs a real cross-repository comparison (one
+  side fetching the other's committed blob in CI, or both consuming an immutable versioned
+  artifact); it is proposed and unbuilt.
+
 ## [1.4.3] - 2026-08-13
 
 ### Added
