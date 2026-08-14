@@ -56,6 +56,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `@bymax-one/nest-core` is a **devDependency** — the same one the OpenAPI contributor's contract
   types will need. Nothing reaches the published bundle.
 
+- **The cookie flags are pinned, and the half no server-side suite can reach is stated as a
+  consumer contract.** Cookie delivery exists for one guarantee — the tokens are never readable
+  from JavaScript — and a leak into JS-readable storage is invisible from the server: the API
+  answers identically, the wire looks correct, and every test here passes. Only a browser
+  observes it.
+
+  This suite now asserts **its half**: `access_token` and `refresh_token` carry `HttpOnly` and
+  `Secure`, the refresh cookie is path-scoped to the auth prefix rather than origin-wide, and the
+  set of cookies is pinned so a new credential-bearing one cannot appear outside those checks.
+  Asserted **per cookie**, not as a blanket rule, because `has_session` is deliberately
+  JS-readable — it carries no credential and is what lets a SPA know a session probably exists
+  without touching a token. A blanket "everything is HttpOnly" assertion would fail on it, and the
+  obvious fix for that would remove the feature silently.
+
+  The README now states the other half as the consumer's: assert in a browser suite that
+  `localStorage` and `sessionStorage` are empty and that `document.cookie` carries neither token.
+
 - **The framework-fed layers are now proven by a suite that goes through the framework.**
   Per-layer measurement, which the aggregate 100% hides: filters were at **0%** e2e coverage and
   guards at **30.4% of branches**. A unit test on a controller, guard or filter _invents_ its

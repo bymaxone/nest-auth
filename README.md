@@ -937,6 +937,19 @@ When integrating `@bymax-one/nest-auth` in production, verify each of the follow
   `cookies.sameSite: 'strict'`. CSRF does not rest on this setting — `TrustedOriginGuard` is
   applied to every controller and runs before authentication.
 
+**The tokens are never readable from JavaScript, and verifying that end-to-end is yours.** Under
+cookie delivery this library never writes a token to `localStorage`, `sessionStorage`, or a
+JS-readable cookie: `access_token` and `refresh_token` are `HttpOnly`, and the only readable
+cookie is `has_session=1`, a hint carrying no credential so a SPA can tell a session probably
+exists without touching a token.
+
+This library's suite asserts **its half** — that the `Set-Cookie` headers carry those flags — and
+it structurally cannot assert the other half. A token leaking into JS-readable storage is
+invisible from the server: the API answers identically, the wire looks correct, and every test
+here passes. Only a browser observes it. **If you run a browser suite, assert there that
+`localStorage` and `sessionStorage` are empty and that `document.cookie` carries neither token**;
+it is the one guarantee cookie delivery exists for and the one no server-side test can reach.
+
 ---
 
 ## 🛡️ Security Table
