@@ -8,15 +8,6 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
 
-# The release-age gate exists to keep a freshly-published third-party version out of the tree
-# before anyone has looked at it. `@bymax-one/nest-core` is first-party — same GitHub org
-# (`bymaxone/nest-core`), same maintainers, published through the same OIDC trusted-publisher
-# flow this package uses — so the delay buys nothing here and only blocks a devDependency the
-# composition suite needs. Pinned exactly, not by range, so the exclusion cannot silently widen
-# to a version nobody chose.
-minimumReleaseAgeExclude:
-  - '@bymax-one/nest-core@1.4.0'
-
 # Forced versions for vulnerable transitive dev dependencies. These live here and
 # NOT in package.json: pnpm 11 no longer reads the `pnpm` field of package.json, so
 # an override placed there does nothing — it warns, but it does nothing.

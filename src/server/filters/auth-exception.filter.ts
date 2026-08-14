@@ -47,8 +47,11 @@ function isAuthEnvelope(body: unknown): body is AuthErrorEnvelope {
  * is the opposite of what registering an extra filter looks like it should do.
  *
  * Pick one. On a backend built on nest-core, take theirs: it already recognises this library's
- * envelope and passes the code, message and per-field details through unchanged, which is what
- * `test/e2e/composition.e2e-spec.ts` pins.
+ * envelope and passes the code, message and per-field details through unchanged.
+ *
+ * Nothing in this repository asserts that, and deliberately so — verifying it would mean this
+ * library depending on a consumer's stack. The behaviour above was measured once and the
+ * dependency removed; the standing assertion belongs to whoever composes the two.
  *
  * @example
  * ```typescript

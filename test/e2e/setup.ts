@@ -419,23 +419,9 @@ export function createMockRedis(): Redis {
 // ---------------------------------------------------------------------------
 
 /**
- * The cookie shim, WITHOUT this library's exception filter.
- *
- * For the composed deployment, which does not register it — and cannot usefully. `useGlobalFilters`
- * binds ahead of an `APP_FILTER` provider, and `AuthExceptionFilter` is `@Catch()` with no
- * argument, so registering it alongside `BymaxCoreModule` means nest-core's envelope filter never
- * runs and the response comes back in this library's nested shape. Measured: the same request
- * answers `{error:{code,…}}` with it and the flat `{statusCode,code,…}` without it.
- *
- * So the two are mutually exclusive in practice, and a derived backend picks one. This function
- * exists so the composition suite models the one a real consumer picks.
+ * Applies the cookie-parser shim and the library's exception filter.
  */
-export function applyComposedMiddleware(app: INestApplication): void {
-  applyCookieShim(app)
-}
-
-/** The cookie-parser shim both entry points need. */
-function applyCookieShim(app: INestApplication): void {
+export function applyTestMiddleware(app: INestApplication): void {
   // Minimal cookie-parser shim. The library expects `req.cookies` to be
   // populated (TokenDeliveryService.readCookie() reads from it directly), but
   // NestJS does not bundle a cookie parser. Adding this here lets cookie-mode
@@ -468,13 +454,6 @@ function applyCookieShim(app: INestApplication): void {
     ;(req as Request & { cookies: Record<string, string> }).cookies = jar
     next()
   })
-}
-
-/**
- * The cookie shim plus this library's exception filter — the single-library deployment.
- */
-export function applyTestMiddleware(app: INestApplication): void {
-  applyCookieShim(app)
 
   // The library's exception filter, which a host is told to register (`AuthExceptionFilter`'s own
   // JSDoc shows `app.useGlobalFilters(new AuthExceptionFilter())`).

@@ -39,22 +39,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   side fetching the other's committed blob in CI, or both consuming an immutable versioned
   artifact); it is proposed and unbuilt.
 
-- **A composition suite: the first tests in this repository to observe the shape a consumer
-  actually receives.** Measured from the consumer seat and confirmed here — this suite carried
-  **3** assertions on the raw `AuthException` body and **0** on the flat envelope every derived
-  backend serves. Neither library's own suite can see it: nest-auth's sees its own exception,
-  `@bymax-one/nest-core`'s sees its own filter, and the shape a client parses exists only where
-  the two are wired together. That is where `POST {prefix}/password/change` was broken, and why a
-  consumer found it rather than this repository.
+- **The E2E config was the one place the OOM bounds from #41 were never applied.**
+  `jest.config.ts` and `jest.coverage.config.ts` both carry `maxWorkers: '50%'` and
+  `workerIdleMemoryLimit: '1GB'` — added in #41, _"bound mutation and jest memory to stop OOM
+  restarts"_ — and `jest.e2e.config.ts` carried neither. E2E is where they matter most: every spec
+  boots a full Nest application with its own `ioredis-mock`, so per-worker memory grows with the
+  number of spec **files**, not with the number of tests.
 
-  `test/e2e/composition.e2e-spec.ts` boots both modules and pins, over HTTP: `auth.validation`
-  arriving flat with `details[].field` intact, a domain code surviving the filter unchanged (a
-  composition broken until nest-core 1.2.0 that neither repo pinned), the **status** a code
-  declares surviving as well as the code, the bearer-mode `refreshToken` body flow that produced
-  the defect, and a failure neither library raised composing into one envelope.
-
-  `@bymax-one/nest-core` is a **devDependency** — the same one the OpenAPI contributor's contract
-  types will need. Nothing reaches the published bundle.
+  Found by adding spec files. Three unrelated suites began failing intermittently — password
+  reset, platform MFA, refresh-token reuse — alongside `Test suite failed to run`, which is a
+  worker dying rather than a test disagreeing. Which suites break depends on how Jest distributes
+  files across workers, so it presents as a flake in whatever spec was added last, and the first
+  diagnosis is always the new spec.
 
 - **The cookie flags are pinned, and the half no server-side suite can reach is stated as a
   consumer contract.** Cookie delivery exists for one guarantee — the tokens are never readable
@@ -88,7 +84,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 - **`AuthExceptionFilter` silently displaces `@bymax-one/nest-core`'s envelope filter.**
   Documented rather than code-changed: the behaviour is correct and only the advice was
-  incomplete. `useGlobalFilters` binds ahead of an `APP_FILTER` provider and this filter is
+  incomplete. **Nothing in this repository verifies it** — doing so would mean depending on
+  `@bymax-one/nest-core`, and this library does not depend on its consumers' stack. The
+  measurement below was taken once, deliberately, and then the dependency was removed; a consumer
+  composing both libraries owns the standing assertion. `useGlobalFilters` binds ahead of an `APP_FILTER` provider and this filter is
   `@Catch()` with no argument, so registering it in a nest-core application means nest-core's
   never runs. Measured — the same request answers `{error: {code, message, details}}` with it and
   the flat `{statusCode, code, message, timestamp, path, details}` without it.

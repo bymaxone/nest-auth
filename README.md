@@ -1227,6 +1227,10 @@ thrown one.
 > On nest-core, take theirs: it already recognises this library's envelope and passes the code,
 > message and per-field details through unchanged. The symptom of getting it wrong is a body
 > nested under `error` where the rest of your application answers flat.
+>
+> **This library does not test the composition** — it would have to depend on nest-core to do so,
+> and it depends on nothing. Assert it in your own suite: the code, the per-field details, and the
+> flat fields (`statusCode`, `timestamp`, `path`) surviving a real request.
 
 #### The HTTP status belongs to the code
 
