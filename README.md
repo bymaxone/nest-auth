@@ -1120,18 +1120,20 @@ A third file,
 [`openapi-declared-structures.json`](./conformance/openapi-declared-structures.json), carries the
 contracts the generated header names and no decorator can express — as **structure**, not prose:
 
-| Declared                                                                                                         | As                                                            |
-| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                       |
-| The OAuth callback needs `code` unless it carries `error`                                                        | `required` + `anyOf`                                          |
-| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accepting what the deployment refuses |
-| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**              |
+| Declared                                                                                                         | As                                                                  |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `reset-password` takes exactly one of `token`, `otp`, `verifiedToken`                                            | `oneOf`                                                             |
+| An OAuth callback with neither `code` nor `error` is the **handler's** refusal, not the pipe's                   | probes the pipe accepts and the handler answers `auth.oauth_failed` |
+| The 8-character floor is structural, not your policy                                                             | probes showing the pipe accepting what the deployment refuses       |
+| `forgot-password`, `resend-otp`, `resend-verification`, `verify-email` answer identically for an unknown address | probes asserting the two responses are **equal**                    |
 
 Three rules keep it honest. Only `required`, `oneOf` and `anyOf` may appear — `allOf` and `not`
 are valid OpenAPI 3.0 and are **refused at load**, because a keyword nothing evaluates publishes
 a claim nothing checks. Every entry carries probes, and both suites run them: the unit suite
-evaluates each body against its own structure and enforces the pipe-refused ones, the e2e suite
-answers the rest with a real application. And presence means _present and not `null`_ — this
+evaluates each body against its own structure and reads what the pipe answers, the e2e suite
+answers the rest with a real application. An entry whose two layers disagree — the pipe accepting
+what the handler or the service then refuses — is split across the two suites on purpose, because
+neither can see the pair. And presence means _present and not `null`_ — this
 server's rule rather than JSON Schema's, because `@IsOptional()` treats `null` as absent, so a
 body sending `null` and one omitting the key are the same request.
 

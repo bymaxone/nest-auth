@@ -2,7 +2,7 @@
   "$comment": [
     "DECLARED overlay — written by hand, never generated. Regenerating the schema artifact does not touch this file.",
     "",
-    "It carries the contracts the generated half names in its own header and cannot express, because a class-validator decorator cannot express them: the exactly-one-of proof set on reset-password, the conditional requirement on the OAuth callback, the password floor that is configuration rather than structure, and the anti-enumeration semantics that are a property of two responses being identical rather than of either one alone.",
+    "It carries the contracts the generated half names in its own header and cannot express, because a class-validator decorator cannot express them: the exactly-one-of proof set on reset-password, the OAuth callback whose missing `code` is the handler's refusal rather than the pipe's, the password floor that is configuration rather than structure, and the anti-enumeration semantics that are a property of two responses being identical rather than of either one alone.",
     "",
     "Structures are OpenAPI 3.0 keywords, and only the three the evaluator understands — `required`, `oneOf`, `anyOf`. 3.0's Schema Object is an extended subset of JSON Schema Wright Draft 00 and also permits `allOf` and `not`; those are absent rather than unimplemented, and a structure using one is refused at load rather than skipped. An unevaluated keyword would publish a claim nothing checks, which is the same silence an unmapped decorator produces on the generated side.",
     "",
@@ -198,121 +198,103 @@
         ]
       },
       "codegenNote": "Root-level oneOf on a request body is where OpenAPI client generators are weakest — support is patchy across the ecosystem and several flatten or mis-model it. The oneOf stays anyway: a document that under-declares to please a generator is the defect this artifact exists to remove, and correctness at the contract layer outranks convenience at the tooling layer. The `description` above states the same rule in prose so the constraint survives a generator that drops the composition."
-    },
-    "OAuthCallbackQueryDto": {
-      "description": "`state` is always required. `code` is required only when `error` is absent: the error callback that RFC 6749 §4.1.2.1 defines carries `error` instead of `code`, and a user who declined consent must reach the library's OAuth error handling rather than a validation envelope. A callback carrying neither is the malformed request it has always been.",
-      "structure": {
-        "required": ["state"],
-        "anyOf": [
-          {
-            "required": ["code"]
-          },
-          {
-            "required": ["error"]
-          }
-        ]
-      },
-      "enforcement": {
-        "kind": "pipe",
-        "rejection": "auth.validation"
-      },
-      "probes": [
-        {
-          "note": "The success callback.",
-          "body": {
-            "state": "0123456789abcdef",
-            "code": "probe-authorization-code"
-          },
-          "satisfies": true,
-          "expect": {
-            "accepted": true
-          }
-        },
-        {
-          "note": "The error callback — no `code`, and none required.",
-          "body": {
-            "state": "0123456789abcdef",
-            "error": "access_denied"
-          },
-          "satisfies": true,
-          "expect": {
-            "accepted": true
-          }
-        },
-        {
-          "note": "Both. `anyOf` is at-least-one, not exactly-one, and the DTO agrees: with `error` present the conditional skips `code` entirely, so a provider sending both is accepted.",
-          "body": {
-            "state": "0123456789abcdef",
-            "code": "probe-authorization-code",
-            "error": "access_denied"
-          },
-          "satisfies": true,
-          "expect": {
-            "accepted": true
-          }
-        },
-        {
-          "note": "`code: null` beside an `error` is absent, and absent is what the error callback looks like. Accepted.",
-          "body": {
-            "state": "0123456789abcdef",
-            "code": null,
-            "error": "access_denied"
-          },
-          "satisfies": true,
-          "expect": {
-            "accepted": true
-          }
-        },
-        {
-          "note": "Neither `code` nor `error`.",
-          "body": {
-            "state": "0123456789abcdef"
-          },
-          "satisfies": false,
-          "expect": {
-            "accepted": false,
-            "field": "code"
-          }
-        },
-        {
-          "note": "`code: null` with no `error` is absent with nothing to excuse it, so the conditional runs and the value is refused.",
-          "body": {
-            "state": "0123456789abcdef",
-            "code": null
-          },
-          "satisfies": false,
-          "expect": {
-            "accepted": false,
-            "field": "code"
-          }
-        },
-        {
-          "note": "No `state`. Unconditional, and refused for the field the structure names.",
-          "body": {
-            "code": "probe-authorization-code"
-          },
-          "satisfies": false,
-          "expect": {
-            "accepted": false,
-            "field": "state"
-          }
-        },
-        {
-          "note": "`error: null` is absent by the same predicate `@IsOptional()` uses, so `code` is required and its absence is refused. A query string cannot carry `null`, so this body cannot arrive over HTTP — it is here because the pipe is reachable with a hand-built object, and an overlay whose presence rule disagreed with the DTO on any value it can be handed would be describing a different server.",
-          "body": {
-            "state": "0123456789abcdef",
-            "error": null
-          },
-          "satisfies": false,
-          "expect": {
-            "accepted": false,
-            "field": "code"
-          }
-        }
-      ]
     }
   },
   "operationSemantics": {
+    "OAuthController.callback#codelessCallback": {
+      "kind": "handlerRefusal",
+      "description": "A callback carrying neither `code` nor `error` is refused by the HANDLER as `auth.oauth_failed`, not by the pipe as `auth.validation`. `state` remains the only unconditional requirement of the query DTO; `code` is validated when it is present and `error` is not, so its absence is no longer a structural violation. The refusal moved because a codeless callback is a failed authorization rather than a malformed request — it is what rust-auth answers for the same request, and until 1.4.3 the two libraries disagreed on it while nest-auth's own handler already carried the rust-auth behaviour behind a branch the pipe made unreachable. This entry is what keeps the branch reachable: the probes below are refused by two different layers, and a DTO that took the requirement back would move a refusal from one to the other.",
+      "handler": "OAuthController.callback",
+      "dto": "OAuthCallbackQueryDto",
+      "method": "get",
+      "path": "/oauth/google/callback",
+      "placeholders": {
+        "OVERSIZED_CODE_2049": "Both suites expand this to a string exactly one character past `code`'s declared `maxLength`, read from the generated schema rather than restated here — so raising the bound moves the probe with it instead of leaving a value that is no longer oversized. Writing the characters into this file would bury the six probes they sit among."
+      },
+      "controllers": {
+        "auth": true,
+        "oauth": true
+      },
+      "deployment": {
+        "oauth": {
+          "google": {
+            "clientId": "probe-client-id",
+            "clientSecret": "probe-client-secret",
+            "callbackUrl": "http://localhost/oauth/google/callback"
+          }
+        }
+      },
+      "probes": [
+        {
+          "note": "Neither `code` nor `error` — the whole change. The pipe accepts it and the handler refuses it, which is the pair a single suite cannot see.",
+          "query": {
+            "state": "0123456789abcdef"
+          },
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.oauth_failed"
+          }
+        },
+        {
+          "note": "The error callback RFC 6749 §4.1.2.1 defines — the user declined consent. Answered with the same code as the callback above, which is the point: both are failed authorizations, and neither is a validation envelope.",
+          "query": {
+            "state": "0123456789abcdef",
+            "error": "access_denied"
+          },
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.oauth_failed"
+          }
+        },
+        {
+          "note": "An oversized `code` beside an `error`. Accepted by the pipe — with `error` present the conditional skips `code` entirely, bounds included — and the handler's `error` check runs BEFORE it reads `code`, which is what keeps an unbounded value from reaching the token exchange or the Redis key. Reordering those two checks would make this probe the only thing that notices.",
+          "query": {
+            "state": "0123456789abcdef",
+            "error": "access_denied",
+            "code": "OVERSIZED_CODE_2049"
+          },
+          "acceptedByPipe": true,
+          "expect": {
+            "code": "auth.oauth_failed"
+          }
+        },
+        {
+          "note": "An oversized `code` with no `error`: still the pipe's to refuse, and it names the field. The handler taking over the ABSENT case did not loosen the bound on the present one.",
+          "query": {
+            "state": "0123456789abcdef",
+            "code": "OVERSIZED_CODE_2049"
+          },
+          "acceptedByPipe": false,
+          "expect": {
+            "code": "auth.validation",
+            "field": "code"
+          }
+        },
+        {
+          "note": "An EMPTY `code` with no `error` — present, and therefore validated. This is the probe that separates absent from empty: absent reaches the handler and answers `auth.oauth_failed`, empty stops at the pipe and answers `auth.validation`. A DTO that swapped `@IsOptional()` for a blanket skip would answer both the same and this is where that shows.",
+          "query": {
+            "state": "0123456789abcdef",
+            "code": ""
+          },
+          "acceptedByPipe": false,
+          "expect": {
+            "code": "auth.validation",
+            "field": "code"
+          }
+        },
+        {
+          "note": "No `state`. Unconditional, refused by the pipe for the field it names, and unchanged by any of the above — the callback still has to prove which flow it belongs to.",
+          "query": {
+            "code": "probe-authorization-code"
+          },
+          "acceptedByPipe": false,
+          "expect": {
+            "code": "auth.validation",
+            "field": "state"
+          }
+        }
+      ]
+    },
     "PasswordResetController.resetPassword#passwordFloor": {
       "kind": "policyFloor",
       "description": "The `minLength: 8` in the generated schema is STRUCTURAL — the lowest NIST SP 800-63B-4 §3.1.1.1 permits under any circumstance, and what a decorator can express, since decorators are evaluated when the class is defined and no configuration exists yet. The deployment's floor is `password.minLength`, default 15, enforced in PasswordService and answering the same `auth.validation` code with the same `{field, message}` details the pipe produces. A client generated from the schema alone will therefore build requests the server refuses, and the refusal names the field.",

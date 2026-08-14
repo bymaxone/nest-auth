@@ -20,6 +20,8 @@ import request from 'supertest'
 
 import type { AuthErrorCode } from '../../src/server/errors/auth-error-codes'
 import type { BymaxAuthModuleOptions } from '../../src/server/interfaces/auth-module-options.interface'
+import { deriveRequestSchema } from '../../src/server/openapi/derive-request-schemas'
+import { REQUEST_SCHEMA_DTOS } from '../../src/server/openapi/request-schema-dtos'
 import { bootstrapTestApp, expectAuthError } from './setup'
 
 // ---------------------------------------------------------------------------
@@ -70,7 +72,31 @@ interface IndistinguishableEntry {
   deployment: Deployment
 }
 
-type SemanticEntry = PolicyFloorEntry | IndistinguishableEntry
+/**
+ * A refusal the HANDLER owns, whose probes are queries rather than bodies.
+ *
+ * `controllers` is separate from `deployment` because the library keeps it separate: the switch
+ * that registers a controller is read when Nest builds the module, before any factory runs, and
+ * `BymaxAuthModule` throws if it finds `controllers` in the factory's return value. So an entry
+ * about an endpoint that is off by default has to say so in its own field.
+ */
+interface HandlerRefusalEntry {
+  kind: 'handlerRefusal'
+  dto: string
+  method: 'get'
+  path: string
+  controllers: NonNullable<BymaxAuthModuleOptions['controllers']>
+  deployment: Deployment
+  placeholders?: Record<string, string>
+  probes: readonly {
+    note: string
+    query: Record<string, string>
+    acceptedByPipe: boolean
+    expect: { code: AuthErrorCode; field?: string }
+  }[]
+}
+
+type SemanticEntry = PolicyFloorEntry | IndistinguishableEntry | HandlerRefusalEntry
 
 const declared = JSON.parse(
   readFileSync(join(__dirname, '../../conformance/openapi-declared-structures.json'), 'utf8')
@@ -91,6 +117,10 @@ const policyFloors = semantics.filter(
 
 const indistinguishables = semantics.filter(
   (pair): pair is [string, IndistinguishableEntry] => pair[1].kind === 'indistinguishable'
+)
+
+const handlerRefusals = semantics.filter(
+  (pair): pair is [string, HandlerRefusalEntry] => pair[1].kind === 'handlerRefusal'
 )
 
 // ---------------------------------------------------------------------------
@@ -131,6 +161,41 @@ function byDeployment<T extends { deployment: Deployment }>(
   }
 
   return [...groups.values()]
+}
+
+/**
+ * Expands a probe's placeholder values against the DTO's own declared bounds.
+ *
+ * The artifact names a placeholder instead of carrying 2049 literal characters, and resolves it
+ * from the generated schema instead of a hardcoded length — so raising `@MaxLength` moves the
+ * probe with it rather than leaving a value that is no longer oversized under a note claiming it
+ * is. `src/server/openapi/declared-structures.conformance.spec.ts` carries the same six lines for
+ * the same probes; sharing them would mean a test-only helper living in the published tree.
+ */
+function expandPlaceholders(
+  dto: string,
+  query: Record<string, string>,
+  placeholders: Record<string, string>
+): Record<string, string> {
+  const metatype = REQUEST_SCHEMA_DTOS.find((candidate) => candidate.name === dto)
+
+  // Asserted rather than `!`. A placeholder naming a DTO the artifact does not carry is a
+  // mistake in the overlay, and passing `undefined` into schema derivation reports it as a
+  // property read on undefined — an error about the wrong thing, one call frame from the
+  // artifact that caused it.
+  expect(metatype).toBeDefined()
+
+  const schema = deriveRequestSchema(metatype!)
+
+  return Object.fromEntries(
+    Object.entries(query).map(([property, value]) => {
+      if (!Object.hasOwn(placeholders, value)) return [property, value]
+
+      const bound = schema.properties[property]?.maxLength
+      expect(bound).toBeDefined()
+      return [property, 'a'.repeat(bound! + 1)]
+    })
+  )
 }
 
 /**
@@ -270,6 +335,45 @@ describe.each(policyFloors)('declared policy floor — %s', (_name, entry) => {
 })
 
 // ---------------------------------------------------------------------------
+// Refusals the handler owns
+// ---------------------------------------------------------------------------
+
+describe.each(handlerRefusals)('declared handler refusal — %s', (_name, entry) => {
+  let app: INestApplication
+
+  beforeAll(async () => {
+    ;({ app } = await bootstrapTestApp(entry.deployment, { controllers: entry.controllers }))
+  })
+
+  afterAll(async () => {
+    await app.close()
+  })
+
+  // Verifies what the running application answers each probe. The unit suite has already read
+  // the pipe's half — which of these queries it lets through — so a query declared
+  // `acceptedByPipe: true` that comes back `auth.validation` here means the pipe took a refusal
+  // the handler was supposed to make, which is exactly the state 1.4.3 left behind.
+  //
+  // The code, not merely the status: `auth.validation` is a 400 and `auth.oauth_failed` a 401,
+  // but a suite asserting the status alone would have been green through the whole period the
+  // handler's branch was unreachable, because something refused the request either way.
+  it.each(entry.probes)('$note', async (probe) => {
+    const res = await request(app.getHttpServer())
+      .get(entry.path)
+      .query(expandPlaceholders(entry.dto, probe.query, entry.placeholders ?? {}))
+
+    expectAuthError(res, probe.expect.code)
+
+    if (probe.expect.field !== undefined) {
+      const body = res.body as { error: { details: unknown } }
+      expect(body.error.details).toContainEqual(
+        expect.objectContaining({ field: probe.expect.field })
+      )
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Anti-enumeration
 // ---------------------------------------------------------------------------
 
@@ -335,9 +439,13 @@ describe('declared structures — artifact coverage', () => {
     expect(httpStructures.length).toBeGreaterThan(0)
     expect(policyFloors.length).toBeGreaterThan(0)
     expect(indistinguishables.length).toBeGreaterThan(0)
+    expect(handlerRefusals.length).toBeGreaterThan(0)
 
+    const known = ['policyFloor', 'indistinguishable', 'handlerRefusal']
     const kinds = semantics.map(([, entry]) => entry.kind)
-    expect(kinds.every((kind) => kind === 'policyFloor' || kind === 'indistinguishable')).toBe(true)
-    expect(policyFloors.length + indistinguishables.length).toBe(semantics.length)
+    expect(kinds.every((kind) => known.includes(kind))).toBe(true)
+    expect(policyFloors.length + indistinguishables.length + handlerRefusals.length).toBe(
+      semantics.length
+    )
   })
 })

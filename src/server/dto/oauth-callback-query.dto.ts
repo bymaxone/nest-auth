@@ -3,9 +3,10 @@ import { IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-v
 /**
  * Query parameters for the OAuth callback endpoint (`GET /oauth/:provider/callback`).
  *
- * `state` is always required; `code` is required except on the error callback RFC 6749
- * §4.1.2.1 defines, which carries `error` instead. Length limits prevent oversized payloads
- * from reaching the token exchange HTTP call and the SHA-256 Redis key lookup.
+ * `state` is the only unconditional requirement. `code` is validated when it is present and
+ * `error` is not — a callback carrying neither reaches the handler, which refuses it as the
+ * OAuth failure it is. Length limits prevent oversized payloads from reaching the token
+ * exchange HTTP call and the SHA-256 Redis key lookup.
  *
  * The remaining fields (`iss`, `scope`, `authuser`, `prompt`, `hd`) are
  * standard OIDC / Google Account-chooser parameters that providers append to
@@ -28,16 +29,30 @@ export class OAuthCallbackQueryDto {
    * is a safe upper bound that rejects clearly malformed payloads.
    *
    * Absent on the error callback RFC 6749 §4.1.2.1 defines — the response a provider sends
-   * when the user declines consent. Required whenever `error` is absent, so a callback
-   * carrying neither is still the malformed request it always was.
+   * when the user declines consent. Never required here: a callback carrying neither `code`
+   * nor `error` is an OAuth failure rather than a malformed request, and the handler is what
+   * says so — `OAuthController.callback` answers `auth.oauth_failed`, which is also what
+   * rust-auth answers for the same callback. Requiring it here made the handler's branch
+   * unreachable and split one behaviour across two libraries.
    */
-  // `null` as well as `undefined`, so this conditional excludes exactly what `@IsOptional()`
-  // excludes everywhere else in this library — its predicate is
-  // `value !== null && value !== undefined`. A query string cannot carry `null`, so no callback
-  // reaches this with one and the wire behaviour is unchanged; the alignment matters because the
-  // declared overlay models presence with one rule for every DTO, and a predicate that read
-  // `null` as *present* would make this the single field the overlay describes wrongly.
+  // Two conditionals, and they compose conjunctively — class-validator's `ValidationExecutor`
+  // reduces every `CONDITIONAL_VALIDATION` predicate with `&&` before running any validator.
+  // So `code` is validated only when `error` is absent AND `code` is present:
+  //
+  //   - `error` present  → skipped entirely, whatever `code` carries. That is what keeps a
+  //     provider's error callback out of the validation envelope even when it arrives with an
+  //     empty or oversized `code` beside it, which is the reason `@ValidateIf` is here at all.
+  //   - `code` absent    → skipped, and the request reaches the handler. This is the change:
+  //     the refusal moved from the pipe to the handler, where the behaviour lives.
+  //   - `code` present   → the bounds below apply, unchanged.
+  //
+  // Both predicates read `null` as absent, matching `@IsOptional()`'s own
+  // (`value !== null && value !== undefined`). A query string cannot carry `null`, so no
+  // callback reaches this with one; the alignment matters because the declared overlay models
+  // presence with one rule for every DTO, and a predicate that read `null` as *present* would
+  // make this the single field the overlay describes wrongly.
   @ValidateIf((query: OAuthCallbackQueryDto) => query.error === undefined || query.error === null)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(2048)
