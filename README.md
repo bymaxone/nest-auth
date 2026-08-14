@@ -1178,7 +1178,9 @@ feels, so they will not change; their **definitions** are config-derived.
 > whether this library is new enough to contribute them at all, and only then your nest-core
 > version. The two states look identical from the document.
 
-**If you already wrote these by hand, delete them.** Precedence, read from nest-core's
+**If you already wrote these by hand, delete them** — not because they are wrong. They are what
+makes your document correct today; the deletion is what hands the job to the library, and it is
+needed precisely because they were doing it. Precedence, read from nest-core's
 `augmentOperation` rather than summarised: the generated operation's own `security` outranks
 everything, then your `openapi.operationSecurity` override, then this library's fragment, then
 nest-core's policy. So a stale scheme name or an override for an auth route keeps winning and the

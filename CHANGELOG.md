@@ -146,7 +146,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   nest-core version is too old" are indistinguishable from the document.
 
   **Apply to a derived backend.** If you wrote `securitySchemes` or `openapi.operationSecurity`
-  entries for this library's routes by hand, **delete them**. Precedence — read from nest-core's
+  entries for this library's routes by hand, **delete them** — and note what that sentence is
+  not saying. Those entries are not stale and not wrong: they are what makes the document correct
+  today, and a maintainer told to remove "incorrect config" will go looking for a defect and find
+  none. The accurate instruction is _delete the entries that currently do this job correctly,
+  because the library now does it_ — the deletion is what transfers the work, and it is needed
+  exactly because the entries were doing it. Precedence — read from nest-core's
   `augmentOperation`, not summarised — is: the generated operation's own `security`, then your
   override, then this library's fragment. So the stale vocabulary keeps winning and the
   contributed one never lands.
