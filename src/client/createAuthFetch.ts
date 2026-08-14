@@ -14,7 +14,11 @@
  * stable constants exported from `@bymax-one/nest-auth/shared`.
  */
 
-import { AUTH_PROXY_ROUTES, buildAuthRefreshSkipSuffixes } from '@bymax-one/nest-auth/shared'
+import {
+  AUTH_ERROR_CODES,
+  AUTH_PROXY_ROUTES,
+  buildAuthRefreshSkipSuffixes
+} from '@bymax-one/nest-auth/shared'
 
 /**
  * Configuration options for {@link createAuthFetch}.
@@ -154,6 +158,59 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
     }
   }
   return false
+}
+
+/**
+ * Whether a 401 means the access token expired — the only case a refresh can fix.
+ *
+ * The skip list answers this by PATH, and a path cannot answer it where one route produces
+ * both: `POST {prefix}/password/change` sits behind the JWT guard, so an expired token really
+ * does 401 there, and so does a wrong `currentPassword`. Refreshing on the second is what a
+ * consumer measured: one refresh per typo, ten typos inside a minute exhaust the refresh
+ * limiter, the client reads that 429 as an expiry and calls `onSessionExpired` — discarding a
+ * session the server still honours. `GET {prefix}/me` answered 200 throughout.
+ *
+ * So the decision is made on the error CODE the response carries, which is the only thing that
+ * separates the two on one route. `auth.token_invalid` is the expiry — every guard collapses an
+ * expired, revoked, malformed or absent token onto it, deliberately, so that a caller learns
+ * nothing from the difference. Every other code is the server answering about something else,
+ * and a new token would not change its mind.
+ *
+ * **A response this cannot read still refreshes**, which keeps the wrapper usable as a general
+ * fetch: an application's own API returning a bare 401 with no envelope, an empty body, or
+ * anything that is not JSON behaves exactly as it did before. The narrowing applies only where
+ * a code is actually present.
+ *
+ * Both envelope shapes are read — this library's `{error: {code}}` and the flat
+ * `{statusCode, code, …}` a `@bymax-one/nest-core` application answers with — because a derived
+ * backend serves the second and the client cannot tell which it is talking to.
+ *
+ * Read from a CLONE: the caller receives the original response with its body untouched, and a
+ * retry after a successful refresh still has a request to send. Cloning rather than reading and
+ * re-wrapping also keeps this off the deadlock the drain in `performRefresh` documents — the
+ * clone is consumed, not cancelled.
+ *
+ * @param response - The 401 response, unconsumed.
+ * @returns `true` when a refresh could plausibly help.
+ */
+async function isExpiredSessionResponse(response: Response): Promise<boolean> {
+  let body: unknown
+  try {
+    body = await response.clone().json()
+  } catch {
+    // Not JSON, empty, or a body the runtime would not parse twice. No code to read, so the
+    // behaviour is the one that predates this check.
+    return true
+  }
+
+  if (typeof body !== 'object' || body === null) return true
+
+  const envelope = body as { code?: unknown; error?: { code?: unknown } }
+  const code = envelope.error?.code ?? envelope.code
+
+  if (typeof code !== 'string') return true
+
+  return code === AUTH_ERROR_CODES.TOKEN_INVALID
 }
 
 /**
@@ -376,6 +433,13 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     // mfa challenge, etc.) where a 401 means "wrong credentials" rather
     // than "session expired".
     if (response.status !== 401 || shouldSkipRefreshOnUrl(url, skipRefreshSuffixes)) {
+      return response
+    }
+
+    // And then the same question the path cannot answer: a route can be behind the JWT guard
+    // AND verify a second credential, so an expired token and a wrong password 401 from the
+    // same URL. The code separates them; the path never could.
+    if (!(await isExpiredSessionResponse(response))) {
       return response
     }
 

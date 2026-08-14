@@ -20,6 +20,43 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [1.4.3] - 2026-08-13
 
+### Fixed
+
+- **A wrong password no longer spends a refresh — and ten of them no longer sign the user out.**
+  `createAuthFetch` treated every 401 outside its path skip list as an expired session. A consumer
+  measured what that costs on a live instance: a wrong `currentPassword` on
+  `POST {prefix}/password/change` answers `401 auth.invalid_credentials`, the client refreshed,
+  and the retry then surfaced the real error — one refresh per typo. Ten typos inside a minute
+  exhaust the refresh limiter (`429 auth.too_many_requests`), the client read **that** as an
+  irrecoverable expiry and called `onSessionExpired`.
+
+  The session was never revoked: `GET {prefix}/me` answered `200` throughout. The sign-out was
+  entirely client-side — the wrapper discarding a session the server still honoured, triggered by
+  a rate limit that exists for something else. Behind a proxy with `clientIpSource: 'peer'` the
+  bucket is shared, so the ten are the whole deployment's.
+
+  **The skip list could not fix it, which is the finding under the finding.** That route is behind
+  the JWT guard: an expired token 401s there too. One path, two meanings — so the decision moved
+  to the error **code**, the only thing that separates them. `auth.token_invalid` is the expiry
+  (every guard collapses expired, revoked, malformed and absent onto it deliberately); every other
+  code is the server answering about something else, and a new token would not change its mind.
+
+  Measured across the family rather than fixing the one route reported: `password/change`,
+  `mfa/recovery-codes` and `email/change` all answer a non-expiry 401 and none was on the list,
+  while `mfa/setup` and `mfa/disable` answer the same codes and were. The list was three entries
+  short, not one — which is why the mechanism changed instead of the data.
+
+  **A 401 the client cannot read still refreshes.** No envelope, an empty body, a non-JSON body, a
+  code that is not a string — every one behaves exactly as before, so this wrapper stays usable as
+  a general fetch against an application's own API. Both envelope shapes are read: this library's
+  `{error: {code}}` and the flat `{statusCode, code, …}` a `@bymax-one/nest-core` backend answers
+  with. The body is read from a **clone**, so the caller still receives an unconsumed response —
+  otherwise every consumer parsing the error body would meet `TypeError: body already used`.
+
+  **Apply to a derived backend.** No server change. If your frontend relied on the old behaviour —
+  a 401 from any endpoint eventually reaching `onSessionExpired` — note that only
+  `auth.token_invalid` does now. A 401 your own API answers with no auth envelope is unaffected.
+
 ### Added
 
 - **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:
