@@ -38,11 +38,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `!== 'active'` refuses everyone once a session has been refreshed, `=== 'suspended'` refuses
   nobody, ever. Both fail quietly, hours from the code that caused them.
 
-  Backfilling it during rotation was considered and rejected: it would make the claim _usually_
-  true, which is the failure mode that survives testing — status can still change under an
-  unexpired token. The claim cannot be authoritative, so it is not made to look like it. Stated
-  in the README and at the call site, with `mfaVerified: false` on rotation beside it, and the
-  `userStatusCacheTtlSeconds` window (default 60) that decides how quickly a suspension bites.
+  Every populated value is stale the instant the account changes, because nothing re-stamps a live
+  token — so the exceptional re-stamp is the worst of the three for a reader, not the best: it
+  makes the claim _usually_ wrong rather than reliably empty. That is also why backfilling the
+  rotation path was considered and rejected: it would extend the failure mode that survives
+  testing. The empty string is the one state that cannot be mistaken for an answer.
+
+  Stated in the README as a three-row table and at the call site, with `mfaVerified: false` on
+  rotation beside it, and the `userStatusCacheTtlSeconds` window (default 60) that decides how
+  quickly a suspension bites.
 
   **Apply to a derived backend.** Read status per request — `UserStatusGuard` on the route,
   `IUserRepository.findById` for anything richer — and never from the token. If you already gate
