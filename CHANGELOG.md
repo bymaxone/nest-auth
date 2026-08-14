@@ -57,6 +57,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   a 401 from any endpoint eventually reaching `onSessionExpired` — note that only
   `auth.token_invalid` does now. A 401 your own API answers with no auth envelope is unaffected.
 
+- **Two internal-only error codes now say so in the shared catalogue.** `auth.token_expired` and
+  `auth.token_revoked` are never on the wire — both implementations collapse them onto
+  `auth.token_invalid`, deliberately, because telling a caller "expired" rather than "invalid"
+  separates a token that WAS valid from one that never was, which is what an attacker holding a
+  captured value wants to learn. `rust-auth` maps them through `AuthErrorCode::to_wire`; this
+  library never throws them at all.
+
+  Three of the five internal-only codes already carried that note (`auth.token_missing`,
+  `auth.otp_expired`, `auth.otp_max_attempts`) and these two did not — so a reader concluded,
+  reasonably, that the unmarked ones do appear. A consumer seat did exactly that while reviewing
+  the refresh fix above, and asked whether it had a hole for `auth.token_expired`. It does not,
+  and now the catalogue answers the question without anyone reading the emit sites. **A code in a
+  published catalogue is something a consumer will write a branch for**, so an unreachable one has
+  to say it is unreachable.
+
 ### Added
 
 - **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:

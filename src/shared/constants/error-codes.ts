@@ -22,8 +22,28 @@ export const AUTH_ERROR_CODES = {
   PENDING_APPROVAL: 'auth.pending_approval',
 
   // Tokens and sessions
+  /**
+   * Internal-only: the token's `exp` had passed. **Never on the wire** — see
+   * {@link AUTH_ERROR_CODES.TOKEN_INVALID}.
+   *
+   * A client cannot branch on this. Both implementations collapse it deliberately: telling a
+   * caller "expired" rather than "invalid" is an oracle that separates a token that WAS valid
+   * from one that never was, and the difference is exactly what an attacker holding a captured
+   * value wants to learn. `rust-auth` maps it through `AuthErrorCode::to_wire`; this library
+   * never throws it at all.
+   */
   TOKEN_EXPIRED: 'auth.token_expired',
+  /**
+   * Internal-only: a logout or an epoch bump killed the token. **Never on the wire** — see
+   * {@link AUTH_ERROR_CODES.TOKEN_INVALID}, and the same oracle argument as
+   * {@link AUTH_ERROR_CODES.TOKEN_EXPIRED}.
+   */
   TOKEN_REVOKED: 'auth.token_revoked',
+  /**
+   * What a client actually receives for every unusable credential: expired, revoked, malformed,
+   * or absent. Measured across all five by a consumer against a live deployment — the collapse
+   * is total, which is what makes this a reliable signal for "a refresh could help".
+   */
   TOKEN_INVALID: 'auth.token_invalid',
   /** Internal-only: the request carried no credential. Never on the wire — see TOKEN_INVALID. */
   TOKEN_MISSING: 'auth.token_missing',
