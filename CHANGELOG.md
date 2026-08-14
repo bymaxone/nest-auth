@@ -22,6 +22,40 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:
+  every other guard here is reached by an HTTP request, this one by a socket upgrade, and no
+  suite spoke that protocol — so its only proof was unit tests handing it an `ExecutionContext`
+  whose `switchToWs()` returned an object literal. That proves the code runs; it cannot prove a
+  real handshake presents the credential where the guard looks for it, which is the entire
+  question about a guard fed by a transport.
+
+  The alternative was to exclude it from the e2e-only rule with the residual risk written down.
+  The devDependency was taken instead — `@nestjs/platform-socket.io`, `socket.io` and
+  `socket.io-client`, dev-only, none of them in the published bundle. Statements 0% → **90.16%**,
+  branches → **81.25%**, functions → **100%**, from a gateway declared in the test module the way
+  a consumer declares one.
+
+  Both credential channels are exercised: the single-use ticket in the upgrade query (the only
+  path a browser has, since the `WebSocket` API cannot set handshake headers) and the
+  `Authorization` header. So are the refusals that matter — a replayed ticket, a token this
+  deployment never signed, a token killed by a logout, a token killed by an epoch bump, one
+  carrying no `jti`, and a ticket redeeming to a snapshot with **no tenant**, which is the shape
+  `rust-auth` writes for a platform ticket into the `wst:` keyspace both libraries share.
+
+  **A finding this surfaced, reported rather than fixed:** the library's error catalogue does not
+  reach the socket. `WsJwtGuard` throws `AuthException`, which is an `HttpException`, and Nest's
+  WebSocket exception layer understands only `WsException` — so a refused client receives
+  `{status: 'error', message: 'Internal server error'}` and cannot tell a dead credential from a
+  crashed handler. The security property holds (the handler never runs), and the gap is now
+  pinned by a test so it cannot change unnoticed. Closing it means either a new exported WS
+  exception filter or changing what the guard throws; both are public surface, so both go through
+  the maintainer.
+
+  Three branches remain unreachable through this transport and say so in the suite: the
+  missing-`@nestjs/websockets` arm of `onModuleInit`, `assertDashboardSnapshot`'s non-string
+  `sub` (`redeemWsTicket` refuses such a record before it becomes a snapshot), and
+  `readUpgradeTicket`'s unparseable-URL arm (Socket.IO builds the URL itself).
+
 - **`AuthService.refresh` read the account without its tenant.** `findById(session.userId)` with
   no tenant argument, in the path that re-validates the account on every rotation — while the
   interface documents that ids may collide across tenants, and `UserStatusGuard` passes both for
