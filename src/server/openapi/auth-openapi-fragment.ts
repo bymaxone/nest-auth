@@ -90,7 +90,16 @@ export interface AuthOpenApiFragment {
  * needs in order to NOT attach a credential. Leaving it out would let the document's own default
  * apply, and the consumer's default is "authenticated".
  */
-type Credential = 'none' | 'access' | 'refresh' | 'platform' | 'platformLogout' | 'platformRefresh'
+type Credential =
+  | 'none'
+  | 'access'
+  /** The refresh credential is REQUIRED: with none of its forms present the operation 401s. */
+  | 'refreshRequired'
+  /** The refresh credential is READ but optional: absent, the operation still answers 204. */
+  | 'refreshOptional'
+  | 'platform'
+  | 'platformLogout'
+  | 'platformRefresh'
 
 /**
  * Every operation this library can mount, with the credential it requires.
@@ -110,8 +119,11 @@ const OPERATIONS: Readonly<
     // Both read the refresh credential, and neither is behind a guard: they are `@Public()`
     // because an expired access token must not stop a caller from ending or renewing a
     // session. What authorises them is the refresh token itself.
-    'AuthController.logout': 'refresh',
-    'AuthController.refresh': 'refresh',
+    // Measured, and the two differ: `logout` answers 204 with no credential at all, while
+    // `refresh` 401s. Describing them alike would tell a generated client that one demands
+    // something it does not, or that the other tolerates something it will refuse.
+    'AuthController.logout': 'refreshOptional',
+    'AuthController.refresh': 'refreshRequired',
     'AuthController.me': 'access',
     'AuthController.wsTicket': 'access',
     'AuthController.verifyEmail': 'none',
@@ -269,23 +281,43 @@ function describe(
           ...(bearerDelivery ? [{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }] : [])
         ]
       }
-    case 'refresh':
+    case 'refreshRequired':
       // Under `'bearer'` there is no refresh scheme to reference — the token arrives in the body,
-      // which is not a security scheme in OpenAPI's model but a request body. So the operation is
-      // `security: []` plus the body, and a scheme that the resolved options cannot satisfy is
-      // ABSENT rather than defined-and-unreferenced.
+      // which OpenAPI models as a request body and not as a security scheme. So a scheme the
+      // resolved options cannot satisfy is ABSENT rather than defined-and-unreferenced, and the
+      // body carries the requirement instead: REQUIRED here, because with neither form present
+      // this operation refuses.
+      //
+      // Under `'both'` either form works, and the empty requirement is what says so: a two-entry
+      // list `[{cookie}, {}]` reads as "the cookie, OR nothing declared here" — which is how
+      // OpenAPI expresses a credential that may arrive somewhere it cannot model. Without the
+      // empty entry the document would refuse to describe the body-only caller, who is valid.
       return {
-        security: cookieDelivery ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }] : [],
+        security: cookieDelivery
+          ? bearerDelivery
+            ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}]
+            : [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }]
+          : [],
+        ...(bearerDelivery
+          ? { requestBody: cookieDelivery ? REFRESH_BODY : { ...REFRESH_BODY, required: true } }
+          : {})
+      }
+    case 'refreshOptional':
+      // Same channels, no requirement: this operation answers 204 whatever arrives, so every
+      // form is optional and the empty alternative is present in every mode that has a scheme.
+      return {
+        security: cookieDelivery ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}] : [],
         ...(bearerDelivery ? { requestBody: REFRESH_BODY } : {})
       }
     case 'platform':
       return { security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }] }
     case 'platformLogout':
-      // Both credentials, and the body is optional: logout tolerates a missing refresh token —
-      // it answers 204 either way — so declaring it required would describe a server that
-      // refuses a request this one accepts.
+      // `@Public()`, deliberately: an operator whose access token expired must still be able to
+      // end the session, so the refresh token alone is enough. Both are read and NEITHER is
+      // required — the empty alternative beside the bearer scheme is what lets a generated
+      // client model the refresh-only logout the server supports.
       return {
-        security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }],
+        security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }, {}],
         requestBody: { ...PLATFORM_REFRESH_BODY, required: false }
       }
     case 'platformRefresh':

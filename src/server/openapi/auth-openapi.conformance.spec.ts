@@ -161,7 +161,11 @@ describe('OpenAPI contributor — conformance', () => {
   // purpose, and a reader is not an importer.
   it('imports no other Bymax library, in any file', () => {
     const offenders: string[] = []
-    const foreign = /(?:from|import\()\s*['"]@bymax-one\/(?!nest-auth)/
+    // Every import form, not just the one that reads naturally: `from '…'`, a dynamic
+    // `import('…')`, a bare side-effect `import '…'`, and `require('…')`. A side-effect import
+    // introduces the dependency while carrying no binding to grep for, which is exactly the shape
+    // that would have slipped past the first version of this gate.
+    const foreign = /(?:from|import|require)\s*\(?\s*['"]@bymax-one\/(?!nest-auth)/
 
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {

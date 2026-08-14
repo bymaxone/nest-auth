@@ -112,13 +112,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   chose. So the fragment is derived from the options that actually resolved, and keyed by handler
   identity — which survives every prefix, version and mount point.
 
-  | resolved options          | contributed                                                                                                     |
-  | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
-  | `tokenDelivery: 'cookie'` | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                         |
-  | `tokenDelivery: 'bearer'` | `bymaxAuthAccessBearer` only; `logout`/`refresh` get `security: []` and a documented `{refreshToken}` body      |
-  | `tokenDelivery: 'both'`   | both access schemes as a two-entry requirement list, which OpenAPI reads as OR                                  |
-  | `platform.enabled`        | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says |
-  | a controller not mounted  | no operation, and no scheme only it would have referenced                                                       |
+  | resolved options             | contributed                                                                                                                                                                                                                                                                                             |
+  | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `tokenDelivery: 'cookie'`    | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                                                                                                                                                                                                                 |
+  | `tokenDelivery: 'bearer'`    | `bymaxAuthAccessBearer` only; `refresh` gets `security: []` and a **required** `{refreshToken}` body, `logout` the same body **optional** — measured, they differ: logout answers 204 with no credential at all, refresh 401s                                                                           |
+  | `tokenDelivery: 'both'`      | both access schemes as a **two-entry requirement list**, which OpenAPI reads as OR; the refresh operations add an **empty** alternative beside the cookie — how OpenAPI says "or a credential this member cannot model", without which the document would refuse to describe the valid body-only caller |
+  | `controllers.platform: true` | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says. The registration switch decides, not `platform.enabled`                                                                                                                                |
+  | a controller not mounted     | no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                               |
 
   **A scheme the options cannot satisfy is absent**, never defined-and-unreferenced: nest-core
   fails a boot on a requirement naming an undefined scheme, and a document defining a credential

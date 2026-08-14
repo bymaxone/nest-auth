@@ -166,15 +166,15 @@ describe('buildAuthOpenApiFragment', () => {
 
     // The refresh operations have no scheme to reference at all — the token arrives in the body,
     // which OpenAPI models as a request body and not as a security scheme. So the operation is
-    // `security: []` PLUS a contributed body, and this is the one place the two halves of the
-    // decision meet: absent scheme, described body.
-    it('describes the refresh token as a request body instead', () => {
+    // `security: []` PLUS a contributed body, and the body is REQUIRED here: with no cookie
+    // fallback, a caller omitting it hands the service an empty string and cannot succeed.
+    it('describes the refresh token as a required request body instead', () => {
       const refresh = fragment.operations['AuthController.refresh']
 
       expect(refresh?.['security']).toEqual([])
       expect(refresh?.['requestBody']).toEqual(
         expect.objectContaining({
-          required: false,
+          required: true,
           content: expect.objectContaining({
             'application/json': expect.objectContaining({
               schema: expect.objectContaining({
@@ -183,6 +183,15 @@ describe('buildAuthOpenApiFragment', () => {
             })
           })
         })
+      )
+    })
+
+    // Logout reads the same channels and requires none of them: it answers 204 whatever arrives.
+    // The pair is the point — one required body and one optional, from one delivery mode, because
+    // the two operations really do differ.
+    it('describes the logout body as optional', () => {
+      expect(fragment.operations['AuthController.logout']?.['requestBody']).toEqual(
+        expect.objectContaining({ required: false })
       )
     })
   })
@@ -202,12 +211,14 @@ describe('buildAuthOpenApiFragment', () => {
       })
     })
 
-    // Refresh accepts either, so both are described: the cookie as a requirement and the body as
-    // an optional one.
-    it('describes the refresh cookie and the body together', () => {
+    // Refresh accepts either form, and the empty requirement is what says so: `[{cookie}, {}]`
+    // reads as "the cookie, OR nothing declared here" — which is how OpenAPI expresses a
+    // credential that may arrive somewhere `security` cannot model. Without it the document
+    // would refuse to describe the body-only caller, who is valid on this deployment.
+    it('offers the cookie or the body, and describes both', () => {
       const refresh = fragment.operations['AuthController.refresh']
 
-      expect(refresh?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }])
+      expect(refresh?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}])
       expect(refresh?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
     })
   })
@@ -241,14 +252,16 @@ describe('buildAuthOpenApiFragment', () => {
       expect(refresh?.['requestBody']).toEqual(expect.objectContaining({ required: true }))
     })
 
-    // Platform logout reads both, and tolerates a missing refresh token — it answers 204 either
-    // way — so the body is described and NOT required. Declaring it required would describe a
-    // server that refuses a request this one accepts.
-    it('describes the platform logout body as optional, beside the bearer requirement', () => {
+    // Platform logout is `@Public()` on purpose: an operator whose access token expired must
+    // still be able to end the session, so the refresh token alone is enough. Both are read and
+    // NEITHER is required — the empty alternative beside the bearer scheme is what lets a
+    // generated client model the refresh-only logout the server supports, and a mandatory
+    // requirement there would have it refuse to.
+    it('describes platform logout as optional in both channels', () => {
       const fragment = buildAuthOpenApiFragment(optionsFor('cookie'), EVERYTHING)
       const logout = fragment.operations['PlatformAuthController.logout']
 
-      expect(logout?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }])
+      expect(logout?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }, {}])
       expect(logout?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
     })
 
