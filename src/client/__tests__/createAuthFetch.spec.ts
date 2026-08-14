@@ -538,6 +538,42 @@ describe('createAuthFetch — a 401 that is not an expiry', () => {
     expect(spy).toHaveBeenCalledTimes(3)
   })
 
+  // The bound. A 401 whose body never terminates must not hang the wrapper: the request has
+  // already completed and its timeout has already been cleared, so without a bound here the
+  // caller waits forever — and a deployment that disables `timeout` for long-polling would have
+  // no protection at all. On expiry the classification gives up and the pre-existing behaviour
+  // applies, which is the safe direction: this step may narrow what refreshes, never suspend it.
+  it('gives up on a body that never arrives and refreshes as before', async () => {
+    jest.useFakeTimers()
+
+    try {
+      // A body that never closes: `json()` on it never settles.
+      const hanging = new Response(
+        new ReadableStream({
+          start() {
+            /* deliberately never enqueues and never closes */
+          }
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+
+      spy.mockResolvedValueOnce(hanging)
+      spy.mockResolvedValueOnce(makeResponse(200))
+      spy.mockResolvedValueOnce(makeResponse(200, { ok: true }))
+
+      const pending = createAuthFetch()('/api/users')
+
+      await jest.advanceTimersByTimeAsync(2_000)
+
+      const res = await pending
+
+      expect(res.status).toBe(200)
+      expect(spy).toHaveBeenCalledTimes(3)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   // Verifies the check does not consume the response the caller receives. It reads a CLONE, and
   // if it read the original instead every consumer parsing the error body would get
   // `TypeError: body already used` — trading one defect for a worse one, on the path that

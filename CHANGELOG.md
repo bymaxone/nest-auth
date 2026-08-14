@@ -46,6 +46,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   while `mfa/setup` and `mfa/disable` answer the same codes and were. The list was three entries
   short, not one — which is why the mechanism changed instead of the data.
 
+  **Three routes left the path skip list**: `mfa/setup`, `mfa/verify-enable` and `mfa/disable`.
+  They were there because a wrong password or a wrong TOTP code 401s from them — which the code
+  check now recognises — but all three are **JWT-guarded**, so an expired token 401s from them
+  too, and skipping the refresh would have left the exact inverse of the defect above: a client
+  refusing to refresh a session that only needed refreshing. Found in review, and it is the same
+  one-path-two-meanings shape as `password/change`.
+
+  What remains on the list is the narrower set where a refresh cannot help **whatever** the code
+  says: the token endpoints themselves (recursion), the credential-issuing endpoints (no session
+  to refresh yet), and the **platform** surface — a dashboard refresh cannot fix a platform
+  credential, so attempting one spends the refresh budget and can call `onSessionExpired` for a
+  dashboard session that is perfectly healthy.
+
+  **The classification is time-bounded.** Reading the error body waits at most two seconds; on
+  expiry the pre-existing behaviour applies and a refresh is attempted. The request itself has
+  already completed and its timeout has already been cleared, so an unbounded read would hang the
+  wrapper on a 401 whose body never terminates — including on deployments that disable `timeout`
+  for long-polling. This step may narrow what refreshes; it may never suspend the wrapper.
+
   **A 401 the client cannot read still refreshes.** No envelope, an empty body, a non-JSON body, a
   code that is not a string — every one behaves exactly as before, so this wrapper stays usable as
   a general fetch against an application's own API. Both envelope shapes are read: this library's

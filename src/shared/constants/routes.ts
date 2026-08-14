@@ -169,12 +169,33 @@ export const AUTH_PROXY_ROUTES = {
 } as const
 
 /**
- * Controller-relative path fragments that must NEVER trigger an
- * automatic refresh when they return 401.
+ * Controller-relative path fragments where a refresh can NEVER help, whatever the 401 says.
  *
- * Used by {@link buildAuthRefreshSkipSuffixes} together with the
- * consumer's `routePrefix` to produce the absolute skip list at
- * `createAuthFetch` time.
+ * Used by {@link buildAuthRefreshSkipSuffixes} together with the consumer's `routePrefix` to
+ * produce the absolute skip list at `createAuthFetch` time.
+ *
+ * **This list is no longer how a credential failure is recognised.** `createAuthFetch` reads the
+ * error code first: only `auth.token_invalid` means "the access token expired", and every other
+ * code returns the response untouched. That covers the routes this list used to cover for that
+ * reason, and covers them on routes it never could — `password/change` is behind the JWT guard,
+ * so an expired token and a wrong current password both 401 from one path, and no path list can
+ * separate them.
+ *
+ * What stays here is the narrower set where refreshing is pointless or harmful even for
+ * `auth.token_invalid`:
+ *
+ *  - the token endpoints themselves (`refresh`, `logout`) — recursion, and nothing to renew;
+ *  - the credential-ISSUING endpoints, which have no session to refresh yet;
+ *  - the **platform** surface, whose credential is a different plane: a dashboard refresh cannot
+ *    fix a platform token, so attempting one spends the refresh budget and can call
+ *    `onSessionExpired` for a dashboard session that is perfectly healthy.
+ *
+ * The three dashboard MFA endpoints that used to sit here — `mfa/setup`, `mfa/verify-enable`,
+ * `mfa/disable` — are gone deliberately. They are JWT-guarded, so an expired token there is a
+ * real expiry that a refresh fixes, and their non-expiry 401s (a wrong password, a wrong TOTP
+ * code) are recognised by code now. Keeping them would have left the exact inverse of the defect
+ * the code check exists to fix: a client refusing to refresh a session that only needed
+ * refreshing.
  */
 const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   // Dashboard auth-issuing endpoints
@@ -189,11 +210,10 @@ const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   'password/reset-password',
   'password/verify-otp',
   'password/resend-otp',
-  // MFA endpoints
-  'mfa/setup',
-  'mfa/verify-enable',
+  // The MFA challenge issues the session — there is none to refresh. Its siblings
+  // (`mfa/setup`, `mfa/verify-enable`, `mfa/disable`) are NOT here: they are JWT-guarded, so a
+  // 401 there can be a genuine expiry, and their credential failures are recognised by code.
   'mfa/challenge',
-  'mfa/disable',
   // Invitation acceptance issues tokens
   'invitations/accept',
   // The address-change confirmation is public: the holder is proving control of a mailbox,

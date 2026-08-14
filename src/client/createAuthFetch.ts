@@ -160,6 +160,48 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
   return false
 }
 
+/** Sentinel for a body that did not arrive inside {@link ERROR_BODY_READ_TIMEOUT_MS}. */
+const UNREAD = Symbol('unread')
+
+/**
+ * How long the 401 classification may wait for the error body.
+ *
+ * The request itself has already completed — only the body is outstanding — and an auth error
+ * body is a few hundred bytes by construction, so anything slower is pathological rather than
+ * slow. It is deliberately NOT the consumer's `timeout`: that bound belongs to the request, its
+ * timer has already been cleared by the time this runs, and a deployment that disables it (`0`)
+ * for long-polling must not thereby allow a 401 to hang the wrapper forever.
+ *
+ * On expiry the classification gives up and the pre-existing behaviour applies — a refresh is
+ * attempted. This step may narrow what refreshes; it may never suspend the wrapper.
+ */
+const ERROR_BODY_READ_TIMEOUT_MS = 2_000
+
+/**
+ * Reads a cloned response's JSON within {@link ERROR_BODY_READ_TIMEOUT_MS}, or gives up.
+ *
+ * The clone's body is cancelled when the bound elapses so the connection is released rather than
+ * held until garbage collection — and NOT awaited, for the reason `performRefresh` documents:
+ * under request interception the cancel promise never settles, and awaiting it would reintroduce
+ * the deadlock this bound exists to prevent.
+ */
+async function withReadBound(clone: Response): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const bound = new Promise<typeof UNREAD>((resolve) => {
+    timer = setTimeout(() => {
+      void clone.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
+      resolve(UNREAD)
+    }, ERROR_BODY_READ_TIMEOUT_MS)
+  })
+
+  try {
+    return await Promise.race([clone.json(), bound])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Whether a 401 means the access token expired — the only case a refresh can fix.
  *
@@ -194,14 +236,20 @@ function shouldSkipRefreshOnUrl(url: string, suffixes: readonly string[]): boole
  * @returns `true` when a refresh could plausibly help.
  */
 async function isExpiredSessionResponse(response: Response): Promise<boolean> {
+  const clone = response.clone()
+
   let body: unknown
   try {
-    body = await response.clone().json()
+    body = await withReadBound(clone)
   } catch {
     // Not JSON, empty, or a body the runtime would not parse twice. No code to read, so the
     // behaviour is the one that predates this check.
     return true
   }
+
+  // The bound elapsed. Same answer as an unreadable body, for the same reason: this step may
+  // narrow the behaviour, never suspend it.
+  if (body === UNREAD) return true
 
   if (typeof body !== 'object' || body === null) return true
 
