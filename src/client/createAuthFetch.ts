@@ -202,15 +202,19 @@ async function isExpiredSessionResponse(response: Response): Promise<boolean> {
 
   try {
     // `undefined` is the give-up sentinel and needs no symbol: `json()` cannot resolve to it,
-    // because JSON has no such value. The clone's body is cancelled so the connection is
-    // released, and not awaited — under interception that promise never settles.
+    // because JSON has no such value.
+    //
+    // The abandoned read is NOT cancelled, and that is measured rather than assumed: `json()`
+    // locks the body, so `cancel()` on it rejects with
+    // `TypeError: Invalid state: ReadableStream is locked`. An earlier draft called it inside a
+    // `.catch(() => undefined)`, which meant the cleanup that comment promised never happened
+    // and the rejection was swallowed. Owning a reader to make the read genuinely abortable
+    // would cost more bundle than the case is worth — a 401 whose body never arrives — so the
+    // read is left to the collector, and this says so instead of claiming otherwise.
     body = await Promise.race([
       clone.json(),
       new Promise((resolve) => {
-        timer = setTimeout(() => {
-          void clone.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
-          resolve(undefined)
-        }, ERROR_BODY_READ_TIMEOUT_MS)
+        timer = setTimeout(() => resolve(undefined), ERROR_BODY_READ_TIMEOUT_MS)
       })
     ])
   } catch {

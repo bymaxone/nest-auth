@@ -46,6 +46,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   while `mfa/setup` and `mfa/disable` answer the same codes and were. The list was three entries
   short, not one — which is why the mechanism changed instead of the data.
 
+  **And the whole platform surface joined it.** The list carried five platform routes and left
+  out `platform/me` and all four `platform/mfa/*` — every one of them JWT-**platform**-guarded, so
+  an expired platform token answers `auth.token_invalid`, the code that means "refresh me" on the
+  dashboard plane. A dashboard refresh cannot fix another plane's credential: it spends the
+  budget and can call `onSessionExpired` for a session that is perfectly healthy. Found in review
+  of the paragraph claiming the list already covered the plane.
+
   **Three routes left the path skip list**: `mfa/setup`, `mfa/verify-enable` and `mfa/disable`.
   They were there because a wrong password or a wrong TOTP code 401s from them — which the code
   check now recognises — but all three are **JWT-guarded**, so an expired token 401s from them

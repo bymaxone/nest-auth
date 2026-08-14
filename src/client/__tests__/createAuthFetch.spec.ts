@@ -574,6 +574,25 @@ describe('createAuthFetch — a 401 that is not an expiry', () => {
     }
   })
 
+  // A platform route, which is the case the code check must NOT be allowed to answer. Every
+  // protected platform endpoint is JWT-PLATFORM-guarded, so an expired platform token answers
+  // `auth.token_invalid` — the very code that means "refresh me" on the dashboard plane. A
+  // dashboard refresh cannot fix another plane's credential: it spends the budget and can call
+  // `onSessionExpired` for a session that is perfectly healthy.
+  //
+  // `platform/mfa/setup` specifically, because it was one of the five protected platform routes
+  // the first draft of the skip list left out while claiming the list covered the plane.
+  it('does not refresh on a platform route, even for auth.token_invalid', async () => {
+    spy.mockResolvedValue(makeResponse(401, { error: { code: 'auth.token_invalid' } }))
+    const onSessionExpired = jest.fn()
+
+    const res = await createAuthFetch({ onSessionExpired })('/auth/platform/mfa/setup')
+
+    expect(res.status).toBe(401)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
+
   // Verifies the check does not consume the response the caller receives. It reads a CLONE, and
   // if it read the original instead every consumer parsing the error body would get
   // `TypeError: body already used` — trading one defect for a worse one, on the path that

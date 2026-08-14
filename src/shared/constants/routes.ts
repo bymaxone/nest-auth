@@ -204,12 +204,21 @@ const AUTH_REFRESH_SKIP_CONTROLLER_PATHS = [
   // The address-change confirmation is public: the holder is proving control of a mailbox,
   // not of a session.
   'email/change/confirm',
-  // Platform endpoints
+  // The platform surface, ALL of it. Every protected route here is JWT-PLATFORM-guarded, so an
+  // expired platform token answers `auth.token_invalid` — the code the client reads as "expired"
+  // — and a dashboard refresh cannot fix another plane's credential. Listing only some of them
+  // left the rest launching a refresh that spends the budget and can call `onSessionExpired` for
+  // a dashboard session that is perfectly healthy.
   'platform/login',
   'platform/refresh',
   'platform/logout',
+  'platform/me',
+  'platform/sessions',
   'platform/mfa/challenge',
-  'platform/sessions'
+  'platform/mfa/setup',
+  'platform/mfa/verify-enable',
+  'platform/mfa/disable',
+  'platform/mfa/recovery-codes'
 ] as const
 
 /**
