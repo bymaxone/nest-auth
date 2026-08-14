@@ -71,6 +71,14 @@ export class PlatformRolesGuard implements CanActivate {
 
     const hierarchy = this.options.roles.platformHierarchy
 
+    // Unreachable through any composition this library supports, and deliberately kept: reaching
+    // it needs a platform-typed `request.user`, which needs `JwtPlatformGuard`, which is only
+    // registered when `platform.enabled` — and `resolveOptions` refuses that configuration
+    // without a `platformHierarchy`. What it defends is a consumer's own guard populating
+    // `request.user` with a platform payload in a deployment that never configured the map:
+    // denying is the only safe answer, since there is nothing to evaluate the role against.
+    // Proven by the unit spec; `test/e2e/host-mounted-guards.e2e-spec.ts` says why it cannot be
+    // proven over HTTP.
     if (!hierarchy) {
       throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
