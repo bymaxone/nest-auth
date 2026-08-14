@@ -1557,6 +1557,30 @@ describe('AuthService', () => {
       })
     })
 
+    // Verifies the account is read TENANT-SCOPED. `findById` accepts an absent tenant for flows
+    // that are deliberately cross-tenant, and ids may collide across tenants — the interface says
+    // so, which is why `UserStatusGuard` passes both. Unscoped here, a homonym in another tenant
+    // could pass the status gate on this caller's behalf and, on the re-stamp path, put that
+    // account's tenant and role into the token this request hands back.
+    it('reads the account scoped to the session tenant', async () => {
+      mockTokenManager.reissueTokens.mockResolvedValue({
+        session: { userId: 'u1', tenantId: 't1', role: 'member' },
+        accessToken: 'new.access',
+        rawRefreshToken: 'new-refresh'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'u1',
+        email: 'a@e.com',
+        status: 'active',
+        role: 'member',
+        tenantId: 't1'
+      })
+
+      await service.refresh('old-refresh', '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.findById).toHaveBeenCalledWith('u1', 't1')
+    })
+
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
     it('should delegate to tokenManager.reissueTokens and return the account with it', async () => {
       const rotated = {

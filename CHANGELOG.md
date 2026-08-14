@@ -22,6 +22,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AuthService.refresh` read the account without its tenant.** `findById(session.userId)` with
+  no tenant argument, in the path that re-validates the account on every rotation — while the
+  interface documents that ids may collide across tenants, and `UserStatusGuard` passes both for
+  that reason. On a deployment whose ids are per-tenant, a homonym in another tenant could pass
+  the status gate on the caller's behalf, and the re-stamp path a line below would sign **that
+  account's tenant and role** into the token handed back. Now scoped to the tenant the session
+  already carries, with a test that goes red without it.
+
+  Found in review of the documentation change below, which was recommending tenant-scoped reads
+  to consumers while the library's own refresh path did not do one.
+
 - **The access token's `status` claim is documented as point-in-time and never authoritative.**
   Three states, and a client can tell them apart from nothing: minted at login it carries the
   account's value _at that moment_; an ordinary refresh rotation stamps an **empty string**,

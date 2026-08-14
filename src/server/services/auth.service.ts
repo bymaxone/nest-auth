@@ -573,7 +573,13 @@ export class AuthService {
     // the account holds is revoked, including the one just minted, and the epoch bump kills
     // the access token issued a line above. Touching the system while blocked ends everything
     // at once, which is what the ban was supposed to mean.
-    const user = await this.userRepo.findById(result.session.userId)
+    // Tenant-scoped, like every other read of an account this library performs. `findById`
+    // accepts an absent tenant for flows that are deliberately cross-tenant, and ids may collide
+    // across tenants — the interface says so — so an unscoped read here could validate the
+    // status of a homonym in another tenant and, on the re-stamp path below, sign that account's
+    // tenant and role into the caller's token. The session record already carries the tenant the
+    // login resolved, which is the one this token is for.
+    const user = await this.userRepo.findById(result.session.userId, result.session.tenantId)
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
