@@ -751,7 +751,17 @@ export class TokenManagerService {
    * The `status` claim in the issued access token is intentionally empty during
    * rotation — the Redis session does not store full user data. Guards that enforce
    * status checks must read from the user repository or a status cache, not the
-   * JWT `status` claim.
+   * JWT `status` claim. `rust-auth` stamps the same empty string at the same point, with a
+   * test pinning it, so this is a shared contract rather than a local shortcut.
+   *
+   * **What that means for a consumer, which is where the cost lands.** `issueTokens` stamps the
+   * account's real value, so the claim is truthful until the first refresh and empty for the
+   * rest of the session's life. A derived backend reading `request.user.status` is therefore
+   * wrong in both directions: `!== 'active'` refuses everyone after fifteen minutes, and
+   * `=== 'suspended'` refuses nobody, ever. Backfilling it here would be worse than leaving it:
+   * the claim would be usually true, which is the failure mode that survives testing — status
+   * can still change under an unexpired token, so a consumer trusting it would be wrong more
+   * rarely and far later. The claim cannot be authoritative, so it is not made to look like it.
    *
    * `mfaVerified` is always `false` after rotation because the Redis session does not
    * persist MFA verification state. A user who authenticated with MFA will lose the

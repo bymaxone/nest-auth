@@ -820,6 +820,30 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > rather than letting it fail open, and rejects an unreadable time span or a non-positive
 > lifetime on the same pass.
 
+> [!WARNING]
+> **Do not gate on the access token's `status` claim.** It is stamped at issue and is an **empty
+> string** on every token a refresh rotation mints — the stored session record carries no live
+> status, so there is nothing to copy. `rust-auth` does the same, deliberately and with a test
+> pinning it; this is a shared contract rather than a defect in either.
+>
+> The claim is therefore never authoritative, and a route that reads it is wrong in **both**
+> directions: `status !== 'active'` refuses everyone once a session has been refreshed, and
+> `status === 'suspended'` refuses nobody, ever. Both fail quietly and hours away from the code
+> that caused them — the first looks like a broken login, the second like nothing at all.
+>
+> Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and read
+> `IUserRepository.findById` for anything richer. That is what the library's own guards do, which
+> is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same
+> reason — it is always `false` after a rotation, so step-up does not survive a refresh and a
+> user re-acquires it through the MFA challenge.
+>
+> One consequence worth planning for: the guard reads a status cache with a
+> `userStatusCacheTtlSeconds` window (default **60**), so a suspension takes up to that long to
+> bite on a guarded route, and a reactivation the same to restore. Nothing exported invalidates
+> that key for one user today — the only immediate lever is `bumpUserTokenEpoch`, which ends
+> every session the user has rather than refreshing one cached string. Lower the TTL if a faster
+> answer matters more than the repository reads it costs.
+
 `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
 **on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a
 SHALL and puts it at no more than 30 days for AAL1. Without a cap, a client refreshing every

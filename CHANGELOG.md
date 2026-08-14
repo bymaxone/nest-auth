@@ -22,6 +22,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **The access token's `status` claim is documented as never authoritative.** It is stamped at
+  issue and is an **empty string** on every token a refresh rotation mints — the stored session
+  record carries no live status, so there is nothing to copy. `rust-auth` stamps the same empty
+  string at the same point, with a test pinning it, so this is a shared contract rather than a
+  defect in either library.
+
+  Reported by a consumer seat that measured it on a live boot: `"pending"` before the first
+  refresh, `""` after. Nothing in this library's own enforcement reads the claim — `UserStatusGuard`
+  resolves status from the cache and the repository — so it is not a bypass. The exposure is a
+  derived backend reading `request.user.status`, which is wrong in **both** directions:
+  `!== 'active'` refuses everyone once a session has been refreshed, `=== 'suspended'` refuses
+  nobody, ever. Both fail quietly, hours from the code that caused them.
+
+  Backfilling it during rotation was considered and rejected: it would make the claim _usually_
+  true, which is the failure mode that survives testing — status can still change under an
+  unexpired token. The claim cannot be authoritative, so it is not made to look like it. Stated
+  in the README and at the call site, with `mfaVerified: false` on rotation beside it, and the
+  `userStatusCacheTtlSeconds` window (default 60) that decides how quickly a suspension bites.
+
+  **Apply to a derived backend.** Read status per request — `UserStatusGuard` on the route,
+  `IUserRepository.findById` for anything richer — and never from the token. If you already gate
+  on the claim, that gate is either refusing everyone or nobody depending on which way you wrote
+  the comparison.
+
 - **The controller layer is now measured by the suite that goes through the framework.** E2E-only
   branch coverage of `src/server/controllers` was **75%**, and the shortfall was mostly whole
   endpoints nobody drove over HTTP. It is now **87%**, and everything still uncovered is named
