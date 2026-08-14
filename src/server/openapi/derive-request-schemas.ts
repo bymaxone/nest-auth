@@ -10,12 +10,12 @@
  * Why derivation is a CHECK here and not the source: three of this library's contracts are
  * invisible to a decorator, and a schema derived faithfully would document them wrong —
  * `ResetPasswordDto`'s exactly-one-of proof, the structural `@MinLength(8)` that is not the
- * deployment's `password.minLength` floor, and the conditional requirement on the OAuth
- * callback query.
+ * deployment's `password.minLength` floor, and the OAuth callback query, whose optional `code`
+ * is a refusal the handler makes rather than one the schema is missing.
  *
  * All three are declared, with probes, in `conformance/openapi-declared-structures.json` — the
- * `oneOf`, the `anyOf`, and the policy floor as a pair of probes showing the pipe accepting what
- * the deployment refuses. `openapi-request-descriptions.json` covers the e-mail normalisation
+ * `oneOf`, the policy floor as a pair of probes showing the pipe accepting what the deployment
+ * refuses, and the handler refusal as the same pair one layer further in. `openapi-request-descriptions.json` covers the e-mail normalisation
  * beside them. What the declared overlay adds beyond the header it replaces is that a reader can
  * run it: the header was prose, and prose is checked by nobody.
  *

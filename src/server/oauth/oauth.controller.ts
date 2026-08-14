@@ -293,10 +293,14 @@ export class OAuthController {
       return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
     }
 
-    // `code` is optional on the DTO only so the provider's error response can validate; the
-    // early return above means the pipe has already required it here. Refusing outright beats
-    // defaulting to an empty string, which would travel to the provider's token endpoint and
-    // come back as their error rather than ours.
+    // A callback carrying neither `code` nor `error`. Reachable: the DTO no longer requires
+    // `code`, so the pipe hands this request straight here and the refusal is the handler's —
+    // `auth.oauth_failed`, the same answer rust-auth gives, rather than the `auth.validation`
+    // the pipe used to produce. A codeless callback is a failed authorization, not a malformed
+    // request, and the two libraries now say so in the same words.
+    //
+    // Refusing outright beats defaulting to an empty string, which would travel to the
+    // provider's token endpoint and come back as their error rather than ours.
     if (query.code === undefined) {
       return this.handleCallbackFailure(res, new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED))
     }

@@ -7,11 +7,16 @@
  *
  * This suite covers the half that is reachable without an HTTP server — the keyword census, the
  * evaluation of every probe against its own structure, the binding to real DTO properties, and
- * the enforcement of the structures the validation pipe is what refuses. The half that only a
- * bootstrapped application can answer — the service-enforced exactly-one-of, the policy floor,
- * the anti-enumeration pairs — lives in `test/e2e/declared-structures.e2e-spec.ts`, which reads
- * this same file. Neither suite may skip an entry silently: each asserts it handled every entry
- * of the kinds it owns.
+ * what the validation pipe answers each probe. The half that only a bootstrapped application can
+ * answer — the service-enforced exactly-one-of, the policy floor, the handler refusal, the
+ * anti-enumeration pairs — lives in `test/e2e/declared-structures.e2e-spec.ts`, which reads this
+ * same file. Neither suite may skip an entry silently: each asserts it handled every entry of the
+ * kinds it owns.
+ *
+ * Two of the kinds exist BECAUSE the halves disagree: the policy floor and the handler refusal
+ * both declare bodies the pipe accepts and something further in refuses. Reading the pipe's
+ * answer is this suite's whole contribution to them — a suite that only saw the final status
+ * could not tell a request the pipe rejected from one the deployment did.
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -81,17 +86,56 @@ interface PolicyFloorProbe {
   expect: { code: AuthErrorCode; field?: string }
 }
 
+/**
+ * One probe of a handler-enforced refusal, whose two halves are checked in two suites.
+ *
+ * The same split the policy floor uses, and for the same reason: the claim is that the pipe and
+ * the handler answer differently, so neither suite can see the whole of it. `acceptedByPipe` is
+ * this suite's half. What the running application then answers is `declared-structures.e2e-spec`'s.
+ */
+interface HandlerRefusalProbe {
+  note: string
+  query: Record<string, string>
+  acceptedByPipe: boolean
+  expect: { code: AuthErrorCode; field?: string }
+}
+
+/** One handler-enforced refusal entry. */
+interface HandlerRefusalEntry {
+  kind: 'handlerRefusal'
+  dto: string
+  placeholders?: Record<string, string>
+  probes: readonly HandlerRefusalProbe[]
+}
+
 const declared = JSON.parse(readFileSync(ARTIFACT, 'utf8')) as {
   $comment: readonly string[]
   openapi: string
   requestStructures: Record<string, DeclaredRequestStructure>
-  operationSemantics: Record<string, { kind: string; probes?: readonly PolicyFloorProbe[] }>
+  operationSemantics: Record<
+    string,
+    { kind: string; probes?: readonly PolicyFloorProbe[] } | HandlerRefusalEntry
+  >
 }
 
+const semantics = Object.values(declared.operationSemantics)
+
 /** Every probe of every declared policy floor, flattened for the per-probe cases below. */
-const policyFloorProbes = Object.values(declared.operationSemantics)
-  .filter((entry) => entry.kind === 'policyFloor')
+const policyFloorProbes = semantics
+  .filter((entry): entry is { kind: string; probes?: readonly PolicyFloorProbe[] } =>
+    isKind(entry, 'policyFloor')
+  )
   .flatMap((entry) => entry.probes ?? [])
+
+/** Every declared handler refusal. */
+const handlerRefusals = semantics.filter((entry): entry is HandlerRefusalEntry =>
+  isKind(entry, 'handlerRefusal')
+)
+
+/** The handler-refusal probes, each carrying the DTO its query is validated against. */
+const handlerRefusalProbes = handlerRefusals.flatMap((entry) =>
+  entry.probes.map((probe) => ({ dto: entry.dto, entry, probe }))
+)
 
 const requestStructures = Object.entries(declared.requestStructures)
 
@@ -176,28 +220,64 @@ describe('OpenAPI declared structures — overlay', () => {
     }
   )
 
-  // Verifies the pipe-enforced structures against the pipe itself — the same instance the auth
-  // controllers mount, so what is asserted is the enforcement rather than a re-implementation of
-  // it. `@ValidateIf` is the only reason the OAuth callback's requirement is conditional, and
-  // this is where that stops being a comment.
-  it.each(probes.filter(({ entry }) => entry.enforcement.kind === 'pipe'))(
-    '$dtoName is enforced by the pipe — $probe.note',
-    async ({ dtoName, entry, probe }) => {
-      const outcome = await throughPipe(dtoName, probe.body)
-      const body = outcome.getResponse() as { error: { code: string; details: unknown } }
+  // Verifies no request structure is pipe-enforced today, which is a claim rather than an
+  // omission. The OAuth callback was the one, and 1.4.3 moved its alternation to the handler: a
+  // callback with no `code` is an OAuth failure, not a malformed request. Nothing else in the
+  // overlay is refused by the pipe, so the block that ran those probes through
+  // `createAuthValidationPipe` has no table left to iterate.
+  //
+  // Pinned as an exact set for the reason every other census here is: the next pipe-enforced
+  // structure must fail HERE, where this note tells its author that the enforcement block has to
+  // come back with it — rather than shipping declared and refused by nobody.
+  it('declares no structure whose enforcement this suite alone would own', () => {
+    expect([...new Set(requestStructures.map(([, entry]) => entry.enforcement.kind))]).toEqual([
+      'http'
+    ])
+  })
 
-      if (probe.expect.accepted === true) {
-        // `AUTH_ERROR_CODES.INTERNAL` is what `throughPipe` returns when the pipe did NOT throw.
-        expect(body.error.code).toBe(AUTH_ERROR_CODES.INTERNAL)
-        return
-      }
+  // Verifies the pipe half of every declared handler refusal, against the pipe itself — the same
+  // instance the controllers mount, so what is asserted is the enforcement rather than a
+  // re-implementation of it. The claim is that these queries get PAST the pipe (or do not), and
+  // the e2e suite then reads what the handler does with the ones that do. Neither half is the
+  // contract on its own: a pipe that refused them all would satisfy the e2e suite's status
+  // expectations for the wrong reason, since `auth.validation` and `auth.oauth_failed` are
+  // different codes but both refusals.
+  it.each(handlerRefusalProbes)('$dto — $probe.note', async ({ dto, entry, probe }) => {
+    const query = expandPlaceholders(dto, probe.query, entry.placeholders ?? {})
+    const outcome = await throughPipe(dto, query)
+    const body = outcome.getResponse() as { error: { code: string; details: unknown } }
 
-      expect(body.error.code).toBe(entry.enforcement.rejection)
-      expect(body.error.details).toContainEqual(
-        expect.objectContaining({ field: probe.expect.field })
-      )
+    if (probe.acceptedByPipe) {
+      // `AUTH_ERROR_CODES.INTERNAL` is what `throughPipe` returns when the pipe did NOT throw.
+      expect(body.error.code).toBe(AUTH_ERROR_CODES.INTERNAL)
+      return
     }
-  )
+
+    expect(body.error.code).toBe(AUTH_ERROR_CODES.VALIDATION)
+    expect(body.error.details).toContainEqual(
+      expect.objectContaining({ field: probe.expect.field })
+    )
+  })
+
+  // Verifies each handler refusal declares a query the pipe accepts AND one it refuses. Without
+  // the first, the entry would be a set of validation errors dressed up as a handler contract —
+  // and the handler's refusal, which is the whole reason the entry exists, would never be
+  // reached by any probe.
+  it.each(handlerRefusals)("$dto separates the pipe's refusals from the handler's", (entry) => {
+    expect(entry.probes.some((probe) => probe.acceptedByPipe)).toBe(true)
+    expect(entry.probes.some((probe) => !probe.acceptedByPipe)).toBe(true)
+  })
+
+  // Verifies every declared placeholder is used by a probe. An unused one is a rule nothing
+  // resolves — it would sit in the artifact describing an expansion that never happens, and the
+  // suites would go on passing because nothing looked for it.
+  it.each(handlerRefusals)('$dto uses every placeholder it declares', (entry) => {
+    const values = new Set(entry.probes.flatMap((probe) => Object.values(probe.query)))
+
+    for (const placeholder of Object.keys(entry.placeholders ?? {})) {
+      expect(values).toContain(placeholder)
+    }
+  })
 
   // Verifies the structural half of the policy floor: whether the DTO's own `@MinLength(8)` lets
   // the body through. The claim the overlay makes is that the pipe and the deployment disagree,
@@ -224,16 +304,14 @@ describe('OpenAPI declared structures — overlay', () => {
     expect(policyFloorProbes.some((probe) => !probe.acceptedByPipe)).toBe(true)
   })
 
-  // Verifies this suite handled every pipe-enforced entry, and that the rest are accounted for by
-  // the e2e suite rather than by nothing. An entry whose kind neither suite owns would otherwise
-  // ship declared and unchecked.
+  // Verifies every declared enforcement kind is one a suite owns. An entry whose kind neither
+  // suite recognises would otherwise ship declared and unchecked — iterated over by the census
+  // above, and exercised by nothing.
   it('covers every entry with a suite that owns its enforcement kind', () => {
     const kinds = requestStructures.map(([, entry]) => entry.enforcement.kind)
 
     expect(kinds.length).toBeGreaterThan(0)
     expect(kinds.every((kind) => kind === 'pipe' || kind === 'http')).toBe(true)
-    expect(kinds).toContain('pipe')
-    expect(kinds).toContain('http')
   })
 
   // Verifies the overlay still declares what it is supposed to declare — the guard against
@@ -247,14 +325,12 @@ describe('OpenAPI declared structures — overlay', () => {
   // Pinned as an exact set rather than a minimum, for the reason the validator census is: a
   // collection nothing pins lets the checks over it pass while covering less than they claim.
   it('declares a structure for exactly the DTOs it is supposed to', () => {
-    expect(Object.keys(declared.requestStructures).sort()).toEqual([
-      'OAuthCallbackQueryDto',
-      'ResetPasswordDto'
-    ])
+    expect(Object.keys(declared.requestStructures).sort()).toEqual(['ResetPasswordDto'])
 
     expect(Object.keys(declared.operationSemantics).sort()).toEqual([
       'AuthController.resendVerification',
       'AuthController.verifyEmail',
+      'OAuthController.callback#codelessCallback',
       'PasswordResetController.forgotPassword',
       'PasswordResetController.resendOtp',
       'PasswordResetController.resetPassword#passwordFloor'
@@ -354,6 +430,43 @@ describe('OpenAPI declared structures — the narrowing is a single-variable exp
     expect(pairs.some((pair) => pair.role === 'demonstrates')).toBe(true)
   })
 })
+
+/** Narrows an `operationSemantics` entry by its declared kind. */
+function isKind<K extends string>(entry: { kind: string }, kind: K): boolean {
+  return entry.kind === kind
+}
+
+/**
+ * Expands a probe's placeholder values against the DTO's own declared bounds.
+ *
+ * A probe that needs a value past `@MaxLength(2048)` cannot carry it literally — 2049 characters
+ * in the artifact would bury the probes around it — and cannot carry a hardcoded length either,
+ * because raising the bound would leave a value that is no longer oversized while the probe's
+ * note still claimed it was. So the artifact names a placeholder and this resolves it from the
+ * generated schema: one character past whatever the decorator currently declares.
+ *
+ * `test/e2e/declared-structures.e2e-spec.ts` carries the same six lines for the same probes. The
+ * duplication is deliberate — the alternative is a shared helper importable from `src/`, which
+ * would put test-only code in the published tree.
+ */
+function expandPlaceholders(
+  dto: string,
+  query: Record<string, string>,
+  placeholders: Record<string, string>
+): Record<string, string> {
+  const metatype = REQUEST_SCHEMA_DTOS.find((candidate) => candidate.name === dto)
+  const schema = deriveRequestSchema(metatype!)
+
+  return Object.fromEntries(
+    Object.entries(query).map(([property, value]) => {
+      if (!Object.hasOwn(placeholders, value)) return [property, value]
+
+      const bound = schema.properties[property]?.maxLength
+      expect(bound).toBeDefined()
+      return [property, 'a'.repeat(bound! + 1)]
+    })
+  )
+}
 
 /** Every property name a structure mentions, at any depth. */
 function namedProperties(structure: DeclaredStructure): string[] {

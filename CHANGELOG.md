@@ -80,6 +80,41 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   valid caller on the way somewhere else — including every refusal branch of the CSRF guard, a
   token whose account was deleted after issue, and `/ws-ticket`, which had no e2e of its own.
 
+### Changed
+
+- **An OAuth callback carrying neither `code` nor `error` now answers `401 auth.oauth_failed`
+  instead of `400 auth.validation`.** Wire change, and the one place this library and `rust-auth`
+  still disagreed on the same request.
+
+  `OAuthCallbackQueryDto.code` no longer carries a requirement: it is validated when it is present
+  and `error` is not, so its bounds are unchanged and an empty or oversized `code` is still the
+  pipe's to refuse, naming the field. What moved is the **absent** case. The handler already
+  carried the answer — `if (query.code === undefined) return this.handleCallbackFailure(...)`,
+  written when the "user clicked Cancel" path was fixed — and the DTO's conditional requirement
+  made that branch **unreachable over HTTP**: the pipe refused the request first, every time. The
+  branch nonetheless read as covered, by a unit test handing the controller a query object the
+  HTTP surface could not produce (`{ state } as never`). A test that invents its input proves the
+  code runs, never that it is reachable.
+
+  A codeless callback is a failed authorization, not a malformed request, and both libraries now
+  say so in the same code. Under `oauth.errorRedirectUrl` it takes the same `?error=oauth_failed`
+  redirect every other OAuth failure takes, rather than escaping the redirect as a validation
+  envelope.
+
+  `conformance/openapi-declared-structures.json` follows the behaviour: the `anyOf` over
+  `code | error` was a request structure while the pipe enforced it, and is now a handler refusal
+  (`OAuthController.callback#codelessCallback`) with probes both layers answer — the pipe half
+  read where the pipe answers, the HTTP half over a bootstrapped application. Falsified by putting
+  the requirement back: exactly one case goes red in each suite, and it is the codeless callback
+  in both.
+
+  **Apply to a derived backend.** No code change. If you match on the response to a malformed
+  OAuth callback — an error page keyed by `code`, a log alert, an e2e assertion — a callback with
+  no `code` and no `error` now arrives as `401 auth.oauth_failed` with no `details` array, where
+  it used to arrive as `400 auth.validation` with `details[0].field === 'code'`. The provider's
+  own error callback (`?error=access_denied`) is unaffected; it already answered
+  `auth.oauth_failed`.
+
 ### Fixed
 
 - **`AuthExceptionFilter` silently displaces `@bymax-one/nest-core`'s envelope filter.**
