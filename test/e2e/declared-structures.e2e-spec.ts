@@ -178,6 +178,13 @@ function expandPlaceholders(
   placeholders: Record<string, string>
 ): Record<string, string> {
   const metatype = REQUEST_SCHEMA_DTOS.find((candidate) => candidate.name === dto)
+
+  // Asserted rather than `!`. A placeholder naming a DTO the artifact does not carry is a
+  // mistake in the overlay, and passing `undefined` into schema derivation reports it as a
+  // property read on undefined — an error about the wrong thing, one call frame from the
+  // artifact that caused it.
+  expect(metatype).toBeDefined()
+
   const schema = deriveRequestSchema(metatype!)
 
   return Object.fromEntries(

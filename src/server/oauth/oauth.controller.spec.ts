@@ -343,7 +343,7 @@ describe('OAuthController', () => {
     // A callback carrying neither `code` nor `error`. The body below is one the pipe really
     // produces now — `code` is optional on the DTO, so this shape arrives at the handler
     // instead of being refused in front of it. What makes the path *reachable* is proven over
-    // HTTP in `test/e2e/oauth-flow.e2e-spec.ts`; this pins the redirect target, which a unit
+    // HTTP in `test/e2e/declared-structures.e2e-spec.ts`; this pins the redirect target, which a unit
     // test can read directly off the mock. Defaulting the missing code to an empty string
     // instead would send it to the provider's token endpoint and surface their error, not ours.
     it('should refuse a callback carrying neither code nor error', async () => {
