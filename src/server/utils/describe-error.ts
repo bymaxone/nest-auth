@@ -192,15 +192,29 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * searches from a million to a thousand. Requiring the separator rejects it structurally, with no
  * need to know which credential was in flight.
  *
- * **THREE digits, and the enhanced code is deliberately not kept.** RFC 3463's `X.Y.Z` is where a
- * bounce's real reason lives — `5.1.1` an unknown mailbox, `5.2.2` a full one — and it was kept
- * until the arithmetic was done: `550 5.7.1`, an entirely ordinary reply, is six digits once its
- * punctuation is dropped, and `550571` is a valid OTP. One in a million sends would have published
- * a live credential through the one field this path allows, with no relay misbehaving and no
- * substring check able to see it, because the line holds `550 5.7.1` and the secret is `550571`.
- * Three digits cannot reproduce a credential this library issues: an OTP is four to eight digits
- * and a token is 64 hex characters. That is a proof rather than a probability, which is the
- * standard everything else on this path is held to.
+ * **THREE digits, and the enhanced code is deliberately not kept — for two costs, not for a leak.**
+ * RFC 3463's `X.Y.Z` is where a bounce's real reason lives (`5.1.1` an unknown mailbox, `5.2.2` a
+ * full one), so dropping it is a real loss and the reason had better be stated honestly.
+ *
+ * It is NOT that `550 5.7.1` stripped of punctuation is `550571`, a valid six-digit OTP. That was
+ * the first reasoning and it over-reads: the published token is a function of the relay's answer
+ * alone, so the same reply appears whatever the code was, or if no code existed. An observer
+ * learns nothing — `550571` is as likely to be a status when the OTP is `123456` — and a
+ * coincidental equality carrying no information about the secret is not disclosure. That is the
+ * difference from the encoding case, which IS a leak: there the output was a function of the body
+ * and inverting it recovered the code. Credit to the `@bymax-one` seat for the correction.
+ *
+ * What survives are two costs. The first is a **detection tax**: a log rule alerting on a four-to
+ * -eight digit run in an error line — precisely the tooling a team builds after an incident like
+ * this one — fires on every `550 5.7.1`. The second is **one rule with no exception to remember**;
+ * this file's history is four rules that each held until someone found the case they did not
+ * predict, and the cheapest guarantee is the one with nothing to carve out. A structured field
+ * would answer the first cost, and this line is prose.
+ *
+ * The malicious-relay case is real and does not change the balance: the enhanced code's grammar
+ * carries seven digits of the sender's choosing (`550 4.812.345`), so a relay that wanted a covert
+ * channel into the log has one. It gains nothing by it — it received the body, so it already holds
+ * every code it was asked to send.
  *
  * What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
  * transient outage, `535` a credential problem on their side.

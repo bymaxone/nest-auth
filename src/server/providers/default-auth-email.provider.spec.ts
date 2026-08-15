@@ -492,22 +492,20 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
-  // The reason the enhanced status code is NOT kept, kept as a test because the arithmetic is the
-  // whole argument. `550 5.7.1` is an entirely ordinary reply, and stripped of its punctuation it
-  // is `550571` — six digits, which is a valid OTP. No relay has to misbehave and no substring
-  // check can see it, because the line holds `550 5.7.1` while the secret is `550571`. One in a
-  // million sends would have published a live credential through the one field this path allows.
-  //
-  // Three digits cannot reproduce a credential this library issues: an OTP is four to eight
-  // digits, a token is 64 hex characters. That is a proof rather than a probability.
-  it('does not let a reply code reassemble into the credential', async () => {
+  // The enhanced status code is not kept, and this pins the CONSEQUENCE rather than a leak. The
+  // arithmetic is real — `550 5.7.1` stripped of punctuation is `550571`, a valid six-digit OTP —
+  // but it is coincidence, not derivation: that reply appears whatever the code was, so the line
+  // carries no information about it and a log holding it is no help to anyone. What dropping the
+  // field buys is a log a detection rule can read without firing on every bounce, and one rule
+  // with nothing to carve out. See `statusOf` for the full reasoning and for the correction.
+  it('publishes only the basic code, whatever the reply carries after it', async () => {
     const otp = '550571'
     sink.send.mockRejectedValueOnce(new Error('550 5.7.1 rejected by policy'))
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    // The attacker's own test: strip everything that is not a digit and see what is left.
+    expect(logged).not.toContain('5.7.1')
     expect(logged.replace(/[^0-9]/g, '')).not.toContain(otp)
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
   })

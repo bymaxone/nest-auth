@@ -72,14 +72,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   nothing rather than half an OTP. At most **one** status appears per line whatever the depth of
   the cause chain, so a channel cannot place `424` beside `242` and have them read back as a code.
 
-  RFC 3463's enhanced code (`5.1.1` an unknown mailbox, `5.2.2` a full one) was kept until the
-  arithmetic was done. `550 5.7.1` is an entirely ordinary reply, and stripped of its punctuation
-  it is `550571` — six digits, a valid OTP. One in a million sends would have published a live
-  credential through the one field this path allows, with no relay misbehaving and no substring
-  check able to see it, because the line holds `550 5.7.1` while the secret is `550571`. Three
-  digits cannot reproduce a credential this library issues: an OTP is four to eight digits and a
-  token is 64 hex characters. That is a proof rather than a probability, which is the standard
-  everything else here is held to.
+  RFC 3463's enhanced code (`5.1.1` an unknown mailbox, `5.2.2` a full one) is **not** kept, and
+  the reason is a cost rather than a leak — the first version of this note said otherwise and
+  over-read its own measurement. The arithmetic is real: `550 5.7.1` stripped of punctuation is
+  `550571`, a valid six-digit OTP. It is coincidence, not derivation. That reply appears whatever
+  the code was, or if no code existed, so the line carries no information about the credential and
+  an attacker who reads it has the odds they started with. The encoding case is the opposite and is
+  why it was a leak: there the output was a function of the body, and decoding it recovered the
+  code.
+
+  What dropping the field buys is two costs avoided. A **detection rule** that alerts on a
+  four-to-eight digit run in an error line — the tooling a team builds after exactly this incident
+  — fires on every `550 5.7.1`. And **one rule with nothing to carve out**: the four superseded
+  rules above each held until someone found the case they did not predict, and an exception is
+  where the next one hides. A structured field rather than prose would answer the first.
 
   What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
   transient outage, `535` a credential problem at their relay.
