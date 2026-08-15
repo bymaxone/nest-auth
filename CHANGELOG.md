@@ -74,7 +74,7 @@ delivered` yields nothing rather than half an OTP. At most **one** status appear
   them read back as a code. And it is the half of a bounce an operator acts on: `550` is a
   refusal, `421` a transient outage, `5.1.1` an unknown mailbox, `5.2.2` a full one.
 
-  **The same mistake was in eight more places, found by hunting the family rather than the report.**
+  **The same mistake was in eight more handlers, found by hunting the family rather than the report.**
   `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
   services caught a rejected send and logged the raw error the same way — `AuthService` for the
   verification OTP, `PasswordResetService` for both the reset token and the reset OTP — and those
@@ -83,8 +83,9 @@ delivered` yields nothing rather than half an OTP. At most **one** status appear
   and `InvitationService.invite` **await** their send, so the provider's rejection travelled to the
   controller and was logged by `AuthExceptionFilter`'s unknown-exception path — inside this
   library, with no consumer able to intervene. `EmailChangeService.notifyOldAddress`,
-  `PasswordResetService.notifyPasswordChanged` and the three `MfaService` notices formed the last
-  group, described below.
+  `PasswordResetService.notifyPasswordChanged` and `MfaService`'s shared notice handler formed the
+  last group, described below — ten call sites in all, since that one handler serves the enable,
+  disable and administrative-reset flows.
 
   **The recipient survived on the paths that AWAITED the send, and those had a second defect.**
   `MfaService` awaited its three state-change notices — enable, disable, administrative reset —

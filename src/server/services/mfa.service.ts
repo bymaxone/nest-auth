@@ -1820,6 +1820,15 @@ export class MfaService {
     // An async IIFE rather than `Promise.resolve(send(...))`: the second evaluates the call before
     // the promise wraps it, so a provider that throws SYNCHRONOUSLY skips this handler entirely.
     // Inside the IIFE the call is still made synchronously and the `try` still catches the throw.
+    //
+    // Detached rather than awaited, and the trade is worth stating because the `catch` above means
+    // awaiting would no longer fail the operation. What awaiting WOULD buy is that the handoff to
+    // the channel completed before the caller was answered — which is not the same as the notice
+    // arriving, and is bought with the user's request waiting on a third party after their MFA
+    // state has already changed. A relay that is slow, not down, would then stall an enable that
+    // has fully succeeded. Neither shape survives a freeze mid-flight: an awaited send loses the
+    // notice AND the response. A guarantee that this notice is delivered belongs to a queue, which
+    // is the consumer's `IEmailProvider` to provide and this library cannot supply on its behalf.
     void (async (): Promise<void> => {
       try {
         await send(provider, tenantId, email)
