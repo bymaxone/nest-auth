@@ -371,10 +371,10 @@ describe('buildAuthOpenApiFragment', () => {
     // a body that may be omitted. The pair is the point — one required body and one optional,
     // from one delivery mode, because the two handlers really do differ.
     it('asks for the same header and an optional body when the refresh half is only read', () => {
-      const list = fragment.operations['SessionController.listSessions']
+      const change = fragment.operations['PasswordResetController.changePassword']
 
-      expect(list?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }])
-      expect(list?.['requestBody']).toEqual({
+      expect(change?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }])
+      expect(change?.['requestBody']).toEqual({
         required: false,
         content: {
           'application/json': {
@@ -498,12 +498,36 @@ describe('buildAuthOpenApiFragment', () => {
     // the cookie may be carrying the token — so both operations describe it that way.
     it('describes the required and the optional case identically, body included', () => {
       const revokeAll = fragment.operations['SessionController.revokeAllSessions']
-      const list = fragment.operations['SessionController.listSessions']
+      const change = fragment.operations['PasswordResetController.changePassword']
 
-      expect(list?.['security']).toEqual(revokeAll?.['security'])
-      expect(list?.['requestBody']).toEqual(revokeAll?.['requestBody'])
+      expect(change?.['security']).toEqual(revokeAll?.['security'])
+      expect(change?.['requestBody']).toEqual(revokeAll?.['requestBody'])
       expect(revokeAll?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
     })
+
+    // The operation whose method has no payload semantics keeps the cookie and loses the body,
+    // in every mode. OpenAPI 3.0.3 defers to RFC 7231 on GET, so a contributed `requestBody`
+    // there is a request no generated client sends — and unlike the bulk revocation, which moved
+    // to POST because it REFUSES without the token, a session list that cannot read it simply
+    // marks nothing as current. The document says exactly that much.
+    it.each(['cookie', 'bearer', 'both'] as const)(
+      'contributes no body for the listing under tokenDelivery: %s',
+      (tokenDelivery) => {
+        const list = buildAuthOpenApiFragment(optionsFor(tokenDelivery), EVERYTHING).operations[
+          'SessionController.listSessions'
+        ]
+
+        expect(list).toBeDefined()
+        expect(list && 'requestBody' in list).toBe(false)
+        expect(list?.['security']).toEqual(
+          tokenDelivery === 'bearer'
+            ? [{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }]
+            : expect.arrayContaining([
+                expect.objectContaining({ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] })
+              ])
+        )
+      }
+    )
   })
 
   describe('the platform surface', () => {

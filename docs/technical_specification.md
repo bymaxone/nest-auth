@@ -2728,7 +2728,7 @@ The per-route throttle limits the controllers apply with `@Throttle()`:
 | `POST /auth/email/change/confirm`     | 5 req  | 1 minute  | Bounds guessing at the address-change token                                      |
 | `GET /auth/sessions`                  | 30 req | 1 minute  | Limits session listing                                                           |
 | `DELETE /auth/sessions/:id`           | 10 req | 1 minute  | Limits per-session revocation                                                    |
-| `DELETE /auth/sessions/all`           | 5 req  | 1 minute  | Limits bulk revocation                                                           |
+| `POST /auth/sessions/revoke-all`      | 5 req  | 1 minute  | Limits bulk revocation                                                           |
 | `GET /auth/oauth/:provider`           | 10 req | 1 minute  | Limits OAuth starts                                                              |
 | `GET /auth/oauth/:provider/callback`  | 10 req | 1 minute  | Limits OAuth callbacks                                                           |
 

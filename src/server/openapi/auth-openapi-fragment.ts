@@ -106,6 +106,11 @@ type Credential =
    */
   | 'accessWithOptionalRefresh'
   /**
+   * The same, on an operation whose HTTP method carries no body — so the cookie is the only
+   * channel the refresh token has, whatever `tokenDelivery` says.
+   */
+  | 'accessWithOptionalRefreshCookie'
+  /**
    * Both credentials are READ and NEITHER is required. Each one it receives does more of the job,
    * and a caller with neither still gets an answer.
    */
@@ -117,7 +122,10 @@ type Credential =
 /** The three kinds whose requirement is built from BOTH credentials rather than from one. */
 type TwoCredentialKind = Extract<
   Credential,
-  'accessAndRefreshRequired' | 'accessWithOptionalRefresh' | 'optionalAccessAndRefresh'
+  | 'accessAndRefreshRequired'
+  | 'accessWithOptionalRefresh'
+  | 'accessWithOptionalRefreshCookie'
+  | 'optionalAccessAndRefresh'
 >
 
 /**
@@ -181,7 +189,7 @@ const OPERATIONS: Readonly<
     // without it — it revokes everything EXCEPT the current session, so a request that cannot
     // name the current one would sign the caller out, and it answers `auth.session_not_found`
     // instead. `revokeSession` names its target in the path and reads no refresh token at all.
-    'SessionController.listSessions': 'accessWithOptionalRefresh',
+    'SessionController.listSessions': 'accessWithOptionalRefreshCookie',
     'SessionController.revokeAllSessions': 'accessAndRefreshRequired',
     'SessionController.revokeSession': 'access'
   },
@@ -373,6 +381,7 @@ function describe(
       }
     case 'accessAndRefreshRequired':
     case 'accessWithOptionalRefresh':
+    case 'accessWithOptionalRefreshCookie':
     case 'optionalAccessAndRefresh':
       return describeTwoCredentials(credential, cookieDelivery, bearerDelivery)
     case 'platform':
@@ -426,6 +435,13 @@ function describeTwoCredentials(
     refresh: credential === 'accessAndRefreshRequired'
   }
 
+  // A body is a channel only where the deployment delivers credentials that way AND the
+  // operation's HTTP method defines what a payload means. OpenAPI 3.0.3 defers to RFC 7231 here:
+  // on GET and DELETE a `requestBody` **SHALL be ignored by consumers**, so contributing one
+  // describes a request no generated client sends. The cookie remains, because a cookie rides on
+  // the request line rather than in a payload.
+  const bodyChannel = bearerDelivery && credential !== 'accessWithOptionalRefreshCookie'
+
   const accessSchemes = [
     ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
     ...(bearerDelivery ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
@@ -455,7 +471,7 @@ function describeTwoCredentials(
 
   return {
     security: [...withRefreshCookie, ...accessAlone, ...refreshAlone, ...nothing],
-    ...(bearerDelivery
+    ...(bodyChannel
       ? { requestBody: cookieDelivery || !required.refresh ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
       : {})
   }

@@ -9,7 +9,7 @@
  *   2. `/invitations/accept` replay with a consumed token → INVALID_INVITATION_TOKEN.
  *   3. `DELETE /sessions/:id` for a session that does not belong to the caller →
  *      SESSION_NOT_FOUND (auth-bypass-class guarantee).
- *   4. `DELETE /sessions/all` with no refresh token / cookie → SESSION_NOT_FOUND.
+ *   4. `POST /sessions/revoke-all` with no refresh token / cookie → SESSION_NOT_FOUND.
  *   5. `/password/reset-password` with an unknown token → PASSWORD_RESET_TOKEN_INVALID.
  *   6. `/password/verify-otp` with the wrong code → OTP_INVALID.
  *   7. `/oauth/:provider` with an unknown provider → OAUTH_FAILED.
@@ -383,10 +383,15 @@ describe('sessions negative paths (E2E)', () => {
     expectAuthError(res, 'auth.session_not_found')
   })
 
-  // Verifies that DELETE /sessions/all without a refresh token in the request
+  // Verifies that POST /sessions/revoke-all without a refresh token in the request
   // is rejected with SESSION_NOT_FOUND — the controller cannot determine which
   // session to keep alive without the token.
-  it('should reject DELETE /sessions/all with SESSION_NOT_FOUND when no refresh token is present', async () => {
+  //
+  // The route is asserted as its own verb for a reason: while it was `DELETE /sessions/all`,
+  // this test kept passing after the handler moved, because `DELETE /sessions/:id` matched
+  // `all` as an id and answered the same code. A test that cannot tell the endpoint it means
+  // from the one next to it is not testing the endpoint.
+  it('should reject POST /sessions/revoke-all with SESSION_NOT_FOUND when no refresh token is present', async () => {
     const user = await registerAndLogin(
       boot,
       `noref-${Math.random().toString(36).slice(2)}@example.com`
@@ -395,7 +400,7 @@ describe('sessions negative paths (E2E)', () => {
     // Bearer-mode call without a refresh-token body is the failure scenario
     // the controller specifically guards against.
     const res = await request(boot.app.getHttpServer())
-      .delete('/sessions/all')
+      .post('/sessions/revoke-all')
       .set('Authorization', `Bearer ${user.accessToken}`)
     // intentionally no body
 

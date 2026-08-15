@@ -1054,7 +1054,7 @@ Authentication is critical infrastructure, so the suite is held to a bar beyond 
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
 - ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 5,274 seeded faults detected (5,252 killed, 22 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-14](./docs/mutation_testing_results.md#re-measured-cold--2026-08-14))
-- ✅ **3,961 tests** — 3,713 unit and 248 end-to-end, spanning all five subpaths
+- ✅ **3,968 tests** — 3,719 unit and 249 end-to-end, spanning all five subpaths
 - ✅ **Every equivalent mutant documented** — the 367 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
 ```bash
@@ -1074,40 +1074,46 @@ pnpm mutation      # Stryker mutation testing
 
 Conditionally registered controllers (mfa, sessions, platform, invitations, oauth, password-reset) only mount their endpoints when the corresponding feature is enabled in `BymaxAuthModule.registerAsync()`.
 
-| Method | Path                        | Auth / Guard                       | Description                                                 |
-| ------ | --------------------------- | ---------------------------------- | ----------------------------------------------------------- |
-| POST   | `/register`                 | Public                             | Register a new dashboard user and issue tokens              |
-| POST   | `/login`                    | Public                             | Authenticate with email/password (may return MFA challenge) |
-| POST   | `/logout`                   | `JwtAuthGuard`                     | Revoke tokens and clear session                             |
-| POST   | `/refresh`                  | Public (refresh cookie)            | Rotate refresh token, issue new access token                |
-| GET    | `/me`                       | `JwtAuthGuard`                     | Current dashboard user payload                              |
-| POST   | `/verify-email`             | Public                             | Verify email with OTP                                       |
-| POST   | `/resend-verification`      | Public                             | Resend email-verification OTP                               |
-| POST   | `/password/forgot-password` | Public                             | Request password reset (token or OTP)                       |
-| POST   | `/password/reset-password`  | Public                             | Submit new password with reset token                        |
-| POST   | `/password/verify-otp`      | Public                             | Verify password-reset OTP                                   |
-| POST   | `/password/resend-otp`      | Public                             | Resend password-reset OTP                                   |
-| POST   | `/mfa/setup`                | `JwtAuthGuard`                     | Generate TOTP secret and recovery codes                     |
-| POST   | `/mfa/verify-enable`        | `JwtAuthGuard`                     | Confirm setup and enable MFA                                |
-| POST   | `/mfa/challenge`            | Public + `@SkipMfa()`              | Submit TOTP/recovery code after login                       |
-| POST   | `/mfa/disable`              | `JwtAuthGuard`                     | Disable MFA for the current user                            |
-| GET    | `/sessions`                 | `JwtAuthGuard`, `UserStatusGuard`  | List active sessions for the current user                   |
-| DELETE | `/sessions/all`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke all sessions                                         |
-| DELETE | `/sessions/:id`             | `JwtAuthGuard`, `UserStatusGuard`  | Revoke a specific session                                   |
-| POST   | `/invitations`              | `JwtAuthGuard`, `UserStatusGuard`  | Create a tenant invitation                                  |
-| POST   | `/invitations/accept`       | Public                             | Accept an invitation and create the user                    |
-| POST   | `/invitations/revoke`       | `JwtAuthGuard`, `UserStatusGuard`  | Withdraw a pending invitation                               |
-| POST   | `/email/change`             | `JwtAuthGuard`, `UserStatusGuard`  | Request an address change (re-proves the current password)  |
-| POST   | `/email/change/confirm`     | Public                             | Confirm it with the token mailed to the new address         |
-| POST   | `/platform/login`           | Public                             | Platform admin login (separate token context)               |
-| POST   | `/platform/mfa/challenge`   | Public                             | Platform admin MFA challenge                                |
-| GET    | `/platform/me`              | `JwtPlatformGuard`                 | Current platform admin payload                              |
-| POST   | `/platform/logout`          | `JwtPlatformGuard`                 | Revoke platform tokens                                      |
-| POST   | `/platform/refresh`         | Public (platform refresh cookie)   | Rotate platform refresh token                               |
-| DELETE | `/platform/sessions`        | `JwtPlatformGuard`                 | Revoke all platform sessions                                |
-| POST   | `/password/change`          | `JwtAuthGuard` + `UserStatusGuard` | Change the password, proving the current one                |
-| GET    | `/oauth/:provider`          | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
-| GET    | `/oauth/:provider/callback` | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
+| Method | Path                           | Auth / Guard                       | Description                                                 |
+| ------ | ------------------------------ | ---------------------------------- | ----------------------------------------------------------- |
+| POST   | `/register`                    | Public                             | Register a new dashboard user and issue tokens              |
+| POST   | `/login`                       | Public                             | Authenticate with email/password (may return MFA challenge) |
+| POST   | `/logout`                      | Public (reads both credentials)    | Revoke the session; blacklists the access token it is given |
+| POST   | `/refresh`                     | Public (refresh cookie)            | Rotate refresh token, issue new access token                |
+| GET    | `/me`                          | `JwtAuthGuard`                     | Current dashboard user payload                              |
+| POST   | `/ws-ticket`                   | `JwtAuthGuard`                     | Mint a single-use ticket for a WebSocket upgrade            |
+| POST   | `/verify-email`                | Public                             | Verify email with OTP                                       |
+| POST   | `/resend-verification`         | Public                             | Resend email-verification OTP                               |
+| POST   | `/password/forgot-password`    | Public                             | Request password reset (token or OTP)                       |
+| POST   | `/password/reset-password`     | Public                             | Submit new password with reset token                        |
+| POST   | `/password/verify-otp`         | Public                             | Verify password-reset OTP                                   |
+| POST   | `/password/resend-otp`         | Public                             | Resend password-reset OTP                                   |
+| POST   | `/mfa/setup`                   | `JwtAuthGuard`                     | Generate TOTP secret and recovery codes                     |
+| POST   | `/mfa/verify-enable`           | `JwtAuthGuard`                     | Confirm setup and enable MFA                                |
+| POST   | `/mfa/challenge`               | Public + `@SkipMfa()`              | Submit TOTP/recovery code after login                       |
+| POST   | `/mfa/disable`                 | `JwtAuthGuard`                     | Disable MFA for the current user                            |
+| POST   | `/mfa/recovery-codes`          | `JwtAuthGuard`                     | Replace the recovery codes, proving a fresh OTP             |
+| GET    | `/sessions`                    | `JwtAuthGuard`, `UserStatusGuard`  | List active sessions for the current user                   |
+| POST   | `/sessions/revoke-all`         | `JwtAuthGuard`, `UserStatusGuard`  | Revoke every session except the caller's                    |
+| DELETE | `/sessions/:id`                | `JwtAuthGuard`, `UserStatusGuard`  | Revoke a specific session                                   |
+| POST   | `/invitations`                 | `JwtAuthGuard`, `UserStatusGuard`  | Create a tenant invitation                                  |
+| POST   | `/invitations/accept`          | Public                             | Accept an invitation and create the user                    |
+| POST   | `/invitations/revoke`          | `JwtAuthGuard`, `UserStatusGuard`  | Withdraw a pending invitation                               |
+| POST   | `/email/change`                | `JwtAuthGuard`, `UserStatusGuard`  | Request an address change (re-proves the current password)  |
+| POST   | `/email/change/confirm`        | Public                             | Confirm it with the token mailed to the new address         |
+| POST   | `/platform/login`              | Public                             | Platform admin login (separate token context)               |
+| POST   | `/platform/mfa/challenge`      | Public                             | Platform admin MFA challenge                                |
+| GET    | `/platform/me`                 | `JwtPlatformGuard`                 | Current platform admin payload                              |
+| POST   | `/platform/logout`             | `JwtPlatformGuard`                 | Revoke platform tokens                                      |
+| POST   | `/platform/refresh`            | Public (platform refresh cookie)   | Rotate platform refresh token                               |
+| DELETE | `/platform/sessions`           | `JwtPlatformGuard`                 | Revoke all platform sessions                                |
+| POST   | `/platform/mfa/setup`          | `JwtPlatformGuard`                 | Generate the admin's TOTP secret and recovery codes         |
+| POST   | `/platform/mfa/verify-enable`  | `JwtPlatformGuard`                 | Confirm setup and enable MFA for the admin                  |
+| POST   | `/platform/mfa/disable`        | `JwtPlatformGuard`                 | Disable the admin's MFA, proving a fresh OTP                |
+| POST   | `/platform/mfa/recovery-codes` | `JwtPlatformGuard`                 | Replace the admin's recovery codes                          |
+| POST   | `/password/change`             | `JwtAuthGuard` + `UserStatusGuard` | Change the password, proving the current one                |
+| GET    | `/oauth/:provider`             | Public + `@SkipMfa()`              | Initiate OAuth authorization redirect                       |
+| GET    | `/oauth/:provider/callback`    | Public + `@SkipMfa()`              | Handle OAuth callback, exchange code, issue tokens          |
 
 > **The OAuth routes require `cookie-parser`.** `GET /oauth/:provider` plants an HttpOnly
 > `oauth_state` cookie carrying the flow's `state`, and the callback refuses any request that
