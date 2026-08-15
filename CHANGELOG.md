@@ -319,9 +319,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   legitimate: `JwtAuthGuard` is registered and exported unconditionally, so mounting no dashboard
   controller does not stop a backend from guarding its own routes with a dashboard access token.
   Deriving correctly there answers "the scheme does not exist", which is true and unusable — so
-  that deployment **declares the scheme itself** in `openapi.securitySchemes`, matching the
-  `cookies.accessTokenName` it configured. `AUTH_SECURITY_SCHEMES` is not public API today, so the
-  name is written as a literal for now; exporting it is tracked.
+  that deployment **declares the scheme itself** in `openapi.securitySchemes`. Which scheme is
+  still a function of delivery, not a fixed recipe: `cookie` needs the `apiKey`-in-cookie
+  definition carrying the configured `cookies.accessTokenName`; `bearer` needs the HTTP bearer
+  definition and has no cookie name to carry; `both` needs **both**, or the document is incomplete
+  in the same quiet way described above. `AUTH_SECURITY_SCHEMES` is not public API today, so the
+  names are written as literals for now; exporting them is tracked.
 
   Per-operation beats document-level, so the default cannot reach this library's operations.
   Verified on a real adoption: thirteen contributed operations render byte-identical with and

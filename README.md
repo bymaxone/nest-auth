@@ -1315,13 +1315,21 @@ it, including cookie names you have since changed.
 > dashboard scheme on a deployment with no dashboard operation would put an unreferenced
 > credential in every such document, which is the opposite error and the reason for the gate.
 >
-> Two honest caveats on doing it. **`AUTH_SECURITY_SCHEMES` is not part of the public API today**,
-> so you will be writing the scheme name as a string literal (`bymaxAuthAccessCookie`,
-> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. And your definition must
-> match what the server actually reads — the cookie name is yours to choose, so an `apiKey`-in-
-> cookie scheme has to carry the same `cookies.accessTokenName` you configured, which is the same
-> derivation rule as everywhere else in this note. Exporting those names so this stops being a
-> literal is tracked; until it ships, this paragraph is the whole contract.
+> **Which scheme you declare is still a function of delivery** — the exception is to the deletion
+> rule, not to the derivation rule, and writing one fixed definition here reintroduces the very
+> literal this section is about:
+>
+> - `cookie` → the `apiKey`-in-cookie definition, carrying the `cookies.accessTokenName` you
+>   configured. The cookie name is yours to choose, so this is the one that must match what the
+>   server actually reads.
+> - `bearer` → the HTTP bearer definition. There is no cookie name to carry.
+> - `both` → **both of them**, or your document is incomplete in exactly the quiet way described
+>   above.
+>
+> One honest caveat on doing any of it: **`AUTH_SECURITY_SCHEMES` is not part of the public API
+> today**, so you will be writing the names as string literals (`bymaxAuthAccessCookie`,
+> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. Exporting them so this
+> stops being a literal is tracked; until it ships, this paragraph is the whole contract.
 >
 > **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
 > does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —
@@ -1385,11 +1393,22 @@ it, including cookie names you have since changed.
 > covers it.** If you remove _every_ requirement at once — no library describing anything, no
 > decorator, no override, no document default — what remains is indistinguishable from the
 > document of an API that is public on purpose. Both are a set of operations that ask for
-> nothing. No tool can separate the two without also shouting at every genuinely public API,
-> which is how a warning earns the right to be ignored. This is why nest-core's warning requires
-> that _some_ operation still state a requirement: the gap is deliberate, not an omission, and no
-> version closes it. Render the document twice and compare; it is the one step that does not
-> depend on somebody having anticipated your case.
+> nothing. **No general-purpose tool** can separate the two from the rendered document alone
+> without also shouting at every genuinely public API, which is how a warning earns the right to
+> be ignored. This is why nest-core's warning requires that _some_ operation still state a
+> requirement: the gap is deliberate, not an omission, and no version closes it.
+>
+> **But it is a limit on document-only checks, not on you** — and the distinction matters, because
+> the better answer is the one a general-purpose tool cannot supply. **You** know your API is not
+> public, which is exactly the intent no renderer can recover, so write it down as an assertion in
+> your own suite: that the built document carries a top-level `security`, or that every route
+> behind your auth guard renders with some requirement. That is a standing check, it runs on every
+> commit, and it does not depend on anyone remembering to compare. Prefer it to the diff.
+>
+> Render the document twice and compare when you are **changing** this — adopting the contributor,
+> moving delivery mode, adding a surface — because a diff shows you what moved without your having
+> to predict it in advance. Then turn what you learned into the assertion, so the next change is
+> caught rather than inspected.
 
 **That chain is about `security` alone, and the other members run the opposite rule** — worth
 stating because generalising either one produces a wrong belief about the other. There is no
