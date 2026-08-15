@@ -321,9 +321,13 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > the line decode straight back to the OTP. Under `'drop'` NOTHING the channel wrote reaches the
 > line — not the message, and not the `name` either, which is as much the channel's field and
 > which validating by shape does not save: `MTIzNDU2` is the base64 of the OTP `123456`, a valid
-> identifier by any such rule. What survives is the SMTP status, rebuilt from a pattern's own
-> capture rather than sliced out of the input, and that is the half of a bounce you act on anyway:
-> `550` is a refusal, `421` a transient outage, `535` a credential problem at your relay.
+> identifier by any such rule. What survives is the SMTP status — the three-digit code only,
+> rebuilt from a pattern's own capture rather than sliced out of the input. The enhanced code is
+> dropped for arithmetic rather than caution: `550 5.7.1` stripped of punctuation is `550571`,
+> which is a valid OTP, so an ordinary reply would have published a live one about once in a
+> million sends. Three digits cannot reproduce a credential this library issues. What is left is
+> still the half of a bounce you act on: `550` is a refusal, `421` a transient outage, `535` a
+> credential problem at your relay.
 >
 > **`describeError(error, [values])` for errors whose text you have a reason to trust**, where the
 > values you name appear the way you wrote them and redaction reaches them. The bundled provider

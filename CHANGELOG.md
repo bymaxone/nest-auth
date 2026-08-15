@@ -65,14 +65,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   reasonable-looking thing to write. The line carries a fixed label instead, which also identifies
   the message more stably for anyone parsing it.
 
-  **What is kept, and why it is safe to keep.** The SMTP status, rebuilt from the pattern's own
-  capture rather than sliced out of the input, so nothing a relay writes after it can ride along
-  whatever it encoded it in. The class is checked (2xx–5xx, and RFC 3463's 2/4/5 for the enhanced
-  code) and a reply delimiter is required after the three digits, so `123456 could not be
-delivered` yields nothing rather than half an OTP. At most **one** status appears per line
-  whatever the depth of the cause chain, so a channel cannot place `424` beside `242` and have
-  them read back as a code. And it is the half of a bounce an operator acts on: `550` is a
-  refusal, `421` a transient outage, `5.1.1` an unknown mailbox, `5.2.2` a full one.
+  **What is kept, and why it is safe to keep.** The SMTP status — the three-digit code and nothing
+  else — rebuilt from the pattern's own capture rather than sliced out of the input, so nothing a
+  relay writes after it can ride along whatever it encoded it in. The class is checked (2xx–5xx)
+  and a reply delimiter is required after the digits, so `123456 could not be delivered` yields
+  nothing rather than half an OTP. At most **one** status appears per line whatever the depth of
+  the cause chain, so a channel cannot place `424` beside `242` and have them read back as a code.
+
+  RFC 3463's enhanced code (`5.1.1` an unknown mailbox, `5.2.2` a full one) was kept until the
+  arithmetic was done. `550 5.7.1` is an entirely ordinary reply, and stripped of its punctuation
+  it is `550571` — six digits, a valid OTP. One in a million sends would have published a live
+  credential through the one field this path allows, with no relay misbehaving and no substring
+  check able to see it, because the line holds `550 5.7.1` while the secret is `550571`. Three
+  digits cannot reproduce a credential this library issues: an OTP is four to eight digits and a
+  token is 64 hex characters. That is a proof rather than a probability, which is the standard
+  everything else here is held to.
+
+  What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
+  transient outage, `535` a credential problem at their relay.
 
   **The same mistake was in eight more handlers, found by hunting the family rather than the report.**
   `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three

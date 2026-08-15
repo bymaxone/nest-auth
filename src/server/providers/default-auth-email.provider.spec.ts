@@ -400,7 +400,7 @@ describe('DefaultAuthEmailProvider', () => {
     // which is the half an operator acts on — `550` is a refusal, `421` a transient outage.
     expect(logged).not.toContain(secret)
     expect(logged).not.toContain('rejected by policy')
-    expect(logged).toContain('550 5.7.1')
+    expect(logged).toContain('550')
   })
 
   // The measurement that decided the policy, kept as a test because it is the only evidence that
@@ -431,7 +431,7 @@ describe('DefaultAuthEmailProvider', () => {
       .join(' ')
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain(otp)
-    expect(logged).toContain('550 5.7.1')
+    expect(logged).toContain('550')
   })
 
   // The status is read from what SURVIVED redaction, not from the raw message. A message that
@@ -475,7 +475,7 @@ describe('DefaultAuthEmailProvider', () => {
       .join(' ')
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain('MTIzNDU2')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550 5.7.1')
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
   })
 
   // A reply code runs 2xx to 5xx, so a leading `1` says this is not a reply. Without the class
@@ -491,6 +491,26 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
+  // The reason the enhanced status code is NOT kept, kept as a test because the arithmetic is the
+  // whole argument. `550 5.7.1` is an entirely ordinary reply, and stripped of its punctuation it
+  // is `550571` — six digits, which is a valid OTP. No relay has to misbehave and no substring
+  // check can see it, because the line holds `550 5.7.1` while the secret is `550571`. One in a
+  // million sends would have published a live credential through the one field this path allows.
+  //
+  // Three digits cannot reproduce a credential this library issues: an OTP is four to eight
+  // digits, a token is 64 hex characters. That is a proof rather than a probability.
+  it('does not let a reply code reassemble into the credential', async () => {
+    const otp = '550571'
+    sink.send.mockRejectedValueOnce(new Error('550 5.7.1 rejected by policy'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // The attacker's own test: strip everything that is not a digit and see what is left.
+    expect(logged.replace(/[^0-9]/g, '')).not.toContain(otp)
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
+  })
+
   // The two ends of the reply grammar, which the separator rule has to admit as well as reject.
   // A bare `421` with nothing after it is a complete SMTP reply — a transient outage, and the one
   // an operator most wants to see — and an enhanced code can sit at the very end of the message
@@ -498,11 +518,7 @@ describe('DefaultAuthEmailProvider', () => {
   // as "the relay said nothing" for a relay that said the most useful thing it could.
   it.each([
     ['a bare status with nothing after it', '421', '421'],
-    ['an enhanced code at the end of the message', '550 5.7.1', '550 5.7.1'],
-    // RFC 3463 subject and detail are one to three digits each, and the multi-digit ones carry the
-    // most specific diagnosis a relay offers. Reading a single digit would silently truncate
-    // `5.7.123` to `5.7.1`, which is a DIFFERENT and wrong reason for the refusal.
-    ['a multi-digit enhanced subject and detail', '550 5.71.123 blocked', '550 5.71.123']
+    ['a reply whose text follows the code', '550 5.7.1 rejected', '550']
   ])('keeps %s', async (_why, message, expected) => {
     sink.send.mockRejectedValueOnce(new Error(message))
 
@@ -572,7 +588,7 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).toContain('550 5.7.1')
+    expect(logged).toContain('550')
     expect(logged).not.toContain('rejected by policy')
   })
 
@@ -669,7 +685,7 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendPasswordResetOtp('t', 'u@example.com', '333333')
 
     expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed sending passwordResetOtp: <error> <- <error>: 550 5.7.1'
+      'delivery failed sending passwordResetOtp: <error> <- <error>: 550'
     )
   })
 

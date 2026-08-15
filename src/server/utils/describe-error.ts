@@ -178,10 +178,10 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * and returned from the PATTERN's own capture rather than by slicing the input. Nothing a relay
  * writes after that can ride along, whatever it encoded it in.
  *
- * **The reply CLASS is checked too.** SMTP codes run 2xx to 5xx, so a leading `1` or `6` says this
- * is not a reply at all — and `123 456 could not be delivered` would otherwise publish `123`, the
+ * **The reply CLASS is checked.** SMTP codes run 2xx to 5xx, so a leading `1` or `6` says this is
+ * not a reply at all — and `123 456 could not be delivered` would otherwise publish `123`, the
  * first half of a six-digit code, on the path whose entire purpose is to publish nothing the
- * channel wrote. The enhanced code's class is bounded the same way: RFC 3463 defines 2, 4 and 5.
+ * channel wrote.
  *
  * **The separator after the three digits is a confidentiality boundary, not pedantry.** RFC 5321
  * replies are `code SP text` or `code - text`, so a fourth digit means this is not a reply at all
@@ -190,18 +190,26 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * searches from a million to a thousand. Requiring the separator rejects it structurally, with no
  * need to know which credential was in flight.
  *
- * It is also the half of a bounce an operator actually acts on — `550` is a refusal, `421` is a
- * transient outage, `535` is a credential problem on their side. Keeping it is what makes dropping
- * the rest affordable.
+ * **THREE digits, and the enhanced code is deliberately not kept.** RFC 3463's `X.Y.Z` is where a
+ * bounce's real reason lives — `5.1.1` an unknown mailbox, `5.2.2` a full one — and it was kept
+ * until the arithmetic was done: `550 5.7.1`, an entirely ordinary reply, is six digits once its
+ * punctuation is dropped, and `550571` is a valid OTP. One in a million sends would have published
+ * a live credential through the one field this path allows, with no relay misbehaving and no
+ * substring check able to see it, because the line holds `550 5.7.1` and the secret is `550571`.
+ * Three digits cannot reproduce a credential this library issues: an OTP is four to eight digits
+ * and a token is 64 hex characters. That is a proof rather than a probability, which is the
+ * standard everything else on this path is held to.
+ *
+ * What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
+ * transient outage, `535` a credential problem on their side.
  *
  * @param message - The channel's raw message.
- * @returns The status code, normalised, or `''` when the message does not begin with one.
+ * @returns The three-digit status code, or `''` when the message does not begin with one.
  */
 function statusOf(message: string): string {
-  const match = /^([2-5]\d{2})(?:[ -]+([245]\.\d{1,3}\.\d{1,3})(?=$|\s)|[ -]|$)/.exec(message)
+  const match = /^([2-5]\d{2})(?:[ -]|$)/.exec(message)
 
-  if (match === null) return ''
-  return match[2] === undefined ? `${match[1]}` : `${match[1]} ${match[2]}`
+  return match?.[1] ?? ''
 }
 
 /**
