@@ -298,15 +298,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   On nest-core below 1.5.0 nothing reports it: no error, no unmatched key, no failing build. The
   document just stops asking for credentials on the routes the library never knew about — the ones
   the backend owns. nest-core 1.5.0 warns on this shape and names the bare operations, which makes
-  it visible rather than impossible. Keep the default, and **derive it from `tokenDelivery` instead
-  of writing a literal**, which goes wrong in two different ways depending on the mode: under
-  `bearer` this contributor emits no cookie scheme at all, so a default naming
-  `bymaxAuthAccessCookie` references an undeclared scheme and nest-core's `assertSchemesDeclared`
-  throws the build; under `both` that scheme does exist, so nothing throws and the default is
-  merely incomplete, describing one of the two channels the routes accept. Loud in one mode, quiet
-  in the other. Per-operation beats document-level, so the default cannot reach this library's
-  operations. Verified on a real adoption: thirteen contributed operations render byte-identical
-  with and without it.
+  it visible rather than impossible. Keep the default, and **derive it instead of writing a
+  literal** — from the guard your own routes use, your `tokenDelivery`, and the controllers you
+  registered, all three. A literal goes wrong in two distinct ways: where the named scheme is not
+  declared, nest-core's `assertSchemesDeclared` throws the build; under `both`, where both access
+  schemes exist, nothing throws and the default is merely incomplete, describing one of the two
+  channels the routes accept. Loud in one place, quiet in the other. Two cases a delivery-only
+  recipe gets wrong: `schemesFor` gates both dashboard schemes on a dashboard controller being
+  registered, so a **platform-only deployment declares neither and throws under `cookie` too**;
+  and a route behind `JwtPlatformGuard` always wants `bymaxPlatformAccessBearer`, since
+  `extractPlatformAccessToken` reads the `Authorization` header whatever the mode says. A backend
+  guarding different routes with both families needs per-operation `security` for one of them.
+  Per-operation beats document-level, so the default cannot reach this library's operations.
+  Verified on a real adoption: thirteen contributed operations render byte-identical with and
+  without it.
 
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same

@@ -1261,28 +1261,49 @@ it, including cookie names you have since changed.
 > none. It names the operations and never throws. That makes the failure visible, not impossible —
 > a warning in a build log is still something a person has to read.
 >
-> Keep the default, and **derive it from your `tokenDelivery` rather than writing a literal**. The
-> derivation is not style. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`, which is
-> correct under `cookie`, and read what the other two modes do with it:
+> Keep the default, and **derive it rather than writing a literal**. What to derive it from takes
+> two questions, not one — a recipe phrased on `tokenDelivery` alone is wrong for two real
+> deployments, so answer both:
 >
-> | mode     | this contributor declares         | that literal default                                        |
-> | -------- | --------------------------------- | ----------------------------------------------------------- |
-> | `cookie` | the cookie scheme only            | correct                                                     |
-> | `both`   | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
-> | `bearer` | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
+> **1. Which guard protects your own routes?** That decides the credential family, and
+> `tokenDelivery` does not enter into it for one of them.
 >
-> **The two wrong outcomes are not the same failure, and the difference is the point.** Under
-> `bearer` the scheme does not exist, so nest-core's `assertSchemesDeclared` **throws** and the
-> document never builds — loud, immediate, impossible to ship. Under `both` the scheme does exist,
-> so nothing throws; the default is merely **incomplete**, telling a reader that your own routes
-> take a cookie when they equally accept a bearer token. That one is quiet, and it is the same
-> class of quiet as the bug this whole note is about. A literal written against a bearer-only
-> deployment inverts the table and fails under `cookie` for the same reasons.
+> - `JwtAuthGuard` (the dashboard family) → an access scheme, chosen by delivery. Go to question 2.
+> - `JwtPlatformGuard` → **`bymaxPlatformAccessBearer`, in every mode**. `extractPlatformAccessToken`
+>   reads the `Authorization` header whatever `tokenDelivery` says, and `schemesFor` declares that
+>   scheme with no delivery condition on it. A platform-guarded route wants it under `cookie`
+>   delivery exactly as much as under `bearer`.
+> - **Both, on different routes** → a single document default cannot state two different
+>   requirements. Give the minority family per-operation `security` (via your own decorator or
+>   nest-core's `operationSecurity`) and let the default cover the majority.
+>
+> **2. For the dashboard family — which schemes does this deployment actually declare?** Delivery
+> decides, and so does what you mounted. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`:
+>
+> | deployment                      | this contributor declares         | that literal default                                        |
+> | ------------------------------- | --------------------------------- | ----------------------------------------------------------- |
+> | dashboard mounted, `cookie`     | the cookie scheme only            | correct                                                     |
+> | dashboard mounted, `both`       | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
+> | dashboard mounted, `bearer`     | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
+> | **platform-only, any delivery** | **neither dashboard scheme**      | names an undeclared scheme — throws, `cookie` included      |
+>
+> That last row is the one a delivery-only recipe gets wrong: `schemesFor` gates both dashboard
+> schemes on a dashboard controller being registered at all, so a deployment mounting only the
+> platform surface declares neither — and `cookie` delivery, which the recipe would call the safe
+> case, throws just as hard as `bearer`.
+>
+> **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
+> does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —
+> loud, immediate, impossible to ship. Under `both` the scheme does exist, so nothing throws; the
+> default is merely **incomplete**, telling a reader that your own routes take a cookie when they
+> equally accept a bearer token. That one is quiet, and it is the same class of quiet as the bug
+> this whole note is about. A literal written against a bearer-only deployment inverts the table
+> and fails under `cookie` for the same reasons.
 >
 > So the advice that fixes a silently wrong document can introduce a loud broken one **or a second
-> quiet one**, depending on which mode you land in. Read the mode you configured and name the
-> schemes that mode actually defines — deriving from the same input the contributor reads is right
-> in all three, once, instead of correct in one and checked forever.
+> quiet one**, depending on where you land. Derive from the same inputs the contributor reads —
+> the guard your routes use, your delivery mode, and the controllers you registered — and the
+> answer is right everywhere at once, instead of correct in one configuration and checked forever.
 >
 > The default is what covers your routes, and it cannot disturb this library's: a per-operation
 > requirement outranks a document-level one, and every operation the contributor describes carries
