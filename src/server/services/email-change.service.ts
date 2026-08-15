@@ -366,13 +366,12 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
-      // `'drop'`, matching the provider's policy for this same message. The notification RENDERS
-      // the new address, so a relay that rejects by quoting the body puts it into this error —
-      // and quoting it RE-ENCODED puts it past redaction, which is the whole reason the provider
-      // stopped redacting this body and started dropping its text. This is the second line the
-      // same failure reaches under `onDeliveryError: 'rethrow'`; containing a value in one place
-      // and not the other contains it nowhere, and that applies to the policy as much as to the
-      // list of values.
+      // The status-only description, matching what the provider does for this same message. The
+      // notification RENDERS the new address, so a relay that rejects by quoting the body puts it
+      // into this error — and quoting it RE-ENCODED puts it past any redaction, which is why the
+      // rule is to publish none of the channel's text rather than to strip parts of it. This is
+      // the second line the same failure reaches under `onDeliveryError: 'rethrow'`, and
+      // containing a value in one place and not the other contains it nowhere.
       this.logger.error(
         `confirmChange: notification to the previous address failed: ` + describeChannelStatus(err)
       )

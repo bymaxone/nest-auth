@@ -1135,22 +1135,18 @@ export class AuthService {
       try {
         await provider.sendEmailVerificationOtp(tenantId, email, otp)
       } catch (err: unknown) {
-        // The error is NOT passed through: a relay that rejects by quoting the message body
-        // puts THIS otp into it, and the raw object would carry the quote to the log.
-        // Each field is sanitised at ITS OWN boundary, and the assembled line is CHECKED rather
-        // than redacted again. `userId` is the consumer's identifier, interpolated outside
-        // `describeError`'s reach — an id that happens to contain the generated code would put it
-        // back after the error text was cleaned. Redacting the assembled line instead would cover
-        // that, but then either redaction alone satisfies the assertion and NEITHER is proven: the
-        // mutation gate reported exactly that, one surviving mutant per argument, each masked by
-        // the other. `safeLogLine` closes the seam between the fields without that cost, because
-        // it fails when a per-field guard is removed instead of standing in for it.
+        // The error is NOT passed through, and nothing it carried reaches this line:
+        // `describeChannelStatus` publishes only a validated SMTP status, because a relay that
+        // rejects by quoting the message body puts THIS otp into the error, and a quote can arrive
+        // re-encoded where no substring match reaches it.
         //
-        // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as independent decisions that happened to agree, and the mutation gate
-        // showed the cost: the copy passed to `describeError` could be emptied with nothing
-        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
-        // Shared, the list is one decision, and removing a value from it fails.
+        // `withheld` is for the fields THIS line composes, not for the error. `userId` is the
+        // consumer's identifier, interpolated here rather than inside the description, and an id
+        // that happens to contain the generated code would put it back beside a description that
+        // never had it. `safeLogLine` then checks the assembled result, because two fields that
+        // each contain nothing can spell a value across the text between them — and it CHECKS
+        // rather than redacting again, so removing the per-field guard fails loudly instead of
+        // being silently covered by a second pass.
         const withheld = [otp, email]
         this.logger.error(
           safeLogLine(

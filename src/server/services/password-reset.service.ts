@@ -620,10 +620,10 @@ export class PasswordResetService {
       try {
         await send.call(provider, user.tenantId, user.email)
       } catch (err: unknown) {
-        // The error is NOT handed to the logger. This notice renders nothing secret, so the
-        // channel's own words are the diagnosis and are kept — but an SMTP rejection routinely
-        // NAMES the recipient it refused (`550 user@example.com: recipient rejected`), and no
-        // quoted body is needed for that, which makes it the likeliest exposure of the set. The
+        // The error is NOT handed to the logger, and nothing the channel wrote reaches this line:
+        // `describeChannelStatus` publishes only a validated status. An SMTP rejection routinely
+        // NAMES the recipient it refused (`550 user@example.com: recipient rejected`) with no
+        // quoted body involved, which makes it the likeliest exposure of the set — and the
         // provider strips the address from ITS line and rethrows the original under
         // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
         this.logger.error(
@@ -773,11 +773,8 @@ export class PasswordResetService {
         // while a 64-hex token can only appear inside an id derived FROM it, which no repository
         // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
         //
-        // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as independent decisions that happened to agree, and the mutation gate
-        // showed the cost: the copy passed to `describeError` could be emptied with nothing
-        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
-        // Shared, the list is one decision, and removing a value from it fails.
+        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
+        // wrote reaches the description at all, so there is nothing there to name.
         const withheld = [rawToken, email]
         this.logger.error(
           safeLogLine(
@@ -789,8 +786,8 @@ export class PasswordResetService {
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           // Only `userId` changes here, which is the finding. `delErr` comes from `redis.del` on a
           // key that is a SHA-256 of the token, so no quoted-body path can put a credential into
-          // it — and routing it through `describeError` would add an empty-secrets argument whose
-          // mutation no realistic test can kill, for a line that is not what this change is about.
+          // it, and Redis is not a channel that quotes what it rejected — this is the one error
+          // object in this file that reaches a logger, and it reaches it deliberately.
           this.logger.error(`pw_reset rollback delete failed for user ${logSafe(userId)}`, delErr)
         })
       }
@@ -837,11 +834,8 @@ export class PasswordResetService {
         // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
         // otp because a reset code is short enough for an identifier to contain one.
         //
-        // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as independent decisions that happened to agree, and the mutation gate
-        // showed the cost: the copy passed to `describeError` could be emptied with nothing
-        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
-        // Shared, the list is one decision, and removing a value from it fails.
+        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
+        // wrote reaches the description at all, so there is nothing there to name.
         const withheld = [otp, email]
         this.logger.error(
           safeLogLine(

@@ -455,7 +455,7 @@ describe('DefaultAuthEmailProvider', () => {
   // quoted body and does NOT exclude an encoded one: `MTIzNDU2` is the base64 of the OTP `123456`
   // — eight characters, alphanumeric, leading letter, a valid identifier by any such rule, and
   // reversible by anyone reading the log. No shape test can tell `SmtpRejection` from a credential
-  // in transfer encoding, which is the exact threat the drop policy exists for, so on a credential
+  // in transfer encoding, which is the exact threat this rule exists for, so on any credential
   // path no name comes through at all.
   it('does not publish a name that is the credential in transfer encoding', async () => {
     const otp = '123456'
@@ -516,13 +516,15 @@ describe('DefaultAuthEmailProvider', () => {
   // The error's NAME is the other field the channel controls, and dropping the message while
   // letting the name through would have moved the leak one field over rather than closing it — an
   // error class built around a relay reply (`name = `SmtpRejection: ${response}``) is a normal
-  // thing for a mail client to do. So under the drop policy the name is kept only when it LOOKS
-  // like a name, matched whole: an identifier from its first character to its last.
+  // thing for a mail client to do.
   //
-  // The name here is bracketed by identifier text on both sides on purpose. Checking only where a
-  // name starts would admit it for its `SmtpError` head, and checking only where it ends would
-  // admit it for its `RelayTail`; either way the relay's own words ride into the log between them.
-  // Anchoring one end is not anchoring.
+  // Validating the name by SHAPE was the first answer and is the reason this test is written
+  // around one: `SmtpError 550 rejected by policy RelayTail` would pass a check anchored at only
+  // one end, admitted for its head or for its tail, with the relay's own words riding in between.
+  // It fails a whole-string identifier check — and that check was not enough either, because an
+  // encoded credential IS a valid identifier, which is what took the name out of the line
+  // entirely. The assertion holds for the stronger rule and would have caught the weaker one's
+  // gap.
   it('publishes no part of a name the channel built out of its reply', async () => {
     const named = new Error('channel down')
     named.name = 'SmtpError 550 rejected by policy RelayTail'

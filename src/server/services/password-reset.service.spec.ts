@@ -651,7 +651,7 @@ describe('PasswordResetService', () => {
     it('withholds the line when the identifier and the error compose the address', async () => {
       // The composed value straddles the template's own `': '` separator: the identifier ends
       // one field and the description begins the next, and neither field contains the value.
-      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
       // straddling value has to be built from.
       const named = new Error('channel down')
 
@@ -2161,7 +2161,7 @@ describe('PasswordResetService', () => {
       // makes this reachable rather than theoretical.
       // The composed value straddles the template's own `': '` separator: the identifier ends
       // one field and the description begins the next, and neither field contains the value.
-      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
       // straddling value has to be built from.
       const named = new Error('channel down')
 
@@ -2276,8 +2276,8 @@ describe('PasswordResetService', () => {
         status: 'active',
         tenantId: 'tenant1'
       })
-      // The error's NAME carries the code too — the one channel-controlled field the drop policy
-      // still admits, and the reason `describeError` is given the secrets on this path.
+      // The error's NAME carries the code too, and the name is as much the channel's field to fill
+      // as the message is — which is why neither reaches the line.
       const named = new Error('550 rejected by policy: "Your code is 424242."')
       named.name = 'E424242'
       mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(named)
@@ -2286,14 +2286,11 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
-      // The `secrets` argument to `describeError` is what makes the error's NAME safe, and the name
-      // is the one channel-controlled field the drop policy still lets through — validated by
-      // shape, so a hex token fits it exactly. What this asserts is not the absence of the code
-      // (the outer `safeLogLine` would catch that anyway) but that the ORDINARY line survives: a
-      // call that named no secret leaks the code into the name, `safeLogLine` withholds the whole
-      // record to stop it, and the operator loses the diagnosis to a guard that should not have
-      // had to fire. Measured — without the argument this mutates cleanly and every other
-      // assertion here still passes.
+      // The error's NAME carries the code here, and no part of it reaches the line: the
+      // description is a validated status and nothing else. The assertion is not merely that the
+      // code is absent — it is that the ORDINARY line survives, because a build that let the name
+      // through would have `safeLogLine` withhold the whole record to stop it, and the operator
+      // would lose the diagnosis to a guard that should never have had to fire.
       const logged = errorSpy.mock.calls[0]?.[0] as string
       expect(logged).not.toContain('424242')
       // On a credential path the relay's prose does not reach the line at all — only the status

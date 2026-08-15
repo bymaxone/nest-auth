@@ -2494,7 +2494,7 @@ describe('AuthService', () => {
     it('withholds the line when the identifier and the error compose the address', async () => {
       // The composed value straddles the template's own `': '` separator: the identifier ends
       // one field and the description begins the next, and neither field contains the value.
-      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
       // straddling value has to be built from.
       const named = new Error('channel down')
 
@@ -2603,8 +2603,8 @@ describe('AuthService', () => {
       mockOtpService.generate.mockReturnValue('654321')
       mockOtpService.store.mockResolvedValue(undefined)
       // The error's NAME carries the code too. A mail client that names its error class after the
-      // response is ordinary, and under the drop policy the name is the only channel-controlled
-      // field still allowed through — so it has to be redacted like the body was.
+      // response is ordinary, and the name is as much the channel's field to fill as the message
+      // is — which is why neither reaches the line.
       const named = new Error('550 rejected by policy: "Your code is 654321."')
       named.name = 'E654321'
       mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
@@ -2612,14 +2612,11 @@ describe('AuthService', () => {
       await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
       await new Promise((r) => setImmediate(r))
 
-      // The `secrets` argument to `describeError` is what makes the error's NAME safe, and the name
-      // is the one channel-controlled field the drop policy still lets through — validated by
-      // shape, so a hex token fits it exactly. What this asserts is not the absence of the code
-      // (the outer `safeLogLine` would catch that anyway) but that the ORDINARY line survives: a
-      // call that named no secret leaks the code into the name, `safeLogLine` withholds the whole
-      // record to stop it, and the operator loses the diagnosis to a guard that should not have
-      // had to fire. Measured — without the argument this mutates cleanly and every other
-      // assertion here still passes.
+      // The error's NAME carries the code here, and no part of it reaches the line: the
+      // description is a validated status and nothing else. The assertion is not merely that the
+      // code is absent — it is that the ORDINARY line survives, because a build that let the name
+      // through would have `safeLogLine` withhold the whole record to stop it, and the operator
+      // would lose the diagnosis to a guard that should never have had to fire.
       const logged = loggerSpy.mock.calls[0]?.[0] as string
       expect(logged).not.toContain('654321')
       // On a credential path the relay's prose does not reach the line at all — only the status

@@ -1796,9 +1796,10 @@ export class MfaService {
    *
    * **And the address does not reach the log.** The filter logged that error raw, and an SMTP
    * rejection routinely NAMES the recipient it refused (`550 user@example.com: recipient
-   * rejected`) — no quoted body required, which makes it the likeliest exposure of the set. The
-   * body carries nothing secret, so the channel's own words are kept and only the named values
-   * are stripped; `safeLogLine` covers the seam the template opens between them.
+   * rejected`) — no quoted body required, which makes it the likeliest exposure of the set.
+   * `describeChannelStatus` publishes only a validated status, so nothing the channel wrote comes
+   * through at all. `withheld` covers the fields this line composes rather than the error, and
+   * `safeLogLine` checks the seam the template opens between them.
    *
    * @param origin - The calling flow, for the log line.
    * @param userId - Whose account changed.
