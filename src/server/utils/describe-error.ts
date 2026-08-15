@@ -211,10 +211,15 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * predict, and the cheapest guarantee is the one with nothing to carve out. A structured field
  * would answer the first cost, and this line is prose.
  *
- * The malicious-relay case is real and does not change the balance: the enhanced code's grammar
- * carries seven digits of the sender's choosing (`550 4.812.345`), so a relay that wanted a covert
- * channel into the log has one. It gains nothing by it — it received the body, so it already holds
- * every code it was asked to send.
+ * The malicious-relay case is real and does not change the balance, though the reason is narrower
+ * than it first looks. The enhanced code's grammar carries seven digits of the sender's choosing
+ * (`550 4.812.345`), so a relay wanting a covert channel into the log has one. It is non-additive
+ * **where the relay has its own egress**, which is nearly always: a relay that can reach the
+ * network already holds every code it was asked to send. Where it cannot — an on-premise relay
+ * hardened with no outbound path, whose only route off the box is the log pipeline — the channel
+ * converts "holds the plaintext" into "can transmit it", which is a new capability. Still not an
+ * argument here: a compromised relay in that position has wider channels than seven digits per
+ * failure, starting with which sends it chooses to fail.
  *
  * What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
  * transient outage, `535` a credential problem on their side.
