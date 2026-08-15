@@ -9,6 +9,17 @@
 import { redactSecrets } from './redact-secrets'
 
 describe('redactSecrets', () => {
+  // The early return is not only an optimisation, so it gets an assertion rather than being left
+  // to the other cases to imply. Callers that hold no secret are ordinary — a status-only error
+  // description passes none — and the scan walks remote-controlled text one character at a time
+  // inside a failure handler, where a relay is free to reject with megabytes.
+  it('returns the input untouched when there is nothing to look for', () => {
+    const line = '550 5.7.1 rejected by policy'
+
+    expect(redactSecrets(line, [])).toBe(line)
+    expect(redactSecrets(line, ['', ''])).toBe(line)
+  })
+
   // The measured case, reduced: a 550 that quotes the body containing the code this library
   // issued. If this line ever prints the digits again, a credential is in the log pipeline.
   it('removes a code the relay quoted back inside a rejection', () => {

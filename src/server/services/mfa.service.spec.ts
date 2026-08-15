@@ -2921,6 +2921,51 @@ describe('MfaService', () => {
       )
     })
 
+    // A provider that throws SYNCHRONOUSLY rather than rejecting, which is the whole reason the
+    // send runs inside an async IIFE. `Promise.resolve(send(...))` evaluates the call before the
+    // promise wraps it, so the throw would skip the handler entirely and fail an MFA transition
+    // that already completed — and the three rejection tests stay green through that regression,
+    // which is what makes this one load-bearing rather than redundant. A provider is consumer code
+    // and may do either; the outcome must not depend on which.
+    it('completes the enable when the notice throws synchronously', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaEnabledNotification.mockImplementationOnce(() => {
+        throw new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      })
+
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      // One argument, not two: the error object never reaches the logger.
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      expect(logged).toContain('<redacted>')
+      errorSpy.mockRestore()
+    })
+
     // The same two properties the enable path asserts, at the site that matters as much: the
     // factor is already gone, so answering the caller with an error for a notice that bounced
     // would report a removal that happened as one that did not. And a bounce NAMES the recipient.

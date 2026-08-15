@@ -379,6 +379,29 @@ describe('PasswordResetService', () => {
     // already written, nor change the answer. That makes the log line the only trace of it, and
     // the notification is the control that turns "the victim finds out days later, at a failed
     // login" into "the victim finds out now". Losing it silently loses that.
+    // A provider that throws SYNCHRONOUSLY rather than rejecting, which is why the send runs inside
+    // an async IIFE. `Promise.resolve(send.call(...))` evaluates the call before the promise wraps
+    // it, so the throw would skip the handler and fail a password change that already completed —
+    // and the rejection test below stays green through that regression, which is what makes this
+    // one load-bearing. A provider is consumer code and may do either.
+    it('records a synchronous throw without failing the change', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockEmailProvider.sendPasswordChangedNotification.mockImplementationOnce(() => {
+        throw new Error('550 user@example.com: recipient rejected — smtp down')
+      })
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      await new Promise((resolve) => setImmediate(resolve))
+
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls[0]?.[0] as string
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
+      expect(logged).not.toContain('user@example.com')
+      expect(logged).toContain('<redacted>')
+      errorSpy.mockRestore()
+    })
+
     it('records a failed notification without failing the change', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       // The likeliest shape, and it needs no quoted body: an SMTP rejection NAMES the recipient it

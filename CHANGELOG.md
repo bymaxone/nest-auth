@@ -182,8 +182,8 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   parse that log line, it changed from `delivery failed for "<subject>"` with the error attached
   as a second argument to a single string. On the notices that carry nothing secret that reads
   `delivery failed for "<subject>": <Name>: <message>`, with `<-` between cause links; on the
-  five credential-bearing sends the channel's text is absent and it reads `<Name>: <status>`, with
-  `<Name>` replaced by `<error>` when the channel did not supply an identifier-shaped one. And if you run `onDeliveryError: 'rethrow'`, audit what your
+  paths whose body renders something withheld the channel's text is absent entirely and it reads
+  `<error>` or `<error>: <status>` — the name is replaced regardless of what the channel supplied. And if you run `onDeliveryError: 'rethrow'`, audit what your
   handler does with the error, per the paragraph above.
 
   Not exploitable by an unauthenticated caller on its own — it requires a relay configured to

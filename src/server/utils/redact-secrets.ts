@@ -62,6 +62,18 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // `filter` already returned a new array; `secrets` itself is never reordered under the caller.
   const present = secrets.filter((secret) => secret.length > 0).sort((a, b) => b.length - a.length)
 
+  // Nothing to look for means nothing to do, and returning the input is not merely an
+  // optimisation. The scan below walks the string one character at a time, building the output by
+  // concatenation — linear work over text a REMOTE controls, run inside a failure handler, where a
+  // relay is free to reject with megabytes. Callers that hold no secret are ordinary (a status-only
+  // description passes none at all), so this is the common path rather than a corner of it.
+  // Stryker disable next-line ConditionalExpression: the FALSE mutant — never taking this return —
+  // produces the identical string, because the scan below over an empty list copies the input
+  // character for character. No behavioural test can separate them; what changes is the work done,
+  // which is the whole point. The TRUE mutant is not equivalent and is not disabled: taking the
+  // return unconditionally would publish every secret, and the redaction tests kill it.
+  if (present.length === 0) return value
+
   // The marker is written INTO the output, so it is subject to the same contract as everything
   // else in it: if a secret occurs inside `<redacted>` — `cted` does — then emitting the marker
   // publishes that secret, and the function fails the one promise it makes. Deleting instead is

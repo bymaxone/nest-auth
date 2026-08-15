@@ -85,8 +85,8 @@ function isError(value: unknown): value is Error {
  *
  * @param error - The link being described.
  * @param secrets - Credentials that must not survive into the line.
- * @param channelText - `'drop'` reduces BOTH channel-controlled fields to a validated shape: the
- *   message to its status code (see {@link statusOf}), the name to an identifier (see
+ * @param channelText - `'drop'` publishes nothing the channel authored: the message is reduced to
+ *   a validated status code (see {@link statusOf}) and the name is replaced outright (see
  *   {@link nameOf}).
  * @returns One redacted, control-character-free line. NOT length-bounded: the cap is applied
  *   once to the finished description, because capping each part would let a chain of parts
@@ -100,6 +100,10 @@ function describeOneLink(
   try {
     const name = nameOf(error, secrets, channelText)
 
+    // Unconditional, with no branch on the policy: the drop path passes no secrets, and
+    // `redactSecrets` returns its input untouched when there is nothing to look for, so the walk
+    // over remote-controlled text never happens there. Branching here instead would have made the
+    // guard conditional on a policy rather than on whether anything needs guarding.
     const raw = redactSecrets(String(error.message), secrets)
 
     // WITH a credential in flight, the channel's free text does not reach the line at all — only
@@ -159,6 +163,11 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * and returned from the PATTERN's own capture rather than by slicing the input. Nothing a relay
  * writes after that can ride along, whatever it encoded it in.
  *
+ * **The reply CLASS is checked too.** SMTP codes run 2xx to 5xx, so a leading `1` or `6` says this
+ * is not a reply at all — and `123 456 could not be delivered` would otherwise publish `123`, the
+ * first half of a six-digit code, on the path whose entire purpose is to publish nothing the
+ * channel wrote. The enhanced code's class is bounded the same way: RFC 3463 defines 2, 4 and 5.
+ *
  * **The separator after the three digits is a confidentiality boundary, not pedantry.** RFC 5321
  * replies are `code SP text` or `code - text`, so a fourth digit means this is not a reply at all
  * — and `123456 could not be delivered`, which a custom provider is free to produce, would
@@ -174,7 +183,7 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * @returns The status code, normalised, or `''` when the message does not begin with one.
  */
 function statusOf(message: string): string {
-  const match = /^(\d{3})(?:[ -]+(\d\.\d\.\d)(?=$|\s)|[ -]|$)/.exec(message)
+  const match = /^([2-5]\d{2})(?:[ -]+([245]\.\d{1,3}\.\d{1,3})(?=$|\s)|[ -]|$)/.exec(message)
 
   if (match === null) return ''
   return match[2] === undefined ? `${match[1]}` : `${match[1]} ${match[2]}`

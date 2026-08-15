@@ -476,6 +476,19 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed for "Your password reset code": <error>: 550 5.7.1')
   })
 
+  // A reply code runs 2xx to 5xx, so a leading `1` says this is not a reply. Without the class
+  // check `123 456 could not be delivered` publishes `123` — the first half of a six-digit code —
+  // on the path whose entire purpose is to publish nothing the channel wrote.
+  it('does not accept a three-digit prefix that is not a reply class', async () => {
+    sink.send.mockRejectedValueOnce(new Error('123 456 could not be delivered'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '123456')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('123')
+    expect(logged).toBe('delivery failed for "Your password reset code": <error>')
+  })
+
   // The two ends of the reply grammar, which the separator rule has to admit as well as reject.
   // A bare `421` with nothing after it is a complete SMTP reply — a transient outage, and the one
   // an operator most wants to see — and an enhanced code can sit at the very end of the message
@@ -483,7 +496,11 @@ describe('DefaultAuthEmailProvider', () => {
   // as "the relay said nothing" for a relay that said the most useful thing it could.
   it.each([
     ['a bare status with nothing after it', '421', '421'],
-    ['an enhanced code at the end of the message', '550 5.7.1', '550 5.7.1']
+    ['an enhanced code at the end of the message', '550 5.7.1', '550 5.7.1'],
+    // RFC 3463 subject and detail are one to three digits each, and the multi-digit ones carry the
+    // most specific diagnosis a relay offers. Reading a single digit would silently truncate
+    // `5.7.123` to `5.7.1`, which is a DIFFERENT and wrong reason for the refusal.
+    ['a multi-digit enhanced subject and detail', '550 5.71.123 blocked', '550 5.71.123']
   ])('keeps %s', async (_why, message, expected) => {
     sink.send.mockRejectedValueOnce(new Error(message))
 
