@@ -424,7 +424,9 @@ describe('EmailChangeService', () => {
     // own line, but under `onDeliveryError: 'rethrow'` the original error arrives here and this
     // catch logs it too — and this notification renders the new address into its body, so a relay
     // that rejects by quoting it puts the address into this entry. Containing a value in one place
-    // and not the other contains it nowhere.
+    // and not the other contains it nowhere, and that applies to the POLICY as much as to the list
+    // of values: this line drops the channel's text like the provider's does, because a body
+    // quoted back re-encoded walks past redaction on this path exactly as it does on that one.
     it('keeps the addresses out of the notification-failure log', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       try {
@@ -437,7 +439,8 @@ describe('EmailChangeService', () => {
         const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
         expect(logged).toContain('notification to the previous address failed')
         expect(logged).not.toContain(NEW_EMAIL)
-        expect(logged).toContain('<redacted>')
+        expect(logged).not.toContain('rejected')
+        expect(logged).toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }

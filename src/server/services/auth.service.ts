@@ -30,7 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -1156,7 +1156,7 @@ export class AuthService {
         this.logger.error(
           safeLogLine(
             `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
-              describeError(err, withheld, 'drop'),
+              describeChannelStatus(err),
             withheld
           )
         )

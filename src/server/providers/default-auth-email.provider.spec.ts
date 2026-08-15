@@ -324,7 +324,7 @@ describe('DefaultAuthEmailProvider', () => {
     )
     // A credential path, so the channel's text does not reach the line — `channel down` carries
     // no status code, leaving the error's name alone.
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Reset your password": Error')
+    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Reset your password": <error>')
   })
 
   // The rethrown error is the ORIGINAL, unlaundered. Deliberate, and asserted so a later "let us
@@ -445,7 +445,53 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed for "Your password reset code": Error')
+    expect(logged).toBe('delivery failed for "Your password reset code": <error>')
+  })
+
+  // The measurement that killed the shape check, kept as a test because the shape check LOOKED
+  // sufficient and was not. Validating the name as an identifier bounded in length excludes a
+  // quoted body and does NOT exclude an encoded one: `MTIzNDU2` is the base64 of the OTP `123456`
+  // — eight characters, alphanumeric, leading letter, a valid identifier by any such rule, and
+  // reversible by anyone reading the log. No shape test can tell `SmtpRejection` from a credential
+  // in transfer encoding, which is the exact threat the drop policy exists for, so on a credential
+  // path no name comes through at all.
+  it('does not publish a name that is the credential in transfer encoding', async () => {
+    const otp = '123456'
+    const named = new Error('550 5.7.1 rejected')
+    named.name = Buffer.from(otp).toString('base64')
+    sink.send.mockRejectedValueOnce(named)
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // The attacker's own test: decode whatever survived and look for the code in the plaintext.
+    // Asserting the absence of the digits passes while the leak is live, because encoded they are
+    // not there to find.
+    const decoded = logged
+      .split(/[^A-Za-z0-9+/=]+/)
+      .map((chunk) => Buffer.from(chunk, 'base64').toString('utf8'))
+      .join(' ')
+    expect(decoded).not.toContain(otp)
+    expect(logged).not.toContain('MTIzNDU2')
+    expect(logged).toBe('delivery failed for "Your password reset code": <error>: 550 5.7.1')
+  })
+
+  // The two ends of the reply grammar, which the separator rule has to admit as well as reject.
+  // A bare `421` with nothing after it is a complete SMTP reply — a transient outage, and the one
+  // an operator most wants to see — and an enhanced code can sit at the very end of the message
+  // with no trailing text. Requiring something after either would silently drop both, which reads
+  // as "the relay said nothing" for a relay that said the most useful thing it could.
+  it.each([
+    ['a bare status with nothing after it', '421', '421'],
+    ['an enhanced code at the end of the message', '550 5.7.1', '550 5.7.1']
+  ])('keeps %s', async (_why, message, expected) => {
+    sink.send.mockRejectedValueOnce(new Error(message))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '606060')
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `delivery failed for "Your password reset code": <error>: ${expected}`
+    )
   })
 
   // The error's NAME is the other field the channel controls, and dropping the message while
@@ -508,7 +554,7 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed for "Your password reset code": Error')
+    expect(logged).toBe('delivery failed for "Your password reset code": <error>')
   })
 
   // An enhanced status code is separated from the basic one by whitespace whose width is the
@@ -542,7 +588,7 @@ describe('DefaultAuthEmailProvider', () => {
     // from "the relay said" — and on a credential path each link contributes only its name and a
     // parsed status, never the relay's prose.
     expect(logged).not.toContain('550123')
-    expect(logged).toBe('delivery failed for "Your password reset code": Error <- Error: 550')
+    expect(logged).toBe('delivery failed for "Your password reset code": <error> <- <error>: 550')
   })
 
   // Text that came back from a remote relay is untrusted input. A CR/LF in it would close the log
@@ -921,7 +967,7 @@ describe('DefaultAuthEmailProvider', () => {
   // and at most a status — but it does not close it, which is the point of checking the composed
   // line rather than trusting the parts. A device string is arbitrary consumer text.
   it('withholds a line whose template rebuilt a value across the seam', async () => {
-    const device = 'foo": Error'
+    const device = 'foo": <error>'
     const messages = { newSessionAlert: () => ({ subject: 'foo', text: 'body' }) }
     const custom = new DefaultAuthEmailProvider(sink, { messages })
     sink.send.mockRejectedValueOnce(new Error('bar'))
@@ -987,12 +1033,17 @@ describe('DefaultAuthEmailProvider', () => {
   // A channel can throw an error with no message at all — `new Error()`, or one whose entire
   // message was control characters and got replaced. The name then stands alone rather than
   // trailing a colon with nothing after it, so the line still reads as a diagnosis.
+  //
+  // On a credential-FREE notice, because that is where a name reaches the line at all: the drop
+  // policy replaces it with a stand-in, which would satisfy this for the wrong reason.
   it('reports the error name alone when the message is empty', async () => {
     sink.send.mockRejectedValueOnce(new Error())
 
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '444444')
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
 
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Your password reset code": Error')
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Two-factor authentication is on": Error'
+    )
   })
 
   // A cycle in the cause chain must not turn one failed send into an unbounded record. The depth

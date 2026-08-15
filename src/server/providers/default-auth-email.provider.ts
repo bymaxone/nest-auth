@@ -45,7 +45,7 @@ import type {
   InviteData,
   SessionInfo
 } from '../interfaces/email-provider.interface'
-import { describeError, type ChannelTextPolicy } from '../utils/describe-error'
+import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { redactSecrets } from '../utils/redact-secrets'
 import { safeLogLine } from '../utils/safe-log-line'
@@ -172,6 +172,19 @@ export interface DefaultAuthEmailProviderOptions {
  * three separate chances for the array to be something other than empty, each needing its own
  * assertion to prove it was not.
  */
+/**
+ * Whether a message's own body rendered something that must not reach a log.
+ *
+ * `'drop'` selects {@link describeChannelStatus}, which publishes nothing the channel authored;
+ * `'redact'` selects {@link describeError}, which keeps the relay's explanation with the named
+ * values stripped. The standard is what the BODY renders, not how damaging it would be — the
+ * new-session alert states an IP, which is not a credential and is still personal data.
+ *
+ * Local to this provider: the exported API is two functions with two guarantees, not one function
+ * with a mode, so nothing outside here needs to name the choice.
+ */
+type ChannelTextPolicy = 'redact' | 'drop'
+
 const NO_SECRETS: readonly string[] = []
 
 const CODE_VALIDITY_TEXT = 'It expires shortly, so use it soon.'
@@ -562,7 +575,11 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
 
       this.logger.error(
         safeLogLine(
-          `delivery failed for "${loggedSubject}": ${describeError(error, withheldValues, channelText)}`,
+          `delivery failed for "${loggedSubject}": ${
+            channelText === 'drop'
+              ? describeChannelStatus(error)
+              : describeError(error, withheldValues)
+          }`,
           withheldValues
         )
       )

@@ -31,6 +31,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   run measured on a real relay, where the code captured from the SMTP `DATA` appeared verbatim in
   the consumer's error entry under the same request id.
 
+  **Two exported helpers, not one with a mode.** `describeChannelStatus(error)` for any path whose
+  body rendered something to withhold — it takes no secrets, and that is the guarantee rather than
+  an omission, because nothing the channel authored comes through. `describeError(error, [values])`
+  where the body rendered nothing withheld, keeping the relay's explanation with the named values
+  stripped. Which function you call IS the decision; there is no permissive default to inherit by
+  forgetting one.
+
   **The fix does not depend on the channel behaving.** The error object never reaches the logger.
   A delivery failure now logs the subject plus a description built from an allowlist of the
   error's `name` and `message` — never its `stack`, never its own properties, which is where a
@@ -61,14 +68,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **The error's `name` is the channel's field too, and closing only `message` would have moved the
   leak one field over.** An error class built around a relay reply — `name = \`SmtpRejection:
   ${response}\``— is a normal thing for a mail client to do, and every argument above applies to
-it unchanged. So on a credential path the name is kept only when it looks like a name: an
-identifier, matched from its first character to its last, bounded to 48. The bound is a specific
-number rather than a generous one, because it makes the guarantee provable — no credential this
-library issues can occupy a valid name, since every token is 64 hex characters and every OTP is
-digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTimeoutError` is
-  24 characters. Where nothing secret was in flight, both fields pass through as before — the
-  relay's own words are the diagnosis there, and constraining them would cost an operator the
-  reason for the failure to buy nothing.
+  it unchanged. So on a credential path the name is not published at all.
+
+  Validating its SHAPE was tried first and is not enough — an identifier bounded in length excludes
+  a quoted body and does **not** exclude an encoded one. `MTIzNDU2` is the base64 of the OTP
+  `123456`: eight characters, alphanumeric, leading letter, a valid identifier by any such rule,
+  and reversible by anyone reading the log. No shape test can tell `SmtpRejection` from a
+  credential in transfer encoding, which is the exact threat this policy exists for. What is lost
+  is the error's class; what is kept is the status, and a link with no status still reads as
+  `<error>`, which distinguishes a provider that threw from a relay that refused. Where nothing
+  secret was in flight both fields pass through as before — the relay's own words are the diagnosis
+  there, and constraining them would cost an operator the reason for the failure to buy nothing.
 
   **The same mistake was in four more places, found by hunting the family rather than the report.**
   `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
@@ -94,7 +104,7 @@ digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTim
   (`cted` is inside `<redacted>`). Found by the `@bymax-one/nest-notification` seat, which carried the
   identical defect and measured this case.
 
-  **`describeError` is exported alongside `redactSecrets`**, because redaction alone is not the
+  **`describeChannelStatus` and `describeError` are exported alongside `redactSecrets`**, because redaction alone is not the
   whole guard: the helper also reads only `name` and `message` (never `stack`, never the
   transport's own fields), caps the length so a re-encoded body cannot flood a log, strips control
   characters so a relay cannot forge extra records, walks the `cause` chain, and never throws

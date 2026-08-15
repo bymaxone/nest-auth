@@ -2492,8 +2492,11 @@ describe('AuthService', () => {
     // so a withheld value spanning both is rebuilt from two fields that each contain nothing.
     // Reachable because the description opens with the error's NAME, which a custom class controls.
     it('withholds the line when the identifier and the error compose the address', async () => {
+      // The composed value straddles the template's own `': '` separator: the identifier ends
+      // one field and the description begins the next, and neither field contains the value.
+      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // straddling value has to be built from.
       const named = new Error('channel down')
-      Object.defineProperty(named, 'name', { value: 'x' })
 
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockRedis.setnx.mockResolvedValue(true)
@@ -2502,11 +2505,11 @@ describe('AuthService', () => {
       mockOtpService.store.mockResolvedValue(undefined)
       mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
 
-      await service.resendVerificationEmail('tenant-1', 'u1: x', mockReq)
+      await service.resendVerificationEmail('tenant-1', 'u1: <error>', mockReq)
       await new Promise((r) => setImmediate(r))
 
       const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('u1: x')
+      expect(logged).not.toContain('u1: <error>')
       expect(logged).toContain('withheld')
       loggerSpy.mockRestore()
     })

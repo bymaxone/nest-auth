@@ -288,12 +288,13 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > that error, or attaching it as a `cause` to one you log, puts a working credential into your log
 > pipeline in clear text until it expires. Measured on a real relay, not hypothesised.
 >
-> This is your half: the library cannot reach inside your provider implementation. **`describeError`
-> is exported for it** — the same helper the bundled provider uses on its own log line, so you get
-> the whole treatment rather than just redaction:
+> This is your half: the library cannot reach inside your provider implementation.
+> **`describeChannelStatus` and `describeError` are exported for it** — the same two helpers the
+> bundled provider uses on its own log line, so you get the whole treatment rather than just
+> redaction:
 >
 > ```typescript
-> import { describeError } from '@bymax-one/nest-auth'
+> import { describeChannelStatus } from '@bymax-one/nest-auth'
 >
 > async sendPasswordResetOtp(tenantId: string, email: string, otp: string): Promise<void> {
 >   try {
@@ -301,38 +302,41 @@ Email delivery is fully delegated to the consumer — the library never imports 
 >   } catch (error: unknown) {
 >     // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
 >     // into something that logs — both carry the quoted body.
->     this.logger.error(`reset OTP delivery failed: ${describeError(error, [otp], 'drop')}`)
+>     this.logger.error(`reset OTP delivery failed: ${describeChannelStatus(error)}`)
 >     throw error
 >   }
 > }
 > ```
 >
-> The third argument is the one that matters, and it has no default on purpose — the permissive
-> value has to be chosen, never inherited by a call site that forgot it.
+> Two functions, not one with a mode: which one you call IS the decision, and there is no
+> permissive default to inherit by forgetting.
 >
-> **`'drop'` wherever the body rendered something you would withhold.** Redaction alone does not close this, and
-> neither does a length cap. A relay may quote the body it rejected in transfer encoding rather
+> **`describeChannelStatus(error)` wherever the body rendered something you would withhold.** It
+> takes no secrets, and that is the guarantee rather than an omission — nothing the channel wrote
+> is published, so there is nothing to name. Redaction alone does not close this, and neither does
+> a length cap. A relay may quote the body it rejected in transfer encoding rather
 > than verbatim; base64 is the ordinary case and defeats both at once — substring matching finds
 > nothing because the credential's characters are not in the line, and the cap does not help
 > because the encoding runs from the body's first byte, so the code is in the first sentence.
 > Measured: a reset-code body is 96 base64 characters end to end, and the first 200 characters of
-> the line decode straight back to the OTP. Under `'drop'` the channel's free text does not reach
-> the line at all. What survives is the SMTP status — rebuilt from a pattern's own capture, not
-> sliced out of the input — plus the error's name when it looks like a name, and that is the half
-> of a bounce you act on anyway: `550` is a refusal, `421` a transient outage, `535` a credential
-> problem at your relay.
+> the line decode straight back to the OTP. Under `'drop'` NOTHING the channel wrote reaches the
+> line — not the message, and not the `name` either, which is as much the channel's field and
+> which validating by shape does not save: `MTIzNDU2` is the base64 of the OTP `123456`, a valid
+> identifier by any such rule. What survives is the SMTP status, rebuilt from a pattern's own
+> capture rather than sliced out of the input, and that is the half of a bounce you act on anyway:
+> `550` is a refusal, `421` a transient outage, `535` a credential problem at your relay.
 >
-> **`'redact'` only where the body renders nothing you would withhold.** There the relay's own
-> words are the diagnosis and there is no encoded body to see through. Note the standard is what
-> the message renders, not how damaging it would be: the bundled provider drops the text on its
-> new-session alert too, because that body states an IP and a device, and an IP is personal data
-> even though it is not a credential.
+> **`describeError(error, [values])` only where the body renders nothing you would withhold.**
+> There the relay's own words are the diagnosis, there is no encoded body to see through, and the
+> values worth naming — a recipient address, say — appear the way you wrote them, where redaction
+> reaches them. Note the standard is what the message renders, not how damaging it would be: the
+> bundled provider uses the status-only form on its new-session alert too, because that body states
+> an IP and a device, and an IP is personal data even though it is not a credential.
 >
-> Under either policy `describeError` reads only `name` and `message` (never `stack`, never the
-> transport's own fields — nodemailer hangs the server's full reply on `response`), strips the
-> credentials you name, caps the length, and removes control characters so a relay cannot forge
-> extra records in a line-oriented pipeline. It walks the `cause` chain and never throws, whatever
-> the transport's error does.
+> Both read only `name` and `message` (never `stack`, never the transport's own fields — nodemailer
+> hangs the server's full reply on `response`), cap the length, and remove control characters so a
+> relay cannot forge extra records in a line-oriented pipeline. Both walk the `cause` chain and
+> never throw, whatever the transport's error does.
 >
 > `redactSecrets(text, [otp])` is exported too, for when you already have a string and only need
 > the redaction half.

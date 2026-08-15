@@ -49,7 +49,7 @@ const ERROR_CAUSE_DEPTH = 3
  * any cap that leaves enough to decode. Measured — the whole reset-code body is 96 base64
  * characters, and the first 200 of that line decode straight back to the OTP.
  */
-export type ChannelTextPolicy = 'redact' | 'drop'
+type ChannelTextPolicy = 'redact' | 'drop'
 
 const MALFORMED = '<malformed-error>'
 
@@ -100,11 +100,6 @@ function describeOneLink(
   try {
     const name = nameOf(error, secrets, channelText)
 
-    // Redacted BEFORE the status is read off it, not after. `statusOf` returns the first three
-    // digits of the message, and a message that BEGINS with the credential — `123456 could not be
-    // delivered`, which a custom provider is free to produce — would hand back half a six-digit
-    // code as if it were a status. A real SMTP reply opens with its own code, so redaction cannot
-    // cost a genuine status; the only thing it removes is a secret masquerading as one.
     const raw = redactSecrets(String(error.message), secrets)
 
     // WITH a credential in flight, the channel's free text does not reach the line at all — only
@@ -122,54 +117,38 @@ function describeOneLink(
   }
 }
 
-/**
- * A JavaScript error name, as a shape rather than as free text.
- *
- * An identifier: `Error`, `TypeError`, `SmtpRejection`, `AggregateError`. Two properties are being
- * bought, and the second is why the bound is a specific number rather than a generous one.
- *
- * The character class excludes what a quoted body is made of — spaces, quotes, colons, and the
- * `+/=` of base64 — so a rejection that echoes the message cannot pass as a name whatever encoding
- * it arrived in.
- *
- * The length of 48 is chosen so that **no credential this library issues can occupy a valid name**:
- * every token is 64 hex characters, which does not fit, and every OTP is digits, which cannot even
- * start one. It is still far above any real name — `MongoNetworkTimeoutError` is 24 — so nothing
- * legitimate is lost. That invariant is what lets the drop policy be stated as a guarantee rather
- * than as a hope about what a channel happens to write.
- */
-const ERROR_NAME_SHAPE = /^[A-Za-z_$][A-Za-z0-9_$]{0,47}$/
-
-/** Stands in for a name that did not look like one. */
+/** Stands in for a name on a path where nothing the channel wrote may be published. */
 const OPAQUE_NAME = '<error>'
 
 /**
- * The error's name, validated by shape when the channel's free text is not trusted.
+ * The error's name, or an opaque stand-in when the channel's text is not trusted.
  *
  * `name` is as much the channel's to write as `message` is — an error class built around a relay
  * reply (`name = \`SmtpRejection: ${response}\``) is a normal thing for a mail client to do, and
  * this module's own history is the proof that "it is only the error's own field, not the body" is
- * the assumption that fails. Dropping the message while letting the name through would have moved
- * the leak one field over and left every argument for the drop intact: redaction still misses a
- * re-encoded body, and the line cap still bounds volume rather than disclosure.
+ * the assumption that fails.
  *
- * So under `'drop'` the name is kept only when it looks like a name. Redaction runs FIRST, so a
- * name that did contain a credential no longer matches the shape and becomes opaque rather than
- * being published with a marker in it.
+ * **Under `'drop'` the name is never published.** Validating its SHAPE was tried and is not
+ * enough: an identifier bounded in length excludes a quoted body, and does NOT exclude an encoded
+ * one. `MTIzNDU2` is the base64 of the OTP `123456` — eight characters, alphanumeric, leading
+ * letter, a valid identifier by any such rule, and reversible by anyone reading the log. A shape
+ * test cannot tell `SmtpRejection` from a credential in transfer encoding, which is the exact
+ * threat this policy exists for, so on a credential path the answer is that no name comes through
+ * at all. What is lost is the error's class; what is kept is the status, which is the half an
+ * operator acts on — and a link with no status still reads as `<error>`, which distinguishes a
+ * provider that threw from a relay that refused.
  *
  * Under `'redact'` nothing secret was in flight, the message's own text is already allowed
  * through, and constraining the name would cost diagnosis to buy nothing.
  *
  * @param error - The link whose name is wanted.
- * @param secrets - Credentials that must not survive into it.
+ * @param secrets - Values that must not survive into it.
  * @param channelText - Whether the channel's free text is trusted on this path.
- * @returns The name, or an opaque stand-in.
+ * @returns The name, or the opaque stand-in.
  */
 function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTextPolicy): string {
-  const name = logSafe(redactSecrets(String(error.name), secrets))
-
-  if (channelText === 'redact') return name
-  return ERROR_NAME_SHAPE.test(name) ? name : OPAQUE_NAME
+  if (channelText === 'drop') return OPAQUE_NAME
+  return logSafe(redactSecrets(String(error.name), secrets))
 }
 
 /**
@@ -180,6 +159,13 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * and returned from the PATTERN's own capture rather than by slicing the input. Nothing a relay
  * writes after that can ride along, whatever it encoded it in.
  *
+ * **The separator after the three digits is a confidentiality boundary, not pedantry.** RFC 5321
+ * replies are `code SP text` or `code - text`, so a fourth digit means this is not a reply at all
+ * — and `123456 could not be delivered`, which a custom provider is free to produce, would
+ * otherwise hand back half of a six-digit OTP dressed as a status, cutting the space an attacker
+ * searches from a million to a thousand. Requiring the separator rejects it structurally, with no
+ * need to know which credential was in flight.
+ *
  * It is also the half of a bounce an operator actually acts on — `550` is a refusal, `421` is a
  * transient outage, `535` is a credential problem on their side. Keeping it is what makes dropping
  * the rest affordable.
@@ -188,7 +174,7 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * @returns The status code, normalised, or `''` when the message does not begin with one.
  */
 function statusOf(message: string): string {
-  const match = /^(\d{3})(?:\s+(\d\.\d\.\d))?/.exec(message)
+  const match = /^(\d{3})(?:[ -]+(\d\.\d\.\d)(?=$|\s)|[ -]|$)/.exec(message)
 
   if (match === null) return ''
   return match[2] === undefined ? `${match[1]}` : `${match[1]} ${match[2]}`
@@ -213,46 +199,19 @@ function readCause(error: Error): unknown {
 }
 
 /**
- * Describes a thrown value in one line, with known credentials stripped out.
+ * Shared walk behind {@link describeError} and {@link describeChannelStatus}.
  *
  * Reads an allowlist of `name` and `message` and nothing else. That is the point rather than an
  * omission: a thrown value carries whatever threw it decided to put in it — a mail client hangs
  * the server's full reply on `response`, and `stack` embeds the message — so an allowlist is the
- * only shape whose contents a caller can reason about. Each piece is redacted against the secrets
- * in flight, joined, length-capped and passed through {@link logSafe}, because text that came
- * back from a remote is untrusted input and a CR/LF in it would forge a second log record.
- *
- * The case this exists for: a mail relay rejecting a message by **quoting the body back**. The
- * body holds the one-time code this library just issued, so the error is the credential, and a
- * log line built from it publishes a working credential until it expires.
- *
- * @example
- * ```typescript
- * // A relay rejected the message and quoted the body back, wrapped by the mail client:
- * describeError(err, [otp], 'drop')
- * // => 'Error <- Error: 550'
- *
- * // The same error where nothing secret was in flight — the relay's own words are the diagnosis:
- * describeError(err, [], 'redact')
- * // => 'Error: send failed <- Error: 550 rejected: "Your code is 123456."'
- * ```
+ * only shape whose contents a caller can reason about.
  *
  * @param error - Whatever was thrown.
- * @param secrets - Credentials that were in flight and must not survive into the line. Required
- *   rather than defaulted: a caller that has nothing to hide says so by passing an empty array,
- *   which is one keystroke, whereas a default lets a call site that *does* hold a credential
- *   forget to name it and read as correct. This is the parameter whose omission is the bug.
- * @param channelText - What to do with the free text the remote sent. `'drop'` on any path that
- *   carries a credential: the text is replaced by the status code parsed off its front, because
- *   redaction and the length cap both assume the credential appears in the line the way this
- *   library wrote it, and a relay that re-encodes the body it quotes (base64 is the ordinary
- *   case) breaks that assumption — the encoding runs from the body's first byte, so the code is
- *   inside the cap and matches no secret. `'redact'` only where nothing secret was in flight.
- *   Required for the same reason `secrets` is: a permissive default is a leak that reads as
- *   correct at the call site that forgot it.
+ * @param secrets - Values that must not survive into the line.
+ * @param channelText - Whether the channel's own words may be published.
  * @returns A single-line description safe to log.
  */
-export function describeError(
+function describe(
   error: unknown,
   secrets: readonly string[],
   channelText: ChannelTextPolicy
@@ -302,4 +261,71 @@ export function describeError(
   // warns about, made one level up. The bound exists to stop a channel relaying an unbounded
   // quantity of its own text into a log, and a chain is a channel's text just as a message is.
   return redactSecrets(line, secrets).slice(0, ERROR_TEXT_LIMIT)
+}
+
+/**
+ * Describes a thrown value in one line, with known values stripped out of the channel's own words.
+ *
+ * For failures where **nothing that must be withheld was rendered into the message**. There the
+ * relay's explanation is the diagnosis, and the values worth naming — a recipient address, say —
+ * appear the way this library wrote them, where redaction reaches them. Each piece is redacted,
+ * joined, length-capped and passed through {@link logSafe}, because text that came back from a
+ * remote is untrusted input and a CR/LF in it would forge a second log record.
+ *
+ * **When the message DID render something to withhold, use {@link describeChannelStatus} instead.**
+ * Redaction cannot save that case: a relay may quote the body it rejected in transfer encoding
+ * rather than verbatim, and base64 defeats substring matching outright.
+ *
+ * @example
+ * ```typescript
+ * describeError(err, [recipient])
+ * // => 'Error: send failed <- Error: 550 <redacted>: recipient rejected'
+ * ```
+ *
+ * @param error - Whatever was thrown.
+ * @param secrets - Values that must not survive into the line. Required rather than defaulted: a
+ *   caller with nothing to hide says so by passing an empty array, which is one keystroke, whereas
+ *   a default lets a call site that *does* hold one forget to name it and read as correct.
+ * @returns A single-line description safe to log.
+ */
+export function describeError(error: unknown, secrets: readonly string[]): string {
+  return describe(error, secrets, 'redact')
+}
+
+/**
+ * Describes a thrown value using only what can be independently validated.
+ *
+ * For failures on a path that **rendered a credential, or anything else you would withhold, into
+ * the message**. Nothing the channel wrote is published: not the message, and not the `name`
+ * either, which is as much the channel's field to fill. What survives is the SMTP status, rebuilt
+ * from a pattern's own capture rather than sliced out of the input, so nothing a relay writes
+ * after it can ride along whatever it encoded it in.
+ *
+ * **It takes no secrets, and that is the guarantee rather than an omission.** Redaction is a
+ * substring match: it assumes the credential reaches the error the way this library wrote it, and
+ * a relay may quote the body it rejected re-encoded instead. Bounding the length does not help
+ * either — the encoding runs from the body's first byte, so the code is in the first sentence.
+ * Measured: a reset-code body is 96 base64 characters end to end, and the first 200 of the line
+ * decode straight back to the OTP. Validating the name's SHAPE does not help either: `MTIzNDU2` is
+ * the base64 of the OTP `123456`, a valid identifier by any such rule. There is nothing to name
+ * because nothing the channel authored comes through.
+ *
+ * @example
+ * ```typescript
+ * describeChannelStatus(err)
+ * // => '<error> <- <error>: 550 5.7.1'
+ * ```
+ *
+ * @param error - Whatever was thrown.
+ * @returns A single-line description carrying only validated status codes.
+ */
+export function describeChannelStatus(error: unknown): string {
+  // Stryker disable next-line ArrayDeclaration: no test can kill a non-empty list here, and the
+  // reason is the function's own guarantee rather than a gap in the suite. On this path the line
+  // is composed entirely of text this library authored — the `<error>` stand-in, the `<-` join,
+  // and a status rebuilt from a pattern's own capture — so there is no channel-written substring
+  // for any secret to match. That is precisely why the parameter is gone from the signature: a
+  // caller has nothing to name. Where naming IS load-bearing the function is `describeError`, and
+  // its list is pinned by tests.
+  return describe(error, [], 'drop')
 }

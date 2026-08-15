@@ -621,8 +621,11 @@ describe('PasswordResetService', () => {
     // in an identifier), so the composition is the only guard, and `safeLogLine` is what provides
     // it — the per-field redactions cannot see across the `: ` the template inserts.
     it('withholds the line when the identifier and the error compose the address', async () => {
+      // The composed value straddles the template's own `': '` separator: the identifier ends
+      // one field and the description begins the next, and neither field contains the value.
+      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // straddling value has to be built from.
       const named = new Error('channel down')
-      Object.defineProperty(named, 'name', { value: 'x' })
 
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       try {
@@ -634,11 +637,11 @@ describe('PasswordResetService', () => {
         })
         mockEmailProvider.sendPasswordResetToken.mockRejectedValue(named)
 
-        await service.initiateReset({ ...dto, email: 'u1: x' }, mockReq)
+        await service.initiateReset({ ...dto, email: 'u1: <error>' }, mockReq)
         await flushMicrotasks()
 
         const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-        expect(logged).not.toContain('u1: x')
+        expect(logged).not.toContain('u1: <error>')
         expect(logged).toContain('withheld')
       } finally {
         loggerSpy.mockRestore()
@@ -2128,10 +2131,13 @@ describe('PasswordResetService', () => {
       // description opens with the error's NAME — so the composition spells the address only when
       // that name is lower case too. A custom error class provides exactly that, which is what
       // makes this reachable rather than theoretical.
+      // The composed value straddles the template's own `': '` separator: the identifier ends
+      // one field and the description begins the next, and neither field contains the value.
+      // Under the drop policy the description opens with the opaque stand-in, so that is what the
+      // straddling value has to be built from.
       const named = new Error('channel down')
-      Object.defineProperty(named, 'name', { value: 'x' })
 
-      const seam = { ...dto, email: 'u1: x' }
+      const seam = { ...dto, email: 'u1: <error>' }
       mockRedis.setnx.mockResolvedValue(true)
       mockOtpService.generate.mockReturnValue('303030')
       mockUserRepo.findByEmail.mockResolvedValue({
@@ -2146,7 +2152,7 @@ describe('PasswordResetService', () => {
       await flushMicrotasks()
 
       const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
-      expect(logged).not.toContain('u1: x')
+      expect(logged).not.toContain('u1: <error>')
       expect(logged).toContain('withheld')
       errorSpy.mockRestore()
     })

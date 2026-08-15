@@ -1826,7 +1826,7 @@ export class MfaService {
         this.logger.error(
           safeLogLine(
             `${origin}: MFA notice delivery failed for user ${logSafe(userId)}: ` +
-              describeError(err, withheld, 'redact'),
+              describeError(err, withheld),
             withheld
           )
         )

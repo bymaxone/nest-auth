@@ -20,7 +20,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -251,16 +251,7 @@ export class InvitationService {
         expiresAt
       })
     } catch (err: unknown) {
-      // Stryker disable next-line ArrayDeclaration: emptying this list is unobservable HERE, and
-      // the reason is a proof rather than a gap in the suite. Under `'drop'` the only two fields
-      // that reach the line are a status code rebuilt from its own capture and a name bounded to
-      // 48 identifier characters, and neither secret in this list can occupy either: `rawToken` is
-      // 64 hex characters, which exceeds the bound, and an address contains `@`, which the shape
-      // excludes. It is passed because the guarantee belongs to `describeError`, not to this call
-      // site's luck about the shape of what it happens to hold — a policy change to `'redact'`
-      // here would make it load-bearing immediately. Where a secret CAN take a valid name's shape,
-      // the argument is pinned by a test instead: see the verification-OTP site in `auth.service`.
-      throw new Error(describeError(err, [rawToken, normalizedEmail], 'drop'))
+      throw new Error(describeChannelStatus(err))
     }
     this.logger.log(
       `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${logSafe(tenantId)} inviterUserId=${inviterUserId}`

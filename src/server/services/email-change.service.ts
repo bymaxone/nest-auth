@@ -18,7 +18,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -202,16 +202,7 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
     } catch (err: unknown) {
-      // Stryker disable next-line ArrayDeclaration: emptying this list is unobservable HERE, and
-      // the reason is a proof rather than a gap in the suite. Under `'drop'` the only two fields
-      // that reach the line are a status code rebuilt from its own capture and a name bounded to
-      // 48 identifier characters, and neither secret in this list can occupy either: `rawToken` is
-      // 64 hex characters, which exceeds the bound, and an address contains `@`, which the shape
-      // excludes. It is passed because the guarantee belongs to `describeError`, not to this call
-      // site's luck about the shape of what it happens to hold — a policy change to `'redact'`
-      // here would make it load-bearing immediately. Where a secret CAN take a valid name's shape,
-      // the argument is pinned by a test instead: see the verification-OTP site in `auth.service`.
-      throw new Error(describeError(err, [rawToken, newEmail], 'drop'))
+      throw new Error(describeChannelStatus(err))
     }
     this.logger.log(
       `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`
@@ -375,14 +366,15 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
-      // Both addresses are named, because this notification RENDERS the new one into its body and
-      // a relay that rejects by quoting the body puts it into this error. The provider's own log
-      // line already strips them; this is the second line the same failure reaches under
-      // `onDeliveryError: 'rethrow'`, and containing a value in one place and not the other
-      // contains it nowhere.
+      // `'drop'`, matching the provider's policy for this same message. The notification RENDERS
+      // the new address, so a relay that rejects by quoting the body puts it into this error —
+      // and quoting it RE-ENCODED puts it past redaction, which is the whole reason the provider
+      // stopped redacting this body and started dropping its text. This is the second line the
+      // same failure reaches under `onDeliveryError: 'rethrow'`; containing a value in one place
+      // and not the other contains it nowhere, and that applies to the policy as much as to the
+      // list of values.
       this.logger.error(
-        `confirmChange: notification to the previous address failed: ` +
-          describeError(err, [oldEmail, newEmail], 'redact')
+        `confirmChange: notification to the previous address failed: ` + describeChannelStatus(err)
       )
     }
   }
