@@ -605,6 +605,41 @@ describe('PasswordResetService', () => {
       }
     })
 
+    // Third site of the same leak: `sendPasswordResetToken` hands the provider a raw reset token,
+    // and a relay that rejects by quoting the body puts it into the error this path logs. The
+    // token is a working password reset until its TTL expires, so it must not survive into the
+    // line — including through the rollback branch, which logs a second time.
+    it('keeps the reset token out of the log when the relay quotes it back', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      try {
+        mockRedis.setnx.mockResolvedValue(true)
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
+        mockEmailProvider.sendPasswordResetToken.mockImplementation(
+          (_t: string, _e: string, token: string) =>
+            Promise.reject(new Error(`550 rejected by policy: "Use ${token} to reset."`))
+        )
+
+        await service.initiateReset(dto, mockReq)
+        await flushMicrotasks()
+
+        const sent = mockEmailProvider.sendPasswordResetToken.mock.calls[0]?.[2] as string
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+
+        // The token has to have existed for the assertion to mean anything — a build that stopped
+        // passing one would otherwise satisfy `not.toContain` trivially.
+        expect(sent).toBeTruthy()
+        expect(logged).toContain('sendPasswordResetToken failed')
+        expect(logged).not.toContain(sent)
+        expect(logged).toContain('<redacted>')
+      } finally {
+        loggerSpy.mockRestore()
+      }
+    })
+
     // Verifies that calls sendToken path (token method) when user exists and is not blocked.
     it('calls sendToken path (token method) when user exists and is not blocked', async () => {
       // Arrange
@@ -1992,10 +2027,35 @@ describe('PasswordResetService', () => {
       await flushMicrotasks()
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('sendPasswordResetOtp failed'),
-        expect.any(Error)
+      // One argument, not two — see the OTP-redaction cases: the error object never reaches the
+      // logger, so a relay quoting the body cannot carry the code into the record.
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('sendPasswordResetOtp failed'))
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      errorSpy.mockRestore()
+    })
+
+    // The measured shape of the leak, at this call site: a relay rejecting with 550 while quoting
+    // the body puts the reset code into the provider's error. This code resets a password, so a
+    // log line carrying it is a credential in the operator's pipeline until its TTL expires.
+    it('keeps the reset code out of the log when the relay quotes it back', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockOtpService.generate.mockReturnValue('424242')
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(
+        new Error('550 rejected by policy: "Your code is 424242."')
       )
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await otpMethodService.resendOtp(dto, mockReq)
+      await flushMicrotasks()
+
+      const logged = errorSpy.mock.calls[0]?.[0] as string
+      expect(logged).not.toContain('424242')
+      expect(logged).toContain('<redacted>')
       errorSpy.mockRestore()
     })
   })

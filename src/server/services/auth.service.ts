@@ -30,6 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -1117,7 +1118,11 @@ export class AuthService {
     await this.otpService.store('email_verification', identifier, otp, ttl)
 
     void this.emailProvider.sendEmailVerificationOtp(tenantId, email, otp).catch((err: unknown) => {
-      this.logger.error(`sendEmailVerificationOtp failed for user ${userId}`, err)
+      // The error is NOT passed through: a relay that rejects by quoting the message body
+      // puts THIS otp into it, and the raw object would carry the quote to the log.
+      this.logger.error(
+        `sendEmailVerificationOtp failed for user ${userId}: ${describeError(err, [otp])}`
+      )
     })
   }
 }

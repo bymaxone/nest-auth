@@ -28,6 +28,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeError } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
@@ -723,7 +724,11 @@ export class PasswordResetService {
     void Promise.resolve(
       this.emailProvider.sendPasswordResetToken(tenantId, email, rawToken)
     ).catch((err: unknown) => {
-      this.logger.error(`sendPasswordResetToken failed for user ${userId}`, err)
+      // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
+      // error, and this token is a working password reset until its TTL expires.
+      this.logger.error(
+        `sendPasswordResetToken failed for user ${userId}: ${describeError(err, [rawToken])}`
+      )
       void this.redis.del(tokenKey).catch((delErr: unknown) => {
         this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
       })
@@ -747,7 +752,10 @@ export class PasswordResetService {
 
     void Promise.resolve(this.emailProvider.sendPasswordResetOtp(tenantId, email, otp)).catch(
       (err: unknown) => {
-        this.logger.error(`sendPasswordResetOtp failed for user ${userId}`, err)
+        // Redacted, not raw: the quoted body carries this otp, which resets the password.
+        this.logger.error(
+          `sendPasswordResetOtp failed for user ${userId}: ${describeError(err, [otp])}`
+        )
       }
     )
   }

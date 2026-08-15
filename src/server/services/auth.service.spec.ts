@@ -2464,10 +2464,37 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
+      // One argument, not two: the error object is never handed to the logger, because a relay
+      // that rejects by quoting the message body would carry the OTP into the record Nest prints
+      // from it. The description replaces it, and the code must not appear anywhere in the line.
       expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining('sendEmailVerificationOtp failed'),
-        expect.any(Error)
+        expect.stringContaining('sendEmailVerificationOtp failed')
       )
+      expect(loggerSpy.mock.calls[0]).toHaveLength(1)
+      expect(loggerSpy.mock.calls[0]?.[0]).not.toContain('654321')
+      loggerSpy.mockRestore()
+    })
+
+    // The measured shape of the leak, at this call site. A policy or DLP relay rejects with 550
+    // and QUOTES the offending content, so the provider's error carries the verification code
+    // this service just generated. The previous version passed that error straight to the logger,
+    // which put a working credential into the operator's pipeline until it expired.
+    it('keeps the verification code out of the log when the relay quotes it back', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('654321')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(
+        new Error('550 rejected by policy: "Your code is 654321."')
+      )
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls[0]?.[0] as string
+      expect(logged).not.toContain('654321')
+      expect(logged).toContain('<redacted>')
       loggerSpy.mockRestore()
     })
   })

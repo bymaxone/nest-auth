@@ -39,69 +39,8 @@ import type {
   InviteData,
   SessionInfo
 } from '../interfaces/email-provider.interface'
+import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
-import { redactSecrets } from '../utils/redact-secrets'
-
-/**
- * How much of a delivery error's text may reach the log line.
- *
- * A bound rather than a formatting preference. {@link redactSecrets} removes the credentials this
- * library knows it put in the body, but it cannot find one the relay re-encoded, so the second
- * lock is to refuse to relay an unbounded quantity of channel-controlled text into the log at all.
- * The diagnosis an operator actually needs — `535 authentication failed`, `ECONNREFUSED` — is
- * short and comes first; a rejection that quotes an entire message body is exactly the long one.
- */
-const DELIVERY_ERROR_TEXT_LIMIT = 200
-
-/**
- * How far down the `cause` chain the description walks.
- *
- * Chains are how a channel reports "the send failed BECAUSE the relay said". The useful context
- * is near the top, and the depth is capped so a self-referential or pathological chain cannot
- * turn one failed send into an unbounded log record.
- */
-const DELIVERY_ERROR_CAUSE_DEPTH = 3
-
-/**
- * Renders a delivery error into one bounded, secret-free line.
- *
- * Never returns the error object and never reads its `stack` or its own properties. That is the
- * point rather than an omission: a channel's error carries whatever the channel decided to put
- * in it — nodemailer, for one, hangs the server's full reply on `response` — so an allowlist of
- * `name` and `message` is the only shape whose contents this library can reason about. Each piece
- * is redacted, length-capped, and passed through {@link logSafe}, because text that came back
- * from a remote relay is untrusted input and a CR/LF in it would forge a second log record.
- *
- * @param error - Whatever the channel threw.
- * @param secrets - Credentials this message carried, which must not survive into the line.
- * @returns A single-line description safe to log.
- */
-function describeDeliveryError(error: unknown, secrets: readonly string[]): string {
-  const parts: string[] = []
-  let current: unknown = error
-
-  for (let depth = 0; depth < DELIVERY_ERROR_CAUSE_DEPTH && current !== undefined; depth++) {
-    if (!(current instanceof Error)) {
-      // A thrown non-Error has no contract at all — a string, an object, a rejected promise's
-      // value. Its type is the most that can be said about it without stringifying something
-      // whose `toString` is the channel's code.
-      parts.push(`<non-error: ${typeof current}>`)
-      break
-    }
-
-    const name = logSafe(redactSecrets(current.name, secrets))
-    const message = logSafe(redactSecrets(current.message, secrets))
-    // Capped once, on the composed piece, rather than on each half: two bounds let one link of
-    // the chain contribute twice the intended budget, and the pair says nothing the single bound
-    // does not. An empty message leaves the name standing alone rather than trailing a colon.
-    const described = message === '' ? name : `${name}: ${message}`
-
-    parts.push(described.slice(0, DELIVERY_ERROR_TEXT_LIMIT))
-    current = current.cause
-  }
-
-  return parts.join(' <- ')
-}
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -529,10 +468,17 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // measurement against a real relay disproved. A policy or DLP relay rejects with `550` and
       // QUOTES THE OFFENDING CONTENT, so the channel's own error is the rendered body, and for
       // this provider that body is a live OTP or invitation token. It went to the operator's log
-      // in clear text, valid until expiry. `describeDeliveryError` is what replaces it: an
+      // in clear text, valid until expiry. `describeError` is what replaces it: an
       // allowlist of `name` and `message`, each redacted, bounded and control-character stripped.
+      //
+      // The subject goes through `logSafe` here even though `sanitizeSubject` already ran on it.
+      // They are not the same guard: `sanitizeSubject` removes CR and LF because a subject is an
+      // HTTP-style header and those two would inject one, while `logSafe` rejects the whole C0/C1
+      // range because a log record can be forged by more than CR/LF. A `messages` override is
+      // consumer code returning a consumer-built string, so the subject is not this library's to
+      // trust by the time it reaches a log template.
       this.logger.error(
-        `delivery failed for "${subject}": ${describeDeliveryError(error, secrets)}`
+        `delivery failed for "${logSafe(subject)}": ${describeError(error, secrets)}`
       )
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.

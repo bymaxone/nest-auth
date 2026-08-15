@@ -41,6 +41,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   through `logSafe` — a relay's reply is untrusted input, and a `CR/LF` in it would have forged a
   second log record. That last one was a live log-injection hole on the same line, closed here.
 
+  **The same mistake was in four more places, found by hunting the family rather than the report.**
+  `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
+  services caught a rejected send and logged the raw error the same way — `AuthService` for the
+  verification OTP, `PasswordResetService` for both the reset token and the reset OTP — and those
+  matter more than the provider, because they sit behind the `IEmailProvider` **port**: they leak
+  for any consumer implementation, not only the bundled one. Two paths reach them with a
+  credential-bearing error: `DefaultAuthEmailProvider` on `onDeliveryError: 'rethrow'`, and any
+  custom provider that re-throws — including one written exactly as this README's own guidance
+  recommends, where the consumer redacts correctly on their side and this library then logged the
+  same error again, raw, undoing it. All three now redact. The fifth was on the fixed line itself:
+  the subject was interpolated into the log without `logSafe`, and `sanitizeSubject` strips only
+  CR and LF because its job is the mail header, so the rest of the C0/C1 range reached the log
+  from a consumer-supplied `messages` override.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.

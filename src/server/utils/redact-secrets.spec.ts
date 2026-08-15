@@ -67,6 +67,31 @@ describe('redactSecrets', () => {
     expect(redactSecrets('535 auth failed', ['', '535'])).toBe('<redacted> auth failed')
   })
 
+  // Two secrets where one is a prefix of the other. Replacing sequentially lets the shorter match
+  // first, consume its prefix and leave the remaining `4` behind — a fragment of a live
+  // credential sitting in the log. The longest-first ordering is what prevents that, and this is
+  // the case that proves it rather than the ordering being decorative.
+  it('leaves no fragment when one secret is a prefix of another', () => {
+    expect(redactSecrets('1234', ['123', '1234'])).toBe('<redacted>')
+    expect(redactSecrets('1234', ['1234', '123'])).toBe('<redacted>')
+  })
+
+  // A secret that occurs inside the replacement marker. Replacing one secret at a time rescans
+  // text this function already rewrote, so `cted` matches inside the `<redacted>` an earlier pass
+  // inserted and the line comes out as `<reda<redacted>>`. One pass over the original cannot.
+  it('does not match its own replacement marker', () => {
+    expect(redactSecrets('error xyz here', ['xyz', 'cted'])).toBe('error <redacted> here')
+  })
+
+  // The secret is matched as a literal. Exported means a caller may treat any string as secret,
+  // and an unescaped `(` would throw on an unbalanced group while an unescaped `.` would redact
+  // text that is not the secret at all.
+  it('treats a secret containing regex syntax as a literal', () => {
+    expect(redactSecrets('token a.c and abc', ['a.c'])).toBe('token <redacted> and abc')
+    expect(() => redactSecrets('x', ['(unclosed'])).not.toThrow()
+    expect(redactSecrets('say (unclosed here', ['(unclosed'])).toBe('say <redacted> here')
+  })
+
   // Over-redaction is the accepted trade. A four-digit OTP — the shortest this library permits —
   // colliding with a message id costs an operator one obscured number; the opposite mistake
   // publishes a working credential.

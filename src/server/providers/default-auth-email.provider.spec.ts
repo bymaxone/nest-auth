@@ -452,8 +452,73 @@ describe('DefaultAuthEmailProvider', () => {
     // Truncated, not dropped: the second assertion keeps this from passing on a build that omits
     // the channel's message entirely, which would satisfy a bare length check while removing the
     // diagnosis operators depend on.
-    expect(logged.length).toBeLessThan(400)
+    //
+    // The bound is tight on purpose. The cap is 200 and the prefix
+    // (`delivery failed for "Your password reset code": Error: `) is ~55, so ~255 is the real
+    // answer; a loose `< 400` would still pass if the cap were quietly raised to 300, which is
+    // exactly the regression this test exists to catch.
+    expect(logged.length).toBeLessThan(270)
     expect(logged).toContain('xxx')
+  })
+
+  // The subject is consumer-controlled through a `messages` override, and it lands in a log
+  // template. `sanitizeSubject` only strips CR and LF, because its job is the mail header; the
+  // rest of the C0/C1 range reaches the log line, and more than CR/LF can forge a record in a
+  // line-oriented pipeline. `logSafe` is the second guard, and this is the case that needs it.
+  it('neutralises a control character an override put in the subject', async () => {
+    const messages = {
+      mfaEnabled: () => ({ subject: 'MFALOG [AuthService] forged', text: 'body' })
+    }
+    const custom = new DefaultAuthEmailProvider(sink, { messages })
+    sink.send.mockRejectedValueOnce(new Error('channel down'))
+
+    await custom.sendMfaEnabledNotification('t', 'u@example.com')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('')
+    expect(logged).toContain('<malformed>')
+  })
+
+  // `name` and `message` are typed `string` but are ordinary writable properties, and an error
+  // revived from JSON or built by sloppy code can leave either holding something else. Without
+  // coercion the redaction call throws a TypeError INSIDE this catch block — turning a failure
+  // the swallow policy promises to absorb into an unhandled rejection with no log line at all,
+  // which is worse than the poor log line the coercion produces.
+  it('survives an error whose message is not a string', async () => {
+    const malformed = new Error('placeholder')
+    Object.defineProperty(malformed, 'message', { value: { nested: 'object' } })
+    sink.send.mockRejectedValueOnce(malformed)
+
+    await expect(provider.sendMfaEnabledNotification('t', 'u@example.com')).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+  })
+
+  // `cause: null` is not the same as no cause. An absent `cause` reads as `undefined`, but
+  // `new Error(msg, { cause: null })` installs an own property holding `null`, so a walk that
+  // only stops on `undefined` takes one more step and reports a spurious `<non-error: object>`
+  // link that no channel ever produced. Both terminators are needed, and this is the one nothing
+  // else exercises.
+  it('treats an explicitly null cause as the end of the chain', async () => {
+    sink.send.mockRejectedValueOnce(new Error('channel down', { cause: null }))
+
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Two-factor authentication is on": Error: channel down'
+    )
+  })
+
+  // A thrown `undefined` is legal — `Promise.reject()` produces one. The cause-walk guard that
+  // stops the chain would otherwise skip the body entirely and return an empty description,
+  // emitting `delivery failed for "X": ` with a dangling colon and no diagnosis whatsoever.
+  it('describes a rejection that carries no value at all', async () => {
+    sink.send.mockRejectedValueOnce(undefined)
+
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Two-factor authentication is on": <non-error: undefined>'
+    )
   })
 
   // A channel may reject with something that is not an Error at all. Stringifying it would run
