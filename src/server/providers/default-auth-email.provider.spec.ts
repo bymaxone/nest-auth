@@ -580,6 +580,32 @@ describe('DefaultAuthEmailProvider', () => {
     expect(errorSpy.mock.calls[0]?.[0]).toContain('<malformed-error>')
   })
 
+  // Even asking "is this an Error?" runs code the thrower controls: `instanceof` performs the
+  // prototype lookup, and a Proxy can install a `getPrototypeOf` trap that throws. That exception
+  // would escape the classification — outside the guards on the property reads — and out of the
+  // provider's catch block, which is the unhandled rejection this module exists to prevent.
+  it('survives a rejection whose own classification throws', async () => {
+    const hostile = new Proxy(new Error('unreachable'), {
+      getPrototypeOf() {
+        throw new Error('hostile getPrototypeOf')
+      }
+    })
+    sink.send.mockRejectedValueOnce(hostile)
+
+    await expect(
+      provider.sendPasswordResetOtp('t', 'u@example.com', '135790')
+    ).resolves.toBeUndefined()
+
+    // Asserted as the CLASSIFICATION, not merely as "did not crash". This Proxy traps only
+    // `getPrototypeOf`, so its `name` and `message` read through to the target — a build that
+    // treated a hostile classification as an Error would produce a plausible `Error: unreachable`
+    // line and satisfy any weaker assertion. The contract is that a value whose own classification
+    // is hostile is reported as a non-error, which is what it has earned.
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Your password reset code": <non-error: object>'
+    )
+  })
+
   // `cause: null` is not the same as no cause. An absent `cause` reads as `undefined`, but
   // `new Error(msg, { cause: null })` installs an own property holding `null`, so a walk that
   // only stops on `undefined` takes one more step and reports a spurious `<non-error: object>`

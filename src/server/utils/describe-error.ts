@@ -36,6 +36,26 @@ const ERROR_CAUSE_DEPTH = 3
 const MALFORMED = '<malformed-error>'
 
 /**
+ * Classifies a thrown value without letting the classification itself throw.
+ *
+ * `instanceof` invokes the prototype lookup, and a `Proxy` can install a `getPrototypeOf` trap
+ * that throws — so even asking "is this an Error?" runs code belonging to whoever threw it. That
+ * exception would escape from inside the caller's `catch` block, which is the one thing this
+ * module exists to prevent. A value whose own classification is hostile is treated as a non-error,
+ * which is what it has earned.
+ *
+ * @param value - The thrown value.
+ * @returns `true` only when the value is an `Error` and asking did not throw.
+ */
+function isError(value: unknown): value is Error {
+  try {
+    return value instanceof Error
+  } catch {
+    return false
+  }
+}
+
+/**
  * Renders one link of the chain, and never throws while doing it.
  *
  * `name`, `message` and `cause` look like plain properties but any of them can be an accessor
@@ -119,7 +139,7 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
     depth < ERROR_CAUSE_DEPTH && current !== undefined && current !== null;
     depth++
   ) {
-    if (!(current instanceof Error)) {
+    if (!isError(current)) {
       // A thrown non-Error has no contract at all — a string, an object, a rejected promise's
       // value. Its type is the most that can be said about it without stringifying something
       // whose `toString` belongs to whoever threw it.

@@ -1117,13 +1117,20 @@ export class AuthService {
     const otp = this.otpService.generate(length)
     await this.otpService.store('email_verification', identifier, otp, ttl)
 
-    void this.emailProvider.sendEmailVerificationOtp(tenantId, email, otp).catch((err: unknown) => {
-      // The error is NOT passed through: a relay that rejects by quoting the message body
-      // puts THIS otp into it, and the raw object would carry the quote to the log.
-      this.logger.error(
-        `sendEmailVerificationOtp failed for user ${userId}: ${describeError(err, [otp])}`
-      )
-    })
+    // Deferred through `.then`: calling the provider directly evaluates it before `.catch` is
+    // attached, so a synchronous throw escapes this handler and reaches the caller's own error
+    // path, which logs raw — with `otp` in the message a quoting relay produced.
+    const provider = this.emailProvider
+
+    void Promise.resolve()
+      .then(() => provider.sendEmailVerificationOtp(tenantId, email, otp))
+      .catch((err: unknown) => {
+        // The error is NOT passed through: a relay that rejects by quoting the message body
+        // puts THIS otp into it, and the raw object would carry the quote to the log.
+        this.logger.error(
+          `sendEmailVerificationOtp failed for user ${userId}: ${describeError(err, [otp])}`
+        )
+      })
   }
 }
 

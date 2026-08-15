@@ -721,18 +721,24 @@ export class PasswordResetService {
     // does not linger in Redis until natural TTL expiry. A leaked Redis snapshot
     // could otherwise expose unconsumed reset tokens for accounts that never
     // received the email.
-    void Promise.resolve(
-      this.emailProvider.sendPasswordResetToken(tenantId, email, rawToken)
-    ).catch((err: unknown) => {
-      // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
-      // error, and this token is a working password reset until its TTL expires.
-      this.logger.error(
-        `sendPasswordResetToken failed for user ${userId}: ${describeError(err, [rawToken])}`
-      )
-      void this.redis.del(tokenKey).catch((delErr: unknown) => {
-        this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
+    // `.then(() => call())`, not `Promise.resolve(call())`: the second evaluates the provider
+    // BEFORE the promise wraps it, so a provider that throws SYNCHRONOUSLY bypasses this handler
+    // entirely and lands in `initiateReset`'s outer catch, which logs the error raw — with
+    // `rawToken` inside it. Deferring turns a synchronous throw into a rejection this sees.
+    const provider = this.emailProvider
+
+    void Promise.resolve()
+      .then(() => provider.sendPasswordResetToken(tenantId, email, rawToken))
+      .catch((err: unknown) => {
+        // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
+        // error, and this token is a working password reset until its TTL expires.
+        this.logger.error(
+          `sendPasswordResetToken failed for user ${userId}: ${describeError(err, [rawToken])}`
+        )
+        void this.redis.del(tokenKey).catch((delErr: unknown) => {
+          this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
+        })
       })
-    })
   }
 
   /**
@@ -750,14 +756,20 @@ export class PasswordResetService {
     const otp = this.otpService.generate(otpLength)
     await this.otpService.store(PASSWORD_RESET_PURPOSE, identifier, otp, otpTtlSeconds)
 
-    void Promise.resolve(this.emailProvider.sendPasswordResetOtp(tenantId, email, otp)).catch(
-      (err: unknown) => {
+    // Captured before deferring: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a callback the compiler cannot prove runs before the field changes.
+    const provider = this.emailProvider
+
+    // Deferred for the same reason as `sendToken` above: a synchronous throw from the provider
+    // would skip this handler and reach `resendOtp`'s outer catch, which logs raw — with the otp.
+    void Promise.resolve()
+      .then(() => provider.sendPasswordResetOtp(tenantId, email, otp))
+      .catch((err: unknown) => {
         // Redacted, not raw: the quoted body carries this otp, which resets the password.
         this.logger.error(
           `sendPasswordResetOtp failed for user ${userId}: ${describeError(err, [otp])}`
         )
-      }
-    )
+      })
   }
 
   // ---------------------------------------------------------------------------

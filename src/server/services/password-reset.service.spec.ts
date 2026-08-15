@@ -2037,6 +2037,33 @@ describe('PasswordResetService', () => {
       errorSpy.mockRestore()
     })
 
+    // A provider that throws SYNCHRONOUSLY rather than rejecting. `Promise.resolve(call())`
+    // evaluates the call before the promise wraps it, so the throw skipped the redacting handler
+    // entirely and surfaced in `resendOtp`'s outer catch, which logs the error raw — with the code
+    // in it. Deferring through `.then` turns the throw into a rejection the handler sees. A
+    // provider is consumer code and may do either; the log line must not depend on which.
+    it('keeps the reset code out of the log when the provider throws synchronously', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockOtpService.generate.mockReturnValue('868686')
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockImplementation(() => {
+        throw new Error('550 rejected by policy: "Your code is 868686."')
+      })
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await otpMethodService.resendOtp(dto, mockReq)
+      await flushMicrotasks()
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('868686')
+      expect(logged).toContain('<redacted>')
+      errorSpy.mockRestore()
+    })
+
     // The measured shape of the leak, at this call site: a relay rejecting with 550 while quoting
     // the body puts the reset code into the provider's error. This code resets a password, so a
     // log line carrying it is a credential in the operator's pipeline until its TTL expires.

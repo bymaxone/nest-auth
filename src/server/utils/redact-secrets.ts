@@ -90,10 +90,15 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   let out = ''
   let index = 0
 
-  // Stryker disable next-line EqualityOperator: `<=` is equivalent and no test separates them.
-  // The extra iteration lands on `index === value.length`, where `startsWith` is false for
-  // every non-empty secret and `charAt` returns the empty string — the buffer is unchanged and
-  // the loop exits on the next check. Same output, one wasted comparison.
+  // `<=` here is equivalent and no test separates the two. The extra iteration it allows lands on
+  // `index === value.length`, where `startsWith` is false for every non-empty secret and `charAt`
+  // returns the empty string, so the buffer is unchanged and the loop exits on the next check.
+  // Same output, one wasted comparison.
+  //
+  // The directive sits on its own line immediately above the target. It was measured to bind from
+  // the end of a multi-line comment too, but `next-line` counting past a wrapped explanation is a
+  // documented way to silently disable nothing, and adjacency costs a line.
+  // Stryker disable next-line EqualityOperator
   while (index < value.length) {
     const matched = longestMatchAt(value, present, index)
 
@@ -116,6 +121,19 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
     out += marker
     index = end
   }
+
+  // Replacing text can CREATE an occurrence that was not in the input. The marker is written into
+  // the output and then sits next to whatever followed the region, so a secret spanning that seam
+  // — `'<redacted>X'` declared as a secret, over the input `'xyzX'` with `'xyz'` also declared —
+  // appears in a result assembled entirely from pieces that individually contained none.
+  //
+  // Checking the finished string is the only test that covers every way a seam can arise, because
+  // it asks the question the contract actually makes rather than enumerating the mechanisms. When
+  // it fails there is no safe partial answer to return — a second pass could synthesise a third
+  // occurrence — so the diagnostic is abandoned entirely. That costs an operator the line, in a
+  // case that requires a caller to declare a secret containing this function's own marker.
+  if (present.some((secret) => out.includes(secret))) return ''
+
   return out
 }
 

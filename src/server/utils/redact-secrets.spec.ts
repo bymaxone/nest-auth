@@ -148,6 +148,18 @@ describe('redactSecrets', () => {
     expect(redactSecrets('say (unclosed here', ['(unclosed'])).toBe('say <redacted> here')
   })
 
+  // Replacement can CREATE an occurrence the input never had. The marker lands next to whatever
+  // followed the region, so a secret spanning that seam appears in a result assembled entirely
+  // from pieces that individually contained none: `'xyz'` becomes `<redacted>`, the `X` after it
+  // survives, and the pair spells the second declared secret. The finished string is checked, and
+  // the diagnostic is abandoned rather than published with a credential in it.
+  it('returns nothing rather than a string a replacement made secret', () => {
+    const line = redactSecrets('xyzX', ['xyz', '<redacted>X'])
+
+    expect(line).not.toContain('<redacted>X')
+    expect(line).toBe('')
+  })
+
   // Over-redaction is the accepted trade. A four-digit OTP — the shortest this library permits —
   // colliding with a message id costs an operator one obscured number; the opposite mistake
   // publishes a working credential.
