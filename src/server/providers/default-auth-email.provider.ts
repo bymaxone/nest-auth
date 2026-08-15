@@ -144,17 +144,21 @@ export interface DefaultAuthEmailProviderOptions {
    * resolves, so a down channel never turns a notification into a failed user request. `'rethrow'`
    * logs and then re-throws, restoring the throw the two flows that react to one expect —
    * `PasswordResetService` deletes an undelivered reset token early, and `EmailChangeService` lets
-   * a failed verification send surface rather than reporting "sent". The trade is symmetric: under
-   * `'rethrow'` a channel outage also fails MFA, invitation and the other awaited sends. Pick the
-   * failure mode the deployment's channel reliability warrants.
+   * a failed verification send surface rather than reporting "sent". The trade is narrower than it
+   * looks: an invitation send fails under `'rethrow'` too, but the three MFA notices do NOT — they
+   * are detached and their failure is caught, because by the time one is sent the factor is
+   * already enabled or removed, and answering the caller with an error would report a change that
+   * happened as one that did not. Pick the failure mode the deployment's channel warrants, knowing
+   * that a completed auth-state change is never reversed by a notice that could not be delivered.
    *
    * **`'rethrow'` hands you an error that may contain the credential.** The provider's own log
-   * line is redacted, but what it re-throws is the channel's original error, unaltered — because
+   * line publishes only a validated status, but what it re-throws is the channel's original error,
+   * unaltered — because
    * a caller that opted into this policy did so to branch on the channel's codes, and a laundered
    * replacement would take those away. A relay that rejects by quoting the message body puts the
    * OTP or invitation token into that error, so whatever catches it must not log it raw. Describe
    * it with `describeChannelStatus`, which publishes only a validated status code — NOT
-   * {@link redactSecrets}, which this file's own history shows is not enough on its own: a relay
+   * `redactSecrets`, which this file's own history shows is not enough on its own: a relay
    * may quote what it rejected in transfer encoding, and a substring match cannot see through
    * that. `redactSecrets` is for strings you know contain the literal value. This is the one
    * credential this library cannot contain on your behalf.
