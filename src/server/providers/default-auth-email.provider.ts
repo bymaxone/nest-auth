@@ -48,6 +48,7 @@ import type {
 import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { redactSecrets } from '../utils/redact-secrets'
+import { safeLogLine } from '../utils/safe-log-line'
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -497,7 +498,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // that, and an override returns a consumer-built string.
       const loggedSubject = logSafe(redactSecrets(subject, secrets))
 
-      this.logger.error(`delivery failed for "${loggedSubject}": ${describeError(error, secrets)}`)
+      this.logger.error(
+        safeLogLine(
+          `delivery failed for "${loggedSubject}": ${describeError(error, secrets)}`,
+          secrets
+        )
+      )
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
       //

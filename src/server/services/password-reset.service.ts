@@ -33,6 +33,7 @@ import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -743,8 +744,11 @@ export class PasswordResetService {
         // symmetric and was dead — the mutation gate reported it as such, since no realistic test
         // can reach it.
         this.logger.error(
-          `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
-            describeError(err, [rawToken])
+          safeLogLine(
+            `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
+              describeError(err, [rawToken]),
+            [rawToken]
+          )
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           // Only `userId` changes here, which is the finding. `delErr` comes from `redis.del` on a
@@ -787,8 +791,11 @@ export class PasswordResetService {
         // Per-field, not whole-line — see the verification-OTP site for why: redacting the
         // assembled string lets either redaction alone satisfy the test, so neither is proven.
         this.logger.error(
-          `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
-            describeError(err, [otp])
+          safeLogLine(
+            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
+              describeError(err, [otp]),
+            [otp]
+          )
         )
       })
   }

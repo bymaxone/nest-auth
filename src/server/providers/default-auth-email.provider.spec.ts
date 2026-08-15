@@ -681,6 +681,28 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<redacted>')
   })
 
+  // The seam ONE LEVEL UP from the composition inside `describeError`: the provider's own template
+  // joins a sanitised subject and a sanitised description with `": `, and a value can straddle
+  // that. Measured with a device string of `foo": Error: bar` — the subject renders `foo`, the
+  // error renders `Error: bar`, and the template rebuilds the device in full from two fields that
+  // each contain nothing. The line is withheld rather than published.
+  it('withholds a line whose template rebuilt a value across the seam', async () => {
+    const device = 'foo": Error: bar'
+    const messages = { newSessionAlert: () => ({ subject: 'foo', text: 'body' }) }
+    const custom = new DefaultAuthEmailProvider(sink, { messages })
+    sink.send.mockRejectedValueOnce(new Error('bar'))
+
+    await custom.sendNewSessionAlert('t', 'u@example.com', {
+      device,
+      ip: '203.0.113.7',
+      sessionHash: 'deadbeef'
+    })
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain(device)
+    expect(logged).toContain('withheld')
+  })
+
   // The COMPOSITION of two clean components can spell a secret neither contains. `name` and
   // `message` are redacted separately, then joined as `name: message` — so a declared secret of
   // `Error: boom` matches neither half and appears in full in the joined line. The end-to-end

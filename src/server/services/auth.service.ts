@@ -36,6 +36,7 @@ import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -1140,8 +1141,11 @@ export class AuthService {
         // alone satisfies the assertion and NEITHER is proven: the mutation gate reported exactly
         // that, one surviving mutant per argument, each masked by the other.
         this.logger.error(
-          `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
-            describeError(err, [otp])
+          safeLogLine(
+            `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
+              describeError(err, [otp]),
+            [otp]
+          )
         )
       })
   }

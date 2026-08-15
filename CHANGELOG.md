@@ -96,6 +96,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   error. Both strip the addresses now. Containing a value in one place and not the other contains
   it nowhere.
 
+  **The last seam is between the fields, and it is closed by a CHECK rather than another
+  redaction.** Sanitising each field separately leaves the text a template puts between them: a
+  device string of `foo": Error: bar` is rebuilt in full when a subject of `foo` and a description
+  of `Error: bar` are joined by `": `, though neither field contains it. Redacting the assembled
+  line closes that and was tried — it makes every per-field redaction redundant with the final
+  one, so removing any single one changes nothing observable, and the mutation gate reported one
+  surviving mutant per redaction, each masked by the others. A check has neither problem: it
+  closes the seam, and it fails loudly if a per-field guard is removed, because the value then
+  survives and the line is withheld. Every guard stays individually provable.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.
