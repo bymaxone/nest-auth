@@ -681,6 +681,20 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<redacted>')
   })
 
+  // The COMPOSITION of two clean components can spell a secret neither contains. `name` and
+  // `message` are redacted separately, then joined as `name: message` — so a declared secret of
+  // `Error: boom` matches neither half and appears in full in the joined line. The end-to-end
+  // redaction over the finished description is what covers it, and this pins that rather than
+  // the per-component pass which looks sufficient and is not.
+  it('removes a secret formed by joining two clean components', async () => {
+    sink.send.mockRejectedValueOnce(new Error('boom'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', 'Error: boom')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('Error: boom')
+  })
+
   // Redaction runs per component, and things happen AFTER it: `logSafe` replaces a
   // control-character value with `<malformed>`, a failed link becomes `<malformed-error>`, and the
   // links are joined with a separator. Each writes text the per-component pass never saw, so a
