@@ -154,6 +154,20 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   which is the same forgery CR and LF are rejected for. This applies everywhere `logSafe` is used,
   not only on the paths this change touched.
 
+  **The same defect was one port over, in the breach checker.** `IPasswordBreachChecker.isBreached`
+  receives the PLAINTEXT PASSWORD by contract, so an error it raises is a place the plaintext can
+  be — an HTTP client that echoes the request it failed on is the ordinary shape. The fail-open
+  handler passed that error straight to `logger.error(msg, err)`, publishing it with its stack and
+  whatever the client hung on it, under a comment claiming the plaintext never reached the logger.
+  It now describes the error the same way every mail path does.
+
+  Two DTO comments carried the same over-claim (`RegisterDto.password`,
+  `AcceptInvitationDto.password`: _"never logged or persisted in plaintext"_) and now say **by this
+  library**, pointing at the ceiling. Found by sweeping for the CLAIM rather than for the wording
+  already corrected — the method comes from the `@bymax-one/nest-notification` seat, who found two
+  more in their own README the same way. A sweep by phrase misses the siblings written in other
+  words, and the most scannable claim in a file is rarely worded like the one you just fixed.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so to
   branch on the channel's codes, and handing it a laundered replacement would take those away. So

@@ -14,6 +14,7 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
+import { describeChannelStatus } from '../utils/describe-error'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -372,7 +373,12 @@ export class PasswordService {
    * documented behaviour, and worst during an incident, when changing the password is the
    * urgent thing. A refusal to answer is not evidence against the password.
    *
-   * The plaintext is never passed to the logger; only the checker's own error is.
+   * The plaintext is not passed to the logger, and neither is the checker's ERROR — which is the
+   * part that took a measurement to learn. A breach checker receives the plaintext by contract, so
+   * an error it raises is a place the plaintext can be: an HTTP client that echoes the request it
+   * failed on, a validation error quoting the value it rejected. `logger.error(msg, err)` then
+   * publishes that, plus the stack and whatever properties the client hung on it. Same shape as
+   * the mail-channel leak this library fixed in `DefaultAuthEmailProvider`, one port over.
    *
    * @param plain - The plaintext password the user is trying to set.
    * @throws {@link AuthException} with `PASSWORD_COMPROMISED` when the corpus knows it.
@@ -382,10 +388,18 @@ export class PasswordService {
     try {
       breached = await this.breachChecker.isBreached(plain)
     } catch (err: unknown) {
+      // The error object is NOT handed to the logger. A checker is consumer code that received
+      // the plaintext, so its error is a place the plaintext can be — and redacting it would not
+      // be enough for the same reason it was not enough for the mail channel: a client that
+      // echoes what it failed on may echo it encoded, where no substring match reaches it.
+      // `describeChannelStatus` publishes only what it can rebuild from a validated shape.
+      //
       // Stryker disable next-line StringLiteral: diagnostic-only log text; the behaviour under
       // test is that the password is ADMITTED and a line is emitted, neither of which the
       // wording changes
-      this.logger.error('breach check threw; admitting the password (the checker fails open)', err)
+      this.logger.error(
+        `breach check threw; admitting the password (the checker fails open): ${describeChannelStatus(err)}`
+      )
       return
     }
     if (breached) {

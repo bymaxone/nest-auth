@@ -50,7 +50,9 @@ export class RegisterDto {
    *
    * Maximum 128 characters as a practical
    * input bound. The service layer hashes this value immediately after receipt —
-   * it is never logged or persisted in plaintext.
+   * it is never logged or persisted in plaintext BY THIS LIBRARY — a breach checker or repository
+   * you supply receives it, and an error either raises is a place it can be. See
+   * `PasswordService.assertNotCompromised` for the ceiling and how the library holds its own half.
    */
   @IsString()
   @MinLength(8)

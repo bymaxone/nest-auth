@@ -44,8 +44,9 @@ export class AcceptInvitationDto {
    *
    * Maximum 128 characters as a practical
    * input bound to prevent DoS via pathological scrypt inputs.
-   * The service layer hashes this value immediately — it is never logged or
-   * persisted in plaintext.
+   * The service layer hashes this value immediately — it is never logged or persisted in plaintext
+   * BY THIS LIBRARY. A breach checker you supply receives it by contract, and an error it raises
+   * is a place it can be; see `PasswordService.assertNotCompromised` for the ceiling.
    */
   @IsString()
   @Length(8, 128)
