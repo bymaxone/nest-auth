@@ -1281,8 +1281,12 @@ it, including cookie names you have since changed.
 >   reads the `Authorization` header whatever `tokenDelivery` says, and `schemesFor` declares that
 >   scheme with no delivery condition on it. A platform-guarded route wants it under `cookie`
 >   delivery exactly as much as under `bearer`.
-> - **Both, on different routes** → a single document default cannot state two different
->   requirements. Give the minority family per-operation `security` (via your own decorator or
+> - **Both, on different routes** → the default cannot express this, though not because it is
+>   limited to one entry. A document `security` array may hold both requirements — but the entries
+>   are **alternatives**, and the whole array applies to every operation that inherits it. Listing
+>   both therefore documents each credential as valid for _either_ family, which says your platform
+>   routes accept a member token. That is not a missing detail; it is a false statement about who
+>   can call what. Give the minority family per-operation `security` (via your own decorator or
 >   nest-core's `operationSecurity`) and let the default cover the majority.
 >
 > **2. For the dashboard family — which schemes does this deployment actually declare?** Delivery
@@ -1389,11 +1393,10 @@ it, including cookie names you have since changed.
 > called unsatisfiable — and one regression that no status-code probe could have surfaced,
 > because the routes it broke still answered correctly at runtime.
 >
-> **And there is one shape nothing can warn you about, so the diff is the only check that
-> covers it.** If you remove _every_ requirement at once — no library describing anything, no
-> decorator, no override, no document default — what remains is indistinguishable from the
-> document of an API that is public on purpose. Both are a set of operations that ask for
-> nothing. **No general-purpose tool** can separate the two from the rendered document alone
+> **And there is one shape no warning will catch for you, however new your nest-core.** If you
+> remove _every_ requirement at once — no library describing anything, no decorator, no override,
+> no document default — what remains is indistinguishable from the document of an API that is
+> public on purpose. Both are a set of operations that ask for nothing. **No general-purpose tool** can separate the two from the rendered document alone
 > without also shouting at every genuinely public API, which is how a warning earns the right to
 > be ignored. This is why nest-core's warning requires that _some_ operation still state a
 > requirement: the gap is deliberate, not an omission, and no version closes it.

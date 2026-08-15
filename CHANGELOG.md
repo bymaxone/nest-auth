@@ -313,7 +313,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   registered, so a **platform-only deployment declares neither and throws under `cookie` too**;
   and a route behind `JwtPlatformGuard` always wants `bymaxPlatformAccessBearer`, since
   `extractPlatformAccessToken` reads the `Authorization` header whatever the mode says. A backend
-  guarding different routes with both families needs per-operation `security` for one of them.
+  guarding different routes with both families needs per-operation `security` for one of them —
+  not because the default holds only one entry, but because its entries are alternatives applied
+  to every inheriting operation, so listing both would document each credential as valid for
+  either family.
 
   The platform-only case gets a remedy rather than only a diagnosis, because the deployment is
   legitimate: `JwtAuthGuard` is registered and exported unconditionally, so mounting no dashboard
