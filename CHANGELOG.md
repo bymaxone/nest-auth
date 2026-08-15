@@ -299,11 +299,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   document just stops asking for credentials on the routes the library never knew about — the ones
   the backend owns. nest-core 1.5.0 warns on this shape and names the bare operations, which makes
   it visible rather than impossible. Keep the default, and **derive it from `tokenDelivery` instead
-  of writing a literal**: under `bearer` this contributor emits no cookie scheme, so a default
-  naming `bymaxAuthAccessCookie` references an undeclared scheme and nest-core's
-  `assertSchemesDeclared` throws the build. Per-operation beats document-level, so the default
-  cannot reach this library's operations. Verified on a real adoption: thirteen contributed
-  operations render byte-identical with and without it.
+  of writing a literal**, which goes wrong in two different ways depending on the mode: under
+  `bearer` this contributor emits no cookie scheme at all, so a default naming
+  `bymaxAuthAccessCookie` references an undeclared scheme and nest-core's `assertSchemesDeclared`
+  throws the build; under `both` that scheme does exist, so nothing throws and the default is
+  merely incomplete, describing one of the two channels the routes accept. Loud in one mode, quiet
+  in the other. Per-operation beats document-level, so the default cannot reach this library's
+  operations. Verified on a real adoption: thirteen contributed operations render byte-identical
+  with and without it.
 
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same

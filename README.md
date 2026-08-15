@@ -1262,12 +1262,27 @@ it, including cookie names you have since changed.
 > a warning in a build log is still something a person has to read.
 >
 > Keep the default, and **derive it from your `tokenDelivery` rather than writing a literal**. The
-> derivation is not style: under `tokenDelivery: 'bearer'` this contributor emits no cookie scheme
-> at all, so a default naming `bymaxAuthAccessCookie` references a scheme the document never
-> declares, and nest-core's `assertSchemesDeclared` **throws** the document build. A literal is
-> correct for the one delivery it was written against and fails on the other two — which is how
-> the advice that fixes a silent wrong document introduces a loud broken one. Read the mode you
-> configured and name the scheme that mode actually defines.
+> derivation is not style. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`, which is
+> correct under `cookie`, and read what the other two modes do with it:
+>
+> | mode     | this contributor declares         | that literal default                                        |
+> | -------- | --------------------------------- | ----------------------------------------------------------- |
+> | `cookie` | the cookie scheme only            | correct                                                     |
+> | `both`   | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
+> | `bearer` | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
+>
+> **The two wrong outcomes are not the same failure, and the difference is the point.** Under
+> `bearer` the scheme does not exist, so nest-core's `assertSchemesDeclared` **throws** and the
+> document never builds — loud, immediate, impossible to ship. Under `both` the scheme does exist,
+> so nothing throws; the default is merely **incomplete**, telling a reader that your own routes
+> take a cookie when they equally accept a bearer token. That one is quiet, and it is the same
+> class of quiet as the bug this whole note is about. A literal written against a bearer-only
+> deployment inverts the table and fails under `cookie` for the same reasons.
+>
+> So the advice that fixes a silently wrong document can introduce a loud broken one **or a second
+> quiet one**, depending on which mode you land in. Read the mode you configured and name the
+> schemes that mode actually defines — deriving from the same input the contributor reads is right
+> in all three, once, instead of correct in one and checked forever.
 >
 > The default is what covers your routes, and it cannot disturb this library's: a per-operation
 > requirement outranks a document-level one, and every operation the contributor describes carries
