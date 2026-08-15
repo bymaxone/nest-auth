@@ -208,7 +208,7 @@ Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
 **100% statements / branches / functions / lines — every layer, no exceptions.**
 Enforced by `jest.config.ts` (`pnpm test:cov`) and `jest.coverage.config.ts`
 (`pnpm test:cov:all`); both fail below 100%. A hard pre-publish gate, not a
-target. Mutation testing (Stryker `break: 95`) is the deeper gate against weak
+target. Mutation testing (Stryker `break: 100`) is the deeper gate against weak
 tests.
 
 ### Mocking Strategy

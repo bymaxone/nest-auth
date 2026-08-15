@@ -198,31 +198,28 @@ const ERROR_BODY_READ_TIMEOUT_MS = 2_000
 async function isExpiredSessionResponse(response: Response): Promise<boolean> {
   const clone = response.clone()
   let timer: ReturnType<typeof setTimeout> | undefined
-  let body: unknown
 
-  try {
-    // `undefined` is the give-up sentinel and needs no symbol: `json()` cannot resolve to it,
-    // because JSON has no such value.
-    //
-    // The abandoned read is NOT cancelled, and that is measured rather than assumed: `json()`
-    // locks the body, so `cancel()` on it rejects with
-    // `TypeError: Invalid state: ReadableStream is locked`. An earlier draft called it inside a
-    // `.catch(() => undefined)`, which meant the cleanup that comment promised never happened
-    // and the rejection was swallowed. Owning a reader to make the read genuinely abortable
-    // would cost more bundle than the case is worth — a 401 whose body never arrives — so the
-    // read is left to the collector, and this says so instead of claiming otherwise.
-    body = await Promise.race([
-      clone.json(),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(undefined), ERROR_BODY_READ_TIMEOUT_MS)
-      })
-    ])
-  } catch {
-    // Not JSON, empty, or a body the runtime would not parse twice.
-    return true
-  } finally {
-    clearTimeout(timer)
-  }
+  // `undefined` is the give-up sentinel and needs no symbol: `json()` cannot resolve to it,
+  // because JSON has no such value. Both ways of giving up produce it — the read failing and the
+  // read taking too long — and they deliberately answer the same, so neither needs its own arm:
+  // a 401 whose body cannot be read is a 401 that says nothing about why, and a refresh is what
+  // this wrapper did for every 401 before it started reading them at all.
+  //
+  // The abandoned read is NOT cancelled, and that is measured rather than assumed: `json()`
+  // locks the body, so `cancel()` on it rejects with
+  // `TypeError: Invalid state: ReadableStream is locked`. An earlier draft called it inside the
+  // `.catch()` below, which meant the cleanup that comment promised never happened and the
+  // rejection was swallowed. Owning a reader to make the read genuinely abortable would cost more
+  // bundle than the case is worth — a 401 whose body never arrives — so the read is left to the
+  // collector, and this says so instead of claiming otherwise.
+  const body: unknown = await Promise.race([
+    clone.json().catch(() => undefined),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(undefined), ERROR_BODY_READ_TIMEOUT_MS)
+    })
+  ])
+
+  clearTimeout(timer)
 
   if (typeof body !== 'object' || body === null) return true
 

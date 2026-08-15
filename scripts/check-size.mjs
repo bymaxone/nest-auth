@@ -82,6 +82,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     runs on a server. It is also the obvious future lever if this budget gets tight again:
 //     consumers read the `.d.ts`, never the comments in the `.mjs`, so stripping comments from
 //     the JS output alone would give several KiB back without losing a word of documentation.
+//     Raised to 115 KiB for the runtime OpenAPI contributor: a deployment building its document
+//     with @bymax-one/nest-core now gets this library's operations described automatically —
+//     which schemes exist, which operation requires which, and which are reachable
+//     unauthenticated — derived from the resolved options, because the same build serves
+//     different paths, transports and cookie names in every deployment. Measured 108.00 -> 108.21
+//     KiB against 0 headroom, so ~6% back, matching this entry's historical band.
+//     Worth recording because it contradicts the note above: for THIS subpath the prose lever did
+//     not apply. Trimming ~4 KB of JSDoc out of the two new files changed the bundle by ZERO
+//     bytes — measured, not assumed — because tsup does not carry those files' comments into the
+//     output. The growth is the handler table and the derivation: code, not documentation.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -103,7 +113,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 108 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 115 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 3.5 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

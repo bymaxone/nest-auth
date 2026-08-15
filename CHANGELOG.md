@@ -100,6 +100,112 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **The OpenAPI security posture is contributed at the consumer's boot, not shipped as a file.**
+  A deployment building its document with `@bymax-one/nest-core` >= 1.4.0 now gets this library's
+  operations described automatically: which schemes exist, which operation requires which, and
+  which are reachable unauthenticated. The module registers a contributor; nest-core discovers it
+  while building the document. Nothing to enable, nothing to import.
+
+  It cannot be a static file, and that is the whole reason the contract exists. The same build
+  serves `/auth/login` here and `/api/v2/identity/login` there, with the credential in a cookie
+  on one deployment and an `Authorization` header on the next, under cookie names the consumer
+  chose. So the fragment is derived from the options that actually resolved, and keyed by handler
+  identity — which survives every prefix, version and mount point.
+
+  | resolved options             | contributed                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `tokenDelivery: 'cookie'`    | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                                                                                                                                                                                                                                                                                                                                                  |
+  | `tokenDelivery: 'bearer'`    | `bymaxAuthAccessBearer` only; `refresh` gets `security: []` and a `{refreshToken}` body that is **required twice** — the body must be sent and the property must be in it, because with no cookie to carry the token a generated client accepting `{}` would be describing a call that fails. `logout` takes the same body **optional**: measured, the two differ, since logout answers 204 with no credential at all where refresh 401s |
+  | `tokenDelivery: 'both'`      | both access schemes as a **two-entry requirement list**, which OpenAPI reads as OR; the refresh operations add an **empty** alternative beside the cookie — how OpenAPI says "or a credential this member cannot model", without which the document would refuse to describe the valid body-only caller                                                                                                                                  |
+  | `controllers.platform: true` | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says. The registration switch decides, not `platform.enabled`                                                                                                                                                                                                                                                                 |
+  | a controller not mounted     | no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                                                                                                                                                                |
+
+  **Two operations need two credentials at once, and the document says so.** Found in review of
+  this PR, against the controllers rather than against the guard stack: `revokeAllSessions` is
+  JWT-guarded AND reads the refresh token, because it revokes every session except the caller's
+  and cannot spare a session it cannot name — without one it answers `auth.session_not_found`.
+  `listSessions` and `changePassword` read the same token and succeed without it, with a lesser
+  answer (`isCurrent` false everywhere; every session ended, the caller's included). Describing
+  all three as access-only told a bearer-mode client to send no body to an endpoint that refuses
+  without one, and a cookie-mode client that the refresh cookie was not read.
+
+  OpenAPI writes AND as one requirement entry carrying both schemes, so that is what they get —
+  and under `'both'` the list is the product of the two channels: each access form, once with the
+  refresh cookie beside it and once without, the second being the body-borne token that `security`
+  cannot name. The required and the optional case produce the same document in that mode, which is
+  a property of OpenAPI rather than a shortcut: once a body-borne alternative exists, no
+  requirement list can insist on a credential that might be arriving in the body.
+
+  **And `logout` names the access token it revokes.** Also found in review, and the one with a
+  security consequence rather than an ergonomic one: `logout` is `@Public()` — deliberately, so a
+  user whose 15-minute access token expired can still sign out — but it READS that token and
+  blacklists its `jti` for whatever life it has left. Described as refresh-only, a generated
+  client sent no `Authorization` header, so the refresh session was revoked while a valid access
+  token stayed usable until it expired. Every form it reads is now an alternative, richest first,
+  with the empty entry last saying that nothing is required. Its platform twin already worked this
+  way (`[{platformBearer}, {}]`), which is what made the dashboard side look like the oversight it
+  was.
+
+  The refresh-cookie scheme is now defined when **any** of the three controllers that reference it
+  is mounted, not only `auth` — a deployment mounting the session surface alone was referencing a
+  scheme its own document never declared.
+
+  **A scheme the options cannot satisfy is absent**, never defined-and-unreferenced: nest-core
+  fails a boot on a requirement naming an undefined scheme, and a document defining a credential
+  the server will not read tells a generated client to offer it. Both directions are asserted —
+  no dangling reference, and no unreferenced definition — under all three delivery modes.
+
+  **No coupling at all** — not a dependency, not a peer, not a devDependency, and no import even
+  in tests. The contributor class is unexported, the contract revision is inlined and the marker
+  is the documented string literal, so nothing published or unpublished names
+  `@bymax-one/nest-core`. A conformance gate walks the whole tree and fails on an import of any
+  other `@bymax-one/*` package, this package's own subpaths excepted; falsified from both a
+  production file and a test file.
+
+  An earlier draft of this work took nest-core as a devDependency so the conformance suite could
+  compare its constants as values, on the reasoning that test files do not ship. That reasoning
+  is true and beside the point: **a library does not take a dependency on its consumers' stack in
+  order to assert a composition** — the rule this repository already applies to
+  `AuthExceptionFilter`. The check moves to the consumer, who can make it better anyway, because
+  their suite runs both packages at the versions they installed. The README carries the two
+  expectations to write, and says which of the two failures is silent.
+
+  Two acceptance checks run in both directions over the handler table: every declared key names a
+  method that exists on the controller it names, and every route handler on every controller is
+  declared. The first matters because a key nest-core cannot resolve **fails a consumer's
+  document build** — a renamed handler here would break their repository on upgrade, not ours.
+  The second is what stops the table falling quietly behind: a new endpoint that nobody described
+  would inherit the consumer's document-level default, which is the wrong answer for a public
+  route and an unenforced promise for a protected one.
+
+  **On nest-core older than 1.4.0 the fragments are silently ignored** — no contributor lane, so
+  the document renders exactly as before with no error and no warning. Documented symptom-first
+  in the README, with the diagnosis order, because "the contributor has not shipped yet" and "the
+  nest-core version is too old" are indistinguishable from the document.
+
+  **Apply to a derived backend.** If you wrote `securitySchemes` or `openapi.operationSecurity`
+  entries for this library's routes by hand, **delete them** — and note what that sentence is
+  not saying. Those entries are not stale and not wrong: they are what makes the document correct
+  today, and a maintainer told to remove "incorrect config" will go looking for a defect and find
+  none. The accurate instruction is _delete the entries that currently do this job correctly,
+  because the library now does it_ — the deletion is what transfers the work, and it is needed
+  exactly because the entries were doing it. Precedence — read from nest-core's
+  `augmentOperation`, not summarised — is: the generated operation's own `security`, then your
+  override, then this library's fragment. So the stale vocabulary keeps winning and the
+  contributed one never lands.
+
+  **And your own document test will not catch it.** A consumer seat measured their case: ten
+  `operationSecurity` entries, all for this library's routes, and a suite asserting the
+  operation-to-posture map with `toEqual`. On adoption every fragment loses to those entries, the
+  old scheme names survive, and the suite stays **green** — it is asserting the old answer that is
+  still being served. A test that pins your document confirms the staleness instead of finding
+  it, so nothing downstream will remind you. Delete the literals, update whatever pins the
+  document to the four-name vocabulary, rebuild, and regenerate any typed client.
+
+  **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
+  read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
+  contributor and are next; the security posture is the half a consumer asserts today.
+
 - **`WsJwtGuard` is now driven by a real WebSocket handshake.** 228 lines at **0% e2e coverage**:
   every other guard here is reached by an HTTP request, this one by a socket upgrade, and no
   suite spoke that protocol — so its only proof was unit tests handing it an `ExecutionContext`
@@ -141,9 +247,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   Register it on a gateway that applies the guard (`@UseFilters(new WsAuthExceptionFilter())`) and
   the client reads `error.code` instead. `status: 'error'` is kept — the field Nest itself sets
-  and the one socket.io clients branch on — with the envelope added beside it. An `AuthException`
-  travels whole, so a `details` payload survives; anything else is answered as `auth.internal`
-  with a generic message and logged, never forwarded.
+  and the one socket.io clients branch on — with the envelope added beside it. The
+  `AuthException` travels whole, so a `details` payload survives.
+
+  **Scoped to `AuthException`, and answering both transports.** An argument-less `@Catch()` would
+  claim every exception the gateway raises, so a `WsException` an unrelated handler throws — a
+  domain error with its own contract — would come back as an `auth.*` code: following the README
+  would silently rewrite errors a consumer already ships. Everything that is not this library's
+  refusal keeps travelling through Nest's own layer. And a native `ws` client is written to with
+  `send`, not emitted on: it extends `EventEmitter`, so `emit` succeeds, dispatches a local event
+  and sends the peer nothing — a filter that only emits is inert on exactly the transport whose
+  refusal this fix exists to deliver.
 
   Opt-in, like its HTTP twin: a library does not get to decide how an application answers
   failures it did not raise. It imports neither `socket.io` nor `@nestjs/websockets` — the client

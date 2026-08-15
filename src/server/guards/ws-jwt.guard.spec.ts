@@ -150,9 +150,15 @@ describe('WsJwtGuard', () => {
   // the caller learned nothing. Refused with the same code a missing credential gets, because a
   // caller must not learn from the code which of the two happened. Driven over a real native
   // adapter in `test/e2e/ws-guard.e2e-spec.ts`.
-  it('refuses a client with no handshake instead of throwing on it', async () => {
+  // Both nullish forms, because they arrive from different places: an adapter that never sets
+  // the property at all, and one that sets it to `null` for a connection it could not describe.
+  // The property access that used to throw does not care which, so neither does the refusal.
+  it.each([
+    ['no handshake at all', {}],
+    ['a null handshake', { handshake: null }]
+  ])('refuses a client with %s instead of throwing on it', async (_why, client) => {
     const context = {
-      switchToWs: () => ({ getClient: () => ({ data: {} }) })
+      switchToWs: () => ({ getClient: () => ({ data: {}, ...client }) })
     } as unknown as ExecutionContext
 
     await expect(guard.canActivate(context)).rejects.toMatchObject({

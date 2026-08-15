@@ -83,6 +83,34 @@ describe('WsAuthExceptionFilter', () => {
       expect(frame.data.error.code).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
     })
 
+    // Half a native socket is not one. Both fields have to be present for the `send` path to be
+    // the right one, and a Socket.IO client that happens to expose either name alone must still
+    // be emitted to — reading the two as an alternative would write the refusal into a client
+    // that cannot be written to, which delivers it to nobody at all.
+    // The first case is not hypothetical — it is the Socket.IO client. `Socket.send()` is the
+    // documented alias for `emit('message')`, and `readyState` lives on the Engine.IO transport
+    // beneath it, so every Socket.IO refusal is a half-match. Reading the two as an alternative
+    // would send them all down the `send` path, where the `readyState` check finds `undefined`
+    // and delivers the refusal to nobody. Each case fails differently and neither fails quietly:
+    // with no `readyState` the filter returns having written nothing, and with no `send` it calls
+    // a function that is not there.
+    it.each([
+      ['a send with no readyState, the Socket.IO shape', { send: jest.fn() }],
+      ['a readyState with no send', { readyState: 1 }]
+    ])('is emitted to, not written to, for %s', (_why, half) => {
+      const emit = jest.fn()
+
+      filter.catch(
+        new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID),
+        hostWithClient({ ...half, emit })
+      )
+
+      expect(emit).toHaveBeenCalledWith('exception', {
+        status: 'error',
+        error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
+      })
+    })
+
     // A socket that is closing or closed cannot be told anything. The refusal still happened;
     // there is simply nobody to hear it, and writing to a closed socket throws.
     it.each([
