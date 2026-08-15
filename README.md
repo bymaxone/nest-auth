@@ -412,6 +412,13 @@ export class ResendEmailProvider implements IEmailProvider {
     })
   }
 
+  // The library does NOT await the three MFA notices — by the time one is sent the factor is
+  // already enabled or removed, so a bounced notice must not answer the caller with an error for
+  // an operation that succeeded. The consequence is here: an inline send like this one can be
+  // lost to a process shutdown or a serverless freeze arriving between the response and the send
+  // completing. Where these alerts matter — the administrative reset most of all, since it is what
+  // makes a support-desk takeover detectable — enqueue durably and resolve instead of sending
+  // inline. Awaiting would not fix it either: a freeze mid-await loses the notice AND the response.
   async sendMfaEnabledNotification(
     _tenantId: string,
     email: string,
