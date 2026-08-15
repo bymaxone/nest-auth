@@ -290,9 +290,18 @@ describe('DefaultAuthEmailProvider', () => {
       provider.sendMfaEnabledNotification('tenant-1', 'user@example.com')
     ).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on"',
-      boom
+      'delivery failed for "Two-factor authentication is on": Error: channel down'
     )
+  })
+
+  // The error OBJECT never reaches the logger — only the description built from it. Asserted on
+  // the call's arity because that is the property that matters: a second argument would hand Nest
+  // the raw error, and Nest prints its stack and its own properties, which is where a channel
+  // hides the server's full reply (nodemailer's `response`, for one).
+  it('passes no error object to the logger, only a rendered line', async () => {
+    sink.send.mockRejectedValueOnce(new Error('channel down'))
+    await provider.sendMfaEnabledNotification('tenant-1', 'user@example.com')
+    expect(errorSpy.mock.calls[0]).toHaveLength(1)
   })
 
   // The log line names the message but never the recipient — a log reaches a wider audience than
@@ -313,7 +322,176 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(strict.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')).rejects.toBe(
       boom
     )
-    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Reset your password"', boom)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Reset your password": Error: channel down'
+    )
+  })
+
+  // The rethrown error is the ORIGINAL, unlaundered. Deliberate, and asserted so a later "let us
+  // sanitize what we throw too" cannot land silently: a caller opted into this policy to branch on
+  // the channel's own codes, and a replacement error takes those away. The consequence — that the
+  // quoted body travels with it — is the caller's to contain, which is why `redactSecrets` is
+  // exported and the option documents the duty.
+  it('re-throws the original error object rather than a sanitized copy', async () => {
+    const boom = new Error('550 rejected: "Your code is 424242."')
+    sink.send.mockRejectedValueOnce(boom)
+    const strict = new DefaultAuthEmailProvider(sink, { onDeliveryError: 'rethrow' })
+
+    await expect(
+      strict.sendPasswordResetOtp('tenant-1', 'user@example.com', '424242')
+    ).rejects.toBe(boom)
+    expect(boom.message).toContain('424242')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Credentials must not reach the log when the channel quotes the body back
+  // ---------------------------------------------------------------------------
+
+  // The measured failure, as a test. A policy/DLP relay rejects with 550 and QUOTES the offending
+  // content, so the channel's error IS the rendered body — the premise this file's old comment got
+  // wrong, and the reason a live OTP reached an operator's log in clear text on a real deployment.
+  // Every credential-bearing method is covered, because each one renders a different secret into
+  // a different body and one of them being threaded is no evidence about the others.
+  it.each([
+    [
+      'password-reset OTP',
+      (p: DefaultAuthEmailProvider) => p.sendPasswordResetOtp('t', 'u@example.com', '699647'),
+      '699647'
+    ],
+    [
+      'email-verification OTP',
+      (p: DefaultAuthEmailProvider) => p.sendEmailVerificationOtp('t', 'u@example.com', '318250'),
+      '318250'
+    ],
+    [
+      'password-reset token',
+      (p: DefaultAuthEmailProvider) =>
+        p.sendPasswordResetToken('t', 'u@example.com', 'a1b2c3d4e5f6a1b2'),
+      'a1b2c3d4e5f6a1b2'
+    ],
+    [
+      'email-change token',
+      (p: DefaultAuthEmailProvider) =>
+        p.sendEmailChangeVerification('t', 'new@example.com', 'f6e5d4c3b2a1f6e5'),
+      'f6e5d4c3b2a1f6e5'
+    ],
+    [
+      'invitation token',
+      (p: DefaultAuthEmailProvider) =>
+        p.sendInvitation('t', 'u@example.com', {
+          inviterName: 'Ana',
+          tenantName: 'Acme',
+          inviteToken: '0f1e2d3c4b5a0f1e',
+          expiresAt: new Date('2026-01-01T00:00:00.000Z')
+        }),
+      '0f1e2d3c4b5a0f1e'
+    ]
+  ])('keeps the %s out of the log when the relay quotes it back', async (_why, send, secret) => {
+    sink.send.mockRejectedValueOnce(
+      new Error(`550 5.7.1 rejected by policy: "Your code is ${secret}. It expires soon."`)
+    )
+
+    await send(provider)
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain(secret)
+    expect(logged).toContain('<redacted>')
+  })
+
+  // A channel reports "send failed BECAUSE the relay said", and the quoted body lands one level
+  // down. Reading only the top-level message would leave the credential in the chain — which is
+  // precisely the shape a sibling library shipped and had to fix.
+  it('redacts a secret quoted in a nested cause', async () => {
+    sink.send.mockRejectedValueOnce(
+      new Error('send failed', {
+        cause: new Error('550 rejected: "Your code is 550123."')
+      })
+    )
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('550123')
+    // The whole line, not just the absence of the code: the links must stay visibly separated so
+    // an operator can tell "the send failed" from "the relay said" instead of reading one run-on
+    // sentence stitched from two different errors.
+    expect(logged).toBe(
+      'delivery failed for "Your password reset code": Error: send failed <- ' +
+        'Error: 550 rejected: "Your code is <redacted>."'
+    )
+  })
+
+  // Text that came back from a remote relay is untrusted input. A CR/LF in it would close the log
+  // record and open a forged one, so the description is control-character stripped — the same
+  // guarantee `logSafe` gives every other request-derived value that reaches a log template.
+  it('does not let a relay forge a second log record', async () => {
+    sink.send.mockRejectedValueOnce(
+      new Error('rejected\nLOG [AuthService] login: success userId=victim')
+    )
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '111111')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // Both halves are needed. Asserting only the absence of a newline passes trivially on any
+    // build that keeps channel text out of the line altogether, which would make this test agree
+    // with a version that reports nothing; asserting the line carries the channel's own diagnosis
+    // is what makes the first assertion mean "included AND neutralised".
+    expect(logged).toContain('<malformed>')
+    expect(logged).not.toContain('\n')
+  })
+
+  // The bound is the second lock, for a relay that re-encodes the body so substring matching
+  // cannot find the credential at all. It cannot make that case safe, but it stops one failed
+  // send from relaying an unbounded quantity of channel-controlled text into the log.
+  it('caps how much channel text reaches the line', async () => {
+    sink.send.mockRejectedValueOnce(new Error('x'.repeat(5_000)))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '222222')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // Truncated, not dropped: the second assertion keeps this from passing on a build that omits
+    // the channel's message entirely, which would satisfy a bare length check while removing the
+    // diagnosis operators depend on.
+    expect(logged.length).toBeLessThan(400)
+    expect(logged).toContain('xxx')
+  })
+
+  // A channel may reject with something that is not an Error at all. Stringifying it would run
+  // the channel's own `toString`, so its type is reported instead and the walk stops.
+  it('describes a thrown non-error without stringifying it', async () => {
+    sink.send.mockRejectedValueOnce({
+      toString: () => 'code 999999 leaked via toString'
+    })
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '999999')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('999999')
+    expect(logged).toContain('<non-error: object>')
+  })
+
+  // A channel can throw an error with no message at all — `new Error()`, or one whose entire
+  // message was control characters and got replaced. The name then stands alone rather than
+  // trailing a colon with nothing after it, so the line still reads as a diagnosis.
+  it('reports the error name alone when the message is empty', async () => {
+    sink.send.mockRejectedValueOnce(new Error())
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '444444')
+
+    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Your password reset code": Error')
+  })
+
+  // A cycle in the cause chain must not turn one failed send into an unbounded record. The depth
+  // cap is what guarantees termination; without it this test hangs rather than fails.
+  it('stops walking a self-referential cause chain', async () => {
+    const looped = new Error('outer')
+    Object.defineProperty(looped, 'cause', { value: looped })
+    sink.send.mockRejectedValueOnce(looped)
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '333333')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged.match(/outer/g)).toHaveLength(3)
   })
 
   // ---------------------------------------------------------------------------

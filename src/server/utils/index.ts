@@ -1,4 +1,5 @@
 export { assertNotBlocked } from './assert-not-blocked'
+export { redactSecrets } from './redact-secrets'
 export { readStampedEpoch } from './stamped-epoch'
 export { sanitizeHeaders } from './sanitize-headers'
 export { sleep } from './sleep'

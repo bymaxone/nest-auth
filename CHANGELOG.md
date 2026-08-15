@@ -18,6 +18,47 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Security
+
+- **A one-time code could reach the operator's log in clear text when the mail relay rejected the
+  message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
+  comment justifying it read "the error is the channel's own, not the rendered body" — and a
+  measurement against a real relay disproved exactly that premise. A policy, DLP or anti-spam
+  relay answering `550` **quotes the offending content**, so the channel's error _is_ the rendered
+  body, and for this provider that body carries a live password-reset OTP, an email-verification
+  OTP, a reset token, an email-change token or an invitation token. The credential landed in the
+  log pipeline valid until it expired. Reported by the `@bymax-one/nest-notification` seat from a
+  run measured on a real relay, where the code captured from the SMTP `DATA` appeared verbatim in
+  the consumer's error entry under the same request id.
+
+  **The fix does not depend on the channel behaving.** The error object never reaches the logger.
+  A delivery failure now logs the subject plus a description built from an allowlist of the
+  error's `name` and `message` — never its `stack`, never its own properties, which is where a
+  channel hides the server's full reply (nodemailer hangs it on `response`). Each piece is
+  stripped of the credentials the message carried, walked three levels down the `cause` chain
+  because that is where a wrapped channel puts the relay's answer, bounded to 200 characters so a
+  re-encoded body cannot relay an unbounded quantity of channel text into the log, and passed
+  through `logSafe` — a relay's reply is untrusted input, and a `CR/LF` in it would have forged a
+  second log record. That last one was a live log-injection hole on the same line, closed here.
+
+  **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
+  channel's original error, deliberately unaltered — a caller that opted into that policy did so
+  to branch on the channel's codes, and handing it a laundered replacement would take those away.
+  So the quoted body travels with it. Whatever catches it must not log it raw. **`redactSecrets`
+  is now exported** from `@bymax-one/nest-auth` for that: `redactSecrets(text, [otp])` removes
+  every occurrence. Deployments on the default `'swallow'` policy need no action.
+
+  **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
+  provider and the log line's shape is the only visible difference. Two things to check. If you
+  parse that log line, it changed from `delivery failed for "<subject>"` with the error attached
+  as a second argument to a single string `delivery failed for "<subject>": <Name>: <message>`,
+  with `<-` between cause links. And if you run `onDeliveryError: 'rethrow'`, audit what your
+  handler does with the error, per the paragraph above.
+
+  Not exploitable by an unauthenticated caller on its own — it requires a relay configured to
+  quote rejected content — but it needs no attacker at all where such a relay is in the path, and
+  the value exposed is a working credential.
+
 ### Added
 
 - **A table key must now name a route handler, not merely a method that exists.** The conformance

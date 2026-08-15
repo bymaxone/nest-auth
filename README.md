@@ -281,6 +281,37 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > [!WARNING]
 > Any user-supplied value (display name, tenant name, inviter name) interpolated into HTML email bodies MUST be escaped to prevent stored XSS in notification content. Tokens and OTPs are library-generated and safe, but `inviterName`, `tenantName`, device strings, and any consumer-supplied placeholder are attacker-controllable.
 
+> [!CAUTION]
+> **Never log the error your transport rejects with — it can contain the code you just sent.**
+> A policy, DLP or anti-spam relay answering `550` commonly **quotes the offending message body**,
+> so the error your `send()` throws carries the OTP or token this library rendered into it. Logging
+> that error, or attaching it as a `cause` to one you log, puts a working credential into your log
+> pipeline in clear text until it expires. Measured on a real relay, not hypothesised.
+>
+> This is your half: the library cannot reach inside your provider implementation. `redactSecrets`
+> is exported for it, and takes the values you were handed:
+>
+> ```typescript
+> import { redactSecrets } from '@bymax-one/nest-auth'
+>
+> async sendPasswordResetOtp(tenantId: string, email: string, otp: string): Promise<void> {
+>   try {
+>     await this.resend.emails.send({ /* ... */ })
+>   } catch (error: unknown) {
+>     // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
+>     // into something that logs — both carry the quoted body.
+>     const detail = error instanceof Error ? error.message : 'unknown'
+>     this.logger.error(`reset OTP delivery failed: ${redactSecrets(detail, [otp])}`)
+>     throw error
+>   }
+> }
+> ```
+>
+> The same applies to `stack`, and to transport-specific fields — nodemailer hangs the server's
+> full reply on `response`. The bundled `DefaultAuthEmailProvider` already does all of this for its
+> own log line; if you use it with `onDeliveryError: 'rethrow'`, the error it re-throws is the
+> channel's original and is still yours to contain.
+
 ```typescript
 // email.provider.ts
 import { Injectable } from '@nestjs/common'

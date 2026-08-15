@@ -17,8 +17,16 @@
  * The copy is deliberately plain and entirely replaceable: pass `messages` to override any subset
  * of the catalogue with a product's own wording, and return `html` from an override for real links,
  * layout and branding. What must survive a rewrite is the security shape — a code is stated once,
- * a notice of a change the user may not have made tells them how to react, and only a message's
- * subject is ever logged (on a delivery failure), never a body, code or address.
+ * and a notice of a change the user may not have made tells them how to react.
+ *
+ * **On what reaches the log.** A delivery failure logs the message's subject and a bounded,
+ * redacted description of the error — never a body, code, address, stack, or the error object
+ * itself. The distinction is load-bearing and was learnt the hard way: this file previously logged
+ * the raw error on the reasoning that a channel's error is the channel's own rather than the
+ * rendered body. A relay that rejects with `550` while quoting the offending content makes those
+ * the same thing, and the OTP this provider had just rendered went to the log in clear text. An
+ * override that puts a code into a *subject* still breaks this, because the subject is logged by
+ * design — the port says so, and it is the one place a rewrite can reintroduce the leak.
  *
  * Coverage for this file is owned by the unit suite.
  *
@@ -31,6 +39,69 @@ import type {
   InviteData,
   SessionInfo
 } from '../interfaces/email-provider.interface'
+import { logSafe } from '../utils/log-safe'
+import { redactSecrets } from '../utils/redact-secrets'
+
+/**
+ * How much of a delivery error's text may reach the log line.
+ *
+ * A bound rather than a formatting preference. {@link redactSecrets} removes the credentials this
+ * library knows it put in the body, but it cannot find one the relay re-encoded, so the second
+ * lock is to refuse to relay an unbounded quantity of channel-controlled text into the log at all.
+ * The diagnosis an operator actually needs — `535 authentication failed`, `ECONNREFUSED` — is
+ * short and comes first; a rejection that quotes an entire message body is exactly the long one.
+ */
+const DELIVERY_ERROR_TEXT_LIMIT = 200
+
+/**
+ * How far down the `cause` chain the description walks.
+ *
+ * Chains are how a channel reports "the send failed BECAUSE the relay said". The useful context
+ * is near the top, and the depth is capped so a self-referential or pathological chain cannot
+ * turn one failed send into an unbounded log record.
+ */
+const DELIVERY_ERROR_CAUSE_DEPTH = 3
+
+/**
+ * Renders a delivery error into one bounded, secret-free line.
+ *
+ * Never returns the error object and never reads its `stack` or its own properties. That is the
+ * point rather than an omission: a channel's error carries whatever the channel decided to put
+ * in it — nodemailer, for one, hangs the server's full reply on `response` — so an allowlist of
+ * `name` and `message` is the only shape whose contents this library can reason about. Each piece
+ * is redacted, length-capped, and passed through {@link logSafe}, because text that came back
+ * from a remote relay is untrusted input and a CR/LF in it would forge a second log record.
+ *
+ * @param error - Whatever the channel threw.
+ * @param secrets - Credentials this message carried, which must not survive into the line.
+ * @returns A single-line description safe to log.
+ */
+function describeDeliveryError(error: unknown, secrets: readonly string[]): string {
+  const parts: string[] = []
+  let current: unknown = error
+
+  for (let depth = 0; depth < DELIVERY_ERROR_CAUSE_DEPTH && current !== undefined; depth++) {
+    if (!(current instanceof Error)) {
+      // A thrown non-Error has no contract at all — a string, an object, a rejected promise's
+      // value. Its type is the most that can be said about it without stringifying something
+      // whose `toString` is the channel's code.
+      parts.push(`<non-error: ${typeof current}>`)
+      break
+    }
+
+    const name = logSafe(redactSecrets(current.name, secrets))
+    const message = logSafe(redactSecrets(current.message, secrets))
+    // Capped once, on the composed piece, rather than on each half: two bounds let one link of
+    // the chain contribute twice the intended budget, and the pair says nothing the single bound
+    // does not. An empty message leaves the name standing alone rather than trailing a colon.
+    const described = message === '' ? name : `${name}: ${message}`
+
+    parts.push(described.slice(0, DELIVERY_ERROR_TEXT_LIMIT))
+    current = current.cause
+  }
+
+  return parts.join(' <- ')
+}
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -133,6 +204,14 @@ export interface DefaultAuthEmailProviderOptions {
    * a failed verification send surface rather than reporting "sent". The trade is symmetric: under
    * `'rethrow'` a channel outage also fails MFA, invitation and the other awaited sends. Pick the
    * failure mode the deployment's channel reliability warrants.
+   *
+   * **`'rethrow'` hands you an error that may contain the credential.** The provider's own log
+   * line is redacted, but what it re-throws is the channel's original error, unaltered — because
+   * a caller that opted into this policy did so to branch on the channel's codes, and a laundered
+   * replacement would take those away. A relay that rejects by quoting the message body puts the
+   * OTP or invitation token into that error, so whatever catches it must not log it raw. Run
+   * {@link redactSecrets} over the text first, or send it through a pipeline that redacts. This
+   * is the one credential this library cannot contain on your behalf.
    */
   readonly onDeliveryError?: DeliveryErrorPolicy
 }
@@ -304,7 +383,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetToken({ token, locale }))
+    await this.deliver(tenantId, email, this.messages.passwordResetToken({ token, locale }), [
+      token
+    ])
   }
 
   /** @inheritdoc */
@@ -314,7 +395,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetOtp({ otp, locale }))
+    await this.deliver(tenantId, email, this.messages.passwordResetOtp({ otp, locale }), [otp])
   }
 
   /** @inheritdoc */
@@ -324,7 +405,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.emailVerificationOtp({ otp, locale }))
+    await this.deliver(tenantId, email, this.messages.emailVerificationOtp({ otp, locale }), [otp])
   }
 
   /** @inheritdoc */
@@ -343,7 +424,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, newEmail, this.messages.emailChangeVerification({ token, locale }))
+    await this.deliver(
+      tenantId,
+      newEmail,
+      this.messages.emailChangeVerification({ token, locale }),
+      [token]
+    )
   }
 
   /** @inheritdoc */
@@ -395,7 +481,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     inviteData: InviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.invitation({ invite: inviteData, locale }))
+    await this.deliver(tenantId, email, this.messages.invitation({ invite: inviteData, locale }), [
+      inviteData.inviteToken
+    ])
   }
 
   /**
@@ -405,8 +493,22 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    * @param tenantId - Tenant the message is attributed to.
    * @param to - Recipient address.
    * @param message - The rendered subject and body, and optionally its own HTML.
+   * @param secrets - Credentials rendered into this message. A channel that rejects by quoting
+   *   the body puts them into the error it raises, so they are named here to be stripped from the
+   *   log line. Messages carrying no credential pass nothing.
    */
-  private async deliver(tenantId: string, to: string, message: AuthEmailMessage): Promise<void> {
+  private async deliver(
+    tenantId: string,
+    to: string,
+    message: AuthEmailMessage,
+    // Stryker disable next-line ArrayDeclaration: filling this default with any value is
+    // equivalent. Redaction searches the error text for each entry, so a default of
+    // `["Stryker was here"]` differs from `[]` only for an error whose message contains that
+    // literal — nothing a test could produce except by asserting on the marker itself. Dropping
+    // the default and passing `[]` at the six credential-free call sites moves the same
+    // equivalence to six places instead of one.
+    secrets: readonly string[] = []
+  ): Promise<void> {
     // Stripped once, then used for both the header and the log line: a subject is a single header,
     // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
     const subject = sanitizeSubject(message.subject)
@@ -420,12 +522,26 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       })
     } catch (error: unknown) {
       // The subject names the message; the address is deliberately left out, because a log line
-      // reaches a wider audience than the inbox it was going to. The built-in subjects carry no
-      // secret — an override that puts a code in a subject breaks the same no-log rule the port
-      // states — and the error is the channel's own, not the rendered body.
-      this.logger.error(`delivery failed for "${subject}"`, error)
+      // reaches a wider audience than the inbox it was going to.
+      //
+      // The error is NOT passed to the logger. This line used to read `logger.error(msg, error)`
+      // on the reasoning that "the error is the channel's own, not the rendered body" — which a
+      // measurement against a real relay disproved. A policy or DLP relay rejects with `550` and
+      // QUOTES THE OFFENDING CONTENT, so the channel's own error is the rendered body, and for
+      // this provider that body is a live OTP or invitation token. It went to the operator's log
+      // in clear text, valid until expiry. `describeDeliveryError` is what replaces it: an
+      // allowlist of `name` and `message`, each redacted, bounded and control-character stripped.
+      this.logger.error(
+        `delivery failed for "${subject}": ${describeDeliveryError(error, secrets)}`
+      )
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
+      //
+      // The error rethrown here is the ORIGINAL and may still carry the quoted body — deliberately,
+      // because a caller that opted into 'rethrow' did so to inspect the failure, and handing it a
+      // laundered error would take away the codes it branches on. That makes the credential the
+      // caller's to contain: log this through a pipeline that redacts, or run `redactSecrets` on
+      // it, which is exported for exactly this. See the option's own documentation.
       if (this.rethrowOnError) {
         throw error
       }
