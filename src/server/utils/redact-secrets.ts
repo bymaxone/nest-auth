@@ -53,7 +53,12 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // Length rather than `=== ''`: this is a guard against a degenerate pattern, not a comparison
   // of one credential against another, and writing it as a length check says so in the code
   // instead of relying on a reader to infer it.
-  const present = secrets.filter((secret) => secret.length > 0)
+  //
+  // Sorted longest-first, once, so the scan below can return on its first match — and so a secret
+  // that is a PREFIX of another cannot claim the position first, consume its own length and leave
+  // the remainder of the longer one in the log. Sorting in place is safe here precisely because
+  // `filter` already returned a new array; `secrets` itself is never reordered under the caller.
+  const present = secrets.filter((secret) => secret.length > 0).sort((a, b) => b.length - a.length)
 
   // The marker is written INTO the output, so it is subject to the same contract as everything
   // else in it: if a secret occurs inside `<redacted>` — `cted` does — then emitting the marker
@@ -63,53 +68,73 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // tokens (lower-case hex) cannot be, but the function is exported and a caller's may.
   const marker = present.some((secret) => REDACTED.includes(secret)) ? '' : REDACTED
 
-  // Every occurrence of every secret, located against the ORIGINAL text before anything is
-  // rewritten. That ordering is the whole design, and two defects live in the alternatives.
+  // One left-to-right pass over the ORIGINAL text, extending each redaction over any secret that
+  // starts inside it. Three designs were wrong before this one and each failure is worth naming,
+  // because each looked correct.
   //
   // Replacing one secret at a time rescans text this function already produced, so a later secret
-  // can match INSIDE a marker an earlier pass inserted — `cted` does — giving `<reda<redacted>>`.
+  // matches INSIDE a marker an earlier pass inserted — `cted` is in `<redacted>` — giving
+  // `<reda<redacted>>`.
   //
-  // And scanning left to right taking the longest match at each position still loses. Consider
-  // `['1234', '2345']` over `12345`: the scan takes `1234` at 0, resumes at 4, finds no match,
-  // and emits `<redacted>5` — the tail of the SECOND secret surviving in the log. No ordering
-  // fixes it, because the two overlap without either containing the other. Collecting the ranges
-  // first and merging the overlap into one redaction is what covers it.
-  const ranges: Array<{ start: number; end: number }> = []
+  // Taking the longest match at each position and resuming past it loses overlaps that nest in
+  // neither direction. Over `12345` with `['1234','2345']` it takes `1234`, resumes at index 4,
+  // matches nothing, and emits `<redacted>5` — the tail of the second credential, in the log.
+  // The inner extension below is exactly what covers that case.
+  //
+  // Collecting every occurrence into an array and merging the ranges is correct but allocates one
+  // object per occurrence and then sorts them. This runs inside a `catch` whose entire purpose is
+  // to absorb a failure, and the text is channel-controlled: a rejection quoting a body with the
+  // code repeated thousands of times would have this function allocating proportionally to the
+  // provocation. Extending in place holds the same guarantees with no per-occurrence allocation
+  // and no sort.
+  let out = ''
+  let index = 0
 
-  for (const secret of present) {
-    // `from + 1`, not `from + secret.length`: occurrences of one secret can overlap each other
-    // (`aa` inside `aaa`), and stepping past the whole match would skip the second one.
-    for (let from = value.indexOf(secret); from !== -1; from = value.indexOf(secret, from + 1)) {
-      ranges.push({ start: from, end: from + secret.length })
-    }
-  }
+  // Stryker disable next-line EqualityOperator: `<=` is equivalent and no test separates them.
+  // The extra iteration lands on `index === value.length`, where `startsWith` is false for
+  // every non-empty secret and `charAt` returns the empty string — the buffer is unchanged and
+  // the loop exits on the next check. Same output, one wasted comparison.
+  while (index < value.length) {
+    const matched = longestMatchAt(value, present, index)
 
-  // Ascending by start, because the merge below walks the list once and compares each range only
-  // against the one before it. Collection order follows the SECRETS array, which has nothing to do
-  // with where they appear — pass `[token, otp]` for a body that mentions the otp first and the
-  // unsorted list makes the merge swallow the earlier range, emitting that secret verbatim.
-  ranges.sort((a, b) => a.start - b.start)
-
-  // Overlapping and nested ranges collapse into one redaction. Emitting a marker per range would
-  // write two for a single overlapping region and, worse, leave the gap between them intact.
-  const merged: Array<{ start: number; end: number }> = []
-
-  for (const range of ranges) {
-    const last = merged.at(-1)
-
-    if (last !== undefined && range.start <= last.end) {
-      last.end = Math.max(last.end, range.end)
+    if (matched === 0) {
+      out += value.charAt(index)
+      index += 1
       continue
     }
-    merged.push({ ...range })
-  }
 
-  let out = ''
-  let cursor = 0
+    let end = index + matched
 
-  for (const range of merged) {
-    out += value.slice(cursor, range.start) + marker
-    cursor = range.end
+    // Extend while any secret STARTS inside the region already claimed. `1234` claims `[0,4)` and
+    // `2345` starts at 1, so the region grows to `[0,5)` and the whole run is redacted as one.
+    //
+    // From `index` rather than `index + 1`, which costs one redundant test per region — the match
+    // at `index` is already known — and buys a loop bound with no arithmetic in it to get wrong.
+    for (let inner = index; inner < end; inner += 1) {
+      end = Math.max(end, inner + longestMatchAt(value, present, inner))
+    }
+    out += marker
+    index = end
   }
-  return out + value.slice(cursor)
+  return out
+}
+
+/**
+ * Length of the longest secret occurring at exactly this position.
+ *
+ * Returns on the first match because `secrets` arrives sorted longest-first, which is what makes
+ * the first match the longest. Comparing lengths per candidate instead would do the same work and
+ * add a comparison whose boundary is invisible in the result: two secrets of equal length produce
+ * the same number whichever one wins.
+ *
+ * @param value - The text being scanned.
+ * @param secrets - Non-empty secrets, ordered longest first.
+ * @param at - Index to test.
+ * @returns The match length, or `0` when no secret starts here.
+ */
+function longestMatchAt(value: string, secrets: readonly string[], at: number): number {
+  for (const secret of secrets) {
+    if (value.startsWith(secret, at)) return secret.length
+  }
+  return 0
 }

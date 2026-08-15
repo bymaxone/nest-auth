@@ -442,12 +442,6 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     tenantId: string,
     to: string,
     message: AuthEmailMessage,
-    // Stryker disable next-line ArrayDeclaration: filling this default with any value is
-    // equivalent. Redaction searches the error text for each entry, so a default of
-    // `["Stryker was here"]` differs from `[]` only for an error whose message contains that
-    // literal — nothing a test could produce except by asserting on the marker itself. Dropping
-    // the default and passing `[]` at the six credential-free call sites moves the same
-    // equivalence to six places instead of one.
     secrets: readonly string[] = []
   ): Promise<void> {
     // Stripped once, then used for both the header and the log line: a subject is a single header,

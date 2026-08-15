@@ -114,11 +114,13 @@ describe('redactSecrets', () => {
     expect(line).toBe('<redacted> <redacted>')
   })
 
-  // Adjacent but non-overlapping occurrences: `aaa` ends exactly where `bbb` begins. Merging on
-  // touching ranges makes that one redaction rather than two, which is the honest rendering —
-  // there is no text between them for a second marker to be separated by.
-  it('merges occurrences that touch without overlapping', () => {
-    expect(redactSecrets('aaabbb', ['aaa', 'bbb'])).toBe('<redacted>')
+  // Adjacent but non-overlapping occurrences: `aaa` ends exactly where `bbb` begins. Two
+  // credentials were present, so two markers are written. Only genuine OVERLAP collapses into one
+  // region — touching is not overlapping, and reporting a single redaction here would tell an
+  // operator that one credential appeared where two did. Both are fully removed either way, so
+  // this pins a rendering choice rather than a safety property.
+  it('writes one marker per occurrence when two secrets merely touch', () => {
+    expect(redactSecrets('aaabbb', ['aaa', 'bbb'])).toBe('<redacted><redacted>')
   })
 
   // A secret that occurs inside the replacement marker, which is a stricter problem than it first

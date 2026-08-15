@@ -465,6 +465,26 @@ describe('DefaultAuthEmailProvider', () => {
   // template. `sanitizeSubject` only strips CR and LF, because its job is the mail header; the
   // rest of the C0/C1 range reaches the log line, and more than CR/LF can forge a record in a
   // line-oriented pipeline. `logSafe` is the second guard, and this is the case that needs it.
+  // The `secrets` default must be EMPTY, not merely defaulted. Six notifications carry no
+  // credential and rely on it, and a default holding any value would redact text out of their
+  // diagnostics — the operator loses the channel's own words for messages that never had a secret
+  // to protect.
+  //
+  // The assertion is written against the literal Stryker substitutes into an array default,
+  // deliberately and with the coupling admitted rather than hidden: it is the one input that
+  // separates `[]` from a non-empty default, so any other string would leave this property
+  // asserted but unenforced. The alternative was a `Stryker disable` claiming equivalence, which
+  // would have been false — the mutant is observable, exactly as this test shows.
+  it('redacts nothing from a message that carries no credential', async () => {
+    sink.send.mockRejectedValueOnce(new Error('relay said Stryker was here'))
+
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Two-factor authentication is on": Error: relay said Stryker was here'
+    )
+  })
+
   // The subject is logged by design, and an override is free to put the code in it —
   // `passwordResetOtp: ({ otp }) => ({ subject: `Code ${otp}` })` looks reasonable to write. That
   // used to be documented as a known way to reopen the leak; it is closed instead, since the
