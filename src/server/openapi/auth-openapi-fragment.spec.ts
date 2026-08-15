@@ -217,6 +217,41 @@ describe('buildAuthOpenApiFragment', () => {
     })
   })
 
+  // The one operation that carries prose, pinned whole because the prose IS the contract here.
+  //
+  // A consumer measured the failure it prevents: `logout` called with no credential answers 204
+  // and revokes nothing, so a document that only said "requires none" let them ship a sign-out
+  // that reported success while the session stayed live. `security` cannot express that — an
+  // empty requirement and an optional one render identically — so the sentence is the carrier,
+  // and a sentence that loses the words "silent no-op" has lost the reason it exists.
+  it('describes what the logout requirement cannot say', () => {
+    const description = buildAuthOpenApiFragment(optionsFor('bearer'), EVERYTHING).operations[
+      'AuthController.logout'
+    ]?.['description']
+
+    expect(description).toBe(
+      'Revokes the session and blacklists the access token, using whichever credentials the ' +
+        'request carries. NEITHER is required — an operator whose access token has expired must ' +
+        'still be able to sign out — but a call that carries none succeeds without revoking ' +
+        'anything. Under `tokenDelivery: bearer` the refresh token in the request body is the ' +
+        'only channel there is, so omitting it makes this a silent no-op.'
+    )
+  })
+
+  // The map is deliberate, not a habit: a description restating what `security` already says is
+  // noise in a rendered document, and nest-core drops a contributed one only where the consumer
+  // wrote their own. Adding a second entry should therefore be a decision someone makes on
+  // purpose — which this assertion forces by failing when one appears.
+  it('contributes prose to that operation and no other', () => {
+    const described = Object.entries(
+      buildAuthOpenApiFragment(optionsFor('both'), EVERYTHING).operations
+    )
+      .filter(([, operation]) => 'description' in operation)
+      .map(([handler]) => handler)
+
+    expect(described).toEqual(['AuthController.logout'])
+  })
+
   // Verifies a public operation says `security: []` rather than omitting the member. The
   // difference is the whole point: an omitted member inherits the document's default, which on a
   // consumer's document is "authenticated" — so a login that said nothing would be described as

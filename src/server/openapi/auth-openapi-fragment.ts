@@ -124,6 +124,15 @@ type Credential =
    * generated client attaches whichever it holds. A consumer's own reviewer reached exactly this
    * conclusion from the document alone, which is why the reasoning lives here rather than only in
    * the CHANGELOG entry that introduced it.
+   *
+   * **And the simplification it invites is a security bug, measured.** `@Public()` beside named
+   * credentials is not a redundancy to tidy away: a consumer who read the decorator, concluded
+   * `security: []` and dropped the alternatives shipped a document telling generated clients to
+   * send nothing — and a logout that carries nothing answers `204` while revoking nothing, with
+   * the same access token still getting `200` from `/me` afterwards. A user clicks sign out, sees
+   * success, and stays signed in; no layer reports a failure. "Requires none" and "accepts and
+   * acts on whichever arrives" are different statements, and this is the operation where
+   * collapsing them costs a session rather than a rejected request.
    */
   | 'optionalAccessAndRefresh'
   | 'platform'
@@ -240,6 +249,39 @@ const OPERATIONS: Readonly<
 }
 
 /**
+ * Prose a handler needs in the rendered document, keyed the same way the table is.
+ *
+ * A `Map` rather than an object literal so the lookup is a method call: indexing a record by a
+ * variable is an object-injection sink the security lint flags, and this repository's precedent
+ * is to reach for `Map` there rather than to accept a warning.
+ *
+ * Contributed as a `description` because nest-core merges a fragment member only where the scan
+ * produced none (`{...members, ...operation}`), so a consumer who wrote their own `@ApiOperation`
+ * keeps it and one who wrote nothing gets this. Nothing here restates what `security` already
+ * says — a description that paraphrases the requirement is noise. These are the facts a
+ * requirement CANNOT carry.
+ */
+const OPERATION_DESCRIPTIONS = new Map<string, string>([
+  [
+    // Measured by a consumer against a running deployment, and the reason this entry exists: a
+    // logout called with no credential answers `204` and revokes NOTHING — the same access token
+    // still gets `200` from `/me` afterwards. Every other imprecision in this fragment costs a
+    // caller one rejected request; this one hands them a success while they stay signed in.
+    //
+    // The operation requires nothing, deliberately, so `security` cannot express any of that: an
+    // empty requirement and an optional one render identically to a reader who is skimming. The
+    // sentence is therefore the only place a person building a sign-out learns that the credential
+    // they omitted was the one doing the work.
+    'AuthController.logout',
+    'Revokes the session and blacklists the access token, using whichever credentials the ' +
+      'request carries. NEITHER is required — an operator whose access token has expired must ' +
+      'still be able to sign out — but a call that carries none succeeds without revoking ' +
+      'anything. Under `tokenDelivery: bearer` the refresh token in the request body is the only ' +
+      'channel there is, so omitting it makes this a silent no-op.'
+  ]
+])
+
+/**
  * The request body the two dashboard token operations read when the refresh token is not a
  * cookie.
  *
@@ -335,7 +377,9 @@ export function buildAuthOpenApiFragment(
     if (!registered[controller as keyof RegisteredControllers]) continue
 
     for (const [handler, credential] of Object.entries(handlers)) {
-      operations[handler] = describe(credential, cookieDelivery, bearerDelivery)
+      const described = describe(credential, cookieDelivery, bearerDelivery)
+      const note = OPERATION_DESCRIPTIONS.get(handler)
+      operations[handler] = note === undefined ? described : { ...described, description: note }
     }
   }
 

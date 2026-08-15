@@ -185,6 +185,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   a property of OpenAPI rather than a shortcut: once a body-borne alternative exists, no
   requirement list can insist on a credential that might be arriving in the body.
 
+  **The fragment also carries one sentence of prose, and it is there because a document cannot
+  say this any other way.** `logout` requires nothing — an operator whose access token expired
+  must still be able to sign out — so `security` renders "requires none" and "accepts and acts on
+  whichever arrives" identically to anyone skimming. A consumer read the `@Public()` decorator,
+  simplified to `security: []`, and measured what that produced: a logout called with no
+  credential answers `204` and revokes **nothing**, with the same access token still getting `200`
+  from `/me` afterwards. The user clicks sign out, sees success, and stays signed in, and no layer
+  reports a failure. Under `tokenDelivery: 'bearer'` the refresh token in the body is the only
+  channel there is, so omitting it is exactly that silent no-op. The operation therefore carries a
+  `description` saying so. It is contributed the way everything else is — nest-core merges a
+  fragment member only where the scan produced none, so a consumer who wrote their own
+  `@ApiOperation` keeps it.
+
   **And `logout` names the access token it revokes.** Also found in review, and the one with a
   security consequence rather than an ergonomic one: `logout` is `@Public()` — deliberately, so a
   user whose 15-minute access token expired can still sign out — but it READS that token and
