@@ -211,22 +211,6 @@ Enforced by `jest.config.ts` (`pnpm test:cov`) and `jest.coverage.config.ts`
 target. Mutation testing (Stryker `break: 100`) is the deeper gate against weak
 tests.
 
-### Logging
-
-`Logger` from `@nestjs/common`, one instance per class. No transport is installed here — an
-application that calls `app.useLogger(...)` reroutes these lines through its own service, so this
-package is coupled to a logging implementation at runtime while depending on none.
-
-**Pass an error cause as the `Error` object, never as `err.stack`.** Nest's documented signature
-is `error(message, stack?, context?)`, so converting the 32 call sites that carry one to a string
-looks like a correction and is a regression: a structured sink reads the params and recovers `name`,
-`message`, `code` and the `cause` chain from the object, while a stack string has discarded all
-of that at the call site. Measured through a real bridge — the object degrades to
-`"Error: ..."` against a naive logger, the string loses everything against a structured one.
-
-Interpolate any caller-controlled value through `logSafe()`. A value carrying a newline writes a
-second log record, and `tenantId` reaches the template on five unauthenticated routes.
-
 ### Mocking Strategy
 
 | Dependency     | Approach                                            |
