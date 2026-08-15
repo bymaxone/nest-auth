@@ -84,6 +84,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
   transient outage, `535` a credential problem at their relay.
 
+  **The same arithmetic applies one level up, where the service lines compose their own fields.**
+  `safeLogLine` — the check over a finished line, which exists because two fields that each hold
+  nothing can spell a value across the text between them — compares the digit-normalised line as
+  well as the literal one. `sendPasswordResetOtp failed for user u4: <error>: 550` contains neither
+  `4550` nor anything resembling it, and stripping every non-digit yields exactly that: a live
+  four-digit reset code assembled from a consumer's user id and a relay's status, neither of which
+  is a leak on its own.
+
   **The same mistake was in eight more handlers, found by hunting the family rather than the report.**
   `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
   services caught a rejected send and logged the raw error the same way — `AuthService` for the

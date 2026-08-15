@@ -67,11 +67,14 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // concatenation — linear work over text a REMOTE controls, run inside a failure handler, where a
   // relay is free to reject with megabytes. Callers that hold no secret are ordinary (a status-only
   // description passes none at all), so this is the common path rather than a corner of it.
-  // Stryker disable next-line ConditionalExpression: the FALSE mutant — never taking this return —
-  // produces the identical string, because the scan below over an empty list copies the input
-  // character for character. No behavioural test can separate them; what changes is the work done,
-  // which is the whole point. The TRUE mutant is not equivalent and is not disabled: taking the
-  // return unconditionally would publish every secret, and the redaction tests kill it.
+  // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
+  // means: the FALSE mutant — never taking this return — produces the identical string, because
+  // the scan below over an empty list copies the input character for character. No behavioural
+  // test can separate them; what changes is the work done, which is the whole point. The TRUE
+  // mutant is NOT equivalent and is not disabled: taking the return unconditionally would publish
+  // every secret, and the redaction tests kill it.
+  //
+  // Stryker disable next-line ConditionalExpression
   if (present.length === 0) return value
 
   // The marker is written INTO the output, so it is subject to the same contract as everything

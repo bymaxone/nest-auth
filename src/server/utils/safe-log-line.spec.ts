@@ -19,6 +19,31 @@ describe('safeLogLine', () => {
     expect(safeLogLine(line, [device])).not.toContain(device)
   })
 
+  // The composition joins NUMBERS as well as text, and the punctuation between them is no barrier
+  // to anyone reading the record. This line contains neither the literal `4550` nor anything
+  // resembling it, and stripping every non-digit yields exactly that — a live four-digit reset
+  // code, assembled from a consumer's user id and a relay's status, neither of which is a leak on
+  // its own. It is the same arithmetic that took the enhanced SMTP code out of the description,
+  // one level up.
+  it('withholds a line whose digits reassemble a numeric value', () => {
+    const line = 'sendPasswordResetOtp failed for user u4: <error>: 550'
+
+    expect(line).not.toContain('4550')
+    expect(line.replace(/\D/g, '')).toContain('4550')
+    // The line is WITHHELD, not merely free of the literal — asserting the absence would pass on a
+    // build that never noticed, because the literal was never there to begin with.
+    expect(safeLogLine(line, ['4550'])).toContain('withheld')
+  })
+
+  // Only all-digit values get that treatment. A token is hex and an address has letters, so
+  // normalising them would compare fragments rather than values — `a1b2` would match any line
+  // holding a `1` and a `2` in order — and withhold diagnoses for no reason at all.
+  it('does not normalise a value that is not all digits', () => {
+    const line = 'sendPasswordResetToken failed for user 1234: <error>: 550'
+
+    expect(safeLogLine(line, ['a1b2'])).toBe(line)
+  })
+
   // The common path. A check that fired on ordinary text would remove the diagnosis operators
   // depend on, which is a worse trade than the leak it prevents.
   it('passes an ordinary line through unchanged', () => {

@@ -360,12 +360,14 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
  * @returns A single-line description carrying only validated status codes.
  */
 export function describeChannelStatus(error: unknown): string {
-  // Stryker disable next-line ArrayDeclaration: no test can kill a non-empty list here, and the
-  // reason is the function's own guarantee rather than a gap in the suite. On this path the line
-  // is composed entirely of text this library authored — the `<error>` stand-in, the `<-` join,
-  // and a status rebuilt from a pattern's own capture — so there is no channel-written substring
-  // for any secret to match. That is precisely why the parameter is gone from the signature: a
-  // caller has nothing to name. Where naming IS load-bearing the function is `describeError`, and
-  // its list is pinned by tests.
+  // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
+  // means: no test can kill a non-empty list here, and the reason is this function's own guarantee
+  // rather than a gap in the suite. The line it produces is composed entirely of text this library
+  // authored — the `<error>` stand-in, the `<-` join, and a status rebuilt from a pattern's own
+  // capture — so there is no channel-written substring for any secret to match. That is precisely
+  // why the parameter is gone from the signature: a caller has nothing to name. Where naming IS
+  // load-bearing the function is `describeError`, and its list is pinned by tests.
+  //
+  // Stryker disable next-line ArrayDeclaration
   return describe(error, [], 'drop')
 }

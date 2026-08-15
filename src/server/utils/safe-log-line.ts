@@ -15,6 +15,30 @@ const WITHHELD =
   'delivery details withheld: the composed line matched a value that must not be logged'
 
 /**
+ * Whether a value survived into a line, verbatim or reassembled from its digits.
+ *
+ * The literal check is the obvious half. The digit-normalised one exists because the composition
+ * this function guards against does not only join text — it joins NUMBERS, and punctuation between
+ * them is not a barrier to anyone reading the record. `sendPasswordResetOtp failed for user u4:
+ * <error>: 550` contains neither the literal `4550` nor anything resembling it, and stripping every
+ * non-digit yields exactly that: a live four-digit reset code, assembled from a consumer's user id
+ * and a relay's status. Both halves are ordinary and neither is a leak on its own.
+ *
+ * Values that are not all digits need no exclusion, and adding one would be dead code dressed as a
+ * guard: a token is hex and an address has letters, and neither can be found inside a haystack of
+ * digits. The search says that on its own.
+ *
+ * @param line - The fully composed line.
+ * @param secret - One value that must not appear in it.
+ * @returns `true` when the value is recoverable from the line.
+ */
+function survives(line: string, secret: string): boolean {
+  if (secret.length === 0) return false
+
+  return line.includes(secret) || line.replace(/\D/g, '').includes(secret)
+}
+
+/**
  * Returns `line`, or a withheld placeholder when any secret survived into it.
  *
  * **Why a check and not another redaction.** Sanitising each field separately leaves the seams
@@ -48,7 +72,7 @@ const WITHHELD =
  * @returns The line, or the withheld placeholder.
  */
 export function safeLogLine(line: string, secrets: readonly string[]): string {
-  if (!secrets.some((secret) => secret.length > 0 && line.includes(secret))) return line
+  if (!secrets.some((secret) => survives(line, secret))) return line
 
   // The placeholder is text like any other, so it is subject to the rule it enforces: a secret of
   // `withheld` — and a device string is arbitrary — occurs inside it, which would have this guard
