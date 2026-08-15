@@ -28,7 +28,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
@@ -629,7 +629,7 @@ export class PasswordResetService {
         this.logger.error(
           safeLogLine(
             `notifyPasswordChanged: delivery failed for user ${logSafe(user.id)}: ` +
-              describeError(err, withheld),
+              describeChannelStatus(err),
             withheld
           )
         )

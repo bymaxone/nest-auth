@@ -398,7 +398,11 @@ describe('PasswordResetService', () => {
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
       expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
       expect(logged).not.toContain('user@example.com')
-      expect(logged).toContain('<redacted>')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -424,11 +428,12 @@ describe('PasswordResetService', () => {
       // Which flow, and whose account. Without both, an operator has a delivery failure with no
       // way to reach the affected user.
       expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('user@example.com')
-      // The notice renders nothing secret, so the relay's own explanation is the diagnosis and is
-      // kept — only the named value is stripped.
-      expect(logged).toContain('smtp down')
-      expect(logged).toContain('<redacted>')
+      expect(logged).not.toContain('smtp down')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 

@@ -45,7 +45,7 @@ import type {
   InviteData,
   SessionInfo
 } from '../interfaces/email-provider.interface'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { redactSecrets } from '../utils/redact-secrets'
 import { safeLogLine } from '../utils/safe-log-line'
@@ -156,9 +156,12 @@ export interface DefaultAuthEmailProviderOptions {
    * line is redacted, but what it re-throws is the channel's original error, unaltered — because
    * a caller that opted into this policy did so to branch on the channel's codes, and a laundered
    * replacement would take those away. A relay that rejects by quoting the message body puts the
-   * OTP or invitation token into that error, so whatever catches it must not log it raw. Run
-   * {@link redactSecrets} over the text first, or send it through a pipeline that redacts. This
-   * is the one credential this library cannot contain on your behalf.
+   * OTP or invitation token into that error, so whatever catches it must not log it raw. Describe
+   * it with `describeChannelStatus`, which publishes only a validated status code — NOT
+   * {@link redactSecrets}, which this file's own history shows is not enough on its own: a relay
+   * may quote what it rejected in transfer encoding, and a substring match cannot see through
+   * that. `redactSecrets` is for strings you know contain the literal value. This is the one
+   * credential this library cannot contain on your behalf.
    */
   readonly onDeliveryError?: DeliveryErrorPolicy
 }
@@ -172,19 +175,6 @@ export interface DefaultAuthEmailProviderOptions {
  * three separate chances for the array to be something other than empty, each needing its own
  * assertion to prove it was not.
  */
-/**
- * Whether a message's own body rendered something that must not reach a log.
- *
- * `'drop'` selects {@link describeChannelStatus}, which publishes nothing the channel authored;
- * `'redact'` selects {@link describeError}, which keeps the relay's explanation with the named
- * values stripped. The standard is what the BODY renders, not how damaging it would be — the
- * new-session alert states an IP, which is not a credential and is still personal data.
- *
- * Local to this provider: the exported API is two functions with two guarantees, not one function
- * with a mode, so nothing outside here needs to name the choice.
- */
-type ChannelTextPolicy = 'redact' | 'drop'
-
 const NO_SECRETS: readonly string[] = []
 
 const CODE_VALIDITY_TEXT = 'It expires shortly, so use it soon.'
@@ -320,9 +310,14 @@ function sanitizeSubject(subject: string): string {
  * "verification sent". Under the default both degrade gracefully rather than break: the reset token
  * still expires at its TTL and was never delivered to anyone, and the change still requires the
  * verification the recipient never got, so it cannot complete. A deployment that wants the throw
- * back on those flows constructs the provider with `{ onDeliveryError: 'rethrow' }`, accepting that
- * an outage then also fails the awaited sends (MFA, invitation). The default optimizes for the
- * common case: a transient channel outage must not fail the user's action.
+ * back on those flows constructs the provider with `{ onDeliveryError: 'rethrow' }`. The default
+ * optimizes for the common case: a transient channel outage must not fail the user's action.
+ *
+ * The MFA notices are the exception in the other direction: `MfaService` does not await them under
+ * either policy. By the time one is sent the secret is written, every session is invalidated and
+ * the token epoch is bumped — the change has happened — so a bounced notice answering the caller
+ * with an error would report a transition that succeeded as one that failed, which is how a user
+ * ends up locked out of the account they just secured.
  */
 export class DefaultAuthEmailProvider implements IEmailProvider {
   /** Records a delivery this provider swallowed, so a silent channel is still visible somewhere. */
@@ -353,13 +348,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordResetToken({ token, locale }),
-      [token],
-      'drop'
-    )
+    await this.deliver(tenantId, email, this.messages.passwordResetToken({ token, locale }), [
+      token
+    ])
   }
 
   /** @inheritdoc */
@@ -369,13 +360,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordResetOtp({ otp, locale }),
-      [otp],
-      'drop'
-    )
+    await this.deliver(tenantId, email, this.messages.passwordResetOtp({ otp, locale }), [otp])
   }
 
   /** @inheritdoc */
@@ -385,13 +370,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.emailVerificationOtp({ otp, locale }),
-      [otp],
-      'drop'
-    )
+    await this.deliver(tenantId, email, this.messages.emailVerificationOtp({ otp, locale }), [otp])
   }
 
   /** @inheritdoc */
@@ -400,13 +379,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.passwordChanged({ locale }),
-      NO_SECRETS,
-      'redact'
-    )
+    await this.deliver(tenantId, email, this.messages.passwordChanged({ locale }), NO_SECRETS)
   }
 
   /** @inheritdoc */
@@ -420,8 +393,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       newEmail,
       this.messages.emailChangeVerification({ token, locale }),
-      [token],
-      'drop'
+      [token]
     )
   }
 
@@ -444,8 +416,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       oldEmail,
       this.messages.emailChanged({ oldEmail, newEmail, locale }),
-      [oldEmail, newEmail],
-      'drop'
+      [oldEmail, newEmail]
     )
   }
 
@@ -455,7 +426,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), NO_SECRETS, 'redact')
+    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), NO_SECRETS)
   }
 
   /** @inheritdoc */
@@ -464,7 +435,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), NO_SECRETS, 'redact')
+    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), NO_SECRETS)
   }
 
   /** @inheritdoc */
@@ -478,13 +449,11 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // three, and a re-encoded one carries them past redaction. An IP and a device string identify
     // a person as surely as an address does, which is the whole reason they are named — so the
     // free text goes for the same reason it goes on a credential path.
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.newSessionAlert({ sessionInfo, locale }),
-      [sessionInfo.device, sessionInfo.ip, sessionInfo.sessionHash],
-      'drop'
-    )
+    await this.deliver(tenantId, email, this.messages.newSessionAlert({ sessionInfo, locale }), [
+      sessionInfo.device,
+      sessionInfo.ip,
+      sessionInfo.sessionHash
+    ])
   }
 
   /** @inheritdoc */
@@ -494,13 +463,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     inviteData: InviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(
-      tenantId,
-      email,
-      this.messages.invitation({ invite: inviteData, locale }),
-      [inviteData.inviteToken],
-      'drop'
-    )
+    await this.deliver(tenantId, email, this.messages.invitation({ invite: inviteData, locale }), [
+      inviteData.inviteToken
+    ])
   }
 
   /**
@@ -510,25 +475,22 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    * @param tenantId - Tenant the message is attributed to.
    * @param to - Recipient address.
    * @param message - The rendered subject and body, and optionally its own HTML.
-   * @param secrets - Credentials rendered into this message. A channel that rejects by quoting
-   *   the body puts them into the error it raises, so they are named here to be stripped from the
-   *   log line. Messages carrying no credential pass an empty array — explicitly, because a
-   *   default here would let a body that renders a credential read as correct while naming none.
-   * @param channelText - Whether the channel's own words may reach the log. `'drop'` on every path
-   *   that renders a credential, keeping only the status code: redaction and the length cap both
-   *   assume the credential appears the way this library wrote it, and a relay is free to quote
-   *   the body it rejected in transfer encoding instead — base64 is the ordinary case, it starts
-   *   at the body's first byte, and the code lands well inside any cap while matching no secret.
-   *   `'redact'` only on the notifications that render nothing secret, where the relay's own
-   *   explanation is the diagnosis and redaction is sound. Required for the same reason `secrets`
-   *   is: the permissive value is the dangerous one, so it has to be chosen, never inherited.
+   * @param secrets - Values this message renders that must not reach a log. They are stripped from
+   *   the SUBJECT, which is logged by design and which an override is free to build out of them.
+   *   Messages that render nothing withheld pass an empty array — explicitly, because a default
+   *   here would let a body that does render one read as correct while naming none.
+   *
+   *   Note what they are NOT for: the channel's error. Nothing the channel wrote reaches the line
+   *   at all, on any path, so there is nothing there to strip. Naming values cannot contain a
+   *   remote's text — redaction is a substring match and a relay may quote what it rejected in
+   *   transfer encoding — so the containment is "publish none of it" rather than "remove the parts
+   *   we can name".
    */
   private async deliver(
     tenantId: string,
     to: string,
     message: AuthEmailMessage,
-    secrets: readonly string[],
-    channelText: ChannelTextPolicy
+    secrets: readonly string[]
   ): Promise<void> {
     // Stripped once, then used for both the header and the log line: a subject is a single header,
     // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
@@ -575,11 +537,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
 
       this.logger.error(
         safeLogLine(
-          `delivery failed for "${loggedSubject}": ${
-            channelText === 'drop'
-              ? describeChannelStatus(error)
-              : describeError(error, withheldValues)
-          }`,
+          `delivery failed for "${loggedSubject}": ${describeChannelStatus(error)}`,
           withheldValues
         )
       )

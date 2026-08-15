@@ -31,12 +31,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   run measured on a real relay, where the code captured from the SMTP `DATA` appeared verbatim in
   the consumer's error entry under the same request id.
 
-  **Two exported helpers, not one with a mode.** `describeChannelStatus(error)` for any path whose
-  body rendered something to withhold — it takes no secrets, and that is the guarantee rather than
-  an omission, because nothing the channel authored comes through. `describeError(error, [values])`
-  where the body rendered nothing withheld, keeping the relay's explanation with the named values
-  stripped. Which function you call IS the decision; there is no permissive default to inherit by
-  forgetting one.
+  **This library now publishes nothing a mail channel authored, on any path.** The rule has no
+  exceptions to remember and no per-call-site judgement to get wrong: `describeChannelStatus(error)`
+  is what every send failure is described with, and it takes no secrets — that is the guarantee
+  rather than an omission, because there is nothing left to name. Even the notices that render
+  nothing secret use it, since a relay may re-encode whatever it quotes and the recipient address
+  is in that message either way.
+
+  `describeError(error, [values])` — the form that keeps the channel's words with named values
+  stripped — remains exported for consumers whose own provider throws errors carrying values they
+  can name literally. It has no caller inside the library, which is why it is now tested directly
+  rather than through whatever happened to use it.
 
   **The fix does not depend on the channel behaving.** The error object never reaches the logger.
   A delivery failure now logs the subject plus a description built from an allowlist of the
@@ -180,11 +185,11 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
   provider and the log line's shape is the only visible difference. Two things to check. If you
   parse that log line, it changed from `delivery failed for "<subject>"` with the error attached
-  as a second argument to a single string. On the notices that carry nothing secret that reads
-  `delivery failed for "<subject>": <Name>: <message>`, with `<-` between cause links; on the
-  paths whose body renders something withheld the channel's text is absent entirely and it reads
-  `<error>` or `<error>: <status>` — the name is replaced regardless of what the channel supplied. And if you run `onDeliveryError: 'rethrow'`, audit what your
-  handler does with the error, per the paragraph above.
+  as a second argument to a single string. On every path the channel's text is absent entirely and
+  it reads `delivery failed for "<subject>": <error>` or `…: <error>: <status>`, with `<-` between
+  cause links — the name is replaced regardless of what the channel supplied. And if you run
+  `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the paragraph
+  above.
 
   Not exploitable by an unauthenticated caller on its own — it requires a relay configured to
   quote rejected content — but it needs no attacker at all where such a relay is in the path, and

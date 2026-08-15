@@ -326,12 +326,12 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > capture rather than sliced out of the input, and that is the half of a bounce you act on anyway:
 > `550` is a refusal, `421` a transient outage, `535` a credential problem at your relay.
 >
-> **`describeError(error, [values])` only where the body renders nothing you would withhold.**
-> There the relay's own words are the diagnosis, there is no encoded body to see through, and the
-> values worth naming — a recipient address, say — appear the way you wrote them, where redaction
-> reaches them. Note the standard is what the message renders, not how damaging it would be: the
-> bundled provider uses the status-only form on its new-session alert too, because that body states
-> an IP and a device, and an IP is personal data even though it is not a credential.
+> **`describeError(error, [values])` for errors whose text you have a reason to trust**, where the
+> values you name appear the way you wrote them and redaction reaches them. The bundled provider
+> uses it nowhere — every one of its paths uses the status-only form, including the notices that
+> render nothing secret, because a relay may re-encode whatever it quotes and the recipient address
+> is in the message either way. If you can say the same about your channel, prefer
+> `describeChannelStatus` and keep this one for strings you built yourself.
 >
 > Both read only `name` and `message` (never `stack`, never the transport's own fields — nodemailer
 > hangs the server's full reply on `response`), cap the length, and remove control characters so a

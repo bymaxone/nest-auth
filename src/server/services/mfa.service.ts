@@ -42,7 +42,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { safeLogLine } from '../utils/safe-log-line'
 
@@ -1826,7 +1826,7 @@ export class MfaService {
         this.logger.error(
           safeLogLine(
             `${origin}: MFA notice delivery failed for user ${logSafe(userId)}: ` +
-              describeError(err, withheld),
+              describeChannelStatus(err),
             withheld
           )
         )

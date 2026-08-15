@@ -289,8 +289,12 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(
       provider.sendMfaEnabledNotification('tenant-1', 'user@example.com')
     ).resolves.toBeUndefined()
+    // `channel down` carries no status, so nothing of the transport's own words survives and the
+    // stand-in is the whole description. That is the contract on EVERY path here, not only the
+    // credential-bearing ones: a relay is as free to re-encode what it quotes when the body held
+    // an address as when it held a code, and a substring match sees through neither.
     expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on": Error: channel down'
+      'delivery failed for "Two-factor authentication is on": <error>'
     )
   })
 
@@ -537,22 +541,6 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed for "Your password reset code": <error>')
   })
 
-  // The other side of the same switch. Where nothing secret was in flight the channel's own words
-  // ARE the diagnosis, the message is already allowed through, and constraining the name would
-  // cost an operator the class of the failure to buy nothing. A guard that fired on both policies
-  // would read as safer and would simply be deleting information.
-  it('keeps an unusual name when nothing secret was in flight', async () => {
-    const named = new Error('relay unreachable')
-    named.name = 'Smtp Error (timeout)'
-    sink.send.mockRejectedValueOnce(named)
-
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on": Smtp Error (timeout): relay unreachable'
-    )
-  })
-
   // The status is read from the FRONT of the message only, and the anchor is a confidentiality
   // boundary rather than a parsing nicety. An SMTP reply opens with its code; digits anywhere else
   // in the line belong to the body the relay quoted — which on these paths is the credential. An
@@ -608,74 +596,24 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed for "Your password reset code": <error> <- <error>: 550')
   })
 
-  // Text that came back from a remote relay is untrusted input. A CR/LF in it would close the log
-  // record and open a forged one, so the description is control-character stripped — the same
-  // guarantee `logSafe` gives every other request-derived value that reaches a log template.
-  it('does not let a relay forge a second log record', async () => {
-    sink.send.mockRejectedValueOnce(
-      new Error('rejected\nLOG [AuthService] login: success userId=victim')
-    )
-
-    // A credential-free notice: the control-character strip only has something to act on where
-    // the channel's text is kept, and dropping it on a credential path would pass this for the
-    // wrong reason.
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    // Both halves are needed. Asserting only the absence of a newline passes trivially on any
-    // build that keeps channel text out of the line altogether, which would make this test agree
-    // with a version that reports nothing; asserting the line carries the channel's own diagnosis
-    // is what makes the first assertion mean "included AND neutralised".
-    expect(logged).toContain('<malformed>')
-    expect(logged).not.toContain('\n')
-  })
-
-  // The bound is the second lock, for a relay that re-encodes the body so substring matching
-  // cannot find the credential at all. It cannot make that case safe, but it stops one failed
-  // send from relaying an unbounded quantity of channel-controlled text into the log.
-  it('caps how much channel text reaches the line', async () => {
-    sink.send.mockRejectedValueOnce(new Error('x'.repeat(5_000)))
-
-    // A credential-FREE notice, because the cap is only observable where the channel's text is
-    // kept at all. On a credential path the text is dropped outright, which bounds the line far
-    // below this limit and would make the assertion pass for the wrong reason.
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    // Truncated, not dropped: the second assertion keeps this from passing on a build that omits
-    // the channel's message entirely, which would satisfy a bare length check while removing the
-    // diagnosis operators depend on.
-    //
-    // The bound is tight on purpose. The cap is 200 and the prefix
-    // (`delivery failed for "Your password reset code": Error: `) is ~55, so ~255 is the real
-    // answer; a loose `< 400` would still pass if the cap were quietly raised to 300, which is
-    // exactly the regression this test exists to catch.
-    expect(logged.length).toBeLessThan(270)
-    expect(logged).toContain('xxx')
-  })
-
-  // The subject is consumer-controlled through a `messages` override, and it lands in a log
-  // template. `sanitizeSubject` only strips CR and LF, because its job is the mail header; the
-  // rest of the C0/C1 range reaches the log line, and more than CR/LF can forge a record in a
-  // line-oriented pipeline. `logSafe` is the second guard, and this is the case that needs it.
-  // The `secrets` default must be EMPTY, not merely defaulted. Six notifications carry no
-  // credential and rely on it, and a default holding any value would redact text out of their
-  // diagnostics — the operator loses the channel's own words for messages that never had a secret
-  // to protect.
+  // `NO_SECRETS` must be EMPTY, not merely a shared constant. Six notifications render nothing to
+  // withhold and pass it, and a non-empty value would redact text out of their SUBJECTS — the one
+  // field of theirs that still reaches the line, and the only place the argument is observable now
+  // that no transport text is published at all.
   //
-  // The assertion is written against the literal Stryker substitutes into an array default,
-  // deliberately and with the coupling admitted rather than hidden: it is the one input that
-  // separates `[]` from a non-empty default, so any other string would leave this property
-  // asserted but unenforced. The alternative was a `Stryker disable` claiming equivalence, which
-  // would have been false — the mutant is observable, exactly as this test shows.
-  it('redacts nothing from a message that carries no credential', async () => {
-    sink.send.mockRejectedValueOnce(new Error('relay said Stryker was here'))
+  // The assertion is written against the literal Stryker substitutes into an array, deliberately
+  // and with the coupling admitted rather than hidden: it is the one input that separates `[]`
+  // from a non-empty list here, so any other string would leave this property asserted but
+  // unenforced. The alternative was a `Stryker disable` claiming equivalence, which would be
+  // false — the mutant is observable, exactly as this shows.
+  it('redacts nothing from the subject of a message that renders nothing withheld', async () => {
+    const messages = { mfaEnabled: () => ({ subject: 'Stryker was here', text: 'body' }) }
+    const custom = new DefaultAuthEmailProvider(sink, { messages })
+    sink.send.mockRejectedValueOnce(new Error('channel down'))
 
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
+    await custom.sendMfaEnabledNotification('t', 'u@example.com')
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on": Error: relay said Stryker was here'
-    )
+    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Stryker was here": <error>')
   })
 
   // The subject is logged by design, and an override is free to put the code in it —
@@ -878,21 +816,6 @@ describe('DefaultAuthEmailProvider', () => {
     )
   })
 
-  // `cause: null` is not the same as no cause. An absent `cause` reads as `undefined`, but
-  // `new Error(msg, { cause: null })` installs an own property holding `null`, so a walk that
-  // only stops on `undefined` takes one more step and reports a spurious `<non-error: object>`
-  // link that no channel ever produced. Both terminators are needed, and this is the one nothing
-  // else exercises.
-  it('treats an explicitly null cause as the end of the chain', async () => {
-    sink.send.mockRejectedValueOnce(new Error('channel down', { cause: null }))
-
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on": Error: channel down'
-    )
-  })
-
   // A thrown `undefined` is legal — `Promise.reject()` produces one. The cause-walk guard that
   // stops the chain would otherwise skip the body entirely and return an empty description,
   // emitting `delivery failed for "X": ` with a dangling colon and no diagnosis whatsoever.
@@ -970,8 +893,12 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendMfaEnabledNotification('t', 'recipient@example.com')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
+    // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+    // matched and removed, but because its carrier was never published. The status is what
+    // survives, and asserting it is what keeps this from passing on a build that logs nothing.
     expect(logged).not.toContain('recipient@example.com')
-    expect(logged).toContain('<redacted>')
+    expect(logged).not.toContain('recipient rejected')
+    expect(logged).toContain('550')
   })
 
   // The seam ONE LEVEL UP from the composition inside `describeError`: the provider's own template
@@ -1045,37 +972,6 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged.length).toBeLessThan(270)
-  })
-
-  // A channel can throw an error with no message at all — `new Error()`, or one whose entire
-  // message was control characters and got replaced. The name then stands alone rather than
-  // trailing a colon with nothing after it, so the line still reads as a diagnosis.
-  //
-  // On a credential-FREE notice, because that is where a name reaches the line at all: the drop
-  // policy replaces it with a stand-in, which would satisfy this for the wrong reason.
-  it('reports the error name alone when the message is empty', async () => {
-    sink.send.mockRejectedValueOnce(new Error())
-
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Two-factor authentication is on": Error'
-    )
-  })
-
-  // A cycle in the cause chain must not turn one failed send into an unbounded record. The depth
-  // cap is what guarantees termination; without it this test hangs rather than fails.
-  it('stops walking a self-referential cause chain', async () => {
-    const looped = new Error('outer')
-    Object.defineProperty(looped, 'cause', { value: looped })
-    sink.send.mockRejectedValueOnce(looped)
-
-    // A credential-free notice, so each link still contributes its text and the repetition is
-    // countable — which is what makes the depth cap observable rather than inferred.
-    await provider.sendMfaEnabledNotification('t', 'u@example.com')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged.match(/outer/g)).toHaveLength(3)
   })
 
   // ---------------------------------------------------------------------------

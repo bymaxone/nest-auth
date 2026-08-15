@@ -1152,10 +1152,11 @@ describe('MfaService', () => {
       // account takeover through the support desk stays silent.
       expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
       expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      // The body renders nothing secret, so the relay's own words stay — only the named value is
-      // stripped, and the marker is what proves the stripping happened rather than the address
-      // simply never having been there.
-      expect(logged).toContain('<redacted>')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -2658,7 +2659,11 @@ describe('MfaService', () => {
       const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       expect(logged).toContain('resetMfa: MFA notice delivery failed')
       expect(logged).not.toContain(AUTH_USER_MFA_ENABLED.email)
-      expect(logged).toContain('<redacted>')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).toContain('550')
       warnSpy.mockRestore()
       errorSpy.mockRestore()
     })
@@ -2962,7 +2967,11 @@ describe('MfaService', () => {
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
       expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
       expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      expect(logged).toContain('<redacted>')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -2993,7 +3002,11 @@ describe('MfaService', () => {
       const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       expect(logged).toContain('disable: MFA notice delivery failed')
       expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
-      expect(logged).toContain('<redacted>')
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the status is
+      // what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 
