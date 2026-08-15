@@ -59,9 +59,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   secrets that overlap without either containing the other — `['1234','2345']` over `12345` —
   defeat every sequential strategy including longest-match-first: the scan takes `1234`, resumes
   past it, and emits `<redacted>5`, leaving the tail of the second credential in the log. Every
-  occurrence is now located against the original text, overlapping and touching ranges collapse
-  into one redaction, and the marker itself is suppressed when a secret occurs inside it (`cted`
-  is inside `<redacted>`). Found by the `@bymax-one/nest-notification` seat, which carried the
+  occurrence is now located against the original text, genuinely **overlapping** occurrences
+  collapse into a single redaction — occurrences that merely touch stay two markers, because two
+  credentials were present — and the marker itself is suppressed when a secret occurs inside it
+  (`cted` is inside `<redacted>`). Found by the `@bymax-one/nest-notification` seat, which carried the
   identical defect and measured this case.
 
   **`describeError` is exported alongside `redactSecrets`**, because redaction alone is not the
@@ -70,6 +71,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   characters so a relay cannot forge extra records, walks the `cause` chain, and never throws
   whatever the transport's error does. A consumer's `IEmailProvider` faces the identical problem,
   so it gets the identical tool rather than an instruction to hand-roll the other three halves.
+
+  **And `'rethrow'` was reintroducing the leak inside this library, not only in your handler.**
+  `EmailChangeService.requestChange` and `InvitationService.invite` **await** their send so a
+  failure surfaces rather than reporting "sent" — which means the provider's rejection travels to
+  the controller and is logged by `AuthExceptionFilter`'s unknown-exception path. Under that
+  policy a relay-quoted change token or invitation token therefore reached the log through this
+  library's own filter, with no consumer able to intervene, because at that point the caller _is_
+  this library. Both now re-throw a redacted error. The advice below is about what escapes to
+  **your** code; this was what never escaped at all.
 
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so

@@ -159,6 +159,27 @@ describe('EmailChangeService', () => {
   describe('requestChange', () => {
     const dto = { newEmail: NEW_EMAIL, currentPassword: 'right' }
 
+    // This send is AWAITED, so a rejection leaves the service and reaches `AuthExceptionFilter`,
+    // which logs an unknown exception. A relay that rejects by quoting the body puts the raw
+    // change token into that error — so propagating the provider's error unchanged would publish
+    // the credential through this library's own filter, with no consumer able to intervene. What
+    // escapes is redacted, and the assertion is that the token the provider was handed is absent.
+    it('does not let a quoted token escape in the error it propagates', async () => {
+      mockEmailProvider.sendEmailChangeVerification.mockImplementation(
+        (_t: string, _e: string, token: string) =>
+          Promise.reject(new Error(`550 rejected: "Confirm with ${token}."`))
+      )
+
+      // One call, and the error from THAT call — a second `requestChange` would mint a different
+      // token, so comparing the first token against the second error could pass by accident.
+      const thrown = (await service.requestChange('user-1', dto).catch((e: unknown) => e)) as Error
+      const sent = mockEmailProvider.sendEmailChangeVerification.mock.calls[0]?.[2] as string
+
+      expect(sent).toMatch(/^[0-9a-f]{64}$/)
+      expect(thrown.message).not.toContain(sent)
+      expect(thrown.message).toContain('<redacted>')
+    })
+
     // The happy path, and every property of the stored record that the confirmation relies on.
     it('mails a token to the new address and stores the pending change', async () => {
       await service.requestChange('user-1', dto)

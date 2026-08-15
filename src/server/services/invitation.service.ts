@@ -20,6 +20,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -238,12 +239,20 @@ export class InvitationService {
     // Send the invitation email. The raw token is passed as inviteToken —
     // the IEmailProvider implementation is responsible for constructing the full URL.
     // The raw token is NOT logged here.
-    await this.emailProvider.sendInvitation(tenantId, normalizedEmail, {
-      inviterName: inviter.name,
-      tenantName: displayTenantName,
-      inviteToken: rawToken,
-      expiresAt
-    })
+    // Re-thrown REDACTED, not propagated as-is: this send is awaited, so its rejection reaches
+    // `AuthExceptionFilter`'s unknown-exception path, which logs it. A relay that rejects by
+    // quoting the body puts `rawToken` into the error, and propagating the original would publish
+    // the invitation token through this library's own filter.
+    try {
+      await this.emailProvider.sendInvitation(tenantId, normalizedEmail, {
+        inviterName: inviter.name,
+        tenantName: displayTenantName,
+        inviteToken: rawToken,
+        expiresAt
+      })
+    } catch (err: unknown) {
+      throw new Error(describeError(err, [rawToken]))
+    }
     this.logger.log(
       `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${logSafe(tenantId)} inviterUserId=${inviterUserId}`
     )

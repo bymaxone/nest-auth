@@ -96,6 +96,13 @@ function readCause(error: Error): unknown {
  * body holds the one-time code this library just issued, so the error is the credential, and a
  * log line built from it publishes a working credential until it expires.
  *
+ * @example
+ * ```typescript
+ * // A relay rejected the message and quoted the body back, wrapped by the mail client:
+ * describeError(err, [otp])
+ * // => 'Error: send failed <- Error: 550 rejected: "Your code is <redacted>."'
+ * ```
+ *
  * @param error - Whatever was thrown.
  * @param secrets - Credentials that were in flight and must not survive into the line. Required
  *   rather than defaulted: a caller that has nothing to hide says so by passing an empty array,
