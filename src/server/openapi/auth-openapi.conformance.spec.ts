@@ -20,6 +20,8 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { METHOD_METADATA } from '@nestjs/common/constants'
+
 import {
   AUTH_SECURITY_SCHEMES,
   buildAuthOpenApiFragment,
@@ -111,6 +113,11 @@ describe('OpenAPI contributor — conformance', () => {
   // prototype-chain reach that once let a catalog lookup hand a FUNCTION to `HttpException` as
   // a status. Requiring the routing metadata closes both: a key must name something Nest
   // actually routes.
+  //
+  // `METHOD_METADATA` rather than `PATH_METADATA`, and the two are not interchangeable here:
+  // the verb is what makes Nest register an operation, and it is what the route explorer reads.
+  // A path without one registers nothing for a fragment key to match. It is also the check the
+  // e2e suite already uses to resolve a handler's method, so the two agree.
   it.each(Object.keys(buildAuthOpenApiFragment(optionsFor('both'), EVERYTHING).operations))(
     '%s names a real route handler',
     (key) => {
@@ -121,7 +128,7 @@ describe('OpenAPI contributor — conformance', () => {
       const target = (controller!.prototype as Record<string, unknown>)[method!]
 
       expect(typeof target).toBe('function')
-      expect(Reflect.hasMetadata('path', target as object)).toBe(true)
+      expect(Reflect.hasMetadata(METHOD_METADATA, target as object)).toBe(true)
     }
   )
 
