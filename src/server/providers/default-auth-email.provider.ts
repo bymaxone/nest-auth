@@ -46,9 +46,6 @@ import type {
   SessionInfo
 } from '../interfaces/email-provider.interface'
 import { describeChannelStatus } from '../utils/describe-error'
-import { logSafe } from '../utils/log-safe'
-import { redactSecrets } from '../utils/redact-secrets'
-import { safeLogLine } from '../utils/safe-log-line'
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -167,16 +164,6 @@ export interface DefaultAuthEmailProviderOptions {
 }
 
 /** How long a verification or reset code stays valid, stated in the message that carries it. */
-/**
- * Passed as `secrets` by the notices that render nothing which must be withheld.
- *
- * One shared constant rather than an `[]` at each call site, so the claim "this message carries no
- * credential" is made in one place and can be pinned by one test. Three separate literals meant
- * three separate chances for the array to be something other than empty, each needing its own
- * assertion to prove it was not.
- */
-const NO_SECRETS: readonly string[] = []
-
 const CODE_VALIDITY_TEXT = 'It expires shortly, so use it soon.'
 
 /** Closing line on every message announcing a change the recipient may not have made. */
@@ -348,9 +335,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetToken({ token, locale }), [
-      token
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordResetToken({ token, locale }),
+      'passwordResetToken'
+    )
   }
 
   /** @inheritdoc */
@@ -360,7 +350,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetOtp({ otp, locale }), [otp])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordResetOtp({ otp, locale }),
+      'passwordResetOtp'
+    )
   }
 
   /** @inheritdoc */
@@ -370,7 +365,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.emailVerificationOtp({ otp, locale }), [otp])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.emailVerificationOtp({ otp, locale }),
+      'emailVerificationOtp'
+    )
   }
 
   /** @inheritdoc */
@@ -379,7 +379,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordChanged({ locale }), NO_SECRETS)
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordChanged({ locale }),
+      'passwordChanged'
+    )
   }
 
   /** @inheritdoc */
@@ -393,7 +398,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       newEmail,
       this.messages.emailChangeVerification({ token, locale }),
-      [token]
+      'emailChangeVerification'
     )
   }
 
@@ -416,7 +421,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       oldEmail,
       this.messages.emailChanged({ oldEmail, newEmail, locale }),
-      [oldEmail, newEmail]
+      'emailChanged'
     )
   }
 
@@ -426,7 +431,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), NO_SECRETS)
+    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), 'mfaEnabled')
   }
 
   /** @inheritdoc */
@@ -435,7 +440,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), NO_SECRETS)
+    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), 'mfaDisabled')
   }
 
   /** @inheritdoc */
@@ -449,11 +454,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // three, and a re-encoded one carries them past redaction. An IP and a device string identify
     // a person as surely as an address does, which is the whole reason they are named — so the
     // free text goes for the same reason it goes on a credential path.
-    await this.deliver(tenantId, email, this.messages.newSessionAlert({ sessionInfo, locale }), [
-      sessionInfo.device,
-      sessionInfo.ip,
-      sessionInfo.sessionHash
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.newSessionAlert({ sessionInfo, locale }),
+      'newSessionAlert'
+    )
   }
 
   /** @inheritdoc */
@@ -463,9 +469,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     inviteData: InviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.invitation({ invite: inviteData, locale }), [
-      inviteData.inviteToken
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.invitation({ invite: inviteData, locale }),
+      'invitation'
+    )
   }
 
   /**
@@ -475,33 +484,25 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    * @param tenantId - Tenant the message is attributed to.
    * @param to - Recipient address.
    * @param message - The rendered subject and body, and optionally its own HTML.
-   * @param secrets - Values this message renders that must not reach a log. They are stripped from
-   *   the SUBJECT, which is logged by design and which an override is free to build out of them.
-   *   Messages that render nothing withheld pass an empty array — explicitly, because a default
-   *   here would let a body that does render one read as correct while naming none.
-   *
-   *   Note what they are NOT for: the channel's error. Nothing the channel wrote reaches the line
-   *   at all, on any path, so there is nothing there to strip. Naming values cannot contain a
-   *   remote's text — redaction is a substring match and a relay may quote what it rejected in
-   *   transfer encoding — so the containment is "publish none of it" rather than "remove the parts
-   *   we can name".
+   * @param label - Which message this is, as a fixed name this file owns. It goes in the log line
+   *   in place of the rendered SUBJECT, and the substitution is the point: a subject comes from
+   *   the `messages` catalogue, which a consumer may override, so logging it publishes a string
+   *   this library did not write. Redacting it is not enough — a renderer that TRANSFORMS a value
+   *   defeats a substring match, and `Code 123-456` for the OTP `123456` is a reasonable-looking
+   *   thing to write. The label carries the same information for an operator, identifies the
+   *   message more stably for a log parser, and cannot carry anything at all.
    */
   private async deliver(
     tenantId: string,
     to: string,
     message: AuthEmailMessage,
-    secrets: readonly string[]
+    label: string
   ): Promise<void> {
-    // Stripped once, then used for both the header and the log line: a subject is a single header,
-    // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
+    // For the mail HEADER, which is where a smuggled CR/LF injects one. It no longer needs
+    // stripping for the log, because the subject does not go there any more — the message's label
+    // does, and a label is text this file owns.
     const subject = sanitizeSubject(message.subject)
 
-    // The RECIPIENT joins the values that must not survive into the line, and it is the likeliest
-    // of them to appear. The template deliberately omits the address — a log line reaches a wider
-    // audience than the inbox — but an SMTP rejection routinely NAMES the recipient it refused
-    // (`550 user@example.com: recipient rejected`), so the transport's own diagnostic puts back
-    // what the template left out. Not a quoted body: the ordinary shape of a bounce.
-    const withheldValues = [...secrets, to]
     try {
       await this.sink.send({
         tenantId,
@@ -522,25 +523,17 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // in clear text, valid until expiry. `describeError` is what replaces it: an
       // allowlist of `name` and `message`, each redacted, bounded and control-character stripped.
       //
-      // The subject gets BOTH guards here, and neither is redundant with `sanitizeSubject`.
+      // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
+      // a status rebuilt from a pattern's own capture. That is the whole guarantee, and it is
+      // simpler to hold than any amount of stripping.
       //
-      // `redactSecrets`, because an override is free to put the code in the subject —
-      // `passwordResetOtp: ({ otp }) => ({ subject: `Code ${otp}` })` is a reasonable-looking
-      // thing to write — and the subject is logged by design. Documenting that as a known way to
-      // reopen the leak was the earlier answer; closing it is the better one, and the secrets are
-      // already in hand on this line.
-      //
-      // `logSafe`, because `sanitizeSubject` removes only CR and LF: its job is the mail header,
-      // where those two inject one. A log record can be forged by more of the C0/C1 range than
-      // that, and an override returns a consumer-built string.
-      const loggedSubject = logSafe(redactSecrets(subject, withheldValues))
-
-      this.logger.error(
-        safeLogLine(
-          `delivery failed for "${loggedSubject}": ${describeChannelStatus(error)}`,
-          withheldValues
-        )
-      )
+      // The rendered subject used to go here, redacted against the values in flight. Redaction is
+      // a substring match, so it only ever covered a subject that reproduced a value VERBATIM —
+      // and a `messages` override is arbitrary consumer code. `Code 123-456` for the OTP `123456`
+      // survives it, and so does its base64. There is nothing to name at this call site now, which
+      // is why `safeLogLine` and the withheld list are gone from it too: a line assembled only
+      // from constants has no seam for a value to straddle.
+      this.logger.error(`delivery failed sending ${label}: ${describeChannelStatus(error)}`)
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
       //

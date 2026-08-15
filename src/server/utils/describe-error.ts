@@ -28,12 +28,6 @@ const ERROR_TEXT_LIMIT = 200
 const ERROR_CAUSE_DEPTH = 3
 
 /**
- * Written when reading an error's own fields is what fails.
- *
- * A description that cannot be produced still has to be a description — the caller is inside a
- * `catch` block and needs a line, not a second exception.
- */
-/**
  * What to do with the channel's own free text.
  *
  * `'redact'` keeps it with the named values stripped. Right only where the BODY renders nothing
@@ -51,6 +45,12 @@ const ERROR_CAUSE_DEPTH = 3
  */
 type ChannelTextPolicy = 'redact' | 'drop'
 
+/**
+ * Written when reading an error's own fields is what fails.
+ *
+ * A description that cannot be produced still has to be a description — the caller is inside a
+ * `catch` block and needs a line, not a second exception.
+ */
 const MALFORMED = '<malformed-error>'
 
 /**
@@ -73,6 +73,12 @@ function isError(value: unknown): value is Error {
   }
 }
 
+/** One rendered link, and whether it consumed the description's single status. */
+interface DescribedLink {
+  line: string
+  usedStatus: boolean
+}
+
 /**
  * Renders one link of the chain, and never throws while doing it.
  *
@@ -88,15 +94,17 @@ function isError(value: unknown): value is Error {
  * @param channelText - `'drop'` publishes nothing the channel authored: the message is reduced to
  *   a validated status code (see {@link statusOf}) and the name is replaced outright (see
  *   {@link nameOf}).
- * @returns One redacted, control-character-free line. NOT length-bounded: the cap is applied
- *   once to the finished description, because capping each part would let a chain of parts
+ * @param statusSpent - Whether an earlier link already used the description's single status.
+ * @returns The rendered line, and whether it consumed that status. NOT length-bounded: the cap is
+ *   applied once to the finished description, because capping each part would let a chain of parts
  *   return a multiple of the budget.
  */
 function describeOneLink(
   error: Error,
   secrets: readonly string[],
-  channelText: ChannelTextPolicy
-): string {
+  channelText: ChannelTextPolicy,
+  statusSpent: boolean
+): DescribedLink {
   try {
     const name = nameOf(error, secrets, channelText)
 
@@ -113,11 +121,18 @@ function describeOneLink(
     // the whole reset-code body is 96 base64 characters, so the first 200 of the line decode
     // straight back to the OTP. A bound on volume was never a bound on disclosure, and describing
     // it as a second lock — as this file did — was the mistake.
-    const detail = channelText === 'drop' ? statusOf(raw) : logSafe(raw)
+    const detail = channelText === 'drop' ? (statusSpent ? '' : statusOf(raw)) : logSafe(raw)
 
-    return detail === '' ? name : `${name}: ${detail}`
+    return {
+      line: detail === '' ? name : `${name}: ${detail}`,
+      // Not qualified by the policy, though only the drop path reads it. `channelText === 'drop' &&`
+      // here would be unobservable — a description is all one policy, so the flag's value on a
+      // redact walk is never consulted — and an unobservable condition is a line no test can hold
+      // to account. The caller asks the question; this only answers whether a detail was produced.
+      usedStatus: detail !== ''
+    }
   } catch {
-    return MALFORMED
+    return { line: MALFORMED, usedStatus: false }
   }
 }
 
@@ -227,6 +242,7 @@ function describe(
 ): string {
   const parts: string[] = []
   let current: unknown = error
+  let statusSpent = false
 
   for (
     let depth = 0;
@@ -241,9 +257,16 @@ function describe(
       break
     }
 
-    const described = describeOneLink(current, secrets, channelText)
+    // At most ONE status for the whole description. Three digits per link is little on its own,
+    // but a chain hands a channel three chances to place digits of its choosing into the record,
+    // and `424` beside `242` reassembles into a live code by concatenation — which no per-link
+    // guard can see, because each half is a valid reply code on its own. The FIRST one found is
+    // the one kept, not the outermost: a client typically wraps the relay's reply, so the status
+    // worth having is the inner one, and taking the first non-empty is what reaches it.
+    const described = describeOneLink(current, secrets, channelText, statusSpent)
+    statusSpent = statusSpent || described.usedStatus
 
-    parts.push(described)
+    parts.push(described.line)
     current = readCause(current)
   }
 

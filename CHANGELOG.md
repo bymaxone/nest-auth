@@ -185,9 +185,14 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
   provider and the log line's shape is the only visible difference. Two things to check. If you
   parse that log line, it changed from `delivery failed for "<subject>"` with the error attached
-  as a second argument to a single string. On every path the channel's text is absent entirely and
-  it reads `delivery failed for "<subject>": <error>` or `…: <error>: <status>`, with `<-` between
-  cause links — the name is replaced regardless of what the channel supplied. And if you run
+  as a second argument to a single string, and the RENDERED SUBJECT is gone from it: the line now
+  reads `delivery failed sending <label>: <error>` or `…: <error>: <status>`, with `<-` between
+  cause links. `<label>` is a fixed name this library owns (`passwordResetOtp`, `mfaEnabled`, …),
+  which identifies the message more stably than a subject a consumer may override — and which is
+  the point, because redacting an overridden subject only ever covered one that reproduced a value
+  VERBATIM. `Code 123-456` for the OTP `123456` survives a substring match, and so does its base64.
+  At most one status appears per line, whatever the depth of the cause chain, so a channel cannot
+  place `424` beside `242` and have them read back as a code. And if you run
   `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the paragraph
   above.
 
