@@ -1053,8 +1053,8 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 5,274 seeded faults detected (5,252 killed, 22 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-14](./docs/mutation_testing_results.md#re-measured-cold--2026-08-14))
-- ✅ **3,969 tests** — 3,719 unit and 250 end-to-end, spanning all five subpaths
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 5,333 seeded faults detected (5,311 killed, 22 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-15](./docs/mutation_testing_results.md#re-measured-cold--2026-08-15))
+- ✅ **3,971 tests** — 3,721 unit and 250 end-to-end, spanning all five subpaths
 - ✅ **Every equivalent mutant documented** — the 367 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
 ```bash

@@ -18,7 +18,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.4.3] - 2026-08-14
+## [1.4.3] - 2026-08-15
 
 ### Changed
 

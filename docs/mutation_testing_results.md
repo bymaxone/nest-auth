@@ -8,7 +8,7 @@ suite detects. This document reports the hardening pass that took the library fr
 mutation score to **99.10%**, the five configuration corrections that made the run trustworthy,
 and an honest accounting of every mutant that remains. Later passes
 ([Where the score stands since](#where-the-score-stands-since)) closed the rest and have held it
-there as the library grew: the most recent cold run — **2026-08-14**, 5 274 valid mutants — is
+there as the library grew: the most recent cold run — **2026-08-15**, 5 333 valid mutants — is
 **100.00%**, with no surviving mutants and none without coverage. All numbers below come from the
 recorded Stryker runs; nothing is estimated.
 
@@ -305,6 +305,7 @@ figure here is from a recorded run; none is estimated.
 | 2026-08-08 | **100.00%** |  4 849 |    **0** |       **0** |      21 | Re-measured cold with the 1.3.1 additions folded in (revocation service, default email provider, tenant on the port)                                                     |
 | 2026-08-12 | **100.00%** |  4 968 |    **0** |       **0** |      21 | Re-measured cold for the 1.4.1 wire-status alignment: the status derives from the code, and both catalog lookups became `Map`s with an explicit fallback                 |
 | 2026-08-14 | **100.00%** |  5 252 |    **0** |       **0** |      22 | Re-measured cold for the 1.4.3 surface (OpenAPI contributor, WS filter, code-driven 401): 28 survivors closed, all of them assertions too loose to see their own subject |
+| 2026-08-15 | **100.00%** |  5 311 |    **0** |       **0** |      22 | The tree tagged as 1.4.3: the session route move, the two completeness gates, and the contributed `logout` description                                                   |
 
 The 2026-07-28 pair is one day's work read twice: the cross-implementation parity fixes landed
 with a single survivor of their own, and the second row is that survivor recorded rather than
@@ -359,6 +360,38 @@ Two of those directives were **silently inert** before this pass, which is worth
 
 If a mutant you documented keeps showing up as a survivor, check that the directive lands on the
 line you think it does — it fails quietly, in the direction of reporting more work, not less.
+
+### Re-measured cold — 2026-08-15
+
+The tree that ships as `1.4.3`, measured after the last merge rather than before it. Run cold with
+the incremental baseline deleted, in **37 minutes 49 seconds**, over **154 instrumented files with
+8 394 mutants**.
+
+| Outcome                          |   Mutants |
+| -------------------------------- | --------: |
+| Killed                           |     5 311 |
+| Timed out (counts as detected)   |        22 |
+| **Survived**                     |     **0** |
+| **No coverage**                  |     **0** |
+| Discarded — compile error        |     2 686 |
+| Discarded — runtime error        |         8 |
+| Ignored — documented equivalents |       367 |
+| **Instrumented, total**          | **8 394** |
+
+**5 333 detected out of 5 333 valid mutants — 100.00%,** behind the unit suite alone: 3 721 tests
+across 128 files. The 250 end-to-end tests run under a separate config and no mutant is ever
+exposed to them.
+
+**Why this row exists when CI had already run the gate.** The post-merge job on `main` reported
+100.00% for the same commit in 3 minutes 56 seconds — because it is **incremental**, reusing
+verdicts from a stored baseline. That is the right trade for a per-merge gate and the wrong one
+for a number printed in a released README: this release cycle produced a first-hand demonstration
+of an incremental report being wrong, listing 46 survivors of which 18 were already dead, killed
+by tests the baseline predated. The dangerous direction is the mirror image — a cached `Killed`
+verdict for code that changed in a way the invalidation missed — and no amount of reading the
+report distinguishes the two. So the published figure comes from a cold run, and both are recorded
+rather than blended: **incremental 5 311 killed in 3m56s, cold 5 311 killed in 37m49s**. They
+agree here, which is evidence about this tree and not a guarantee about the next one.
 
 ### Re-measured cold — 2026-08-14
 
