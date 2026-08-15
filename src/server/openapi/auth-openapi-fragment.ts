@@ -114,6 +114,12 @@ type Credential =
   | 'platformLogout'
   | 'platformRefresh'
 
+/** The three kinds whose requirement is built from BOTH credentials rather than from one. */
+type TwoCredentialKind = Extract<
+  Credential,
+  'accessAndRefreshRequired' | 'accessWithOptionalRefresh' | 'optionalAccessAndRefresh'
+>
+
 /**
  * Every operation this library can mount, with the credential it requires.
  *
@@ -366,19 +372,9 @@ function describe(
           : {})
       }
     case 'accessAndRefreshRequired':
-      return describeTwoCredentials({ access: true, refresh: true }, cookieDelivery, bearerDelivery)
     case 'accessWithOptionalRefresh':
-      return describeTwoCredentials(
-        { access: true, refresh: false },
-        cookieDelivery,
-        bearerDelivery
-      )
     case 'optionalAccessAndRefresh':
-      return describeTwoCredentials(
-        { access: false, refresh: false },
-        cookieDelivery,
-        bearerDelivery
-      )
+      return describeTwoCredentials(credential, cookieDelivery, bearerDelivery)
     case 'platform':
       return { security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }] }
     case 'platformLogout':
@@ -415,16 +411,21 @@ function describe(
  * differ under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
  * body carries it.
  *
- * @param required - Which halves the operation refuses without.
+ * @param credential - Which of the three two-credential kinds this operation is.
  * @param cookieDelivery - Whether this deployment delivers credentials as cookies.
  * @param bearerDelivery - Whether this deployment delivers them in headers and bodies.
  * @returns The security requirement, plus the request body where one channel is the body.
  */
 function describeTwoCredentials(
-  required: { access: boolean; refresh: boolean },
+  credential: TwoCredentialKind,
   cookieDelivery: boolean,
   bearerDelivery: boolean
 ): FragmentObject {
+  const required = {
+    access: credential !== 'optionalAccessAndRefresh',
+    refresh: credential === 'accessAndRefreshRequired'
+  }
+
   const accessSchemes = [
     ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
     ...(bearerDelivery ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
