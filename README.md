@@ -1274,9 +1274,20 @@ it, including cookie names you have since changed.
 > That operation refuses a caller with no credential at all; the token may simply arrive in the
 > request body, which `security` has no vocabulary for. The empty entry is what lets the document
 > describe the body-only caller, and the cost is that it also tells tooling anonymous access is
-> acceptable when it is not. The `requestBody` beside it carries the real requirement. Stated
-> plainly because an earlier version of this note called `{}` "a credential this member cannot
-> model" — that is the intent behind the choice, not what the notation says.
+> acceptable when it is not.
+>
+> The `requestBody` beside it **documents the body channel; it does not carry the requirement**.
+> Under `'both'` it is `required: false` and its schema does not list `refreshToken` as required,
+> because either channel satisfies the server and a body that omits the token is valid when the
+> cookie carries it. So the document as a whole permits a request with neither, and the server
+> refuses that request. **OpenAPI cannot express "one of these two channels" across a security
+> requirement and a request body**, and this is the shape of that limitation rather than an
+> oversight. Under `'bearer'`, where the cookie does not exist, the body becomes required at both
+> levels and the document is exact.
+>
+> Written out because two earlier versions of this note were wrong in opposite directions: one
+> called `{}` "a credential this member cannot model", which is the intent rather than the
+> notation; the other claimed the `requestBody` carried the requirement, which it does not.
 >
 > **Verify with a diff, not by reasoning.** Render the document with the contributor active and
 > again with your entries in place, and compare only the operations you mount. The consumer who
