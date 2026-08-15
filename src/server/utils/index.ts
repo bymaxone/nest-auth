@@ -1,5 +1,6 @@
 export { assertNotBlocked } from './assert-not-blocked'
 export { describeError } from './describe-error'
+export type { ChannelTextPolicy } from './describe-error'
 export { readStampedEpoch } from './stamped-epoch'
 export { redactSecrets } from './redact-secrets'
 export { sanitizeHeaders } from './sanitize-headers'

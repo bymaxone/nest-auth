@@ -1124,9 +1124,18 @@ export class AuthService {
     // path, which logs raw — with `otp` in the message a quoting relay produced.
     const provider = this.emailProvider
 
-    void Promise.resolve()
-      .then(() => provider.sendEmailVerificationOtp(tenantId, email, otp))
-      .catch((err: unknown) => {
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendEmailVerificationOtp(tenantId, email, otp)
+      } catch (err: unknown) {
         // The error is NOT passed through: a relay that rejects by quoting the message body
         // puts THIS otp into it, and the raw object would carry the quote to the log.
         // Each field is sanitised at ITS OWN boundary, and the assembled line is CHECKED rather
@@ -1137,9 +1146,10 @@ export class AuthService {
         // mutation gate reported exactly that, one surviving mutant per argument, each masked by
         // the other. `safeLogLine` closes the seam between the fields without that cost, because
         // it fails when a per-field guard is removed instead of standing in for it.
+        //
         // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as three independent decisions that happened to agree, and the mutation
-        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // layer it read as independent decisions that happened to agree, and the mutation gate
+        // showed the cost: the copy passed to `describeError` could be emptied with nothing
         // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
         // Shared, the list is one decision, and removing a value from it fails.
         const withheld = [otp, email]
@@ -1150,7 +1160,8 @@ export class AuthService {
             withheld
           )
         )
-      })
+      }
+    })()
   }
 }
 

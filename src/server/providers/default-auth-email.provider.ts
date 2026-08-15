@@ -419,17 +419,20 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     newEmail: string,
     locale?: string
   ): Promise<void> {
-    // The addresses are named here for the same reason a code is on the OTP paths. This body
-    // RENDERS the new address, and a relay that rejects by quoting it puts that address into the
-    // error — past the deliberate choice not to log the recipient, which exists because a log line
-    // reaches a wider audience than the inbox. Not a credential, but the parameter is "values this
-    // message renders that must not reach a log", and an address qualifies.
+    // The addresses are named here for the same reason a code is on the OTP paths, and the text
+    // is dropped for the same reason too. This body RENDERS the new address, and a relay that
+    // rejects by quoting it puts that address into the error — past the deliberate choice not to
+    // log the recipient, which exists because a log line reaches a wider audience than the inbox.
+    // Naming them is not enough on its own: a relay is as free to quote this body re-encoded as it
+    // is to quote a reset code's, and redaction sees through neither. An address is not a
+    // credential, but "not a credential" was never the standard — it is personal data, and the
+    // status code is still the half an operator acts on.
     await this.deliver(
       tenantId,
       oldEmail,
       this.messages.emailChanged({ oldEmail, newEmail, locale }),
       [oldEmail, newEmail],
-      'redact'
+      'drop'
     )
   }
 
@@ -459,13 +462,15 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     locale?: string
   ): Promise<void> {
     // Device, IP and session hash are rendered into this body, so a quoted rejection carries all
-    // three. An IP and a device string identify a person as surely as an address does.
+    // three, and a re-encoded one carries them past redaction. An IP and a device string identify
+    // a person as surely as an address does, which is the whole reason they are named — so the
+    // free text goes for the same reason it goes on a credential path.
     await this.deliver(
       tenantId,
       email,
       this.messages.newSessionAlert({ sessionInfo, locale }),
       [sessionInfo.device, sessionInfo.ip, sessionInfo.sessionHash],
-      'redact'
+      'drop'
     )
   }
 

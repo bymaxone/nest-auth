@@ -36,11 +36,14 @@ const ERROR_CAUSE_DEPTH = 3
 /**
  * What to do with the channel's own free text.
  *
- * `'redact'` keeps it with the named values stripped — right when the failure carries no
- * credential, because the diagnosis is what an operator acts on and the worst a re-encoded body
- * can then expose is an address.
+ * `'redact'` keeps it with the named values stripped. Right only where the BODY renders nothing
+ * that must be withheld, which leaves the recipient as the one value at risk — and a bounce names
+ * the recipient in plain text (`550 user@example.com: recipient rejected`), where redaction
+ * reaches it. There is no encoded body to see through, because the body held nothing to hide.
  *
- * `'drop'` keeps only a parsed status code. Required when a CREDENTIAL is in flight, because
+ * `'drop'` keeps only a parsed status code. Required whenever the body renders a value that must
+ * not be logged — a credential, but personal data too: an IP is not a credential and is still not
+ * something to publish. The standard is what the body renders, not how bad it would be. Because
  * redaction cannot see through an encoding and a bound on length does not help: a relay returning
  * the body base64'd encodes it from the start, so the code sits in the first sentence and survives
  * any cap that leaves enough to decode. Measured — the whole reset-code body is 96 base64

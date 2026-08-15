@@ -310,7 +310,7 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > The third argument is the one that matters, and it has no default on purpose — the permissive
 > value has to be chosen, never inherited by a call site that forgot it.
 >
-> **`'drop'` wherever a credential was in flight.** Redaction alone does not close this, and
+> **`'drop'` wherever the body rendered something you would withhold.** Redaction alone does not close this, and
 > neither does a length cap. A relay may quote the body it rejected in transfer encoding rather
 > than verbatim; base64 is the ordinary case and defeats both at once — substring matching finds
 > nothing because the credential's characters are not in the line, and the cap does not help
@@ -322,8 +322,11 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > of a bounce you act on anyway: `550` is a refusal, `421` a transient outage, `535` a credential
 > problem at your relay.
 >
-> **`'redact'` only where nothing secret was in flight.** There the relay's own words are the
-> diagnosis and there is nothing to protect them from.
+> **`'redact'` only where the body renders nothing you would withhold.** There the relay's own
+> words are the diagnosis and there is no encoded body to see through. Note the standard is what
+> the message renders, not how damaging it would be: the bundled provider drops the text on its
+> new-session alert too, because that body states an IP and a device, and an IP is personal data
+> even though it is not a credential.
 >
 > Under either policy `describeError` reads only `name` and `message` (never `stack`, never the
 > transport's own fields — nodemailer hangs the server's full reply on `response`), strips the

@@ -87,6 +87,15 @@ pnpm mutation:full        # cold run — deletes that baseline first. The one th
 pnpm mutation:dry-run     # fast sandbox/config smoke test (no mutants); use to verify config health
 ```
 
+**The sandbox must not survive the run.** `cleanTempDir` is `"always"`, not `true`. `true` deletes
+`.stryker-tmp` only after a run that PASSED — and a run that fails the 100 threshold is the normal
+state while iterating, so it leaves a 45 MB copy of `src/` on disk. `jest.coverage.config.ts` lists
+it in `modulePathIgnorePatterns` and that is not enough: with a sandbox present, `pnpm test:cov:all`
+failed 4 runs out of 11 (random e2e suites, `socket hang up`, and 404s on routes that exist), and
+0 out of 5 with it removed — against 0 out of 15 on a clean checkout of `main`. That was the
+unexplained intermittent failure in the merged coverage run. If you ever see it again, check for
+`.stryker-tmp/` first.
+
 **Config invariants (Node 24 + pnpm — do not regress).** Stryker loads `jest.stryker.config.ts`
 via native ESM `import()` in a child process, so relative imports MUST carry an explicit
 extension (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess extensions

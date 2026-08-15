@@ -730,9 +730,18 @@ export class PasswordResetService {
     // `rawToken` inside it. Deferring turns a synchronous throw into a rejection this sees.
     const provider = this.emailProvider
 
-    void Promise.resolve()
-      .then(() => provider.sendPasswordResetToken(tenantId, email, rawToken))
-      .catch((err: unknown) => {
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendPasswordResetToken(tenantId, email, rawToken)
+      } catch (err: unknown) {
         // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
         // error, and this token is a working password reset until its TTL expires. The recipient
         // joins it — an SMTP rejection routinely names the address it refused, and the provider
@@ -743,9 +752,10 @@ export class PasswordResetService {
         // an OTP is four to eight digits, so an identifier containing one by coincidence is real,
         // while a 64-hex token can only appear inside an id derived FROM it, which no repository
         // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
+        //
         // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as three independent decisions that happened to agree, and the mutation
-        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // layer it read as independent decisions that happened to agree, and the mutation gate
+        // showed the cost: the copy passed to `describeError` could be emptied with nothing
         // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
         // Shared, the list is one decision, and removing a value from it fails.
         const withheld = [rawToken, email]
@@ -763,7 +773,8 @@ export class PasswordResetService {
           // mutation no realistic test can kill, for a line that is not what this change is about.
           this.logger.error(`pw_reset rollback delete failed for user ${logSafe(userId)}`, delErr)
         })
-      })
+      }
+    })()
   }
 
   /**
@@ -787,9 +798,18 @@ export class PasswordResetService {
 
     // Deferred for the same reason as `sendToken` above: a synchronous throw from the provider
     // would skip this handler and reach `resendOtp`'s outer catch, which logs raw — with the otp.
-    void Promise.resolve()
-      .then(() => provider.sendPasswordResetOtp(tenantId, email, otp))
-      .catch((err: unknown) => {
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendPasswordResetOtp(tenantId, email, otp)
+      } catch (err: unknown) {
         // Redacted, not raw: the quoted body carries this otp, which resets the password, and an
         // SMTP rejection commonly names the recipient — which the provider removed from its own
         // line and then rethrew here.
@@ -798,9 +818,10 @@ export class PasswordResetService {
         // see the verification-OTP site for why: redacting the assembled string lets either
         // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
         // otp because a reset code is short enough for an identifier to contain one.
+        //
         // One array, named once and handed to every layer that needs it. Written inline at each
-        // layer it read as three independent decisions that happened to agree, and the mutation
-        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // layer it read as independent decisions that happened to agree, and the mutation gate
+        // showed the cost: the copy passed to `describeError` could be emptied with nothing
         // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
         // Shared, the list is one decision, and removing a value from it fails.
         const withheld = [otp, email]
@@ -811,7 +832,8 @@ export class PasswordResetService {
             withheld
           )
         )
-      })
+      }
+    })()
   }
 
   // ---------------------------------------------------------------------------

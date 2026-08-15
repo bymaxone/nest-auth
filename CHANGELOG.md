@@ -115,8 +115,11 @@ digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTim
   address, and the new-session alert states device, IP and session hash. A relay quoting either
   body puts that data into the error and therefore into the log line — walking straight past this
   provider's deliberate choice to keep the recipient out of it, on the grounds that a log line
-  reaches a wider audience than the inbox does. Both now name those values, and they are stripped
-  the same way a code is. The file's own guarantee is restated accordingly: it cannot promise
+  reaches a wider audience than the inbox does. Both now name those values, and both drop the channel's
+  text the same way a credential path does — redaction sees through a re-encoded body no better
+  here than there, and "not a credential" was never the standard. The standard is what the message
+  renders: an IP is personal data. What survives is the status code, which is the half an operator
+  acts on either way. The file's own guarantee is restated accordingly: it cannot promise
   "never a body", because a `550` **is** the body; what it promises is that the values each
   message is known to render do not survive into the line.
 
@@ -184,6 +187,14 @@ digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTim
 ## [1.4.3] - 2026-08-15
 
 ### Changed
+
+- **Stryker deletes its sandbox even when the run fails (`cleanTempDir: "always"`).** `true` — the
+  previous value, and the default — deletes `.stryker-tmp` only after a run that PASSED, and a run
+  that fails the 100 threshold is the normal state while iterating, so a 45 MB copy of `src/` was
+  left behind. `jest.coverage.config.ts` already listed it in `modulePathIgnorePatterns` and that
+  was not enough: with a sandbox on disk, `pnpm test:cov:all` failed 4 of 11 runs — random E2E
+  suites, `socket hang up`, and 404s on routes that exist — and 0 of 5 with it removed, against
+  0 of 15 on a clean checkout of `main`. Contributor-facing only; nothing ships differently.
 
 - **BREAKING — the bulk session revocation moved to `POST {prefix}/sessions/revoke-all`.** It was
   `DELETE {prefix}/sessions/all`, and the verb was the defect. The handler reads the refresh token

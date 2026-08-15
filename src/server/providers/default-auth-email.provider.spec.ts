@@ -602,8 +602,9 @@ describe('DefaultAuthEmailProvider', () => {
   // used to be documented as a known way to reopen the leak; it is closed instead, since the
   // secrets are already in hand on the line that builds the record.
   //
-  // Every credential-bearing method is covered, and on these paths this is now the ONLY test that
-  // observes the `secrets` argument at all. Dropping the channel's text closed the leak but also
+  // Every method that names a value is covered — the five credential ones and the address notice,
+  // which names the new address without it being a credential. On these paths this is now the ONLY
+  // test that observes the `secrets` argument at all. Dropping the channel's text closed the leak but also
   // hid the redaction behind it: with the relay's words gone, a method that named no secret would
   // still keep the token out of the line, and the table above would pass while `secrets` was
   // empty. Measured — as `[token]` -> `[]` surviving mutation on four of the five methods, killed
@@ -672,6 +673,18 @@ describe('DefaultAuthEmailProvider', () => {
           expiresAt: new Date('2026-01-01T00:00:00.000Z')
         }),
       'd9e0f1a2b3c4d9e0'
+    ],
+    [
+      'the address the email-changed notice renders',
+      {
+        emailChanged: ({ newEmail }: { newEmail: string }) => ({
+          subject: `Now ${newEmail}`,
+          text: `Your address is now ${newEmail}.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) =>
+        p.sendEmailChangedNotification('t', 'old@example.com', 'new@example.com'),
+      'new@example.com'
     ]
   ])('redacts %s an override put in the subject', async (_why, messages, send, secret) => {
     const custom = new DefaultAuthEmailProvider(sink, { messages })
@@ -826,12 +839,18 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<non-error: object>')
   })
 
-  // A quoted body carries more than credentials. These two notices RENDER identifying data —
-  // `emailChanged` states the new address, `newSessionAlert` states device, IP and session hash —
-  // and a relay that rejects by quoting the body puts all of it into the error. The address one
-  // matters most: this provider deliberately keeps the recipient out of the log, on the grounds
-  // that a log line reaches a wider audience than the inbox, and a quoted body walked straight
-  // past that decision.
+  // A quoted body carries more than credentials, so these two get the same treatment. Both notices
+  // RENDER identifying data — `emailChanged` states the new address, `newSessionAlert` states
+  // device, IP and session hash — and a relay that rejects by quoting the body puts all of it into
+  // the error. The address one matters most: this provider deliberately keeps the recipient out of
+  // the log, on the grounds that a log line reaches a wider audience than the inbox, and a quoted
+  // body walked straight past that decision.
+  //
+  // Redacting them is not enough, and "not a credential" was never the standard. A relay is as
+  // free to quote THIS body re-encoded as it is to quote a reset code's, and redaction sees
+  // through neither — so an IP, which is personal data, would reach the log by the same route the
+  // credential fix closed. The text goes; the status stays, and the status is the half an operator
+  // acts on either way.
   it.each([
     [
       'the addresses the email-changed notice renders',
@@ -856,7 +875,8 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain(rendered)
-    expect(logged).toContain('<redacted>')
+    expect(logged).not.toContain('rejected by policy')
+    expect(logged).toContain('550')
   })
 
   // The likeliest shape of all, and it needs no quoted body: an SMTP rejection NAMES the
@@ -875,11 +895,15 @@ describe('DefaultAuthEmailProvider', () => {
 
   // The seam ONE LEVEL UP from the composition inside `describeError`: the provider's own template
   // joins a sanitised subject and a sanitised description with `": `, and a value can straddle
-  // that. Measured with a device string of `foo": Error: bar` — the subject renders `foo`, the
-  // error renders `Error: bar`, and the template rebuilds the device in full from two fields that
-  // each contain nothing. The line is withheld rather than published.
+  // that. The subject renders `foo`, the description renders `Error`, and the template rebuilds
+  // the device in full from two fields that each contain nothing. The line is withheld rather than
+  // published.
+  //
+  // Dropping the channel's text shortens what the seam can spell — the description is now a name
+  // and at most a status — but it does not close it, which is the point of checking the composed
+  // line rather than trusting the parts. A device string is arbitrary consumer text.
   it('withholds a line whose template rebuilt a value across the seam', async () => {
-    const device = 'foo": Error: bar'
+    const device = 'foo": Error'
     const messages = { newSessionAlert: () => ({ subject: 'foo', text: 'body' }) }
     const custom = new DefaultAuthEmailProvider(sink, { messages })
     sink.send.mockRejectedValueOnce(new Error('bar'))

@@ -41,5 +41,5 @@
     "fileName": "reports/mutation/mutation.html"
   },
   "tempDirName": ".stryker-tmp",
-  "cleanTempDir": true
+  "cleanTempDir": "always"
 }
