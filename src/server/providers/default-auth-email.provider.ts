@@ -289,10 +289,10 @@ function sanitizeSubject(subject: string): string {
  * }
  * ```
  *
- * No method throws on a delivery failure — the library awaits most of these calls (enabling MFA,
- * sending an invitation, confirming an address change), so a channel that is down would turn each
- * into a failed request over a message that is a notification rather than the operation itself.
- * The failure is logged and the flow continues.
+ * No method throws on a delivery failure — the library awaits several of these calls (sending an
+ * invitation, confirming an address change), so a channel that is down would turn each into a
+ * failed request over a message that is a notification rather than the operation itself. The
+ * failure is logged and the flow continues. The MFA notices are not awaited at all; see below.
  *
  * That choice has a cost worth stating, because two flows react to a *throw* from the port. A
  * reset-token send that rejects lets `PasswordResetService` delete the stored token early rather

@@ -30,10 +30,11 @@ const ERROR_CAUSE_DEPTH = 3
 /**
  * What to do with the channel's own free text.
  *
- * `'redact'` keeps it with the named values stripped. Right only where the BODY renders nothing
- * that must be withheld, which leaves the recipient as the one value at risk — and a bounce names
- * the recipient in plain text (`550 user@example.com: recipient rejected`), where redaction
- * reaches it. There is no encoded body to see through, because the body held nothing to hide.
+ * `'redact'` keeps it with the named values stripped, and it has NO caller inside this library —
+ * it is reached only through the exported {@link describeError}, by a consumer who has a reason to
+ * trust the text their own channel produces. It stops short of a guarantee: redaction is a
+ * substring match, so it holds for a value that appears the way the caller wrote it and not for
+ * one a remote transformed.
  *
  * `'drop'` keeps only a parsed status code. Required whenever the body renders a value that must
  * not be logged — a credential, but personal data too: an IP is not a credential and is still not
@@ -174,9 +175,10 @@ function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTe
  * The SMTP status code at the head of a message, or the empty string.
  *
  * Structured and independently validated, which is what makes it safe to keep when free text is
- * not: three digits, optionally followed by an enhanced `X.Y.Z` code, matched at the very start
- * and returned from the PATTERN's own capture rather than by slicing the input. Nothing a relay
- * writes after that can ride along, whatever it encoded it in.
+ * not: three digits, matched at the very start and returned from the PATTERN's own capture rather
+ * than sliced out of the input. Nothing a relay writes after that can ride along, whatever it
+ * encoded it in — including the enhanced `X.Y.Z` code, which is read past rather than kept, for
+ * the reason given below.
  *
  * **The reply CLASS is checked.** SMTP codes run 2xx to 5xx, so a leading `1` or `6` says this is
  * not a reply at all — and `123 456 could not be delivered` would otherwise publish `123`, the
