@@ -42,6 +42,9 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeError } from '../utils/describe-error'
+import { logSafe } from '../utils/log-safe'
+import { safeLogLine } from '../utils/safe-log-line'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -920,7 +923,9 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.log(`verifyAndEnable: MFA enabled userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaEnabledNotification(emailTenantOf(user), user.email)
+    this.notify('verifyAndEnable', userId, user, (provider, tenant, email) =>
+      provider.sendMfaEnabledNotification(tenant, email)
+    )
 
     // Fire-and-forget hook — errors must not roll back a completed DB operation.
     if (this.hooks.afterMfaEnabled) {
@@ -1253,7 +1258,9 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.log(`disable: MFA disabled userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaDisabledNotification(emailTenantOf(user), user.email)
+    this.notify('disable', userId, user, (provider, tenant, email) =>
+      provider.sendMfaDisabledNotification(tenant, email)
+    )
 
     const safeUser =
       context === 'platform'
@@ -1339,7 +1346,9 @@ export class MfaService {
     await this.redis.bumpUserTokenEpoch(userId, context)
 
     this.logger.warn(`resetMfa: MFA removed administratively userId=${userId} context=${context}`)
-    await this.emailProvider.sendMfaDisabledNotification(emailTenantOf(user), user.email)
+    this.notify('resetMfa', userId, user, (provider, tenant, email) =>
+      provider.sendMfaDisabledNotification(tenant, email)
+    )
 
     const safeUser =
       context === 'platform'
@@ -1772,6 +1781,57 @@ export class MfaService {
     const { legacy, scoped } = this.mfaFlowCounterIds(flow, context, userId, tenantId)
     await this.bruteForce.resetFailures(scoped)
     if (legacy !== scoped) await this.bruteForce.resetFailures(legacy)
+  }
+
+  /**
+   * Sends an MFA state-change notice, fire-and-forget, with the recipient kept out of the log.
+   *
+   * **Not awaited, and that is the fix, not a shortcut.** These three sends used to be awaited
+   * with no `catch`, so a rejected delivery travelled out of the service to `AuthExceptionFilter`
+   * — which answered the caller with an error for an operation that had ALREADY completed. By
+   * that point the secret is written, the sessions are invalidated and the token epoch is bumped;
+   * the user's second factor is on, and telling them it failed is how they end up locked out of
+   * an account they just secured. `PasswordResetService.notifyPasswordChanged` had reached the
+   * same conclusion for the same reason.
+   *
+   * **And the address does not reach the log.** The filter logged that error raw, and an SMTP
+   * rejection routinely NAMES the recipient it refused (`550 user@example.com: recipient
+   * rejected`) — no quoted body required, which makes it the likeliest exposure of the set. The
+   * body carries nothing secret, so the channel's own words are kept and only the named values
+   * are stripped; `safeLogLine` covers the seam the template opens between them.
+   *
+   * @param origin - The calling flow, for the log line.
+   * @param userId - Whose account changed.
+   * @param user - The account, read for its tenant and address.
+   * @param send - Which notice to dispatch.
+   */
+  private notify(
+    origin: string,
+    userId: string,
+    user: AuthUser | AuthPlatformUser,
+    send: (provider: IEmailProvider, tenantId: string, email: string) => Promise<void> | void
+  ): void {
+    const provider = this.emailProvider
+    const tenantId = emailTenantOf(user)
+    const email = user.email
+    const withheld = [email]
+
+    // An async IIFE rather than `Promise.resolve(send(...))`: the second evaluates the call before
+    // the promise wraps it, so a provider that throws SYNCHRONOUSLY skips this handler entirely.
+    // Inside the IIFE the call is still made synchronously and the `try` still catches the throw.
+    void (async (): Promise<void> => {
+      try {
+        await send(provider, tenantId, email)
+      } catch (err: unknown) {
+        this.logger.error(
+          safeLogLine(
+            `${origin}: MFA notice delivery failed for user ${logSafe(userId)}: ` +
+              describeError(err, withheld, 'redact'),
+            withheld
+          )
+        )
+      }
+    })()
   }
 
   private async fetchUserForContext(

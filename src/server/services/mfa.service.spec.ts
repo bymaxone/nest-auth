@@ -1103,6 +1103,62 @@ describe('MfaService', () => {
       )
     })
 
+    // Two properties, and the first one is why the second exists. This send used to be AWAITED
+    // with no `catch`, so a rejected delivery left the service and reached `AuthExceptionFilter`:
+    // the caller was answered with an error for an operation that had already completed — the
+    // secret written, the sessions invalidated, the epoch bumped. Telling a user their second
+    // factor failed to enable when it did is how they end up locked out of the account they just
+    // secured. And the filter logged that error raw, so the bounce — which NAMES the recipient it
+    // refused, needing no quoted body — put the address into a second record after the provider
+    // had stripped it from its own.
+    it('completes the enable and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaEnabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      )
+
+      // A bare `await`, and that IS the assertion that it does not reject: before the fix this
+      // threw here, and the caller was told the enable failed for an enable already written.
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
+      // Microtasks, NOT `setImmediate`: this describe runs on fake timers, so a macrotask never
+      // fires and the wait would hang the test rather than flush it. The handler sits two awaits
+      // down the notify chain, and real promises still settle under fake timers.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      // The ORIGIN is named, not just the fact of the failure. Three flows send an MFA notice and
+      // they are different incidents: an administrative reset whose notice never arrives is how an
+      // account takeover through the support desk stays silent.
+      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      // The body renders nothing secret, so the relay's own words stay — only the named value is
+      // stripped, and the marker is what proves the stripping happened rather than the address
+      // simply never having been there.
+      expect(logged).toContain('<redacted>')
+      errorSpy.mockRestore()
+    })
+
     // Verifies that errors thrown by afterMfaEnabled hook are silently suppressed (fire-and-forget).
     it('should complete successfully even when afterMfaEnabled hook rejects', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
@@ -2583,6 +2639,30 @@ describe('MfaService', () => {
     // `mfaVerified: true` valid past the factor they attest to; skipping the notification
     // makes this an account-takeover path, because an attacker who reaches the support desk
     // removes the second factor with nothing reaching the owner.
+    // The notice on this path is what makes a support-desk takeover detectable, so a bounce here
+    // is the one an operator most needs named — and it is also where the recipient most easily
+    // leaks, because an SMTP rejection quotes the address it refused with no body involved.
+    it('completes the reset and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      mockEmailProvider.sendMfaDisabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_ENABLED.email}: recipient rejected`)
+      )
+
+      await service.resetMfa('user-1', 'dashboard', 'tenant-1')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('resetMfa: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_ENABLED.email)
+      expect(logged).toContain('<redacted>')
+      warnSpy.mockRestore()
+      errorSpy.mockRestore()
+    })
+
     it('clears the factor, kills the sessions and notifies the account holder', async () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
@@ -2839,6 +2919,37 @@ describe('MfaService', () => {
         'tenant-1',
         AUTH_USER_MFA_DISABLED.email
       )
+    })
+
+    // The same two properties the enable path asserts, at the site that matters as much: the
+    // factor is already gone, so answering the caller with an error for a notice that bounced
+    // would report a removal that happened as one that did not. And a bounce NAMES the recipient.
+    it('completes the disable and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaDisabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      )
+
+      await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('disable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      expect(logged).toContain('<redacted>')
+      errorSpy.mockRestore()
     })
 
     // Verifies that disable throws MFA_INVALID_CODE and records a brute-force failure for a wrong code.

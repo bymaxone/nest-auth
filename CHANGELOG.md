@@ -144,6 +144,22 @@ digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTim
   rejection naming the recipient it refused is the ordinary shape of a bounce — no quoted body
   required — which makes this the likeliest exposure of the set. Five sites now name it.
 
+  **The recipient survived on the paths that AWAITED the send, and those had a second defect.**
+  `MfaService` awaited its three state-change notices — enable, disable, administrative reset —
+  with no `catch`, and `PasswordResetService.notifyPasswordChanged` handed the raw error to the
+  logger. An SMTP rejection routinely NAMES the recipient it refused (`550 user@example.com:
+recipient rejected`), no quoted body required, which makes it the likeliest exposure of the set:
+  the provider strips the address from its own line and rethrows the ORIGINAL, so the next handler
+  put it back. All four now build the line from `describeError` with the address named.
+
+  Awaiting them was the second defect, and worse than the leak. By the time the notice is sent the
+  MFA secret is written, every session is invalidated and the token epoch is bumped — the change
+  has happened. A bounced notice made `verifyAndEnable` answer the caller with an error for an
+  enable that succeeded, which is how a user ends up locked out of the account they just secured.
+  **BREAKING for anyone who relied on that rejection:** the three MFA notices are now
+  fire-and-forget, exactly as `notifyPasswordChanged` already was and for the reason its own
+  comment gave. A delivery failure is logged, not returned.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.
@@ -191,10 +207,10 @@ digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTim
 - **Stryker deletes its sandbox even when the run fails (`cleanTempDir: "always"`).** `true` — the
   previous value, and the default — deletes `.stryker-tmp` only after a run that PASSED, and a run
   that fails the 100 threshold is the normal state while iterating, so a 45 MB copy of `src/` was
-  left behind. `jest.coverage.config.ts` already listed it in `modulePathIgnorePatterns` and that
-  was not enough: with a sandbox on disk, `pnpm test:cov:all` failed 4 of 11 runs — random E2E
-  suites, `socket hang up`, and 404s on routes that exist — and 0 of 5 with it removed, against
-  0 of 15 on a clean checkout of `main`. Contributor-facing only; nothing ships differently.
+  left behind on every failed run. Wanted on its own terms: `jest.coverage.config.ts` has to name
+  it in `modulePathIgnorePatterns` precisely because a second copy of `src/` in the tree is
+  hazardous, and the cheapest way to hold that is for it not to be there. Contributor-facing only;
+  nothing ships differently.
 
 - **BREAKING — the bulk session revocation moved to `POST {prefix}/sessions/revoke-all`.** It was
   `DELETE {prefix}/sessions/all`, and the verb was the defect. The handler reads the refresh token

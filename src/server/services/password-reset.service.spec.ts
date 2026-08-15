@@ -381,8 +381,11 @@ describe('PasswordResetService', () => {
     // login" into "the victim finds out now". Losing it silently loses that.
     it('records a failed notification without failing the change', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      // The likeliest shape, and it needs no quoted body: an SMTP rejection NAMES the recipient it
+      // refused. The provider strips the address from its own line and rethrows the ORIGINAL under
+      // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
       mockEmailProvider.sendPasswordChangedNotification.mockRejectedValueOnce(
-        new Error('smtp down')
+        new Error('550 user@example.com: recipient rejected — smtp down')
       )
 
       await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
@@ -390,10 +393,19 @@ describe('PasswordResetService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
-      expect(errorSpy).toHaveBeenCalledWith(
-        'notifyPasswordChanged: delivery failed',
-        expect.any(Error)
-      )
+
+      const logged = errorSpy.mock.calls[0]?.[0] as string
+      // One argument, not two: the error object is never handed to the logger, because a logger
+      // that receives it prints whatever the transport hung on it.
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      // Which flow, and whose account. Without both, an operator has a delivery failure with no
+      // way to reach the affected user.
+      expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
+      expect(logged).not.toContain('user@example.com')
+      // The notice renders nothing secret, so the relay's own explanation is the diagnosis and is
+      // kept — only the named value is stripped.
+      expect(logged).toContain('smtp down')
+      expect(logged).toContain('<redacted>')
       errorSpy.mockRestore()
     })
 

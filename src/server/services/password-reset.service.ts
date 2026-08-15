@@ -608,11 +608,33 @@ export class PasswordResetService {
   private async notifyPasswordChanged(user: AuthUser): Promise<void> {
     const send = this.emailProvider?.sendPasswordChangedNotification
     if (send === undefined) return
-    void Promise.resolve(send.call(this.emailProvider, user.tenantId, user.email)).catch(
-      (err: unknown) => {
-        this.logger.error('notifyPasswordChanged: delivery failed', err)
+
+    const provider = this.emailProvider
+    const withheld = [user.email]
+
+    // An async IIFE rather than `Promise.resolve(send.call(...))`: the second evaluates the call
+    // before the promise wraps it, so a provider that throws SYNCHRONOUSLY skipped this handler
+    // and reached the caller. Inside the IIFE the call is still made synchronously and the `try`
+    // still catches the throw.
+    void (async (): Promise<void> => {
+      try {
+        await send.call(provider, user.tenantId, user.email)
+      } catch (err: unknown) {
+        // The error is NOT handed to the logger. This notice renders nothing secret, so the
+        // channel's own words are the diagnosis and are kept — but an SMTP rejection routinely
+        // NAMES the recipient it refused (`550 user@example.com: recipient rejected`), and no
+        // quoted body is needed for that, which makes it the likeliest exposure of the set. The
+        // provider strips the address from ITS line and rethrows the original under
+        // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
+        this.logger.error(
+          safeLogLine(
+            `notifyPasswordChanged: delivery failed for user ${logSafe(user.id)}: ` +
+              describeError(err, withheld, 'redact'),
+            withheld
+          )
+        )
       }
-    )
+    })()
   }
 
   /**
