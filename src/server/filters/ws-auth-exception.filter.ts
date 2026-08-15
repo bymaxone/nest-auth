@@ -37,24 +37,38 @@ interface SendingClient {
   send(payload: string): unknown
 }
 
-/** Whether a value can be dispatched to with an event. */
+/**
+ * Whether a value can be dispatched to with an event.
+ *
+ * The optional chain is the whole null check: it short-circuits on `null` and on `undefined`,
+ * and a scalar answers `undefined` for a property it does not have. An explicit
+ * `typeof client === 'object'` in front of it would be worse than redundant — it would refuse a
+ * callable emitter, which is a shape a transport is free to hand a gateway.
+ */
 function isEmittingClient(client: unknown): client is EmittingClient {
-  return (
-    typeof client === 'object' &&
-    client !== null &&
-    typeof (client as { emit?: unknown }).emit === 'function'
-  )
+  return typeof (client as EmittingClient | null | undefined)?.emit === 'function'
 }
 
 /** `WebSocket.OPEN`, inlined for the same reason the marker string is: no import. */
 const WS_OPEN = 1
 
-/** Whether a value is a native socket that must be written to rather than emitted on. */
+/**
+ * Whether a value is a native socket that must be written to rather than emitted on.
+ *
+ * BOTH fields are required, and the conjunction is load-bearing because a Socket.IO client is a
+ * half-match: `Socket.send()` exists there as the documented alias for `emit('message')`, while
+ * `readyState` belongs to the Engine.IO transport under it (`socket.conn.readyState`) and not to
+ * the client a gateway is handed. Reading the two as an alternative would therefore send EVERY
+ * Socket.IO refusal down the `send` path, where the `readyState` check finds `undefined`, decides
+ * the socket is not open, and delivers the refusal to nobody — the exact failure the two-branch
+ * dispatch exists to prevent, on the transport most consumers use.
+ */
 function isSendingClient(client: unknown): client is SendingClient {
-  if (typeof client !== 'object' || client === null) return false
-
-  const candidate = client as { readyState?: unknown; send?: unknown }
-  return typeof candidate.readyState === 'number' && typeof candidate.send === 'function'
+  const candidate = client as SendingClient | null | undefined
+  // Only the first read needs the optional chain: reaching the second one means `readyState`
+  // answered a `typeof` with `'number'`, which nothing nullish can do. A second `?.` would be a
+  // branch no input can take, reported forever as one nothing exercises.
+  return typeof candidate?.readyState === 'number' && typeof candidate.send === 'function'
 }
 
 /**

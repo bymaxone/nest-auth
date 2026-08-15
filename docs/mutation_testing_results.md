@@ -8,7 +8,7 @@ suite detects. This document reports the hardening pass that took the library fr
 mutation score to **99.10%**, the five configuration corrections that made the run trustworthy,
 and an honest accounting of every mutant that remains. Later passes
 ([Where the score stands since](#where-the-score-stands-since)) closed the rest and have held it
-there as the library grew: the most recent cold run — **2026-08-12**, 4 989 valid mutants — is
+there as the library grew: the most recent cold run — **2026-08-14**, 5 274 valid mutants — is
 **100.00%**, with no surviving mutants and none without coverage. All numbers below come from the
 recorded Stryker runs; nothing is estimated.
 
@@ -296,14 +296,15 @@ The 99.10% above is the snapshot at the end of that hardening pass. The number m
 library grows: new code arrives with survivors, and each subsequent pass drives them out. Every
 figure here is from a recorded run; none is estimated.
 
-| Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                                                                                            |
-| ---------- | ----------- | -----: | -------: | ----------: | ------: | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors                                                                        |
-| 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                                                                                              |
-| 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below                                                                                     |
-| 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs                                                                           |
-| 2026-08-08 | **100.00%** |  4 849 |    **0** |       **0** |      21 | Re-measured cold with the 1.3.1 additions folded in (revocation service, default email provider, tenant on the port)                                     |
-| 2026-08-12 | **100.00%** |  4 968 |    **0** |       **0** |      21 | Re-measured cold for the 1.4.1 wire-status alignment: the status derives from the code, and both catalog lookups became `Map`s with an explicit fallback |
+| Date       | Score       | Killed | Survived | No coverage | Timeout | What moved it                                                                                                                                                            |
+| ---------- | ----------- | -----: | -------: | ----------: | ------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-07-26 | 98.37%      |  3 419 |       41 |          16 |      16 | Parity hardening + five security items, then a pass over the new code's survivors                                                                                        |
+| 2026-07-27 | **100.00%** |  3 446 |    **0** |       **0** |      16 | Closed every remaining survivor: 57 mutants across 19 files                                                                                                              |
+| 2026-07-28 | 99.97%      |  3 478 |        1 |           0 |      16 | The audit's parity work landed; its one survivor is the anchor below                                                                                                     |
+| 2026-07-28 | **100.00%** |  3 474 |    **0** |       **0** |      16 | That survivor recorded as an equivalent, after checking it against 211k inputs                                                                                           |
+| 2026-08-08 | **100.00%** |  4 849 |    **0** |       **0** |      21 | Re-measured cold with the 1.3.1 additions folded in (revocation service, default email provider, tenant on the port)                                                     |
+| 2026-08-12 | **100.00%** |  4 968 |    **0** |       **0** |      21 | Re-measured cold for the 1.4.1 wire-status alignment: the status derives from the code, and both catalog lookups became `Map`s with an explicit fallback                 |
+| 2026-08-14 | **100.00%** |  5 252 |    **0** |       **0** |      22 | Re-measured cold for the 1.4.3 surface (OpenAPI contributor, WS filter, code-driven 401): 28 survivors closed, all of them assertions too loose to see their own subject |
 
 The 2026-07-28 pair is one day's work read twice: the cross-implementation parity fixes landed
 with a single survivor of their own, and the second row is that survivor recorded rather than
@@ -316,7 +317,9 @@ rather than argued — anchored and unanchored agree on every one — before the
 The killed count drops by four between the rows because the block-form disable takes the mutator's
 whole region, which is why the region is one declaration long.
 
-The gate is the `break` threshold of **95**, not the peak: a run fails below it. The 2026-07-26
+The gate is the `break` threshold of **100**, not the peak: a run fails below it. It was 95
+until the score had held at 100 across three cold runs; locking it there makes a single new
+survivor a red run rather than a number nobody reads. The 2026-07-26
 figure was new surface area — the trusted-origin guard, the rate limiter, the breach checker, the
 family-lineage rotation — arriving with its own gaps, not a regression in what was already
 covered; the pass the day after closed all of them.
@@ -356,6 +359,68 @@ Two of those directives were **silently inert** before this pass, which is worth
 
 If a mutant you documented keeps showing up as a survivor, check that the directive lands on the
 line you think it does — it fails quietly, in the direction of reporting more work, not less.
+
+### Re-measured cold — 2026-08-14
+
+The `1.4.3` release surface: the runtime OpenAPI contributor, `WsAuthExceptionFilter`, the
+handshake-less refusal in `WsJwtGuard`, and the code-driven 401 classification in
+`createAuthFetch`. Run cold with the incremental baseline deleted, in **32 minutes 33 seconds**,
+over **154 instrumented files with 8 324 mutants**.
+
+| Outcome                          |   Mutants |
+| -------------------------------- | --------: |
+| Killed                           |     5 252 |
+| Timed out (counts as detected)   |        22 |
+| **Survived**                     |     **0** |
+| **No coverage**                  |     **0** |
+| Discarded — compile error        |     2 675 |
+| Discarded — runtime error        |         8 |
+| Ignored — documented equivalents |       367 |
+| **Instrumented, total**          | **8 324** |
+
+**5 274 detected out of 5 274 valid mutants — 100.00%,** behind the **unit suite only: 3 703 tests
+across 127 files** at the moment the run started (3 707 now — four tests added in review of the
+work this row measures, none of which touches `src/`). The 248 end-to-end tests run under a separate config and no mutant is ever
+exposed to them.
+
+**The incremental run that preceded this one said 99.13%, and it was wrong in both directions.**
+It reported 46 survivors; the first one checked was already dead — reproducing the mutant by hand
+failed the existing test — while the real count in those files was 28. An incremental baseline is
+a cache keyed on a diff, and after a branch of new code and new tests, part of it describes a tree
+that no longer exists. The working loop is a **scoped cold run** — `--mutate` with a
+comma-separated list plus `--incrementalFile` pointing at a throwaway path — which measures four
+files in under two minutes instead of thirty-two.
+
+What the 28 were is the more useful record, because none of them was an untested behaviour:
+
+- **25 in `auth-openapi-fragment.ts`**, all in a file with 100% line coverage, and all one shape:
+  the fragment's own literals were never asserted. `expect.objectContaining({ type, in, name })`
+  on a security scheme leaves `description`, `bearerFormat` and every field it does not name free
+  to become `""` — in an object that is copied verbatim into a consumer's published document and
+  read literally by a client generator. They are pinned whole with `toEqual` now, the 38-entry
+  operations table is asserted handler by handler, and one test walks four registrations × three
+  delivery modes asserting the invariant nest-core enforces at boot: no requirement names a scheme
+  the fragment did not define. That invariant is what killed `registered.platform ||
+registered.platformMfa` → `&&`, a mutant every fixture with both flags set passes.
+- **5 in `ws-auth-exception.filter.ts`**, all redundant conjuncts. `typeof client === 'object' &&
+client !== null && typeof client.emit === 'function'` cannot fail on its first operand for any
+  input the second and third accept — so the operand was deleted rather than tested. What was left
+  needed one real test: a client carrying `send` without `readyState` (and the reverse) must still
+  be emitted to, which is the case that separates `&&` from `||`.
+- **1 in `ws-jwt.guard.ts`** — the `handshake === null` arm, refused by a test and not by an
+  argument, alongside the `undefined` one.
+- **1 in `createAuthFetch.ts`**, the interesting one. A `catch` whose body returned the same
+  answer the fall-through produced: genuinely equivalent, measured, and **impossible to suppress**
+  — `// Stryker disable next-line` before `} catch {` binds to the last statement of the `try`,
+  and the block form does not bind either. The fix was not a better-placed directive but deleting
+  the construct: `clone.json().catch(() => undefined)` inside the `Promise.race` says the same
+  thing with no `try/catch/finally` at all, so the mutant no longer exists. The file went to
+  100.00% with one fewer suppression than it had before, and slightly less bundle.
+
+The lesson under all four is one lesson: **line coverage says a literal was executed; only an
+assertion that names it says it was published correctly.** A contract object — an OpenAPI
+fragment, a wire envelope, anything crossing a package boundary — is asserted whole or it is not
+asserted.
 
 ### Re-measured cold — 2026-08-12
 
@@ -467,7 +532,8 @@ pnpm mutation:dry-run
   `--concurrency 2` costs wall-clock and buys headroom; the run above never moved swap off its
   baseline.
 - The HTML report is written to **`reports/mutation/mutation.html`**.
-- The `break` threshold is **95** (raised from the default 80) so the result is locked in: any
-  future change that drops the score below 95% fails the run.
+- The `break` threshold is **100** (default 80, raised to 95 during this pass and to 100 once the
+  score had held) so the result is locked in: any change that leaves a single new survivor fails
+  the run.
 - The full execution plan, including the per-area task breakdown, lives in
   [`docs/mutation_testing_plan.md`](./mutation_testing_plan.md).

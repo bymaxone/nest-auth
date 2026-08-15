@@ -211,6 +211,40 @@ const REFRESH_BODY: FragmentObject = {
   }
 }
 
+/**
+ * The same body under `'bearer'`, where it is the only channel there is.
+ *
+ * Both requirements are needed and they are not the same statement: `required: true` says a body
+ * must be sent, and the schema's `required` says what must be in it. With only the first, a
+ * generated client would accept `{}` as a valid refresh request — a call the service answers by
+ * handing `TokenDeliveryService` an empty string, which cannot succeed. Under `'both'` the
+ * property requirement would be wrong instead: the cookie may carry the token, so a body that
+ * omits it is a request the deployment really does accept.
+ *
+ * Written out rather than spread from {@link REFRESH_BODY}, and the duplication is the cheaper
+ * mistake: `{...REFRESH_BODY, required: true}` is what this was, and it reads as complete while
+ * reaching only the outer field — the schema underneath kept saying the property was optional.
+ * A contract three deployments read literally is safer as three literals, each pinned whole by a
+ * test, than as one literal and two derivations that look right.
+ */
+const REQUIRED_REFRESH_BODY: FragmentObject = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['refreshToken'],
+        properties: {
+          refreshToken: {
+            type: 'string',
+            description: 'The refresh token, when it is not delivered as a cookie.'
+          }
+        }
+      }
+    }
+  }
+}
+
 /** The same body, required — the platform surface never accepts a cookie. */
 const PLATFORM_REFRESH_BODY: FragmentObject = {
   required: true,
@@ -299,7 +333,7 @@ function describe(
             : [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }]
           : [],
         ...(bearerDelivery
-          ? { requestBody: cookieDelivery ? REFRESH_BODY : { ...REFRESH_BODY, required: true } }
+          ? { requestBody: cookieDelivery ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
           : {})
       }
     case 'refreshOptional':

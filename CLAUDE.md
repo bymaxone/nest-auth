@@ -46,7 +46,7 @@
 **7. Testing — TDD, 100% Coverage + 100% Mutation (hard gates)**
 
 - Co-located tests (`*.spec.ts`). AAA pattern. Mock external deps — never real Redis/email in unit tests.
-- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`), per-subpath and global. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 95`) is the deeper gate against weak tests, and the suite currently holds **100%**: no survivors, nothing uncovered. Keep it there — a new survivor is either a missing test or an equivalent that must carry its reason.
+- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`), per-subpath and global. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 100`) is the deeper gate against weak tests, and the suite currently holds **100%**: no survivors, nothing uncovered. Keep it there — a new survivor is either a missing test or an equivalent that must carry its reason.
 
 **8. Build** — tsup builds 5 subpaths → ESM (.mjs) + CJS (.cjs) + .d.ts. `sideEffects: false`. Peer deps always external.
 

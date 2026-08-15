@@ -530,6 +530,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
 }
 ```
 
+> **Which 401 spends a refresh.** The client's `authFetch` retries through `/refresh` only when
+> the 401 says the access token is the problem — `auth.token_invalid`, or a body carrying no
+> readable code. A route can sit behind the JWT guard _and_ verify a second credential, so
+> `auth.invalid_credentials` from a password change and an expired token arrive at the same URL
+> with the same status; the code separates them, the path never could. Any other 401 is returned
+> to the caller untouched, and `createAuthClient({ onSessionExpired })` fires only when a refresh
+> was warranted and failed. `AuthProvider`'s own `onSessionExpired` prop is a different hook: it
+> reacts to a 401 from the session read itself.
+
 ```tsx
 // app/(dashboard)/profile.tsx
 'use client'
@@ -692,6 +701,15 @@ satisfied MFA, so a ticket never carries more authority than the request that as
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
 both channels are accepted, and a ticket wins when both are present.
+
+Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with
+`@nestjs/platform-ws` the gateway receives the raw `ws` socket, which carries no `handshake` and
+does not retain the upgrade request. `WsJwtGuard` refuses such a connection with
+`auth.token_invalid` instead of crashing on it, but it cannot authenticate anyone on that
+adapter. And because `AuthException` extends `HttpException`, which Nest's WebSocket layer does
+not recognise, a gateway that applies the guard also needs `WsAuthExceptionFilter` for the
+refusal to reach the client as anything but `Internal server error` — see
+[On a WebSocket, the envelope needs its own filter](#on-a-websocket-the-envelope-needs-its-own-filter).
 
 ---
 
@@ -1035,9 +1053,9 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 4,989 seeded faults detected (4,968 killed, 21 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-12](./docs/mutation_testing_results.md#re-measured-cold--2026-08-12))
-- ✅ **3,547 tests** — 3,420 unit and 127 end-to-end, spanning all five subpaths
-- ✅ **Every equivalent mutant documented** — the 350 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 5,274 seeded faults detected (5,252 killed, 22 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-14](./docs/mutation_testing_results.md#re-measured-cold--2026-08-14))
+- ✅ **3,955 tests** — 3,707 unit and 248 end-to-end, spanning all five subpaths
+- ✅ **Every equivalent mutant documented** — the 367 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
 ```bash
 pnpm test          # unit suite
@@ -1388,9 +1406,19 @@ export class FeedGateway {}
 
 `status: 'error'` is kept — it is the field Nest itself sets and the one socket.io clients
 already branch on — and the envelope is added beside it, so a client handling both shapes needs
-no second listener. An `AuthException` travels whole (a `details` payload survives); anything
-else the gateway threw is answered as `auth.internal` with a generic message and logged, never
-forwarded.
+no second listener. The `AuthException` travels whole, so a `details` payload survives.
+
+The filter is scoped to `AuthException` on purpose. An argument-less `@Catch()` would claim
+every exception the gateway raises, so a `WsException` an unrelated handler throws — a domain
+error with its own contract — would be rewritten as an `auth.*` code, and following this README
+would silently break errors a consumer already ships. Everything that is not this library's
+refusal keeps travelling through Nest's own exception layer, untouched.
+
+Both transports are answered. A Socket.IO client is dispatched to with `emit`; a native `ws`
+client is written to with `send`, in the `{event, data}` envelope `@nestjs/platform-ws` uses for
+every other message — emitting on one of those succeeds, dispatches a local event and sends the
+peer nothing, which is the failure this ordering exists to prevent. Both paths are driven over a
+real handshake in `test/e2e/ws-guard.e2e-spec.ts`.
 
 #### The HTTP status belongs to the code
 

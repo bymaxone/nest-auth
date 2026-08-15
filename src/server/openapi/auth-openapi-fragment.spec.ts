@@ -91,6 +91,98 @@ describe('buildAuthOpenApiFragment', () => {
     ])
   })
 
+  // The invariant nest-core enforces at the consumer's boot: a requirement naming a scheme the
+  // document does not define fails the build. So it has to hold for every registration a
+  // deployment can choose, not only for the fixtures the tests above happen to use — the
+  // interesting combinations are the lopsided ones, where a surface is mounted without its
+  // sibling and the definition is decided by a condition that has to read as OR.
+  it.each([
+    ['dashboard only', { ...DEFAULTS }],
+    ['the auth controller alone', { ...DEFAULTS, passwordReset: false }],
+    ['a dashboard surface without the auth controller', { ...DEFAULTS, auth: false }],
+    ['platform without its MFA surface', { ...DEFAULTS, platform: true }],
+    ['the platform MFA surface alone', { ...DEFAULTS, platform: false, platformMfa: true }],
+    ['everything', EVERYTHING]
+  ])('references no scheme it did not define — %s', (_why, registered) => {
+    for (const tokenDelivery of ['cookie', 'bearer', 'both'] as const) {
+      const fragment = buildAuthOpenApiFragment(optionsFor(tokenDelivery), registered)
+      const defined = Object.keys(fragment.components.securitySchemes)
+
+      const referenced = Object.values(fragment.operations)
+        .flatMap((operation) => operation['security'] as Record<string, unknown>[])
+        .flatMap((requirement) => Object.keys(requirement))
+
+      // The mode travels into the assertion so a failure names the deployment that broke, rather
+      // than reporting a bare list of scheme names three iterations into a loop.
+      expect({
+        tokenDelivery,
+        dangling: referenced.filter((scheme) => !defined.includes(scheme))
+      }).toEqual({ tokenDelivery, dangling: [] })
+    }
+  })
+
+  // The table itself, pinned handler by handler on a deployment that mounts everything.
+  //
+  // Every test around this one covers one decision — a transport, a mode, a registration. None
+  // of them would notice a single entry changing credential, and that is the failure worth
+  // catching: a handler quietly promoted from `access` to `none` publishes a protected route as
+  // public in the consumer's document, and a generated client then stops attaching the
+  // credential the server requires. The table is a contract, so it is asserted as one.
+  it('pins the credential of every operation it can mount', () => {
+    const fragment = buildAuthOpenApiFragment(optionsFor('cookie'), EVERYTHING)
+    const PUBLIC: unknown[] = []
+    const ACCESS = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
+    const PLATFORM = [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }]
+
+    const security = Object.fromEntries(
+      Object.entries(fragment.operations).map(([handler, operation]) => [
+        handler,
+        operation['security']
+      ])
+    )
+
+    expect(security).toEqual({
+      'AuthController.register': PUBLIC,
+      'AuthController.login': PUBLIC,
+      'AuthController.logout': [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}],
+      'AuthController.refresh': [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }],
+      'AuthController.me': ACCESS,
+      'AuthController.wsTicket': ACCESS,
+      'AuthController.verifyEmail': PUBLIC,
+      'AuthController.resendVerification': PUBLIC,
+      'PasswordResetController.forgotPassword': PUBLIC,
+      'PasswordResetController.resetPassword': PUBLIC,
+      'PasswordResetController.changePassword': ACCESS,
+      'PasswordResetController.verifyOtp': PUBLIC,
+      'PasswordResetController.resendOtp': PUBLIC,
+      'MfaController.setup': ACCESS,
+      'MfaController.verifyEnable': ACCESS,
+      'MfaController.challenge': PUBLIC,
+      'MfaController.disable': ACCESS,
+      'MfaController.regenerateRecoveryCodes': ACCESS,
+      'SessionController.listSessions': ACCESS,
+      'SessionController.revokeAllSessions': ACCESS,
+      'SessionController.revokeSession': ACCESS,
+      'PlatformAuthController.login': PUBLIC,
+      'PlatformAuthController.mfaChallenge': PUBLIC,
+      'PlatformAuthController.me': PLATFORM,
+      'PlatformAuthController.logout': [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }, {}],
+      'PlatformAuthController.refresh': PUBLIC,
+      'PlatformAuthController.revokeSessions': PLATFORM,
+      'PlatformMfaController.setup': PLATFORM,
+      'PlatformMfaController.verifyEnable': PLATFORM,
+      'PlatformMfaController.disable': PLATFORM,
+      'PlatformMfaController.regenerateRecoveryCodes': PLATFORM,
+      'InvitationController.invite': ACCESS,
+      'InvitationController.revoke': ACCESS,
+      'InvitationController.accept': PUBLIC,
+      'EmailChangeController.requestChange': ACCESS,
+      'EmailChangeController.confirmChange': PUBLIC,
+      'OAuthController.initiate': PUBLIC,
+      'OAuthController.callback': PUBLIC
+    })
+  })
+
   // Verifies a public operation says `security: []` rather than omitting the member. The
   // difference is the whole point: an omitted member inherits the document's default, which on a
   // consumer's document is "authenticated" — so a login that said nothing would be described as
@@ -111,9 +203,15 @@ describe('buildAuthOpenApiFragment', () => {
       expect(fragment.operations['AuthController.me']).toEqual({
         security: [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
       })
-      expect(fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.accessCookie]).toEqual(
-        expect.objectContaining({ type: 'apiKey', in: 'cookie', name: 'access_token' })
-      )
+      // Pinned whole: a Security Scheme Object is copied into the consumer's document verbatim,
+      // so every field here is published. `description` included — it is what a developer reads
+      // in the rendered document to know which credential this is.
+      expect(fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.accessCookie]).toEqual({
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'access_token',
+        description: 'Access token, delivered as an HttpOnly cookie.'
+      })
     })
 
     // Verifies the bearer scheme is ABSENT — not defined-and-unreferenced. A document that
@@ -143,9 +241,12 @@ describe('buildAuthOpenApiFragment', () => {
       expect(renamed.components.securitySchemes[AUTH_SECURITY_SCHEMES.accessCookie]).toEqual(
         expect.objectContaining({ name: 'sid' })
       )
-      expect(renamed.components.securitySchemes[AUTH_SECURITY_SCHEMES.refreshCookie]).toEqual(
-        expect.objectContaining({ name: 'sid_r' })
-      )
+      expect(renamed.components.securitySchemes[AUTH_SECURITY_SCHEMES.refreshCookie]).toEqual({
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'sid_r',
+        description: 'Refresh token, delivered as an HttpOnly cookie scoped to the auth prefix.'
+      })
     })
   })
 
@@ -155,6 +256,12 @@ describe('buildAuthOpenApiFragment', () => {
     it('requires the bearer token and defines no cookie scheme', () => {
       expect(fragment.operations['AuthController.me']).toEqual({
         security: [{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }]
+      })
+      expect(fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.accessBearer]).toEqual({
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Access token, delivered in the Authorization header.'
       })
       expect(
         fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.accessCookie]
@@ -168,31 +275,56 @@ describe('buildAuthOpenApiFragment', () => {
     // which OpenAPI models as a request body and not as a security scheme. So the operation is
     // `security: []` PLUS a contributed body, and the body is REQUIRED here: with no cookie
     // fallback, a caller omitting it hands the service an empty string and cannot succeed.
+    // Pinned WHOLE rather than with `objectContaining`, and that is the point of the test: every
+    // string in here is consumed literally by a code generator. A media type of `""`, a schema
+    // with no `type`, a property with no description — each produces a client that compiles and
+    // sends the wrong request, and each is invisible to an assertion that only checks the keys it
+    // names. Both requirements are asserted because they say different things: the body must be
+    // sent, AND it must carry the token — under `'bearer'` there is no cookie to carry it
+    // instead, so a generated client that accepted `{}` would be describing a call that fails.
     it('describes the refresh token as a required request body instead', () => {
       const refresh = fragment.operations['AuthController.refresh']
 
       expect(refresh?.['security']).toEqual([])
-      expect(refresh?.['requestBody']).toEqual(
-        expect.objectContaining({
-          required: true,
-          content: expect.objectContaining({
-            'application/json': expect.objectContaining({
-              schema: expect.objectContaining({
-                properties: expect.objectContaining({ refreshToken: expect.anything() })
-              })
-            })
-          })
-        })
-      )
+      expect(refresh?.['requestBody']).toEqual({
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['refreshToken'],
+              properties: {
+                refreshToken: {
+                  type: 'string',
+                  description: 'The refresh token, when it is not delivered as a cookie.'
+                }
+              }
+            }
+          }
+        }
+      })
     })
 
     // Logout reads the same channels and requires none of them: it answers 204 whatever arrives.
     // The pair is the point — one required body and one optional, from one delivery mode, because
     // the two operations really do differ.
     it('describes the logout body as optional', () => {
-      expect(fragment.operations['AuthController.logout']?.['requestBody']).toEqual(
-        expect.objectContaining({ required: false })
-      )
+      expect(fragment.operations['AuthController.logout']?.['requestBody']).toEqual({
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                refreshToken: {
+                  type: 'string',
+                  description: 'The refresh token, when it is not delivered as a cookie.'
+                }
+              }
+            }
+          }
+        }
+      })
     })
   })
 
@@ -219,7 +351,26 @@ describe('buildAuthOpenApiFragment', () => {
       const refresh = fragment.operations['AuthController.refresh']
 
       expect(refresh?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}])
-      expect(refresh?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
+      // Pinned whole because the interesting failure is a swap, not an absence: this is the one
+      // mode where the property must NOT be required — the cookie may be carrying the token, so
+      // a body that omits it is a request this deployment really does accept. Contributing the
+      // `'bearer'` variant here would have a generated client reject its own valid caller.
+      expect(refresh?.['requestBody']).toEqual({
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                refreshToken: {
+                  type: 'string',
+                  description: 'The refresh token, when it is not delivered as a cookie.'
+                }
+              }
+            }
+          }
+        }
+      })
     })
   })
 
@@ -236,9 +387,14 @@ describe('buildAuthOpenApiFragment', () => {
         expect(fragment.operations['PlatformAuthController.me']).toEqual({
           security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }]
         })
-        expect(fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.platformBearer]).toEqual(
-          expect.objectContaining({ type: 'http', scheme: 'bearer' })
-        )
+        expect(fragment.components.securitySchemes[AUTH_SECURITY_SCHEMES.platformBearer]).toEqual({
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description:
+            'Platform administrator access token, always delivered in the Authorization header ' +
+            'regardless of tokenDelivery.'
+        })
       }
     )
 
@@ -249,7 +405,20 @@ describe('buildAuthOpenApiFragment', () => {
       const refresh = fragment.operations['PlatformAuthController.refresh']
 
       expect(refresh?.['security']).toEqual([])
-      expect(refresh?.['requestBody']).toEqual(expect.objectContaining({ required: true }))
+      expect(refresh?.['requestBody']).toEqual({
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['refreshToken'],
+              properties: {
+                refreshToken: { type: 'string', description: 'The platform refresh token.' }
+              }
+            }
+          }
+        }
+      })
     })
 
     // Platform logout is `@Public()` on purpose: an operator whose access token expired must
@@ -262,7 +431,24 @@ describe('buildAuthOpenApiFragment', () => {
       const logout = fragment.operations['PlatformAuthController.logout']
 
       expect(logout?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }, {}])
-      expect(logout?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
+      // The platform body keeps its schema-level requirement even here, where the body itself is
+      // optional: the two say different things, and they are not in conflict. Logout accepts a
+      // request with no body at all; one that DOES arrive still has to carry the token, because
+      // there is no cookie on this surface for an empty object to be standing in for.
+      expect(logout?.['requestBody']).toEqual({
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['refreshToken'],
+              properties: {
+                refreshToken: { type: 'string', description: 'The platform refresh token.' }
+              }
+            }
+          }
+        }
+      })
     })
 
     // Verifies a deployment with no platform surface defines no platform scheme — the same

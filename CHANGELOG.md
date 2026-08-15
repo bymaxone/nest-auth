@@ -112,13 +112,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   chose. So the fragment is derived from the options that actually resolved, and keyed by handler
   identity — which survives every prefix, version and mount point.
 
-  | resolved options             | contributed                                                                                                                                                                                                                                                                                             |
-  | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `tokenDelivery: 'cookie'`    | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                                                                                                                                                                                                                 |
-  | `tokenDelivery: 'bearer'`    | `bymaxAuthAccessBearer` only; `refresh` gets `security: []` and a **required** `{refreshToken}` body, `logout` the same body **optional** — measured, they differ: logout answers 204 with no credential at all, refresh 401s                                                                           |
-  | `tokenDelivery: 'both'`      | both access schemes as a **two-entry requirement list**, which OpenAPI reads as OR; the refresh operations add an **empty** alternative beside the cookie — how OpenAPI says "or a credential this member cannot model", without which the document would refuse to describe the valid body-only caller |
-  | `controllers.platform: true` | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says. The registration switch decides, not `platform.enabled`                                                                                                                                |
-  | a controller not mounted     | no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                               |
+  | resolved options             | contributed                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `tokenDelivery: 'cookie'`    | `bymaxAuthAccessCookie`, `bymaxAuthRefreshCookie`, carrying the configured cookie names                                                                                                                                                                                                                                                                                                                                                  |
+  | `tokenDelivery: 'bearer'`    | `bymaxAuthAccessBearer` only; `refresh` gets `security: []` and a `{refreshToken}` body that is **required twice** — the body must be sent and the property must be in it, because with no cookie to carry the token a generated client accepting `{}` would be describing a call that fails. `logout` takes the same body **optional**: measured, the two differ, since logout answers 204 with no credential at all where refresh 401s |
+  | `tokenDelivery: 'both'`      | both access schemes as a **two-entry requirement list**, which OpenAPI reads as OR; the refresh operations add an **empty** alternative beside the cookie — how OpenAPI says "or a credential this member cannot model", without which the document would refuse to describe the valid body-only caller                                                                                                                                  |
+  | `controllers.platform: true` | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says. The registration switch decides, not `platform.enabled`                                                                                                                                                                                                                                                                 |
+  | a controller not mounted     | no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                                                                                                                                                                |
 
   **A scheme the options cannot satisfy is absent**, never defined-and-unreferenced: nest-core
   fails a boot on a requirement naming an undefined scheme, and a document defining a credential
@@ -217,9 +217,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   Register it on a gateway that applies the guard (`@UseFilters(new WsAuthExceptionFilter())`) and
   the client reads `error.code` instead. `status: 'error'` is kept — the field Nest itself sets
-  and the one socket.io clients branch on — with the envelope added beside it. An `AuthException`
-  travels whole, so a `details` payload survives; anything else is answered as `auth.internal`
-  with a generic message and logged, never forwarded.
+  and the one socket.io clients branch on — with the envelope added beside it. The
+  `AuthException` travels whole, so a `details` payload survives.
+
+  **Scoped to `AuthException`, and answering both transports.** An argument-less `@Catch()` would
+  claim every exception the gateway raises, so a `WsException` an unrelated handler throws — a
+  domain error with its own contract — would come back as an `auth.*` code: following the README
+  would silently rewrite errors a consumer already ships. Everything that is not this library's
+  refusal keeps travelling through Nest's own layer. And a native `ws` client is written to with
+  `send`, not emitted on: it extends `EventEmitter`, so `emit` succeeds, dispatches a local event
+  and sends the peer nothing — a filter that only emits is inert on exactly the transport whose
+  refusal this fix exists to deliver.
 
   Opt-in, like its HTTP twin: a library does not get to decide how an application answers
   failures it did not raise. It imports neither `socket.io` nor `@nestjs/websockets` — the client
