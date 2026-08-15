@@ -353,7 +353,7 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
  * @example
  * ```typescript
  * describeChannelStatus(err)
- * // => '<error> <- <error>: 550 5.7.1'
+ * // => '<error> <- <error>: 550'
  * ```
  *
  * @param error - Whatever was thrown.

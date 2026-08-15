@@ -37,7 +37,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   message's own label and, when the channel supplied one, an SMTP status code:
 
   ```
-  delivery failed sending passwordResetOtp: <error>: 550 5.7.1
+  delivery failed sending passwordResetOtp: <error>: 550
   ```
 
   Every part of that line is text this library wrote. The guarantee is simpler to hold than any

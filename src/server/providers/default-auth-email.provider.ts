@@ -21,7 +21,7 @@
  *
  * **On what reaches the log: nothing this file did not write.** A delivery failure logs the
  * message's own label and, when the channel supplied one, an SMTP status code —
- * `delivery failed sending passwordResetOtp: <error>: 550 5.7.1`. Never the error object, its
+ * `delivery failed sending passwordResetOtp: <error>: 550`. Never the error object, its
  * `stack`, its own properties, its `message`, its `name`, or the rendered subject.
  *
  * That absolute is deliberate, and four weaker versions of it failed first. A relay that rejects

@@ -578,18 +578,19 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
-  // An enhanced status code is separated from the basic one by whitespace whose width is the
-  // sender's choice, and RFC 5321 replies are routinely padded. Reading exactly one space would
-  // silently drop the enhanced code — the half that says WHY (`5.7.1` is a policy refusal, `5.1.1`
-  // an unknown recipient) — on any relay that aligns its columns.
-  it('reads the enhanced status code across padded whitespace', async () => {
+  // A padded reply, which RFC 5321 senders routinely produce by aligning their columns. The basic
+  // code survives the padding; the enhanced code after it does NOT survive at all, and asserting
+  // its absence is what makes this test document the contract rather than merely observe it —
+  // `550 5.7.1` stripped of punctuation is a valid six-digit OTP, which is why it is dropped.
+  it('keeps the basic code and drops the enhanced one from a padded reply', async () => {
     sink.send.mockRejectedValueOnce(new Error('550   5.7.1 message rejected by policy'))
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).toContain('550')
+    expect(logged).not.toContain('5.7.1')
     expect(logged).not.toContain('rejected by policy')
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
   })
 
   // A channel reports "send failed BECAUSE the relay said", and the quoted body lands one level

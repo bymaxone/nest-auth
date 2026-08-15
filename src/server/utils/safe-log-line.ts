@@ -31,6 +31,18 @@ const WITHHELD =
  * individually observable, which is the property that makes the suite evidence rather than
  * decoration.
  *
+ * @example
+ * ```typescript
+ * // The measured case: a device string of `foo": Error: bar` is rebuilt by the template's own
+ * // `": ` separator, out of a subject and a description that each contain none of it.
+ * safeLogLine('delivery failed for "foo": Error: bar', ['foo": Error: bar'])
+ * // => 'delivery details withheld: the composed line matched a value that must not be logged'
+ *
+ * // The common path — an ordinary line is passed through untouched.
+ * safeLogLine('sending failed: 535', ['699647'])
+ * // => 'sending failed: 535'
+ * ```
+ *
  * @param line - The fully composed line.
  * @param secrets - Values that must not appear in it.
  * @returns The line, or the withheld placeholder.
