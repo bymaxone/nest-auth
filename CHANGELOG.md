@@ -310,7 +310,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   schemes exist, nothing throws and the default is merely incomplete, describing one of the two
   channels the routes accept. Loud in one place, quiet in the other. Two cases a delivery-only
   recipe gets wrong: `schemesFor` gates both dashboard schemes on a dashboard controller being
-  registered, so a **platform-only deployment declares neither and throws under `cookie` too**;
+  registered — and `oauth` is not one of them, since its operations are public — so **any
+  deployment with no dashboard surface declares neither and throws under `cookie` too**,
+  platform-only and OAuth-only alike;
   and a route behind `JwtPlatformGuard` always wants `bymaxPlatformAccessBearer`, since
   `extractPlatformAccessToken` reads the `Authorization` header whatever the mode says. A backend
   guarding different routes with both families needs per-operation `security` for one of them —
@@ -318,7 +320,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   to every inheriting operation, so listing both would document each credential as valid for
   either family.
 
-  The platform-only case gets a remedy rather than only a diagnosis, because the deployment is
+  The no-dashboard case gets a remedy rather than only a diagnosis, because those deployments are
   legitimate: `JwtAuthGuard` is registered and exported unconditionally, so mounting no dashboard
   controller does not stop a backend from guarding its own routes with a dashboard access token.
   Deriving correctly there answers "the scheme does not exist", which is true and unusable — so

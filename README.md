@@ -1292,25 +1292,29 @@ it, including cookie names you have since changed.
 > **2. For the dashboard family — which schemes does this deployment actually declare?** Delivery
 > decides, and so does what you mounted. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`:
 >
-> | deployment                      | this contributor declares         | that literal default                                        |
-> | ------------------------------- | --------------------------------- | ----------------------------------------------------------- |
-> | dashboard mounted, `cookie`     | the cookie scheme only            | correct                                                     |
-> | dashboard mounted, `both`       | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
-> | dashboard mounted, `bearer`     | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
-> | **platform-only, any delivery** | **neither dashboard scheme**      | names an undeclared scheme — throws, `cookie` included      |
+> | deployment                             | this contributor declares         | that literal default                                        |
+> | -------------------------------------- | --------------------------------- | ----------------------------------------------------------- |
+> | dashboard mounted, `cookie`            | the cookie scheme only            | correct                                                     |
+> | dashboard mounted, `both`              | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
+> | dashboard mounted, `bearer`            | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
+> | **no dashboard surface, any delivery** | **neither dashboard scheme**      | names an undeclared scheme — throws, `cookie` included      |
 >
-> That last row is the one a delivery-only recipe gets wrong: `schemesFor` gates both dashboard
-> schemes on a dashboard controller being registered at all, so a deployment mounting only the
-> platform surface declares neither — and `cookie` delivery, which the recipe would call the safe
-> case, throws just as hard as `bearer`.
+> That last row is the one a delivery-only recipe gets wrong, and **"no dashboard surface" is
+> wider than it first sounds.** `schemesFor` gates both dashboard schemes on one of `auth`,
+> `passwordReset`, `mfa`, `sessions`, `invitations` or `emailChange` being registered. `oauth` is
+> **not** in that list — its operations are public and reference no credential — so an OAuth-only
+> deployment contributes operations and zero schemes, exactly like a platform-only one. Any
+> deployment with no dashboard controller is in this row, and `cookie` delivery, which the recipe
+> would call the safe case, throws just as hard as `bearer`.
 >
-> **And that row needs a remedy, not just a warning, because the deployment is legitimate.**
+> **And that row needs a remedy, not just a warning, because these deployments are legitimate.**
 > `JwtAuthGuard` is registered and exported unconditionally — it is not gated on any controller
 > flag — so mounting no dashboard controller does **not** stop you from guarding your own routes
-> with a dashboard access token. That combination is a real deployment: the platform surface from
-> this library, your own routes on the member credential, no member-facing auth controllers
-> mounted because your app issues those tokens through some other flow. Deriving correctly there
-> lands you on "the scheme I need does not exist", which is an accurate answer and not a usable
+> with a dashboard access token. Both shapes are real: the platform surface plus your own routes
+> on the member credential; or the OAuth surface alone, where sign-in happens through a provider
+> and your app issues member tokens itself. In each case the guard is available and the scheme
+> describing it is not. Deriving correctly there lands you on "the scheme I need does not exist",
+> which is an accurate answer and not a usable
 > one.
 >
 > **Declare it yourself, in your own `openapi.securitySchemes`.** This is the one case where
