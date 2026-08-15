@@ -261,7 +261,7 @@ export { OAuthService } from './oauth/oauth.service'
 // Utilities
 // ---------------------------------------------------------------------------
 
-export { hasRole, redactSecrets, sanitizeHeaders, sleep } from './utils'
+export { describeError, hasRole, redactSecrets, sanitizeHeaders, sleep } from './utils'
 export type { IPasswordBreachChecker } from './interfaces/password-breach-checker.interface'
 export { AuthRateLimit } from './decorators/auth-rate-limit.decorator'
 export type { AuthRateLimitWindow } from './decorators/auth-rate-limit.decorator'

@@ -28,6 +28,61 @@ const ERROR_TEXT_LIMIT = 200
 const ERROR_CAUSE_DEPTH = 3
 
 /**
+ * Written when reading an error's own fields is what fails.
+ *
+ * A description that cannot be produced still has to be a description — the caller is inside a
+ * `catch` block and needs a line, not a second exception.
+ */
+const MALFORMED = '<malformed-error>'
+
+/**
+ * Renders one link of the chain, and never throws while doing it.
+ *
+ * `name`, `message` and `cause` look like plain properties but any of them can be an accessor
+ * that throws, and `String()` on an object runs a `toString`/`Symbol.toPrimitive` that can throw
+ * too. All of them belong to whoever constructed the error, which for a mail channel means a
+ * third-party client. An exception raised here would propagate out of the caller's `catch` block
+ * and turn a delivery failure the swallow policy promises to absorb into an unhandled rejection
+ * with **no log line at all** — strictly worse than the leak this function exists to prevent.
+ *
+ * @param error - The link being described.
+ * @param secrets - Credentials that must not survive into the line.
+ * @returns One redacted, bounded, control-character-free line.
+ */
+function describeOneLink(error: Error, secrets: readonly string[]): string {
+  try {
+    const name = logSafe(redactSecrets(String(error.name), secrets))
+    const message = logSafe(redactSecrets(String(error.message), secrets))
+    // Capped once, on the composed piece, rather than on each half: two bounds let one link of
+    // the chain contribute twice the intended budget, and the pair says nothing the single bound
+    // does not. An empty message leaves the name standing alone rather than trailing a colon.
+    const described = message === '' ? name : `${name}: ${message}`
+
+    return described.slice(0, ERROR_TEXT_LIMIT)
+  } catch {
+    return MALFORMED
+  }
+}
+
+/**
+ * Reads the next link of the chain, treating a throwing accessor as the end of it.
+ *
+ * Separate from {@link describeOneLink} because the failures are different: a `cause` that throws
+ * means there is nothing further to walk, whereas a `message` that throws still leaves a link to
+ * report. Collapsing them would drop a description this function could have produced.
+ *
+ * @param error - The link whose cause is wanted.
+ * @returns The next link, or `undefined` when there is none or it cannot be read.
+ */
+function readCause(error: Error): unknown {
+  try {
+    return error.cause
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Describes a thrown value in one line, with known credentials stripped out.
  *
  * Reads an allowlist of `name` and `message` and nothing else. That is the point rather than an
@@ -65,19 +120,10 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
       break
     }
 
-    // `name` and `message` are typed `string` but are ordinary writable properties: a subclass,
-    // or a value revived from JSON, can leave either holding something else. Coercing here keeps
-    // a malformed error from throwing a TypeError inside the caller's catch block, which would
-    // turn a handled failure into an unhandled rejection — a worse outcome than a poor log line.
-    const name = logSafe(redactSecrets(String(current.name), secrets))
-    const message = logSafe(redactSecrets(String(current.message), secrets))
-    // Capped once, on the composed piece, rather than on each half: two bounds let one link of
-    // the chain contribute twice the intended budget, and the pair says nothing the single bound
-    // does not. An empty message leaves the name standing alone rather than trailing a colon.
-    const described = message === '' ? name : `${name}: ${message}`
+    const described = describeOneLink(current, secrets)
 
-    parts.push(described.slice(0, ERROR_TEXT_LIMIT))
-    current = current.cause
+    parts.push(described)
+    current = readCause(current)
   }
 
   // The loop guard stops the walk when a `cause` is absent, which is the same test that skips the

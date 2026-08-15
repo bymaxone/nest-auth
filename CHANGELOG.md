@@ -55,6 +55,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   CR and LF because its job is the mail header, so the rest of the C0/C1 range reached the log
   from a consumer-supplied `messages` override.
 
+  **`describeError` is exported alongside `redactSecrets`**, because redaction alone is not the
+  whole guard: the helper also reads only `name` and `message` (never `stack`, never the
+  transport's own fields), caps the length so a re-encoded body cannot flood a log, strips control
+  characters so a relay cannot forge extra records, walks the `cause` chain, and never throws
+  whatever the transport's error does. A consumer's `IEmailProvider` faces the identical problem,
+  so it gets the identical tool rather than an instruction to hand-roll the other three halves.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.

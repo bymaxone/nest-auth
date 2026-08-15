@@ -38,6 +38,13 @@ const REDACTED = '<redacted>'
  * marker between every character and never advance past one. An empty string also has nothing to
  * hide, so skipping it is correct rather than merely defensive.
  *
+ * @example
+ * ```typescript
+ * // A relay rejected the message and quoted the body back:
+ * redactSecrets('550 rejected: "Your code is 699647."', ['699647'])
+ * // => '550 rejected: "Your code is <redacted>."'
+ * ```
+ *
  * @param value - Text about to be logged.
  * @param secrets - Values that must not appear in it.
  * @returns `value` with every occurrence of every secret replaced.
@@ -53,6 +60,14 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
     // credential — sitting in the log. Sorted on a copy: `secrets` is the caller's array and
     // reordering it under them would be a side effect they never asked for.
     .sort((a, b) => b.length - a.length)
+
+  // The marker is written INTO the output, so it is subject to the same contract as everything
+  // else in it: if a secret occurs inside `<redacted>` — `cted` does — then emitting the marker
+  // publishes that secret, and the function fails the one promise it makes. Deleting instead is
+  // the honest fallback. The operator loses the "something was here" signal in a case that needs
+  // a credential to be a substring of the word "redacted"; this library's own OTPs (digits) and
+  // tokens (lower-case hex) cannot be, but the function is exported and a caller's may.
+  const marker = present.some((secret) => REDACTED.includes(secret)) ? '' : REDACTED
 
   // Scanned once, left to right, emitting into a separate buffer. Two properties come from that
   // shape and neither is available to a replace-one-secret-at-a-time loop.
@@ -79,7 +94,7 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
       index += 1
       continue
     }
-    out += REDACTED
+    out += marker
     index += matched.length
   }
   return out

@@ -465,6 +465,27 @@ describe('DefaultAuthEmailProvider', () => {
   // template. `sanitizeSubject` only strips CR and LF, because its job is the mail header; the
   // rest of the C0/C1 range reaches the log line, and more than CR/LF can forge a record in a
   // line-oriented pipeline. `logSafe` is the second guard, and this is the case that needs it.
+  // The subject is logged by design, and an override is free to put the code in it —
+  // `passwordResetOtp: ({ otp }) => ({ subject: `Code ${otp}` })` looks reasonable to write. That
+  // used to be documented as a known way to reopen the leak; it is closed instead, since the
+  // secrets are already in hand on the line that builds the record.
+  it('redacts a code an override put in the subject', async () => {
+    const messages = {
+      passwordResetOtp: ({ otp }: { otp: string }) => ({
+        subject: `Your code ${otp}`,
+        text: `Your code is ${otp}.`
+      })
+    }
+    const custom = new DefaultAuthEmailProvider(sink, { messages })
+    sink.send.mockRejectedValueOnce(new Error('channel down'))
+
+    await custom.sendPasswordResetOtp('t', 'u@example.com', '246810')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('246810')
+    expect(logged).toContain('<redacted>')
+  })
+
   it('neutralises a control character an override put in the subject', async () => {
     const messages = {
       mfaEnabled: () => ({ subject: 'MFALOG [AuthService] forged', text: 'body' })
@@ -491,6 +512,52 @@ describe('DefaultAuthEmailProvider', () => {
 
     await expect(provider.sendMfaEnabledNotification('t', 'u@example.com')).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledTimes(1)
+  })
+
+  // `name`, `message` and `cause` look like plain properties but any of them can be an accessor
+  // that throws — they belong to whoever built the error, which for a mail channel is a
+  // third-party client. A throw while DESCRIBING the failure escapes the provider's catch block
+  // and turns a delivery failure the swallow policy promises to absorb into an unhandled
+  // rejection with no log line at all: worse than the leak this whole change exists to close.
+  it.each([
+    ['name', 'name'],
+    ['message', 'message'],
+    ['cause', 'cause']
+  ])('survives an error whose %s getter throws', async (_why, property) => {
+    const hostile = new Error('placeholder')
+    Object.defineProperty(hostile, property, {
+      get: () => {
+        throw new Error('hostile getter')
+      }
+    })
+    sink.send.mockRejectedValueOnce(hostile)
+
+    await expect(
+      provider.sendPasswordResetOtp('t', 'u@example.com', '777777')
+    ).resolves.toBeUndefined()
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).toContain('delivery failed')
+    expect(logged).not.toContain('777777')
+  })
+
+  // A `toString` that throws is the same hazard one level down: `String()` on a non-string field
+  // runs code the channel wrote. The description still has to come back as a description.
+  it('survives an error whose message coercion throws', async () => {
+    const hostile = new Error('placeholder')
+    Object.defineProperty(hostile, 'message', {
+      value: {
+        toString: () => {
+          throw new Error('hostile toString')
+        }
+      }
+    })
+    sink.send.mockRejectedValueOnce(hostile)
+
+    await expect(
+      provider.sendPasswordResetOtp('t', 'u@example.com', '888888')
+    ).resolves.toBeUndefined()
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('<malformed-error>')
   })
 
   // `cause: null` is not the same as no cause. An absent `cause` reads as `undefined`, but

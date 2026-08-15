@@ -288,11 +288,12 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > that error, or attaching it as a `cause` to one you log, puts a working credential into your log
 > pipeline in clear text until it expires. Measured on a real relay, not hypothesised.
 >
-> This is your half: the library cannot reach inside your provider implementation. `redactSecrets`
-> is exported for it, and takes the values you were handed:
+> This is your half: the library cannot reach inside your provider implementation. **`describeError`
+> is exported for it** — the same helper the bundled provider uses on its own log line, so you get
+> the whole treatment rather than just redaction:
 >
 > ```typescript
-> import { redactSecrets } from '@bymax-one/nest-auth'
+> import { describeError } from '@bymax-one/nest-auth'
 >
 > async sendPasswordResetOtp(tenantId: string, email: string, otp: string): Promise<void> {
 >   try {
@@ -300,17 +301,24 @@ Email delivery is fully delegated to the consumer — the library never imports 
 >   } catch (error: unknown) {
 >     // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
 >     // into something that logs — both carry the quoted body.
->     const detail = error instanceof Error ? error.message : 'unknown'
->     this.logger.error(`reset OTP delivery failed: ${redactSecrets(detail, [otp])}`)
+>     this.logger.error(`reset OTP delivery failed: ${describeError(error, [otp])}`)
 >     throw error
 >   }
 > }
 > ```
 >
-> The same applies to `stack`, and to transport-specific fields — nodemailer hangs the server's
-> full reply on `response`. The bundled `DefaultAuthEmailProvider` already does all of this for its
-> own log line; if you use it with `onDeliveryError: 'rethrow'`, the error it re-throws is the
-> channel's original and is still yours to contain.
+> `describeError` does four things, and redaction alone is not enough without the other three: it
+> strips the credentials you name, reads only `name` and `message` (never `stack`, never the
+> transport's own fields — nodemailer hangs the server's full reply on `response`), **caps the
+> length** so a relay cannot flood your log with a quoted body it re-encoded past matching, and
+> **removes control characters** so it cannot forge extra records in a line-oriented pipeline. It
+> walks the `cause` chain and never throws, whatever the transport's error does.
+>
+> `redactSecrets(text, [otp])` is exported too, for when you already have a string and only need
+> the redaction half.
+>
+> If you use the bundled `DefaultAuthEmailProvider` with `onDeliveryError: 'rethrow'`, the error it
+> re-throws is the channel's original and is still yours to contain the same way.
 
 ```typescript
 // email.provider.ts

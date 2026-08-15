@@ -76,11 +76,20 @@ describe('redactSecrets', () => {
     expect(redactSecrets('1234', ['1234', '123'])).toBe('<redacted>')
   })
 
-  // A secret that occurs inside the replacement marker. Replacing one secret at a time rescans
-  // text this function already rewrote, so `cted` matches inside the `<redacted>` an earlier pass
-  // inserted and the line comes out as `<reda<redacted>>`. One pass over the original cannot.
-  it('does not match its own replacement marker', () => {
-    expect(redactSecrets('error xyz here', ['xyz', 'cted'])).toBe('error <redacted> here')
+  // A secret that occurs inside the replacement marker, which is a stricter problem than it first
+  // looks. Two things must hold. The scan must not match `cted` inside a `<redacted>` it just
+  // wrote — a replace-one-at-a-time loop does, producing `<reda<redacted>>`. AND the marker itself
+  // must not be emitted at all, because writing `<redacted>` would publish the secret `cted` that
+  // it contains, failing the one promise this function makes. Deletion is the fallback.
+  //
+  // The first revision of this test asserted `'error <redacted> here'` and passed — while the
+  // string it asserted still contained `cted`. A test can sanction the bug it was written for.
+  it('emits no marker when the marker itself would contain a secret', () => {
+    const line = redactSecrets('error xyz here', ['xyz', 'cted'])
+
+    expect(line).not.toContain('xyz')
+    expect(line).not.toContain('cted')
+    expect(line).toBe('error  here')
   })
 
   // The secret is matched as a literal. Exported means a caller may treat any string as secret,

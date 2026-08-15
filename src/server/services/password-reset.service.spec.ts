@@ -630,8 +630,11 @@ describe('PasswordResetService', () => {
         const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
 
         // The token has to have existed for the assertion to mean anything — a build that stopped
-        // passing one would otherwise satisfy `not.toContain` trivially.
-        expect(sent).toBeTruthy()
+        // passing one would otherwise satisfy `not.toContain` trivially. Asserted against the
+        // contract rather than for truthiness: `generateSecureToken` returns 64 lower-case hex
+        // characters, and a bare `toBeTruthy` survives a mutation that hands the provider any
+        // non-empty string at all, which is the shape this assertion exists to rule out.
+        expect(sent).toMatch(/^[0-9a-f]{64}$/)
         expect(logged).toContain('sendPasswordResetToken failed')
         expect(logged).not.toContain(sent)
         expect(logged).toContain('<redacted>')

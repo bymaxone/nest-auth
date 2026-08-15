@@ -24,9 +24,10 @@
  * itself. The distinction is load-bearing and was learnt the hard way: this file previously logged
  * the raw error on the reasoning that a channel's error is the channel's own rather than the
  * rendered body. A relay that rejects with `550` while quoting the offending content makes those
- * the same thing, and the OTP this provider had just rendered went to the log in clear text. An
- * override that puts a code into a *subject* still breaks this, because the subject is logged by
- * design — the port says so, and it is the one place a rewrite can reintroduce the leak.
+ * the same thing, and the OTP this provider had just rendered went to the log in clear text.
+ *
+ * The subject IS logged, by design, so it is redacted and control-character stripped on the way
+ * to the line — an override that puts a code into a subject is covered rather than warned about.
  *
  * Coverage for this file is owned by the unit suite.
  *
@@ -41,6 +42,7 @@ import type {
 } from '../interfaces/email-provider.interface'
 import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { redactSecrets } from '../utils/redact-secrets'
 
 /**
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
@@ -471,15 +473,20 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // in clear text, valid until expiry. `describeError` is what replaces it: an
       // allowlist of `name` and `message`, each redacted, bounded and control-character stripped.
       //
-      // The subject goes through `logSafe` here even though `sanitizeSubject` already ran on it.
-      // They are not the same guard: `sanitizeSubject` removes CR and LF because a subject is an
-      // HTTP-style header and those two would inject one, while `logSafe` rejects the whole C0/C1
-      // range because a log record can be forged by more than CR/LF. A `messages` override is
-      // consumer code returning a consumer-built string, so the subject is not this library's to
-      // trust by the time it reaches a log template.
-      this.logger.error(
-        `delivery failed for "${logSafe(subject)}": ${describeError(error, secrets)}`
-      )
+      // The subject gets BOTH guards here, and neither is redundant with `sanitizeSubject`.
+      //
+      // `redactSecrets`, because an override is free to put the code in the subject —
+      // `passwordResetOtp: ({ otp }) => ({ subject: `Code ${otp}` })` is a reasonable-looking
+      // thing to write — and the subject is logged by design. Documenting that as a known way to
+      // reopen the leak was the earlier answer; closing it is the better one, and the secrets are
+      // already in hand on this line.
+      //
+      // `logSafe`, because `sanitizeSubject` removes only CR and LF: its job is the mail header,
+      // where those two inject one. A log record can be forged by more of the C0/C1 range than
+      // that, and an override returns a consumer-built string.
+      const loggedSubject = logSafe(redactSecrets(subject, secrets))
+
+      this.logger.error(`delivery failed for "${loggedSubject}": ${describeError(error, secrets)}`)
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
       //
