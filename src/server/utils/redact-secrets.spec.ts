@@ -162,6 +162,18 @@ describe('redactSecrets', () => {
     expect(line).toBe('')
   })
 
+  // The marker can also combine with text it did NOT replace. Here `xyz` becomes the marker and
+  // the untouched `a` before it completes the second declared secret — so a check that only asked
+  // whether a secret sits INSIDE the marker would pass this and publish it. The end-to-end check
+  // on the finished string is what covers every shape of seam, including this one, because it
+  // asks the question the contract makes rather than enumerating the ways it can be broken.
+  it('returns nothing when the marker completes a secret with text it did not replace', () => {
+    const line = redactSecrets('axyz', ['xyz', 'a<redacted>'])
+
+    expect(line).not.toContain('a<redacted>')
+    expect(line).toBe('')
+  })
+
   // Over-redaction is the accepted trade. A four-digit OTP — the shortest this library permits —
   // colliding with a message id costs an operator one obscured number; the opposite mistake
   // publishes a working credential.

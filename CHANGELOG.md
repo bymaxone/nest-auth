@@ -91,6 +91,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   "never a body", because a `550` **is** the body; what it promises is that the values each
   message is known to render do not survive into the line.
 
+  The address-change notification's failure is logged **twice** on the `'rethrow'` policy — once
+  by the provider and once by `EmailChangeService.notifyOldAddress`, which catches the propagated
+  error. Both strip the addresses now. Containing a value in one place and not the other contains
+  it nowhere.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.

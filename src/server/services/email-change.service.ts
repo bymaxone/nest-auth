@@ -366,7 +366,15 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
-      this.logger.error('confirmChange: notification to the previous address failed', err)
+      // Both addresses are named, because this notification RENDERS the new one into its body and
+      // a relay that rejects by quoting the body puts it into this error. The provider's own log
+      // line already strips them; this is the second line the same failure reaches under
+      // `onDeliveryError: 'rethrow'`, and containing a value in one place and not the other
+      // contains it nowhere.
+      this.logger.error(
+        `confirmChange: notification to the previous address failed: ` +
+          describeError(err, [oldEmail, newEmail])
+      )
     }
   }
 }

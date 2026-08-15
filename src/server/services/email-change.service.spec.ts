@@ -416,6 +416,29 @@ describe('EmailChangeService', () => {
       expect(mockEmailProvider.sendEmailChangedNotification).not.toHaveBeenCalled()
     })
 
+    // The SECOND log line the same failure reaches. The provider strips the addresses from its
+    // own line, but under `onDeliveryError: 'rethrow'` the original error arrives here and this
+    // catch logs it too — and this notification renders the new address into its body, so a relay
+    // that rejects by quoting it puts the address into this entry. Containing a value in one place
+    // and not the other contains it nowhere.
+    it('keeps the addresses out of the notification-failure log', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      try {
+        mockEmailProvider.sendEmailChangedNotification.mockRejectedValue(
+          new Error(`550 rejected: "... changed to ${NEW_EMAIL} ..."`)
+        )
+
+        await service.confirmChange({ token: TOKEN })
+
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+        expect(logged).toContain('notification to the previous address failed')
+        expect(logged).not.toContain(NEW_EMAIL)
+        expect(logged).toContain('<redacted>')
+      } finally {
+        loggerSpy.mockRestore()
+      }
+    })
+
     // The old address is read from the ACCOUNT at confirm time, not from the token. A record
     // that outlived an intervening change still notifies wherever the account actually is.
     it('notifies the address the account currently holds, not one the token remembers', async () => {
