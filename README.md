@@ -1253,12 +1253,25 @@ it, including cookie names you have since changed.
 > their explicit `[]` in the same move: `ownRouteSecurity` only returns it when
 > `openapi.security.length > 0`.
 >
-> Nothing reports this. No error, no unmatched key, no failing build — the document simply stops
-> asking for credentials on the routes the library never knew about, which are the ones your
-> backend owns. Keep the default, derived from your own delivery mode so it names only a scheme
-> that exists on that deployment. It is what covers your routes, and it cannot disturb this
-> library's: a per-operation requirement outranks a document-level one, and every operation the
-> contributor describes carries its own.
+> **On nest-core below 1.5.0, nothing reports this.** No error, no unmatched key, no failing
+> build — the document simply stops asking for credentials on the routes the library never knew
+> about, which are the ones your backend owns. **nest-core 1.5.0 warns**, on exactly this shape:
+> a document with no top-level `security` where some other operation does state a requirement, so
+> the bare ones are bare against a described posture rather than in a document that describes
+> none. It names the operations and never throws. That makes the failure visible, not impossible —
+> a warning in a build log is still something a person has to read.
+>
+> Keep the default, and **derive it from your `tokenDelivery` rather than writing a literal**. The
+> derivation is not style: under `tokenDelivery: 'bearer'` this contributor emits no cookie scheme
+> at all, so a default naming `bymaxAuthAccessCookie` references a scheme the document never
+> declares, and nest-core's `assertSchemesDeclared` **throws** the document build. A literal is
+> correct for the one delivery it was written against and fails on the other two — which is how
+> the advice that fixes a silent wrong document introduces a loud broken one. Read the mode you
+> configured and name the scheme that mode actually defines.
+>
+> The default is what covers your routes, and it cannot disturb this library's: a per-operation
+> requirement outranks a document-level one, and every operation the contributor describes carries
+> its own.
 >
 > **What an empty `{}` alternative says, and where this library uses it as an approximation.**
 > In OpenAPI it means one thing: authentication is **optional** for that operation — a caller
@@ -1306,8 +1319,10 @@ it, including cookie names you have since changed.
 > decorator, no override, no document default — what remains is indistinguishable from the
 > document of an API that is public on purpose. Both are a set of operations that ask for
 > nothing. No tool can separate the two without also shouting at every genuinely public API,
-> which is how a warning earns the right to be ignored. Render the document twice and compare;
-> it is the one step that does not depend on somebody having anticipated your case.
+> which is how a warning earns the right to be ignored. This is why nest-core's warning requires
+> that _some_ operation still state a requirement: the gap is deliberate, not an omission, and no
+> version closes it. Render the document twice and compare; it is the one step that does not
+> depend on somebody having anticipated your case.
 
 **That chain is about `security` alone, and the other members run the opposite rule** — worth
 stating because generalising either one produces a wrong belief about the other. There is no

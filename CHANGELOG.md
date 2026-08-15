@@ -295,11 +295,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   their explicit `[]` at the same time, since `ownRouteSecurity` returns it only while
   `openapi.security.length > 0`.
 
-  Nothing reports it: no error, no unmatched key, no failing build. The document just stops asking
-  for credentials on the routes the library never knew about — the ones the backend owns. Keep the
-  default, derived from the delivery mode so it names only a scheme that exists on that deployment;
-  per-operation beats document-level, so it cannot reach this library's operations. Verified on a
-  real adoption: thirteen contributed operations render byte-identical with and without it.
+  On nest-core below 1.5.0 nothing reports it: no error, no unmatched key, no failing build. The
+  document just stops asking for credentials on the routes the library never knew about — the ones
+  the backend owns. nest-core 1.5.0 warns on this shape and names the bare operations, which makes
+  it visible rather than impossible. Keep the default, and **derive it from `tokenDelivery` instead
+  of writing a literal**: under `bearer` this contributor emits no cookie scheme, so a default
+  naming `bymaxAuthAccessCookie` references an undeclared scheme and nest-core's
+  `assertSchemesDeclared` throws the build. Per-operation beats document-level, so the default
+  cannot reach this library's operations. Verified on a real adoption: thirteen contributed
+  operations render byte-identical with and without it.
 
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
