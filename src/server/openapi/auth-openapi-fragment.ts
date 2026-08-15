@@ -363,50 +363,9 @@ function describe(
         ...(bearerDelivery ? { requestBody: REFRESH_BODY } : {})
       }
     case 'accessAndRefreshRequired':
-    case 'accessAndRefreshOptional': {
-      // Two credentials at once, and OpenAPI writes AND as ONE requirement entry carrying both
-      // schemes — the opposite of the alternation above, where each entry is a separate
-      // alternative. The access token authorises the caller; the refresh token names the session
-      // they are calling from, which is the only reason these handlers read it.
-      const accessSchemes = [
-        ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
-        ...(bearerDelivery ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
-      ]
-
-      // Each access form, with the refresh cookie required beside it. Only where cookies deliver
-      // it — elsewhere there is no such scheme to name.
-      const withRefreshCookie = cookieDelivery
-        ? accessSchemes.map((access) => ({
-            [access]: [],
-            [AUTH_SECURITY_SCHEMES.refreshCookie]: []
-          }))
-        : []
-
-      // Each access form alone. Under a mode with a body this is the body-borne refresh token —
-      // the same "or a credential this member cannot model" the empty entry states elsewhere; on
-      // a cookie-only deployment it is present only when the operation tolerates no refresh token
-      // at all, which is exactly what separates the two cases here.
-      const accessAlone =
-        bearerDelivery || credential === 'accessAndRefreshOptional'
-          ? accessSchemes.map((access) => ({ [access]: [] }))
-          : []
-
-      // Under `'both'` the two cases produce the same document, and that is a property of
-      // OpenAPI rather than a shortcut: once a body-borne alternative exists, no requirement list
-      // can insist on a credential that might be arriving in the body. The pair still differs
-      // where it can — under `'cookie'`, where the requirement is expressible.
-      return {
-        security: [...withRefreshCookie, ...accessAlone],
-        ...(bearerDelivery
-          ? {
-              requestBody:
-                cookieDelivery || credential === 'accessAndRefreshOptional'
-                  ? REFRESH_BODY
-                  : REQUIRED_REFRESH_BODY
-            }
-          : {})
-      }
-    }
+      return describeTwoCredentials(true, cookieDelivery, bearerDelivery)
+    case 'accessAndRefreshOptional':
+      return describeTwoCredentials(false, cookieDelivery, bearerDelivery)
     case 'platform':
       return { security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }] }
     case 'platformLogout':
@@ -420,6 +379,59 @@ function describe(
       }
     case 'platformRefresh':
       return { security: [], requestBody: PLATFORM_REFRESH_BODY }
+  }
+}
+
+/**
+ * The requirement for an operation that needs the access token AND reads the refresh token.
+ *
+ * OpenAPI writes AND as ONE requirement entry carrying both schemes — the opposite of the
+ * alternation elsewhere in this file, where each entry is a separate alternative. The access
+ * token authorises the caller; the refresh token names the session they are calling from, which
+ * is the only reason these handlers read it.
+ *
+ * Under `'both'` the required and the optional case produce the same document, and that is a
+ * property of the format rather than a shortcut: once a body-borne alternative exists, no
+ * requirement list can insist on a credential that might be arriving in the body. The pair still
+ * differs under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
+ * body carries it.
+ *
+ * @param refreshRequired - Whether the operation refuses without the refresh token.
+ * @param cookieDelivery - Whether this deployment delivers credentials as cookies.
+ * @param bearerDelivery - Whether this deployment delivers them in headers and bodies.
+ * @returns The security requirement, plus the request body where one channel is the body.
+ */
+function describeTwoCredentials(
+  refreshRequired: boolean,
+  cookieDelivery: boolean,
+  bearerDelivery: boolean
+): FragmentObject {
+  const accessSchemes = [
+    ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
+    ...(bearerDelivery ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
+  ]
+
+  // Each access form with the refresh cookie required beside it — only where cookies deliver it,
+  // since elsewhere there is no such scheme to name.
+  const withRefreshCookie = cookieDelivery
+    ? accessSchemes.map((access) => ({
+        [access]: [],
+        [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+      }))
+    : []
+
+  // Each access form alone. Under a mode with a body this is the body-borne refresh token — the
+  // same "or a credential this member cannot model" the empty entry states elsewhere; on a
+  // cookie-only deployment it appears only when the operation tolerates no refresh token at all,
+  // which is exactly what separates the two cases.
+  const accessAlone =
+    bearerDelivery || !refreshRequired ? accessSchemes.map((access) => ({ [access]: [] })) : []
+
+  return {
+    security: [...withRefreshCookie, ...accessAlone],
+    ...(bearerDelivery
+      ? { requestBody: cookieDelivery || !refreshRequired ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
+      : {})
   }
 }
 
