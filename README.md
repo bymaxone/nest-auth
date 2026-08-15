@@ -1267,8 +1267,13 @@ it, including cookie names you have since changed.
 >
 > On `logout` that is exactly right, in **every** delivery mode including `cookie`: the operation
 > really does answer a caller who presents nothing, which is why a user whose access token
-> expired can still sign out. It renders four alternatives there — both credentials, each alone,
-> and neither — and `password/change` renders two.
+> expired can still sign out. How many alternatives you see depends on the mode, since each one
+> is a combination of the credentials that mode actually has:
+>
+> | operation         | `cookie` | `bearer` | `both` |
+> | ----------------- | -------- | -------- | ------ |
+> | `logout`          | 4        | 2        | 6      |
+> | `password/change` | 2        | 1        | 4      |
 >
 > On `refresh` under `tokenDelivery: 'both'` it is an **approximation, and a permissive one**.
 > That operation refuses a caller with no credential at all; the token may simply arrive in the
