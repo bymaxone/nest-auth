@@ -113,6 +113,17 @@ type Credential =
   /**
    * Both credentials are READ and NEITHER is required. Each one it receives does more of the job,
    * and a caller with neither still gets an answer.
+   *
+   * **This reads like a gap in the generated document and is not one.** A reviewer sees an
+   * operation that names two credentials and demands none, next to `me` and `wsTicket` which
+   * demand one, and the natural reading is that a requirement went missing. It did not: `logout`
+   * is the route a user whose fifteen-minute access token expired hours ago still has to reach,
+   * so requiring that token would lock the session open on a device the user has already told the
+   * system to sign out of. The credentials are named because each one does more of the job —
+   * the refresh token revokes the session, the access token gets its `jti` blacklisted — and a
+   * generated client attaches whichever it holds. A consumer's own reviewer reached exactly this
+   * conclusion from the document alone, which is why the reasoning lives here rather than only in
+   * the CHANGELOG entry that introduced it.
    */
   | 'optionalAccessAndRefresh'
   | 'platform'
