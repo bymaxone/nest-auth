@@ -30,6 +30,8 @@ export const AUTH_DASHBOARD_ROUTES = {
   refresh: 'refresh',
   /** GET — return the currently authenticated user. */
   me: 'me',
+  /** POST — mint a single-use ticket for a WebSocket upgrade. */
+  wsTicket: 'ws-ticket',
   /** POST — submit the email-verification token returned by the verification email. */
   verifyEmail: 'verify-email',
   /** POST — request a fresh email-verification token. */
@@ -49,7 +51,9 @@ export const AUTH_MFA_ROUTES = {
   /** POST — exchange an MFA temp token + OTP for a full access token. */
   challenge: 'mfa/challenge',
   /** POST — disable MFA after re-authenticating with a fresh OTP. */
-  disable: 'mfa/disable'
+  disable: 'mfa/disable',
+  /** POST — replace the recovery codes, re-authenticating with a fresh OTP. */
+  recoveryCodes: 'mfa/recovery-codes'
 } as const
 
 /**
@@ -63,6 +67,13 @@ export const AUTH_PASSWORD_ROUTES = {
   forgotPassword: 'password/forgot-password',
   /** POST — submit a new password using the reset token. */
   resetPassword: 'password/reset-password',
+  /**
+   * POST — change the password of the signed-in user, verifying the current one.
+   *
+   * The only route in this family behind the JWT guard: the rest are reached by a
+   * caller who has no session, which is what a reset is for.
+   */
+  changePassword: 'password/change',
   /** POST — verify the reset OTP (when `passwordReset.method = 'otp'`). */
   verifyOtp: 'password/verify-otp',
   /** POST — request a fresh OTP after the previous one expired. */
@@ -91,6 +102,32 @@ export const AUTH_PLATFORM_ROUTES = {
 } as const
 
 /**
+ * Platform administrator MFA routes (`controllers.platform: true`).
+ *
+ * Mounted under `platform/mfa/`
+ * (`src/server/controllers/platform-mfa.controller.ts`). A separate family because the
+ * controller is separate, NOT because the switch is: `controllers.platform: true` mounts
+ * `PlatformAuthController` and `PlatformMfaController` together, and there is no
+ * `controllers.platformMfa` option to turn one on without the other. The platform plane requires
+ * MFA of its administrators, so a deployment that could mount the login surface without the
+ * enrollment surface would be one where an operator can be required to present a second factor
+ * they have no endpoint to set up.
+ *
+ * The challenge is NOT here — it belongs to the login flow on `PlatformAuthController`, which is
+ * why it sits with the routes that issue credentials rather than with the ones that manage them.
+ */
+export const AUTH_PLATFORM_MFA_ROUTES = {
+  /** POST — begin TOTP enrollment for a platform administrator. */
+  setup: 'platform/mfa/setup',
+  /** POST — confirm enrollment by submitting the first valid code. */
+  verifyEnable: 'platform/mfa/verify-enable',
+  /** POST — disable MFA after re-authenticating with a fresh OTP. */
+  disable: 'platform/mfa/disable',
+  /** POST — replace the recovery codes, re-authenticating with a fresh OTP. */
+  recoveryCodes: 'platform/mfa/recovery-codes'
+} as const
+
+/**
  * Session management routes (`controllers.sessions: true`).
  *
  * Mounted under `sessions/`
@@ -99,8 +136,16 @@ export const AUTH_PLATFORM_ROUTES = {
 export const AUTH_SESSION_ROUTES = {
   /** GET — list every active session for the current user. */
   list: 'sessions',
-  /** DELETE — revoke every session belonging to the current user. */
-  revokeAll: 'sessions/all',
+  /**
+   * POST — revoke every session belonging to the current user except the one
+   * making the call.
+   *
+   * POST rather than DELETE because the refresh token that names the current
+   * session travels in the body under `tokenDelivery: 'bearer'`, and OpenAPI 3.0.3
+   * defers to RFC 7231: a payload on DELETE has no defined semantics, so a
+   * generated client drops it.
+   */
+  revokeAll: 'sessions/revoke-all',
   /**
    * DELETE — revoke a single session by id. The `:id` placeholder must be
    * substituted with the session identifier before the request is issued.
@@ -136,6 +181,20 @@ export const AUTH_INVITATION_ROUTES = {
 } as const
 
 /**
+ * OAuth routes (`oauth.google` configured).
+ *
+ * Mounted under `oauth/` (`src/server/oauth/oauth.controller.ts`). Both carry a
+ * `:provider` segment that must be substituted before the request is issued —
+ * `'google'` is the only provider this library implements today.
+ */
+export const AUTH_OAUTH_ROUTES = {
+  /** GET — redirect the browser to the provider's consent screen. */
+  initiate: 'oauth/:provider',
+  /** GET — the provider redirects back here with the authorization code. */
+  callback: 'oauth/:provider/callback'
+} as const
+
+/**
  * Aggregated route map grouped by domain.
  *
  * Provides a single import point for client code that needs to reach
@@ -146,9 +205,11 @@ export const AUTH_ROUTES = {
   mfa: AUTH_MFA_ROUTES,
   password: AUTH_PASSWORD_ROUTES,
   platform: AUTH_PLATFORM_ROUTES,
+  platformMfa: AUTH_PLATFORM_MFA_ROUTES,
   sessions: AUTH_SESSION_ROUTES,
   invitations: AUTH_INVITATION_ROUTES,
-  emailChange: AUTH_EMAIL_CHANGE_ROUTES
+  emailChange: AUTH_EMAIL_CHANGE_ROUTES,
+  oauth: AUTH_OAUTH_ROUTES
 } as const
 
 /**

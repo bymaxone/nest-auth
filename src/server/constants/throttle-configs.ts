@@ -137,7 +137,7 @@ export const AUTH_THROTTLE_CONFIGS = {
   /** DELETE /auth/sessions/:id — 10 requests per minute per IP. */
   revokeSession: { default: { limit: 10, ttl: 60_000 } },
 
-  /** DELETE /auth/sessions/all — 5 requests per minute per IP. */
+  /** POST /auth/sessions/revoke-all — 5 requests per minute per IP. */
   revokeAllSessions: { default: { limit: 5, ttl: 60_000 } },
 
   /**

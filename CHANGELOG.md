@@ -18,7 +18,56 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-## [1.4.3] - 2026-08-13
+## [1.4.3] - 2026-08-14
+
+### Changed
+
+- **BREAKING — the bulk session revocation moved to `POST {prefix}/sessions/revoke-all`.** It was
+  `DELETE {prefix}/sessions/all`, and the verb was the defect. The handler reads the refresh token
+  that names the caller's own session — the one session it must NOT revoke — and under
+  `tokenDelivery: 'bearer'` that token arrives in the request body. OpenAPI 3.0.3 defers to
+  RFC 7231 there: a payload on DELETE has no defined semantics, so `requestBody` on it **SHALL be
+  ignored by consumers**. A generated client therefore sent no body, the server found no refresh
+  token, and every call answered `auth.session_not_found` — an operation the document could not
+  describe and a generated client could not reach, in the delivery mode a mobile or cross-origin
+  consumer runs. POST is the method whose body semantics are defined.
+
+  Found in review of the contributed OpenAPI fragment rather than by a failing test, which is the
+  uncomfortable part: the e2e suite drove the endpoint with a hand-written request that DID carry
+  a body, so it passed throughout. The suite proved the server works; nothing proved a client
+  built from the document could reach it.
+
+  Two smaller truths came out of the same reading. `GET {prefix}/sessions` reads the same token to
+  mark which session is the caller's, and a GET has no body either — so on a bearer-only
+  deployment the cookie is its only channel, the fragment no longer contributes a body it would
+  never receive, and the listing simply marks nothing as current. And `test/e2e` now asserts, from
+  the router Nest actually built, that no contributed `requestBody` lands on a method without
+  payload semantics; the rule is enforced rather than remembered.
+
+  **Apply to a derived backend.** Change `DELETE {prefix}/sessions/all` to
+  `POST {prefix}/sessions/revoke-all` wherever a client calls it — or read it from
+  `AUTH_ROUTES.sessions.revokeAll`, which is what that constant is for. The request body,
+  response (`204`), guards, rate limit and error codes are unchanged; only the method and the last
+  path segment move. `DELETE {prefix}/sessions/:id` is untouched, and no longer has to out-rank a
+  static sibling in routing.
+
+### Added
+
+- **Nine routes this library serves were missing from `AUTH_ROUTES`,** which is the map a client
+  composes URLs with — so a consumer reaching any of them had to hardcode the path the constants
+  exist to spare them, and would keep it hardcoded through a rename. Added:
+  `AUTH_DASHBOARD_ROUTES.wsTicket`, `AUTH_MFA_ROUTES.recoveryCodes`,
+  `AUTH_PASSWORD_ROUTES.changePassword`, the whole `AUTH_PLATFORM_MFA_ROUTES` family (setup,
+  verify-enable, disable, recovery-codes) and `AUTH_OAUTH_ROUTES` (initiate, callback).
+  `AUTH_EMAIL_CHANGE_ROUTES` and the two new families are exported from `./shared` by name, the
+  way every other family already was.
+
+  A test now compares the map against `PATH_METADATA` on the controllers — the same metadata Nest
+  routes with — in **both** directions: no route served without a constant, and no constant
+  pointing at a route nobody serves. It is worth saying how the platform MFA family was found,
+  because it is the failure mode this test exists for: a manual sweep reported those four paths as
+  present, because they appear elsewhere in the same file (in the refresh skip list) and a grep
+  for the literal cannot tell one list from another. The test reads the map, not the file.
 
 ### Fixed
 
@@ -135,6 +184,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   cannot name. The required and the optional case produce the same document in that mode, which is
   a property of OpenAPI rather than a shortcut: once a body-borne alternative exists, no
   requirement list can insist on a credential that might be arriving in the body.
+
+  **The fragment also carries one sentence of prose, and it is there because a document cannot
+  say this any other way.** `logout` requires nothing — an operator whose access token expired
+  must still be able to sign out — so `security` renders "requires none" and "accepts and acts on
+  whichever arrives" identically to anyone skimming. A consumer read the `@Public()` decorator,
+  simplified to `security: []`, and measured what that produced: a logout called with no
+  credential answers `204` and revokes **nothing**, with the same access token still getting `200`
+  from `/me` afterwards. The user clicks sign out, sees success, and stays signed in, and no layer
+  reports a failure. Under `tokenDelivery: 'bearer'` the refresh token in the body is the only
+  channel there is, so omitting it is exactly that silent no-op. The operation therefore carries a
+  `description` saying so. It is contributed the way everything else is — nest-core merges a
+  fragment member only where the scan produced none, so a consumer who wrote their own
+  `@ApiOperation` keeps it.
 
   **And `logout` names the access token it revokes.** Also found in review, and the one with a
   security consequence rather than an ergonomic one: `logout` is `@Public()` — deliberately, so a

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Post,
   Req,
   UseGuards,
   UsePipes,
@@ -41,9 +42,9 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * Exposes three endpoints for the authenticated user to inspect and revoke
  * their own active sessions:
  *
- * - `GET  /sessions`     — list all sessions, with the caller's session marked
- * - `DELETE /sessions/all` — revoke all sessions except the caller's current session
- * - `DELETE /sessions/:id` — revoke a single session by its hash prefix (display id)
+ * - `GET  /sessions`                — list all sessions, with the caller's session marked
+ * - `POST /sessions/revoke-all`     — revoke all sessions except the caller's current session
+ * - `DELETE /sessions/:id`          — revoke a single session by its hash prefix (display id)
  *   or full 64-character SHA-256 session hash
  *
  * All endpoints require a valid JWT access token enforced by {@link JwtAuthGuard}.
@@ -51,11 +52,11 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  * a global prefix (e.g. `/auth`) via `RouterModule` or `setGlobalPrefix`.
  *
  * @remarks
- * `DELETE /all` is declared before `DELETE /:id` in this class body as a
- * readability convention. NestJS resolves the ambiguity by scoring static
- * segments higher than parametric ones, so `all` is matched before `:id`
- * regardless of declaration order. The explicit ordering still communicates
- * intent to future maintainers.
+ * The bulk revocation is a POST because it READS a credential from the request body
+ * under `tokenDelivery: 'bearer'`, and a body on DELETE is a payload OpenAPI 3.0.3
+ * tells consumers to ignore. It used to be `DELETE /sessions/all`, which also had to
+ * out-rank `DELETE /:id` in routing; on its own verb there is no such ambiguity to
+ * reason about, and `revoke-all` cannot be mistaken for a session id.
  *
  * @layer Controller
  */
@@ -107,16 +108,25 @@ export class SessionController {
   }
 
   // ---------------------------------------------------------------------------
-  // DELETE /sessions/all
+  // POST /sessions/revoke-all
   // ---------------------------------------------------------------------------
 
   /**
    * Revokes all sessions for the authenticated user except the current one.
    *
    * Uses the refresh token from the request to determine which session to preserve.
-   * Throws `REFRESH_TOKEN_INVALID` if no refresh token is found — the current
-   * session cannot be determined without it, and revoking all sessions (including
-   * the caller's own) would force an immediate logout.
+   * Throws `SESSION_NOT_FOUND` if no refresh token is found — the current session
+   * cannot be determined without it, and revoking all sessions (including the
+   * caller's own) would force an immediate logout.
+   *
+   * **POST, not DELETE, and the method is load-bearing.** Under
+   * `tokenDelivery: 'bearer'` the refresh token this handler needs arrives in the
+   * request body, and OpenAPI 3.0.3 defers to RFC 7231: a payload on DELETE has no
+   * defined semantics, so `requestBody` there **SHALL be ignored by consumers**. A
+   * generated client therefore dropped the body and every call answered
+   * `SESSION_NOT_FOUND` — an operation the document could not describe and a client
+   * could not reach. POST is the method whose body semantics are defined, so the
+   * contributed fragment describes what the server actually reads.
    *
    * @param user - Verified JWT payload from the access token.
    * @param req - Incoming request (used to extract the current session's refresh token).
@@ -126,7 +136,7 @@ export class SessionController {
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @AuthRateLimit(AUTH_THROTTLE_CONFIGS.revokeAllSessions)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Delete('all')
+  @Post('revoke-all')
   async revokeAllSessions(
     @CurrentUser() user: DashboardJwtPayload,
     @Req() req: Request

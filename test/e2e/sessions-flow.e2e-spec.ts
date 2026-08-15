@@ -5,7 +5,7 @@
  * fully-bootstrapped NestJS application in bearer-token mode. The scenario
  * simulates a single user authenticating from three distinct devices, then
  * inspecting and revoking sessions through `GET /sessions`,
- * `DELETE /sessions/:id`, and `DELETE /sessions/all` — every step issues a
+ * `DELETE /sessions/:id`, and `POST /sessions/revoke-all` — every step issues a
  * real HTTP request via supertest and asserts on the actual response.
  */
 
@@ -230,8 +230,10 @@ describe('sessions flow (E2E)', () => {
       expect(sessions.filter((s) => s.isCurrent)).toHaveLength(1)
     })
 
-    // Verifies that DELETE /sessions/all revokes every session except the caller's current one.
-    it('should revoke every other session via DELETE /sessions/all', async () => {
+    // Verifies that POST /sessions/revoke-all revokes every session except the caller's current
+    // one. POST rather than DELETE because the refresh token that names the current session
+    // travels in the body here, and a payload on DELETE is one OpenAPI tells consumers to ignore.
+    it('should revoke every other session via POST /sessions/revoke-all', async () => {
       // Arrange — two sessions remain (iPhone + Mac OR Linux, depending on
       // which one was kept by the previous DELETE step).
 
@@ -239,7 +241,7 @@ describe('sessions flow (E2E)', () => {
       // the server can identify the current session and exclude it from the
       // bulk revocation.
       const res = await request(app.getHttpServer())
-        .delete('/sessions/all')
+        .post('/sessions/revoke-all')
         .set('Authorization', `Bearer ${currentAccessToken}`)
         .send({ refreshToken: currentRefreshToken })
 

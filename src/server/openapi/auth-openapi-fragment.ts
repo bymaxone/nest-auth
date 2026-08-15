@@ -106,18 +106,46 @@ type Credential =
    */
   | 'accessWithOptionalRefresh'
   /**
+   * The same, on an operation whose HTTP method carries no body — so the cookie is the only
+   * channel the refresh token has, whatever `tokenDelivery` says.
+   */
+  | 'accessWithOptionalRefreshCookie'
+  /**
    * Both credentials are READ and NEITHER is required. Each one it receives does more of the job,
    * and a caller with neither still gets an answer.
+   *
+   * **This reads like a gap in the generated document and is not one.** A reviewer sees an
+   * operation that names two credentials and demands none, next to `me` and `wsTicket` which
+   * demand one, and the natural reading is that a requirement went missing. It did not: `logout`
+   * is the route a user whose fifteen-minute access token expired hours ago still has to reach,
+   * so requiring that token would lock the session open on a device the user has already told the
+   * system to sign out of. The credentials are named because each one does more of the job —
+   * the refresh token revokes the session, the access token gets its `jti` blacklisted — and a
+   * generated client attaches whichever it holds. A consumer's own reviewer reached exactly this
+   * conclusion from the document alone, which is why the reasoning lives here rather than only in
+   * the CHANGELOG entry that introduced it.
+   *
+   * **And the simplification it invites is a security bug, measured.** `@Public()` beside named
+   * credentials is not a redundancy to tidy away: a consumer who read the decorator, concluded
+   * `security: []` and dropped the alternatives shipped a document telling generated clients to
+   * send nothing — and a logout that carries nothing answers `204` while revoking nothing, with
+   * the same access token still getting `200` from `/me` afterwards. A user clicks sign out, sees
+   * success, and stays signed in; no layer reports a failure. "Requires none" and "accepts and
+   * acts on whichever arrives" are different statements, and this is the operation where
+   * collapsing them costs a session rather than a rejected request.
    */
   | 'optionalAccessAndRefresh'
   | 'platform'
   | 'platformLogout'
   | 'platformRefresh'
 
-/** The three kinds whose requirement is built from BOTH credentials rather than from one. */
+/** The kinds whose requirement is built from BOTH credentials rather than from one. */
 type TwoCredentialKind = Extract<
   Credential,
-  'accessAndRefreshRequired' | 'accessWithOptionalRefresh' | 'optionalAccessAndRefresh'
+  | 'accessAndRefreshRequired'
+  | 'accessWithOptionalRefresh'
+  | 'accessWithOptionalRefreshCookie'
+  | 'optionalAccessAndRefresh'
 >
 
 /**
@@ -181,7 +209,7 @@ const OPERATIONS: Readonly<
     // without it — it revokes everything EXCEPT the current session, so a request that cannot
     // name the current one would sign the caller out, and it answers `auth.session_not_found`
     // instead. `revokeSession` names its target in the path and reads no refresh token at all.
-    'SessionController.listSessions': 'accessWithOptionalRefresh',
+    'SessionController.listSessions': 'accessWithOptionalRefreshCookie',
     'SessionController.revokeAllSessions': 'accessAndRefreshRequired',
     'SessionController.revokeSession': 'access'
   },
@@ -219,6 +247,39 @@ const OPERATIONS: Readonly<
     'OAuthController.callback': 'none'
   }
 }
+
+/**
+ * Prose a handler needs in the rendered document, keyed the same way the table is.
+ *
+ * A `Map` rather than an object literal so the lookup is a method call: indexing a record by a
+ * variable is an object-injection sink the security lint flags, and this repository's precedent
+ * is to reach for `Map` there rather than to accept a warning.
+ *
+ * Contributed as a `description` because nest-core merges a fragment member only where the scan
+ * produced none (`{...members, ...operation}`), so a consumer who wrote their own `@ApiOperation`
+ * keeps it and one who wrote nothing gets this. Nothing here restates what `security` already
+ * says — a description that paraphrases the requirement is noise. These are the facts a
+ * requirement CANNOT carry.
+ */
+const OPERATION_DESCRIPTIONS = new Map<string, string>([
+  [
+    // Measured by a consumer against a running deployment, and the reason this entry exists: a
+    // logout called with no credential answers `204` and revokes NOTHING — the same access token
+    // still gets `200` from `/me` afterwards. Every other imprecision in this fragment costs a
+    // caller one rejected request; this one hands them a success while they stay signed in.
+    //
+    // The operation requires nothing, deliberately, so `security` cannot express any of that: an
+    // empty requirement and an optional one render identically to a reader who is skimming. The
+    // sentence is therefore the only place a person building a sign-out learns that the credential
+    // they omitted was the one doing the work.
+    'AuthController.logout',
+    'Revokes the session and blacklists the access token, using whichever credentials the ' +
+      'request carries. NEITHER is required — an operator whose access token has expired must ' +
+      'still be able to sign out — but a call that carries none succeeds without revoking ' +
+      'anything. Under `tokenDelivery: bearer` the refresh token in the request body is the only ' +
+      'channel there is, so omitting it makes this a silent no-op.'
+  ]
+])
 
 /**
  * The request body the two dashboard token operations read when the refresh token is not a
@@ -316,7 +377,9 @@ export function buildAuthOpenApiFragment(
     if (!registered[controller as keyof RegisteredControllers]) continue
 
     for (const [handler, credential] of Object.entries(handlers)) {
-      operations[handler] = describe(credential, cookieDelivery, bearerDelivery)
+      const described = describe(credential, cookieDelivery, bearerDelivery)
+      const note = OPERATION_DESCRIPTIONS.get(handler)
+      operations[handler] = note === undefined ? described : { ...described, description: note }
     }
   }
 
@@ -373,6 +436,7 @@ function describe(
       }
     case 'accessAndRefreshRequired':
     case 'accessWithOptionalRefresh':
+    case 'accessWithOptionalRefreshCookie':
     case 'optionalAccessAndRefresh':
       return describeTwoCredentials(credential, cookieDelivery, bearerDelivery)
     case 'platform':
@@ -411,7 +475,7 @@ function describe(
  * differ under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
  * body carries it.
  *
- * @param credential - Which of the three two-credential kinds this operation is.
+ * @param credential - Which two-credential kind this operation is.
  * @param cookieDelivery - Whether this deployment delivers credentials as cookies.
  * @param bearerDelivery - Whether this deployment delivers them in headers and bodies.
  * @returns The security requirement, plus the request body where one channel is the body.
@@ -425,6 +489,13 @@ function describeTwoCredentials(
     access: credential !== 'optionalAccessAndRefresh',
     refresh: credential === 'accessAndRefreshRequired'
   }
+
+  // A body is a channel only where the deployment delivers credentials that way AND the
+  // operation's HTTP method defines what a payload means. OpenAPI 3.0.3 defers to RFC 7231 here:
+  // on GET and DELETE a `requestBody` **SHALL be ignored by consumers**, so contributing one
+  // describes a request no generated client sends. The cookie remains, because a cookie rides on
+  // the request line rather than in a payload.
+  const bodyChannel = bearerDelivery && credential !== 'accessWithOptionalRefreshCookie'
 
   const accessSchemes = [
     ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
@@ -455,7 +526,7 @@ function describeTwoCredentials(
 
   return {
     security: [...withRefreshCookie, ...accessAlone, ...refreshAlone, ...nothing],
-    ...(bearerDelivery
+    ...(bodyChannel
       ? { requestBody: cookieDelivery || !required.refresh ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
       : {})
   }
