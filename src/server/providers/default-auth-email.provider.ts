@@ -19,20 +19,19 @@
  * layout and branding. What must survive a rewrite is the security shape — a code is stated once,
  * and a notice of a change the user may not have made tells them how to react.
  *
- * **On what reaches the log, stated precisely, because the absolute version of this sentence was
- * wrong twice.** A delivery failure logs the message's subject and a bounded description of the
- * error — never the error object, its `stack`, or its own properties.
+ * **On what reaches the log: nothing this file did not write.** A delivery failure logs the
+ * message's own label and, when the channel supplied one, an SMTP status code —
+ * `delivery failed sending passwordResetOtp: <error>: 550 5.7.1`. Never the error object, its
+ * `stack`, its own properties, its `message`, its `name`, or the rendered subject.
  *
- * It cannot promise "never a body". A relay that rejects with `550` **quotes the offending
- * content**, so the body arrives inside `error.message`, which is exactly how the OTP this
- * provider had just rendered reached the log in clear text before this was fixed. What the
- * provider does instead is name, per message, the values that body renders and must not survive:
- * the code or token on the credential paths, and the addresses, device and IP on the notices that
- * render those. Each is stripped from the line, subject included.
- *
- * **The residual case is a `messages` override.** An override renders text this file cannot see,
- * so a body it invents can be quoted back and logged. The port's own rule is the guard there: a
- * message states its secret once and the provider is told what it was.
+ * That absolute is deliberate, and four weaker versions of it failed first. A relay that rejects
+ * with `550` **quotes the offending content**, so the body arrives inside `error.message` — which
+ * is how the OTP this provider had just rendered reached a log in clear text. Naming the values to
+ * strip does not contain that: redaction is a substring match, and a relay may quote what it
+ * rejected in transfer encoding, where the credential's characters are not present to match. The
+ * same defeats a length cap, a shape check on `error.name`, and redaction of an overridden
+ * subject. Publishing none of it has no such edge, which is why the subject was replaced by a
+ * label this file owns rather than sanitised.
  *
  * Coverage for this file is owned by the unit suite.
  *
@@ -512,27 +511,23 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
         text: message.text
       })
     } catch (error: unknown) {
-      // The subject names the message; the address is deliberately left out, because a log line
-      // reaches a wider audience than the inbox it was going to.
-      //
-      // The error is NOT passed to the logger. This line used to read `logger.error(msg, error)`
-      // on the reasoning that "the error is the channel's own, not the rendered body" — which a
-      // measurement against a real relay disproved. A policy or DLP relay rejects with `550` and
-      // QUOTES THE OFFENDING CONTENT, so the channel's own error is the rendered body, and for
-      // this provider that body is a live OTP or invitation token. It went to the operator's log
-      // in clear text, valid until expiry. `describeError` is what replaces it: an
-      // allowlist of `name` and `message`, each redacted, bounded and control-character stripped.
-      //
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
-      // a status rebuilt from a pattern's own capture. That is the whole guarantee, and it is
-      // simpler to hold than any amount of stripping.
+      // a status rebuilt from a pattern's own capture. The error object is not passed to the
+      // logger, and neither is anything read off it beyond that status.
       //
-      // The rendered subject used to go here, redacted against the values in flight. Redaction is
-      // a substring match, so it only ever covered a subject that reproduced a value VERBATIM —
-      // and a `messages` override is arbitrary consumer code. `Code 123-456` for the OTP `123456`
-      // survives it, and so does its base64. There is nothing to name at this call site now, which
-      // is why `safeLogLine` and the withheld list are gone from it too: a line assembled only
-      // from constants has no seam for a value to straddle.
+      // This line used to read `logger.error(msg, error)` on the reasoning that "the error is the
+      // channel's own, not the rendered body" — which a measurement against a real relay
+      // disproved. A policy or DLP relay rejects with `550` and QUOTES THE OFFENDING CONTENT, so
+      // the channel's own error IS the rendered body, and for this provider that body is a live
+      // OTP or invitation token. It went to the operator's log in clear text, valid until expiry.
+      //
+      // The rendered subject used to be here too, redacted against the values in flight, and that
+      // is why the label replaced it rather than joining it. Redaction is a substring match, so it
+      // only ever covered a subject reproducing a value VERBATIM — and a `messages` override is
+      // arbitrary consumer code. `Code 123-456` for the OTP `123456` survives it, and so does its
+      // base64. With nothing consumer-authored left, there is nothing to name at this call site:
+      // `redactSecrets`, `logSafe` and `safeLogLine` are all gone from it, because a line
+      // assembled only from constants has no seam for a value to straddle.
       this.logger.error(`delivery failed sending ${label}: ${describeChannelStatus(error)}`)
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure
       // to reach the caller that reacts to it, not to be absorbed here.
@@ -540,8 +535,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // The error rethrown here is the ORIGINAL and may still carry the quoted body — deliberately,
       // because a caller that opted into 'rethrow' did so to inspect the failure, and handing it a
       // laundered error would take away the codes it branches on. That makes the credential the
-      // caller's to contain: log this through a pipeline that redacts, or run `redactSecrets` on
-      // it, which is exported for exactly this. See the option's own documentation.
+      // caller's to contain, and redaction is NOT the way — this file's own history is why. Run it
+      // through `describeChannelStatus`, which is exported for exactly this and publishes only a
+      // validated status. See the option's own documentation.
       if (this.rethrowOnError) {
         throw error
       }

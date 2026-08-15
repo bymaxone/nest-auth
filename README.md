@@ -289,9 +289,8 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > pipeline in clear text until it expires. Measured on a real relay, not hypothesised.
 >
 > This is your half: the library cannot reach inside your provider implementation.
-> **`describeChannelStatus` and `describeError` are exported for it** — the same two helpers the
-> bundled provider uses on its own log line, so you get the whole treatment rather than just
-> redaction:
+> **`describeChannelStatus` is exported for it** — the same helper the bundled provider uses on
+> every one of its own log lines, so you get the whole treatment rather than just redaction:
 >
 > ```typescript
 > import { describeChannelStatus } from '@bymax-one/nest-auth'
@@ -338,8 +337,10 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > relay cannot forge extra records in a line-oriented pipeline. Both walk the `cause` chain and
 > never throw, whatever the transport's error does.
 >
-> `redactSecrets(text, [otp])` is exported too, for when you already have a string and only need
-> the redaction half.
+> `redactSecrets(text, [otp])` is exported too, for a string you built yourself and know contains
+> the literal value. It is **not** a substitute for either description on a transport's error: a
+> substring match cannot see through an encoding, which is the whole reason the bundled provider
+> stopped relying on it.
 >
 > If you use the bundled `DefaultAuthEmailProvider` with `onDeliveryError: 'rethrow'`, the error it
 > re-throws is the channel's original and is still yours to contain the same way.
