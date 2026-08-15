@@ -1242,6 +1242,30 @@ nest-core's policy. So a stale scheme name or an override for an auth route keep
 contributed one never lands — the document goes on describing whatever you wrote when you wrote
 it, including cookie names you have since changed.
 
+> **Delete the entries for THESE routes. Keep your document-level `security`.** They are usually
+> written in the same options block, and taking the block out is the failure this warning exists
+> for — reported by a consumer who ran the comparison below and found their document **more wrong
+> after adopting than before**. The mechanism is in `augmentOperation`: an operation with no
+> requirement of its own, no override and no fragment falls through to `ownRouteSecurity`, which
+> answers `undefined` for anything that is not a health or metrics route — so **your** guarded
+> routes carry no requirement and inherit the document default. Remove that default and every
+> route this library does not describe reads as needing no credential. The health probes lose
+> their explicit `[]` in the same move: `ownRouteSecurity` only returns it when
+> `openapi.security.length > 0`.
+>
+> Nothing reports this. No error, no unmatched key, no failing build — the document simply stops
+> asking for credentials on the routes the library never knew about, which are the ones your
+> backend owns. Keep the default, derived from your own delivery mode so it names only a scheme
+> that exists on that deployment; per-operation beats document-level, so it cannot reach these
+> routes.
+>
+> **Verify with a diff, not by reasoning.** Render the document with the contributor active and
+> again with your entries in place, and compare only the operations you mount. The consumer who
+> did this found their own three differences were improvements — a configured cookie name over
+> the exported default, `logout` gaining the access-only and refresh-only alternatives their map
+> called unsatisfiable — and one regression that no status-code probe could have surfaced,
+> because the routes it broke still answered correctly at runtime.
+
 **That chain is about `security` alone, and the other members run the opposite rule** — worth
 stating because generalising either one produces a wrong belief about the other. There is no
 configuration channel for a `description`, a `summary` or a tag: `mergeFragment` merges the

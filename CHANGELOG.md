@@ -284,6 +284,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   it, so nothing downstream will remind you. Delete the literals, update whatever pins the
   document to the four-name vocabulary, rebuild, and regenerate any typed client.
 
+  **Delete the entries for THIS library's routes. Keep your document-level `security`.** Reported
+  after publication by the consumer who ran the comparison this note asks for, and it is the one
+  way following this instruction makes a document **worse**: the two usually live in the same
+  options block, and removing the block removes the default. In `augmentOperation`, an operation
+  with no requirement of its own, no override and no fragment falls through to `ownRouteSecurity`,
+  which answers `undefined` for anything that is not a health or metrics route — so a backend's
+  **own** guarded routes carry no requirement and inherit the document default. Take the default
+  away and every route this library does not describe reads as public. The health probes lose
+  their explicit `[]` at the same time, since `ownRouteSecurity` returns it only while
+  `openapi.security.length > 0`.
+
+  Nothing reports it: no error, no unmatched key, no failing build. The document just stops asking
+  for credentials on the routes the library never knew about — the ones the backend owns. Keep the
+  default, derived from the delivery mode so it names only a scheme that exists on that deployment;
+  per-operation beats document-level, so it cannot reach this library's operations. Verified on a
+  real adoption: thirteen contributed operations render byte-identical with and without it.
+
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
   contributor and are next; the security posture is the half a consumer asserts today.
