@@ -1242,6 +1242,181 @@ nest-core's policy. So a stale scheme name or an override for an auth route keep
 contributed one never lands — the document goes on describing whatever you wrote when you wrote
 it, including cookie names you have since changed.
 
+> **Delete the entries for THESE routes. Keep your document-level `security`.** They are usually
+> written in the same options block, and taking the block out is the failure this warning exists
+> for — reported by a consumer who ran the comparison below and found their document **more wrong
+> after adopting than before**. The mechanism is in `augmentOperation`: an operation with no
+> requirement of its own, no override and no fragment falls through to `ownRouteSecurity`, which
+> answers `undefined` for anything that is not a health or metrics route — so **your** guarded
+> routes carry no requirement and inherit the document default. Remove that default and every one
+> of those routes reads as needing no credential.
+>
+> **Keep the condition attached, because it decides how much of your API is affected.** This
+> reaches the routes that state nothing of their own — no `@ApiSecurity`-style decorator feeding
+> the scanned operation, no entry in nest-core's `operationSecurity`, and not a health or metrics
+> route under a policy that answers for them. Anything carrying its own requirement outranks the
+> document default and is untouched, which is exactly why the fix works at all. If your backend
+> annotates every guarded route individually, this note does not apply to you; the reason it bit
+> two consumers is that annotating each route is the thing a document-level default exists to
+> avoid. The health probes are the exception that still moves: they lose their explicit `[]`,
+> because `ownRouteSecurity` returns it only when `openapi.security.length > 0`.
+>
+> **On nest-core below 1.5.0, nothing reports this.** No error, no unmatched key, no failing
+> build — the document simply stops asking for credentials on the routes the library never knew
+> about, which are the ones your backend owns. **nest-core 1.5.0 warns**, on exactly this shape:
+> a document with no top-level `security` where some other operation does state a requirement, so
+> the bare ones are bare against a described posture rather than in a document that describes
+> none. It names the operations and never throws. That makes the failure visible, not impossible —
+> a warning in a build log is still something a person has to read.
+>
+> Keep the default, and **derive it rather than writing a literal**. What to derive it from takes
+> two questions, not one — a recipe phrased on `tokenDelivery` alone is wrong for two real
+> deployments, so answer both:
+>
+> **1. Which guard protects your own routes?** That decides the credential family, and
+> `tokenDelivery` does not enter into it for one of them.
+>
+> - `JwtAuthGuard` (the dashboard family) → an access scheme, chosen by delivery. Go to question 2.
+> - `JwtPlatformGuard` → **`bymaxPlatformAccessBearer`, in every mode**. `extractPlatformAccessToken`
+>   reads the `Authorization` header whatever `tokenDelivery` says, and `schemesFor` declares that
+>   scheme with no delivery condition on it. A platform-guarded route wants it under `cookie`
+>   delivery exactly as much as under `bearer`.
+> - **Both, on different routes** → the default cannot express this, though not because it is
+>   limited to one entry. A document `security` array may hold both requirements — but the entries
+>   are **alternatives**, and the whole array applies to every operation that inherits it. Listing
+>   both therefore documents each credential as valid for _either_ family, which says your platform
+>   routes accept a member token. That is not a missing detail; it is a false statement about who
+>   can call what. Give the minority family per-operation `security` (via your own decorator or
+>   nest-core's `operationSecurity`) and let the default cover the majority.
+>
+> **2. For the dashboard family — which schemes does this deployment actually declare?** Delivery
+> decides, and so does what you mounted. Take a default written as `[{ bymaxAuthAccessCookie: [] }]`:
+>
+> | deployment                             | this contributor declares         | that literal default                                        |
+> | -------------------------------------- | --------------------------------- | ----------------------------------------------------------- |
+> | dashboard mounted, `cookie`            | the cookie scheme only            | correct                                                     |
+> | dashboard mounted, `both`              | the cookie **and** bearer schemes | resolves, but describes only one of the two channels        |
+> | dashboard mounted, `bearer`            | no cookie scheme at all           | names an undeclared scheme — `assertSchemesDeclared` throws |
+> | **no dashboard surface, any delivery** | **neither dashboard scheme**      | names an undeclared scheme — throws, `cookie` included      |
+>
+> That last row is the one a delivery-only recipe gets wrong, and **"no dashboard surface" is
+> wider than it first sounds.** `schemesFor` gates both dashboard schemes on one of `auth`,
+> `passwordReset`, `mfa`, `sessions`, `invitations` or `emailChange` being registered. `oauth` is
+> **not** in that list — its operations are public and reference no credential — so an OAuth-only
+> deployment contributes operations and zero schemes, exactly like a platform-only one. Any
+> deployment with no dashboard controller is in this row, and `cookie` delivery, which the recipe
+> would call the safe case, throws just as hard as `bearer`.
+>
+> **And that row needs a remedy, not just a warning, because these deployments are legitimate.**
+> `JwtAuthGuard` is registered and exported unconditionally — it is not gated on any controller
+> flag — so mounting no dashboard controller does **not** stop you from guarding your own routes
+> with a dashboard access token. Both shapes are real: the platform surface plus your own routes
+> on the member credential; or the OAuth surface alone, where sign-in happens through a provider
+> and your app issues member tokens itself. In each case the guard is available and the scheme
+> describing it is not. Deriving correctly there lands you on "the scheme I need does not exist",
+> which is an accurate answer and not a usable
+> one.
+>
+> **Declare it yourself, in your own `openapi.securitySchemes`.** This is the one case where
+> "delete your hand-written `securitySchemes`" has an exception, and the exception exists because
+> the contributor deliberately declares only what its own operations reference — defining a
+> dashboard scheme on a deployment with no dashboard operation would put an unreferenced
+> credential in every such document, which is the opposite error and the reason for the gate.
+>
+> **Which scheme you declare is still a function of delivery** — the exception is to the deletion
+> rule, not to the derivation rule, and writing one fixed definition here reintroduces the very
+> literal this section is about:
+>
+> - `cookie` → the `apiKey`-in-cookie definition, carrying the `cookies.accessTokenName` you
+>   configured. The cookie name is yours to choose, so this is the one that must match what the
+>   server actually reads.
+> - `bearer` → the HTTP bearer definition. There is no cookie name to carry.
+> - `both` → **both of them**, or your document is incomplete in exactly the quiet way described
+>   above.
+>
+> One honest caveat on doing any of it: **`AUTH_SECURITY_SCHEMES` is not part of the public API
+> today**, so you will be writing the names as string literals (`bymaxAuthAccessCookie`,
+> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. Exporting them so this
+> stops being a literal is tracked; until it ships, this paragraph is the whole contract.
+>
+> **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
+> does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —
+> loud, immediate, impossible to ship. Under `both` the scheme does exist, so nothing throws; the
+> default is merely **incomplete**, telling a reader that your own routes take a cookie when they
+> equally accept a bearer token. That one is quiet, and it is the same class of quiet as the bug
+> this whole note is about. A literal written against a bearer-only deployment inverts the table
+> and fails under `cookie` for the same reasons.
+>
+> So the advice that fixes a silently wrong document can introduce a loud broken one **or a second
+> quiet one**, depending on where you land. Derive from the same inputs the contributor reads —
+> the guard your routes use, your delivery mode, and the controllers you registered — and the
+> answer is right everywhere at once, instead of correct in one configuration and checked forever.
+>
+> The default is what covers your routes, and it cannot disturb this library's: a per-operation
+> requirement outranks a document-level one, and every operation the contributor describes carries
+> its own.
+>
+> **What an empty `{}` alternative says, and where this library uses it as an approximation.**
+> In OpenAPI it means one thing: authentication is **optional** for that operation — a caller
+> presenting none of the named schemes is valid. Tooling reads it as anonymous access and infers
+> nothing about a request body from it.
+>
+> On `logout` that is exactly right, in **every** delivery mode including `cookie`: the operation
+> really does answer a caller who presents nothing, which is why a user whose access token
+> expired can still sign out. How many alternatives you see depends on the mode, since each one
+> is a combination of the credentials that mode actually has:
+>
+> | operation         | `cookie` | `bearer` | `both` |
+> | ----------------- | -------- | -------- | ------ |
+> | `logout`          | 4        | 2        | 6      |
+> | `password/change` | 2        | 1        | 4      |
+>
+> On `refresh` under `tokenDelivery: 'both'` it is an **approximation, and a permissive one**.
+> That operation refuses a caller with no credential at all; the token may simply arrive in the
+> request body, which `security` has no vocabulary for. The empty entry is what lets the document
+> describe the body-only caller, and the cost is that it also tells tooling anonymous access is
+> acceptable when it is not.
+>
+> The `requestBody` beside it **documents the body channel; it does not carry the requirement**.
+> Under `'both'` it is `required: false` and its schema does not list `refreshToken` as required,
+> because either channel satisfies the server and a body that omits the token is valid when the
+> cookie carries it. So the document as a whole permits a request with neither, and the server
+> refuses that request. **OpenAPI cannot express "one of these two channels" across a security
+> requirement and a request body**, and this is the shape of that limitation rather than an
+> oversight. Under `'bearer'`, where the cookie does not exist, the body becomes required at both
+> levels and the document is exact.
+>
+> Written out because two earlier versions of this note were wrong in opposite directions: one
+> called `{}` "a credential this member cannot model", which is the intent rather than the
+> notation; the other claimed the `requestBody` carried the requirement, which it does not.
+>
+> **Verify with a diff, not by reasoning.** Render the document with the contributor active and
+> again with your entries in place, and compare only the operations you mount. The consumer who
+> did this found their own three differences were improvements — a configured cookie name over
+> the exported default, `logout` gaining the access-only and refresh-only alternatives their map
+> called unsatisfiable — and one regression that no status-code probe could have surfaced,
+> because the routes it broke still answered correctly at runtime.
+>
+> **And there is one shape no warning will catch for you, however new your nest-core.** If you
+> remove _every_ requirement at once — no library describing anything, no decorator, no override,
+> no document default — what remains is indistinguishable from the document of an API that is
+> public on purpose. Both are a set of operations that ask for nothing. **No general-purpose tool** can separate the two from the rendered document alone
+> without also shouting at every genuinely public API, which is how a warning earns the right to
+> be ignored. This is why nest-core's warning requires that _some_ operation still state a
+> requirement: the gap is deliberate, not an omission, and no version closes it.
+>
+> **But it is a limit on document-only checks, not on you** — and the distinction matters, because
+> the better answer is the one a general-purpose tool cannot supply. **You** know your API is not
+> public, which is exactly the intent no renderer can recover, so write it down as an assertion in
+> your own suite: that the built document carries a top-level `security`, or that every route
+> behind your auth guard renders with some requirement. That is a standing check, it runs on every
+> commit, and it does not depend on anyone remembering to compare. Prefer it to the diff.
+>
+> Render the document twice and compare when you are **changing** this — adopting the contributor,
+> moving delivery mode, adding a surface — because a diff shows you what moved without your having
+> to predict it in advance. Then turn what you learned into the assertion, so the next change is
+> caught rather than inspected.
+
 **That chain is about `security` alone, and the other members run the opposite rule** — worth
 stating because generalising either one produces a wrong belief about the other. There is no
 configuration channel for a `description`, a `summary` or a tag: `mergeFragment` merges the

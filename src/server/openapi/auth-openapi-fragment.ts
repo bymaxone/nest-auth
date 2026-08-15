@@ -553,8 +553,11 @@ function schemesFor(
 ): Record<string, FragmentObject> {
   const schemes: Record<string, FragmentObject> = {}
 
-  // The dashboard schemes exist only where a dashboard operation does. A platform-only
-  // deployment defines neither.
+  // The dashboard schemes exist only where a dashboard operation does, so ANY deployment without
+  // one defines neither — platform-only and oauth-only alike. `oauth` is deliberately absent from
+  // this list: its operations are public and reference no credential, so mounting it alone
+  // contributes operations and zero schemes. Naming only the platform case here reads as if it
+  // were the sole one, which is how it reached the README as a narrower rule than it is.
   const dashboardMounted =
     registered.auth ||
     registered.passwordReset ||

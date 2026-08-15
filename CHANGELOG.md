@@ -284,6 +284,57 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   it, so nothing downstream will remind you. Delete the literals, update whatever pins the
   document to the four-name vocabulary, rebuild, and regenerate any typed client.
 
+  **Delete the entries for THIS library's routes. Keep your document-level `security`.** Reported
+  after publication by the consumer who ran the comparison this note asks for, and it is the one
+  way following this instruction makes a document **worse**: the two usually live in the same
+  options block, and removing the block removes the default. In `augmentOperation`, an operation
+  with no requirement of its own, no override and no fragment falls through to `ownRouteSecurity`,
+  which answers `undefined` for anything that is not a health or metrics route — so a backend's
+  **own** guarded routes carry no requirement and inherit the document default. Take the default
+  away and every one of those routes reads as public. The condition travels with the claim: this
+  reaches routes that state nothing of their own — no decorator feeding the scanned operation, no
+  `operationSecurity` entry, not a health or metrics route a policy answers for. Anything carrying
+  its own requirement outranks the default and is untouched, which is why the fix works at all. A
+  backend that annotates every guarded route individually is unaffected; the reason this bit two
+  consumers is that annotating each route is what a document-level default exists to avoid. The
+  health probes do move, losing their explicit `[]`, since `ownRouteSecurity` returns it only
+  while `openapi.security.length > 0`.
+
+  On nest-core below 1.5.0 nothing reports it: no error, no unmatched key, no failing build. The
+  document just stops asking for credentials on those routes — the ones the backend owns.
+  nest-core 1.5.0 warns on this shape and names the bare operations, which makes
+  it visible rather than impossible. Keep the default, and **derive it instead of writing a
+  literal** — from the guard your own routes use, your `tokenDelivery`, and the controllers you
+  registered, all three. A literal goes wrong in two distinct ways: where the named scheme is not
+  declared, nest-core's `assertSchemesDeclared` throws the build; under `both`, where both access
+  schemes exist, nothing throws and the default is merely incomplete, describing one of the two
+  channels the routes accept. Loud in one place, quiet in the other. Two cases a delivery-only
+  recipe gets wrong: `schemesFor` gates both dashboard schemes on a dashboard controller being
+  registered — and `oauth` is not one of them, since its operations are public — so **any
+  deployment with no dashboard surface declares neither and throws under `cookie` too**,
+  platform-only and OAuth-only alike;
+  and a route behind `JwtPlatformGuard` always wants `bymaxPlatformAccessBearer`, since
+  `extractPlatformAccessToken` reads the `Authorization` header whatever the mode says. A backend
+  guarding different routes with both families needs per-operation `security` for one of them —
+  not because the default holds only one entry, but because its entries are alternatives applied
+  to every inheriting operation, so listing both would document each credential as valid for
+  either family.
+
+  The no-dashboard case gets a remedy rather than only a diagnosis, because those deployments are
+  legitimate: `JwtAuthGuard` is registered and exported unconditionally, so mounting no dashboard
+  controller does not stop a backend from guarding its own routes with a dashboard access token.
+  Deriving correctly there answers "the scheme does not exist", which is true and unusable — so
+  that deployment **declares the scheme itself** in `openapi.securitySchemes`. Which scheme is
+  still a function of delivery, not a fixed recipe: `cookie` needs the `apiKey`-in-cookie
+  definition carrying the configured `cookies.accessTokenName`; `bearer` needs the HTTP bearer
+  definition and has no cookie name to carry; `both` needs **both**, or the document is incomplete
+  in the same quiet way described above. `AUTH_SECURITY_SCHEMES` is not public API today, so the
+  names are written as literals for now; exporting them is tracked.
+
+  Per-operation beats document-level, so the default cannot reach this library's operations.
+  Verified on a real adoption: thirteen contributed operations render byte-identical with and
+  without it.
+
   **Not in this change:** per-operation error responses (the `4xx` set each operation can answer,
   read from `errorCatalog.statuses`) and the DTO request schemas. Both are additive to the same
   contributor and are next; the security posture is the half a consumer asserts today.
