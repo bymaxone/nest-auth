@@ -1549,6 +1549,49 @@ API document, or a test that asserts against it.
 
 ---
 
+## 📋 Logging
+
+This library logs through `Logger` from `@nestjs/common`, one instance per service, and installs
+no transport of its own. In an application that calls `app.useLogger(...)`, Nest reroutes every
+`Logger` call in the process — **including the ones inside this package** — through whatever
+service you installed. That coupling is real and invisible from this package's `package.json`,
+which lists no logging dependency and never will.
+
+**Error causes arrive as an `Error` object in the optional params, not as a stack string.**
+
+```typescript
+this.logger.error('breach check threw; admitting the password (the checker fails open)', err)
+```
+
+Nest's documented signature is `error(message, stack?, context?)`, so a `LoggerService` that
+reads the second positional as a string is a reasonable thing to write — and one did, dropping
+the cause from every line this library emits until its author measured it. Hence this section.
+
+The object form is deliberate, and the reason is the asymmetry of what is lost. A structured
+sink that inspects the params recovers `name`, `message`, `code` and the whole `cause` chain
+from the `Error`; a stack string has already thrown all of that away at the call site, before
+any transport could have preserved it. The worst case for the object form is a logger that
+stringifies it — `"Error: breach check threw"`, degraded but readable. The worst case for the
+string form is a structured sink silently receiving less than it could have. Measured through a
+real bridge rather than argued: the object survives both, the string survives one.
+
+**If you write or maintain a `LoggerService`:** read the optional params for an `Error`-like
+value rather than assuming the second positional is a stack. If you also want a context string,
+`logger.error(message, error, 'Context')` is the shape that keeps both.
+
+**What is never logged:** tokens, refresh tokens, session hashes, password hashes, TOTP secrets,
+recovery codes and encryption keys. Log lines carry ids — `userId`, `tenantId`, `jti` — and
+addresses are masked. This does not depend on your logger redacting anything.
+
+Stated as the rule it is: a convention this library's code follows and its reviews enforce, **not
+a gate**. Two related things _are_ tested — `logSafe()` refuses a value carrying control
+characters, because a caller who controls `tenantId` could otherwise forge a second log record,
+and `maskEmail()` is asserted on its own — but nothing asserts of an arbitrary flow that no
+secret reached a log line. Worth knowing precisely, rather than trusting a stronger claim than
+the tests support.
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please read our contributing guidelines before submitting a pull request.
