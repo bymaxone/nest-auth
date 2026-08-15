@@ -648,6 +648,39 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<non-error: object>')
   })
 
+  // A quoted body carries more than credentials. These two notices RENDER identifying data —
+  // `emailChanged` states the new address, `newSessionAlert` states device, IP and session hash —
+  // and a relay that rejects by quoting the body puts all of it into the error. The address one
+  // matters most: this provider deliberately keeps the recipient out of the log, on the grounds
+  // that a log line reaches a wider audience than the inbox, and a quoted body walked straight
+  // past that decision.
+  it.each([
+    [
+      'the addresses the email-changed notice renders',
+      (p: DefaultAuthEmailProvider) =>
+        p.sendEmailChangedNotification('t', 'old@example.com', 'new@example.com'),
+      'new@example.com'
+    ],
+    [
+      'the IP the new-session alert renders',
+      (p: DefaultAuthEmailProvider) =>
+        p.sendNewSessionAlert('t', 'u@example.com', {
+          device: 'Chrome on macOS',
+          ip: '203.0.113.7',
+          sessionHash: 'deadbeef'
+        }),
+      '203.0.113.7'
+    ]
+  ])('keeps %s out of the log when the relay quotes it back', async (_why, send, rendered) => {
+    sink.send.mockRejectedValueOnce(new Error(`550 rejected by policy: "... ${rendered} ..."`))
+
+    await send(provider)
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain(rendered)
+    expect(logged).toContain('<redacted>')
+  })
+
   // Redaction runs per component, and things happen AFTER it: `logSafe` replaces a
   // control-character value with `<malformed>`, a failed link becomes `<malformed-error>`, and the
   // links are joined with a separator. Each writes text the per-component pass never saw, so a

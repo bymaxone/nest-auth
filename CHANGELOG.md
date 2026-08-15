@@ -81,6 +81,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   this library. Both now re-throw a redacted error. The advice below is about what escapes to
   **your** code; this was what never escaped at all.
 
+  **A quoted body carries more than credentials, so the redaction covers more than credentials.**
+  Two notices render identifying data into their own text: the email-changed notice states the new
+  address, and the new-session alert states device, IP and session hash. A relay quoting either
+  body puts that data into the error and therefore into the log line — walking straight past this
+  provider's deliberate choice to keep the recipient out of it, on the grounds that a log line
+  reaches a wider audience than the inbox does. Both now name those values, and they are stripped
+  the same way a code is. The file's own guarantee is restated accordingly: it cannot promise
+  "never a body", because a `550` **is** the body; what it promises is that the values each
+  message is known to render do not survive into the line.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.

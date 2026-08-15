@@ -19,15 +19,20 @@
  * layout and branding. What must survive a rewrite is the security shape — a code is stated once,
  * and a notice of a change the user may not have made tells them how to react.
  *
- * **On what reaches the log.** A delivery failure logs the message's subject and a bounded,
- * redacted description of the error — never a body, code, address, stack, or the error object
- * itself. The distinction is load-bearing and was learnt the hard way: this file previously logged
- * the raw error on the reasoning that a channel's error is the channel's own rather than the
- * rendered body. A relay that rejects with `550` while quoting the offending content makes those
- * the same thing, and the OTP this provider had just rendered went to the log in clear text.
+ * **On what reaches the log, stated precisely, because the absolute version of this sentence was
+ * wrong twice.** A delivery failure logs the message's subject and a bounded description of the
+ * error — never the error object, its `stack`, or its own properties.
  *
- * The subject IS logged, by design, so it is redacted and control-character stripped on the way
- * to the line — an override that puts a code into a subject is covered rather than warned about.
+ * It cannot promise "never a body". A relay that rejects with `550` **quotes the offending
+ * content**, so the body arrives inside `error.message`, which is exactly how the OTP this
+ * provider had just rendered reached the log in clear text before this was fixed. What the
+ * provider does instead is name, per message, the values that body renders and must not survive:
+ * the code or token on the credential paths, and the addresses, device and IP on the notices that
+ * render those. Each is stripped from the line, subject included.
+ *
+ * **The residual case is a `messages` override.** An override renders text this file cannot see,
+ * so a body it invents can be quoted back and logged. The port's own rule is the guard there: a
+ * message states its secret once and the provider is told what it was.
  *
  * Coverage for this file is owned by the unit suite.
  *
@@ -380,10 +385,16 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     newEmail: string,
     locale?: string
   ): Promise<void> {
+    // The addresses are named here for the same reason a code is on the OTP paths. This body
+    // RENDERS the new address, and a relay that rejects by quoting it puts that address into the
+    // error — past the deliberate choice not to log the recipient, which exists because a log line
+    // reaches a wider audience than the inbox. Not a credential, but the parameter is "values this
+    // message renders that must not reach a log", and an address qualifies.
     await this.deliver(
       tenantId,
       oldEmail,
-      this.messages.emailChanged({ oldEmail, newEmail, locale })
+      this.messages.emailChanged({ oldEmail, newEmail, locale }),
+      [oldEmail, newEmail]
     )
   }
 
@@ -412,7 +423,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     sessionInfo: SessionInfo,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.newSessionAlert({ sessionInfo, locale }))
+    // Device, IP and session hash are rendered into this body, so a quoted rejection carries all
+    // three. An IP and a device string identify a person as surely as an address does.
+    await this.deliver(tenantId, email, this.messages.newSessionAlert({ sessionInfo, locale }), [
+      sessionInfo.device,
+      sessionInfo.ip,
+      sessionInfo.sessionHash
+    ])
   }
 
   /** @inheritdoc */
