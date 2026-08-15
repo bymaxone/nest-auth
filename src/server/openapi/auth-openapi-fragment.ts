@@ -97,6 +97,16 @@ type Credential =
   | 'refreshRequired'
   /** The refresh credential is READ but optional: absent, the operation still answers 204. */
   | 'refreshOptional'
+  /**
+   * BOTH credentials, and both required: the access token authorises the caller while the refresh
+   * token names the session they are calling from. Without it the handler refuses.
+   */
+  | 'accessAndRefreshRequired'
+  /**
+   * The access token is required and the refresh token is READ: present, it identifies the
+   * caller's own session; absent, the operation still succeeds with a lesser answer.
+   */
+  | 'accessAndRefreshOptional'
   | 'platform'
   | 'platformLogout'
   | 'platformRefresh'
@@ -132,7 +142,10 @@ const OPERATIONS: Readonly<
   passwordReset: {
     'PasswordResetController.forgotPassword': 'none',
     'PasswordResetController.resetPassword': 'none',
-    'PasswordResetController.changePassword': 'access',
+    // Reads the refresh token to spare the caller's own session when it revokes the others, and
+    // succeeds without it — a password change from a client that sent none simply signs every
+    // session out, including the one that asked.
+    'PasswordResetController.changePassword': 'accessAndRefreshOptional',
     'PasswordResetController.verifyOtp': 'none',
     'PasswordResetController.resendOtp': 'none'
   },
@@ -146,8 +159,14 @@ const OPERATIONS: Readonly<
     'MfaController.regenerateRecoveryCodes': 'access'
   },
   sessions: {
-    'SessionController.listSessions': 'access',
-    'SessionController.revokeAllSessions': 'access',
+    // Measured against the controller rather than inferred from the guard stack, and the three
+    // differ. `listSessions` reads the refresh token to mark which session is the caller's own
+    // and answers 200 without it (every `isCurrent` reads false). `revokeAllSessions` refuses
+    // without it — it revokes everything EXCEPT the current session, so a request that cannot
+    // name the current one would sign the caller out, and it answers `auth.session_not_found`
+    // instead. `revokeSession` names its target in the path and reads no refresh token at all.
+    'SessionController.listSessions': 'accessAndRefreshOptional',
+    'SessionController.revokeAllSessions': 'accessAndRefreshRequired',
     'SessionController.revokeSession': 'access'
   },
   platform: {
@@ -343,6 +362,51 @@ function describe(
         security: cookieDelivery ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}] : [],
         ...(bearerDelivery ? { requestBody: REFRESH_BODY } : {})
       }
+    case 'accessAndRefreshRequired':
+    case 'accessAndRefreshOptional': {
+      // Two credentials at once, and OpenAPI writes AND as ONE requirement entry carrying both
+      // schemes — the opposite of the alternation above, where each entry is a separate
+      // alternative. The access token authorises the caller; the refresh token names the session
+      // they are calling from, which is the only reason these handlers read it.
+      const accessSchemes = [
+        ...(cookieDelivery ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
+        ...(bearerDelivery ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
+      ]
+
+      // Each access form, with the refresh cookie required beside it. Only where cookies deliver
+      // it — elsewhere there is no such scheme to name.
+      const withRefreshCookie = cookieDelivery
+        ? accessSchemes.map((access) => ({
+            [access]: [],
+            [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+          }))
+        : []
+
+      // Each access form alone. Under a mode with a body this is the body-borne refresh token —
+      // the same "or a credential this member cannot model" the empty entry states elsewhere; on
+      // a cookie-only deployment it is present only when the operation tolerates no refresh token
+      // at all, which is exactly what separates the two cases here.
+      const accessAlone =
+        bearerDelivery || credential === 'accessAndRefreshOptional'
+          ? accessSchemes.map((access) => ({ [access]: [] }))
+          : []
+
+      // Under `'both'` the two cases produce the same document, and that is a property of
+      // OpenAPI rather than a shortcut: once a body-borne alternative exists, no requirement list
+      // can insist on a credential that might be arriving in the body. The pair still differs
+      // where it can — under `'cookie'`, where the requirement is expressible.
+      return {
+        security: [...withRefreshCookie, ...accessAlone],
+        ...(bearerDelivery
+          ? {
+              requestBody:
+                cookieDelivery || credential === 'accessAndRefreshOptional'
+                  ? REFRESH_BODY
+                  : REQUIRED_REFRESH_BODY
+            }
+          : {})
+      }
+    }
     case 'platform':
       return { security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }] }
     case 'platformLogout':
@@ -408,9 +472,13 @@ function schemesFor(
     }
   }
 
-  // The refresh cookie is referenced only by `logout` and `refresh`, so it is defined only when
-  // the controller carrying them is mounted AND the deployment delivers it as a cookie.
-  if (registered.auth && cookieDelivery) {
+  // Three controllers reference the refresh cookie, so any of them mounted defines it: `auth`
+  // for `logout` and `refresh`, `sessions` for the two handlers that identify the caller's own
+  // session by it, and `passwordReset` for the change that spares that session while ending the
+  // rest. Defining it from `auth` alone left a deployment mounting only the session surface
+  // referencing a scheme its document never declared — which fails a consumer's document build,
+  // the failure this whole absent-not-unreferenced rule exists to prevent.
+  if ((registered.auth || registered.sessions || registered.passwordReset) && cookieDelivery) {
     schemes[AUTH_SECURITY_SCHEMES.refreshCookie] = {
       type: 'apiKey',
       in: 'cookie',

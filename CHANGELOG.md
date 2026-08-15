@@ -120,6 +120,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   | `controllers.platform: true` | `bymaxPlatformAccessBearer`, in every mode — platform credentials are header-read whatever `tokenDelivery` says. The registration switch decides, not `platform.enabled`                                                                                                                                                                                                                                                                 |
   | a controller not mounted     | no operation, and no scheme only it would have referenced                                                                                                                                                                                                                                                                                                                                                                                |
 
+  **Two operations need two credentials at once, and the document says so.** Found in review of
+  this PR, against the controllers rather than against the guard stack: `revokeAllSessions` is
+  JWT-guarded AND reads the refresh token, because it revokes every session except the caller's
+  and cannot spare a session it cannot name — without one it answers `auth.session_not_found`.
+  `listSessions` and `changePassword` read the same token and succeed without it, with a lesser
+  answer (`isCurrent` false everywhere; every session ended, the caller's included). Describing
+  all three as access-only told a bearer-mode client to send no body to an endpoint that refuses
+  without one, and a cookie-mode client that the refresh cookie was not read.
+
+  OpenAPI writes AND as one requirement entry carrying both schemes, so that is what they get —
+  and under `'both'` the list is the product of the two channels: each access form, once with the
+  refresh cookie beside it and once without, the second being the body-borne token that `security`
+  cannot name. The required and the optional case produce the same document in that mode, which is
+  a property of OpenAPI rather than a shortcut: once a body-borne alternative exists, no
+  requirement list can insist on a credential that might be arriving in the body.
+
+  The refresh-cookie scheme is now defined when **any** of the three controllers that reference it
+  is mounted, not only `auth` — a deployment mounting the session surface alone was referencing a
+  scheme its own document never declared.
+
   **A scheme the options cannot satisfy is absent**, never defined-and-unreferenced: nest-core
   fails a boot on a requirement naming an undefined scheme, and a document defining a credential
   the server will not read tells a generated client to offer it. Both directions are asserted —

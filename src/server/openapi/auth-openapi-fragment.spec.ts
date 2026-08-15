@@ -100,6 +100,14 @@ describe('buildAuthOpenApiFragment', () => {
     ['dashboard only', { ...DEFAULTS }],
     ['the auth controller alone', { ...DEFAULTS, passwordReset: false }],
     ['a dashboard surface without the auth controller', { ...DEFAULTS, auth: false }],
+    [
+      'the session surface without the auth controller',
+      { ...DEFAULTS, auth: false, sessions: true }
+    ],
+    [
+      'the session surface alone',
+      { ...DEFAULTS, auth: false, passwordReset: false, sessions: true }
+    ],
     ['platform without its MFA surface', { ...DEFAULTS, platform: true }],
     ['the platform MFA surface alone', { ...DEFAULTS, platform: false, platformMfa: true }],
     ['everything', EVERYTHING]
@@ -132,6 +140,15 @@ describe('buildAuthOpenApiFragment', () => {
     const fragment = buildAuthOpenApiFragment(optionsFor('cookie'), EVERYTHING)
     const PUBLIC: unknown[] = []
     const ACCESS = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
+    // Access required, refresh read: the pair is one AND-entry, and the access-alone entry beside
+    // it is what says the operation still answers without the refresh token.
+    const ACCESS_WITH_OPTIONAL_REFRESH = [
+      {
+        [AUTH_SECURITY_SCHEMES.accessCookie]: [],
+        [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+      },
+      { [AUTH_SECURITY_SCHEMES.accessCookie]: [] }
+    ]
     const PLATFORM = [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }]
 
     const security = Object.fromEntries(
@@ -152,7 +169,7 @@ describe('buildAuthOpenApiFragment', () => {
       'AuthController.resendVerification': PUBLIC,
       'PasswordResetController.forgotPassword': PUBLIC,
       'PasswordResetController.resetPassword': PUBLIC,
-      'PasswordResetController.changePassword': ACCESS,
+      'PasswordResetController.changePassword': ACCESS_WITH_OPTIONAL_REFRESH,
       'PasswordResetController.verifyOtp': PUBLIC,
       'PasswordResetController.resendOtp': PUBLIC,
       'MfaController.setup': ACCESS,
@@ -160,8 +177,13 @@ describe('buildAuthOpenApiFragment', () => {
       'MfaController.challenge': PUBLIC,
       'MfaController.disable': ACCESS,
       'MfaController.regenerateRecoveryCodes': ACCESS,
-      'SessionController.listSessions': ACCESS,
-      'SessionController.revokeAllSessions': ACCESS,
+      'SessionController.listSessions': ACCESS_WITH_OPTIONAL_REFRESH,
+      'SessionController.revokeAllSessions': [
+        {
+          [AUTH_SECURITY_SCHEMES.accessCookie]: [],
+          [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+        }
+      ],
       'SessionController.revokeSession': ACCESS,
       'PlatformAuthController.login': PUBLIC,
       'PlatformAuthController.mfaChallenge': PUBLIC,
@@ -305,6 +327,59 @@ describe('buildAuthOpenApiFragment', () => {
       })
     })
 
+    // The session sweep needs BOTH credentials, and under `'bearer'` they arrive by different
+    // channels: the access token in the header, the refresh token in the body. So the operation
+    // is one access requirement PLUS a required body — and the body is the one the property
+    // requirement rides on, because a caller who sends `{}` here is refused
+    // (`auth.session_not_found`), not served a lesser answer.
+    it('asks for the access header and a required body when both credentials are needed', () => {
+      const revokeAll = fragment.operations['SessionController.revokeAllSessions']
+
+      expect(revokeAll?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }])
+      expect(revokeAll?.['requestBody']).toEqual({
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['refreshToken'],
+              properties: {
+                refreshToken: {
+                  type: 'string',
+                  description: 'The refresh token, when it is not delivered as a cookie.'
+                }
+              }
+            }
+          }
+        }
+      })
+    })
+
+    // The same two credentials where the refresh half is only read: same access requirement, and
+    // a body that may be omitted. The pair is the point — one required body and one optional,
+    // from one delivery mode, because the two handlers really do differ.
+    it('asks for the same header and an optional body when the refresh half is only read', () => {
+      const list = fragment.operations['SessionController.listSessions']
+
+      expect(list?.['security']).toEqual([{ [AUTH_SECURITY_SCHEMES.accessBearer]: [] }])
+      expect(list?.['requestBody']).toEqual({
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                refreshToken: {
+                  type: 'string',
+                  description: 'The refresh token, when it is not delivered as a cookie.'
+                }
+              }
+            }
+          }
+        }
+      })
+    })
+
     // Logout reads the same channels and requires none of them: it answers 204 whatever arrives.
     // The pair is the point — one required body and one optional, from one delivery mode, because
     // the two operations really do differ.
@@ -371,6 +446,42 @@ describe('buildAuthOpenApiFragment', () => {
           }
         }
       })
+    })
+  })
+
+  describe('two credentials at once, under tokenDelivery: both', () => {
+    const fragment = buildAuthOpenApiFragment(optionsFor('both'), EVERYTHING)
+
+    // Every access form, once with the refresh cookie beside it and once without — the product,
+    // because a caller may present the access token either way and the refresh token either as
+    // the cookie or in the body. An entry without the refresh cookie is NOT "no refresh token":
+    // it is the body-borne one, which `security` has no way to name.
+    it('offers each access form with and without the refresh cookie', () => {
+      expect(fragment.operations['SessionController.revokeAllSessions']?.['security']).toEqual([
+        {
+          [AUTH_SECURITY_SCHEMES.accessCookie]: [],
+          [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+        },
+        {
+          [AUTH_SECURITY_SCHEMES.accessBearer]: [],
+          [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+        },
+        { [AUTH_SECURITY_SCHEMES.accessCookie]: [] },
+        { [AUTH_SECURITY_SCHEMES.accessBearer]: [] }
+      ])
+    })
+
+    // Required and optional collapse here, and the test records it rather than hiding it: once a
+    // body-borne alternative exists, no requirement list can insist on a credential that might be
+    // arriving in the body. What the document CAN still say is that the body itself is optional —
+    // the cookie may be carrying the token — so both operations describe it that way.
+    it('describes the required and the optional case identically, body included', () => {
+      const revokeAll = fragment.operations['SessionController.revokeAllSessions']
+      const list = fragment.operations['SessionController.listSessions']
+
+      expect(list?.['security']).toEqual(revokeAll?.['security'])
+      expect(list?.['requestBody']).toEqual(revokeAll?.['requestBody'])
+      expect(revokeAll?.['requestBody']).toEqual(expect.objectContaining({ required: false }))
     })
   })
 
