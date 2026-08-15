@@ -88,12 +88,16 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
 /**
  * Every controller this module can mount, whatever the feature flags say.
  *
- * The single list the conditional assembly below draws from, so that "which controllers exist"
- * is stated once. A suite that has to reason about the whole surface — the route-constant
- * completeness gate, for one — reads this instead of keeping a copy, and an e2e asserts that a
- * deployment with every flag on registers exactly these classes. Without that pair, a new
- * controller family reaches production while every gate that was supposed to notice quietly
- * skips it.
+ * The list the suites read when they have to reason about the whole surface — the route-constant
+ * completeness gate, and the check that no contributed request body lands on a method without
+ * payload semantics. Both of those pass by knowing less if their view of "every controller" is a
+ * copy that fell behind, so neither keeps one.
+ *
+ * It is **not** the array `registerAsync` builds: that one names the same classes again, each
+ * behind its own feature flag, because which controllers exist and which a given deployment
+ * mounts are different questions. The two are held together by an e2e that boots with every
+ * switch on and asserts the container registered exactly these classes — so a controller added
+ * to one and not the other is a red test rather than a gate that silently skips a family.
  *
  * Internal: exported for those tests, and deliberately absent from the package barrel.
  */

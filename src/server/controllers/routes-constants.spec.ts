@@ -21,8 +21,8 @@
  */
 import { PATH_METADATA } from '@nestjs/common/constants'
 
-import { AUTH_CONTROLLERS } from '../bymax-auth.module'
 import { AUTH_ROUTES } from '../../shared/constants/routes'
+import { AUTH_CONTROLLERS } from '../bymax-auth.module'
 
 /**
  * Every route path the controllers declare, relative to the auth prefix.

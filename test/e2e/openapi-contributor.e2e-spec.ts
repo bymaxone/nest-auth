@@ -15,10 +15,10 @@ import { RequestMethod, type Type } from '@nestjs/common'
 import { METHOD_METADATA } from '@nestjs/common/constants'
 import { DiscoveryService, ModulesContainer, Reflector } from '@nestjs/core'
 
+import { BYMAX_AUTH_EMAIL_PROVIDER } from '../../src/server/bymax-auth.constants'
 import { AUTH_CONTROLLERS } from '../../src/server/bymax-auth.module'
 import { AuthOpenApiContributor } from '../../src/server/openapi/auth-openapi.contributor'
 import { OPENAPI_CONTRIBUTOR_METADATA } from '../../src/server/openapi/auth-openapi-fragment'
-import { BYMAX_AUTH_EMAIL_PROVIDER } from '../../src/server/bymax-auth.constants'
 import { bootstrapTestApp, createMockEmailProvider } from './setup'
 import type { BootstrappedTestApp } from './setup'
 
@@ -40,11 +40,12 @@ const METHODS_WITH_BODY_SEMANTICS = new Set([
 /**
  * Every controller this library can mount, by the class name the fragment keys itself with.
  *
- * Derived from `AUTH_CONTROLLERS` — the list `BymaxAuthModule` assembles its conditional
- * `controllers` array from — rather than written out again here. A copy would let a new
+ * Derived from `AUTH_CONTROLLERS` rather than written out again here. A copy would let a new
  * controller family be described by the fragment while this suite knows nothing about it, which
- * is the silent skip these gates exist to remove. The registration test below closes the other
- * end: what the module actually registers, with every flag on, must be exactly that list.
+ * is the silent skip these gates exist to remove. The registration test above closes the other
+ * end: `AUTH_CONTROLLERS` is not itself the array the module builds — that one names the same
+ * classes again behind their feature flags — so what the module actually registers, with every
+ * switch on, is asserted to be exactly that list.
  */
 const CONTROLLERS: Readonly<Record<string, Type<object>>> = Object.fromEntries(
   AUTH_CONTROLLERS.map((controller) => [controller.name, controller])

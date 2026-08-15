@@ -130,7 +130,7 @@ type Credential =
   | 'platformLogout'
   | 'platformRefresh'
 
-/** The three kinds whose requirement is built from BOTH credentials rather than from one. */
+/** The kinds whose requirement is built from BOTH credentials rather than from one. */
 type TwoCredentialKind = Extract<
   Credential,
   | 'accessAndRefreshRequired'
@@ -431,7 +431,7 @@ function describe(
  * differ under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
  * body carries it.
  *
- * @param credential - Which of the three two-credential kinds this operation is.
+ * @param credential - Which two-credential kind this operation is.
  * @param cookieDelivery - Whether this deployment delivers credentials as cookies.
  * @param bearerDelivery - Whether this deployment delivers them in headers and bodies.
  * @returns The security requirement, plus the request body where one channel is the body.
