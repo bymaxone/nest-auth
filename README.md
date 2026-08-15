@@ -1079,7 +1079,7 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | POST   | `/register`                    | Public                             | Register a new dashboard user and issue tokens              |
 | POST   | `/login`                       | Public                             | Authenticate with email/password (may return MFA challenge) |
 | POST   | `/logout`                      | Public (reads both credentials)    | Revoke the session; blacklists the access token it is given |
-| POST   | `/refresh`                     | Public (refresh cookie)            | Rotate refresh token, issue new access token                |
+| POST   | `/refresh`                     | Public (refresh cookie or body)    | Rotate refresh token, issue new access token                |
 | GET    | `/me`                          | `JwtAuthGuard`                     | Current dashboard user payload                              |
 | POST   | `/ws-ticket`                   | `JwtAuthGuard`                     | Mint a single-use ticket for a WebSocket upgrade            |
 | POST   | `/verify-email`                | Public                             | Verify email with OTP                                       |
