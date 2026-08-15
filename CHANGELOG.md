@@ -55,6 +55,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   CR and LF because its job is the mail header, so the rest of the C0/C1 range reached the log
   from a consumer-supplied `messages` override.
 
+  **Redaction merges overlapping occurrences rather than replacing one secret at a time.** Two
+  secrets that overlap without either containing the other — `['1234','2345']` over `12345` —
+  defeat every sequential strategy including longest-match-first: the scan takes `1234`, resumes
+  past it, and emits `<redacted>5`, leaving the tail of the second credential in the log. Every
+  occurrence is now located against the original text, overlapping and touching ranges collapse
+  into one redaction, and the marker itself is suppressed when a secret occurs inside it (`cted`
+  is inside `<redacted>`). Found by the `@bymax-one/nest-notification` seat, which carried the
+  identical defect and measured this case.
+
   **`describeError` is exported alongside `redactSecrets`**, because redaction alone is not the
   whole guard: the helper also reads only `name` and `message` (never `stack`, never the
   transport's own fields), caps the length so a re-encoded body cannot flood a log, strips control

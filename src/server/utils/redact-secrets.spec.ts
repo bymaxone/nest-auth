@@ -76,6 +76,51 @@ describe('redactSecrets', () => {
     expect(redactSecrets('1234', ['1234', '123'])).toBe('<redacted>')
   })
 
+  // Two secrets that overlap without either containing the other, which no ordering fixes. A scan
+  // taking the longest match at each position consumes `1234` at 0, resumes at 4, matches nothing
+  // and emits `<redacted>5` — the tail of the SECOND secret left in the log. Collecting the ranges
+  // against the original text and merging the overlap is what covers it. Found by the
+  // nest-notification seat, which had the identical defect and measured this exact case.
+  it('leaves no fragment when two secrets overlap without nesting', () => {
+    const line = redactSecrets('12345', ['1234', '2345'])
+
+    expect(line).not.toContain('5')
+    expect(line).toBe('<redacted>')
+  })
+
+  // Occurrences of a single secret can overlap themselves. Stepping past a whole match when
+  // searching for the next would skip the second one and leave it in place.
+  it('finds occurrences of one secret that overlap each other', () => {
+    expect(redactSecrets('aaa', ['aa'])).toBe('<redacted>')
+  })
+
+  // Two secrets far apart stay two separate redactions — merging is for overlap, not for
+  // everything, and collapsing them would tell an operator one credential appeared where two did.
+  it('keeps disjoint occurrences as separate redactions', () => {
+    expect(redactSecrets('a 111111 b 222222 c', ['111111', '222222'])).toBe(
+      'a <redacted> b <redacted> c'
+    )
+  })
+
+  // Ranges are collected in the order the SECRETS are declared, which has nothing to do with the
+  // order they appear in the text — a caller passing `[token, otp]` may well hit the otp first.
+  // Merging walks the list assuming ascending starts, so without the sort the second range is
+  // compared against a later one, swallows it, and the earlier secret is emitted verbatim. This
+  // asserts the leaking case rather than the tidy one: unsorted, the output is `aaa <redacted>`.
+  it('redacts secrets declared in the opposite order to their positions', () => {
+    const line = redactSecrets('aaa bbb', ['bbb', 'aaa'])
+
+    expect(line).not.toContain('aaa')
+    expect(line).toBe('<redacted> <redacted>')
+  })
+
+  // Adjacent but non-overlapping occurrences: `aaa` ends exactly where `bbb` begins. Merging on
+  // touching ranges makes that one redaction rather than two, which is the honest rendering —
+  // there is no text between them for a second marker to be separated by.
+  it('merges occurrences that touch without overlapping', () => {
+    expect(redactSecrets('aaabbb', ['aaa', 'bbb'])).toBe('<redacted>')
+  })
+
   // A secret that occurs inside the replacement marker, which is a stricter problem than it first
   // looks. Two things must hold. The scan must not match `cted` inside a `<redacted>` it just
   // wrote — a replace-one-at-a-time loop does, producing `<reda<redacted>>`. AND the marker itself

@@ -50,16 +50,10 @@ const REDACTED = '<redacted>'
  * @returns `value` with every occurrence of every secret replaced.
  */
 export function redactSecrets(value: string, secrets: readonly string[]): string {
-  const present = [...secrets]
-    // Length rather than `=== ''`: this is a guard against a degenerate pattern, not a comparison
-    // of one credential against another, and writing it as a length check says so in the code
-    // instead of relying on a reader to infer it.
-    .filter((secret) => secret.length > 0)
-    // Longest first, so `1234` is preferred over `123` where both are in flight. Without it the
-    // shorter match wins, consumes its prefix and leaves the remaining `4` — a fragment of a live
-    // credential — sitting in the log. Sorted on a copy: `secrets` is the caller's array and
-    // reordering it under them would be a side effect they never asked for.
-    .sort((a, b) => b.length - a.length)
+  // Length rather than `=== ''`: this is a guard against a degenerate pattern, not a comparison
+  // of one credential against another, and writing it as a length check says so in the code
+  // instead of relying on a reader to infer it.
+  const present = secrets.filter((secret) => secret.length > 0)
 
   // The marker is written INTO the output, so it is subject to the same contract as everything
   // else in it: if a secret occurs inside `<redacted>` — `cted` does — then emitting the marker
@@ -69,33 +63,53 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // tokens (lower-case hex) cannot be, but the function is exported and a caller's may.
   const marker = present.some((secret) => REDACTED.includes(secret)) ? '' : REDACTED
 
-  // Scanned once, left to right, emitting into a separate buffer. Two properties come from that
-  // shape and neither is available to a replace-one-secret-at-a-time loop.
+  // Every occurrence of every secret, located against the ORIGINAL text before anything is
+  // rewritten. That ordering is the whole design, and two defects live in the alternatives.
   //
-  // It never revisits what it wrote. Replacing sequentially rescans text this function already
-  // rewrote, so a later secret can match INSIDE a `<redacted>` an earlier pass inserted — `cted`
-  // does, since the marker contains it — and the line comes out as `<reda<redacted>>`.
+  // Replacing one secret at a time rescans text this function already produced, so a later secret
+  // can match INSIDE a marker an earlier pass inserted — `cted` does — giving `<reda<redacted>>`.
   //
-  // And it matches literally, with no pattern to escape. Building a regular expression from a
-  // caller-supplied secret would need every metacharacter escaped first, and an escape that
-  // missed one would either redact text that is not the secret or throw on an unbalanced group.
-  let out = ''
-  let index = 0
+  // And scanning left to right taking the longest match at each position still loses. Consider
+  // `['1234', '2345']` over `12345`: the scan takes `1234` at 0, resumes at 4, finds no match,
+  // and emits `<redacted>5` — the tail of the SECOND secret surviving in the log. No ordering
+  // fixes it, because the two overlap without either containing the other. Collecting the ranges
+  // first and merging the overlap into one redaction is what covers it.
+  const ranges: Array<{ start: number; end: number }> = []
 
-  // Stryker disable next-line EqualityOperator: `<=` is equivalent here and no test can separate
-  // it. The extra iteration it allows lands on `index === value.length`, where `startsWith` is
-  // false for every non-empty secret and `charAt` returns the empty string, so the buffer is
-  // unchanged and the loop exits on the next check. Same output, one wasted comparison.
-  while (index < value.length) {
-    const matched = present.find((secret) => value.startsWith(secret, index))
+  for (const secret of present) {
+    // `from + 1`, not `from + secret.length`: occurrences of one secret can overlap each other
+    // (`aa` inside `aaa`), and stepping past the whole match would skip the second one.
+    for (let from = value.indexOf(secret); from !== -1; from = value.indexOf(secret, from + 1)) {
+      ranges.push({ start: from, end: from + secret.length })
+    }
+  }
 
-    if (matched === undefined) {
-      out += value.charAt(index)
-      index += 1
+  // Ascending by start, because the merge below walks the list once and compares each range only
+  // against the one before it. Collection order follows the SECRETS array, which has nothing to do
+  // with where they appear — pass `[token, otp]` for a body that mentions the otp first and the
+  // unsorted list makes the merge swallow the earlier range, emitting that secret verbatim.
+  ranges.sort((a, b) => a.start - b.start)
+
+  // Overlapping and nested ranges collapse into one redaction. Emitting a marker per range would
+  // write two for a single overlapping region and, worse, leave the gap between them intact.
+  const merged: Array<{ start: number; end: number }> = []
+
+  for (const range of ranges) {
+    const last = merged.at(-1)
+
+    if (last !== undefined && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end)
       continue
     }
-    out += marker
-    index += matched.length
+    merged.push({ ...range })
   }
-  return out
+
+  let out = ''
+  let cursor = 0
+
+  for (const range of merged) {
+    out += value.slice(cursor, range.start) + marker
+    cursor = range.end
+  }
+  return out + value.slice(cursor)
 }
