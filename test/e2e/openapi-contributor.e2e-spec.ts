@@ -11,45 +11,90 @@
  * deployment actually mounted.
  */
 
-import { RequestMethod } from '@nestjs/common'
+import { RequestMethod, type Type } from '@nestjs/common'
 import { METHOD_METADATA } from '@nestjs/common/constants'
-import { Reflector } from '@nestjs/core'
+import { DiscoveryService, ModulesContainer, Reflector } from '@nestjs/core'
 
-import { AuthController } from '../../src/server/controllers/auth.controller'
-import { EmailChangeController } from '../../src/server/controllers/email-change.controller'
-import { InvitationController } from '../../src/server/controllers/invitation.controller'
-import { MfaController } from '../../src/server/controllers/mfa.controller'
-import { PasswordResetController } from '../../src/server/controllers/password-reset.controller'
-import { PlatformAuthController } from '../../src/server/controllers/platform-auth.controller'
-import { PlatformMfaController } from '../../src/server/controllers/platform-mfa.controller'
-import { SessionController } from '../../src/server/controllers/session.controller'
-import { OAuthController } from '../../src/server/oauth/oauth.controller'
-
+import { AUTH_CONTROLLERS } from '../../src/server/bymax-auth.module'
 import { AuthOpenApiContributor } from '../../src/server/openapi/auth-openapi.contributor'
 import { OPENAPI_CONTRIBUTOR_METADATA } from '../../src/server/openapi/auth-openapi-fragment'
-import { bootstrapTestApp } from './setup'
+import { BYMAX_AUTH_EMAIL_PROVIDER } from '../../src/server/bymax-auth.constants'
+import { bootstrapTestApp, createMockEmailProvider } from './setup'
 import type { BootstrappedTestApp } from './setup'
 
-/** Methods RFC 7231 leaves without payload semantics, which OpenAPI 3.0.3 defers to. */
-const BODYLESS_METHODS = new Set([RequestMethod.GET, RequestMethod.DELETE, RequestMethod.HEAD])
+/**
+ * The methods that DEFINE what a payload means, which is the list OpenAPI 3.0.3 defers to.
+ *
+ * An allowlist rather than a denylist of the others, deliberately: RFC 7231 leaves GET, DELETE,
+ * HEAD **and OPTIONS** without payload semantics, and Nest's `RequestMethod` carries more members
+ * than those four (`ALL`, `SEARCH`, and the WebDAV set). Enumerating what is forbidden makes
+ * every member added upstream default to allowed; enumerating what is permitted makes it default
+ * to refused, which is the direction a gate should fail in.
+ */
+const METHODS_WITH_BODY_SEMANTICS = new Set([
+  RequestMethod.POST,
+  RequestMethod.PUT,
+  RequestMethod.PATCH
+])
 
 /**
  * Every controller this library can mount, by the class name the fragment keys itself with.
  *
- * The map exists so the check below can reach a handler's decorator metadata from a
- * `'Controller.method'` string. A contributed controller missing from it fails the test rather
- * than being skipped — the silent skip is the failure mode a coverage gate like this dies of.
+ * Derived from `AUTH_CONTROLLERS` — the list `BymaxAuthModule` assembles its conditional
+ * `controllers` array from — rather than written out again here. A copy would let a new
+ * controller family be described by the fragment while this suite knows nothing about it, which
+ * is the silent skip these gates exist to remove. The registration test below closes the other
+ * end: what the module actually registers, with every flag on, must be exactly that list.
  */
-const CONTROLLERS: Readonly<Record<string, new (...args: never[]) => object>> = {
-  AuthController,
-  PasswordResetController,
-  MfaController,
-  SessionController,
-  PlatformAuthController,
-  PlatformMfaController,
-  InvitationController,
-  EmailChangeController,
-  OAuthController
+const CONTROLLERS: Readonly<Record<string, Type<object>>> = Object.fromEntries(
+  AUTH_CONTROLLERS.map((controller) => [controller.name, controller])
+)
+
+/** The options every optional controller needs before the module will mount it. */
+const EVERY_FEATURE = {
+  platform: { enabled: true },
+  invitations: { enabled: true, tokenTtlSeconds: 3_600 },
+  oauth: {
+    google: {
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+      callbackUrl: 'https://app.example.com/auth/oauth/google/callback'
+    }
+  }
+}
+
+/**
+ * Every registration switch on, so no family is filtered out before a check can see it.
+ *
+ * The email provider comes with it: `EmailChangeService.onModuleInit` refuses to boot unless the
+ * configured provider implements `sendEmailChangeVerification`, which is the module telling a
+ * consumer that an address-change flow with no way to deliver its token is a misconfiguration
+ * and not a runtime surprise.
+ */
+const EVERY_CONTROLLER = {
+  extraModuleProviders: [
+    {
+      provide: BYMAX_AUTH_EMAIL_PROVIDER,
+      // `sendEmailChangeVerification` is optional on `IEmailProvider` and the shared mock leaves
+      // it out, which is what the boot check above refuses. Added here rather than to the shared
+      // mock, so the deployments that do not mount the address-change surface keep proving they
+      // work without it.
+      useValue: {
+        ...createMockEmailProvider(),
+        sendEmailChangeVerification: async (): Promise<void> => undefined
+      }
+    }
+  ],
+  controllers: {
+    auth: true,
+    passwordReset: true,
+    sessions: true,
+    mfa: true,
+    platform: true,
+    invitations: true,
+    emailChange: true,
+    oauth: true
+  }
 }
 
 /**
@@ -64,7 +109,7 @@ const CONTROLLERS: Readonly<Record<string, new (...args: never[]) => object>> = 
  */
 function methodOf(handler: string): RequestMethod {
   const [controllerName, methodName] = handler.split('.')
-  const controller = CONTROLLERS[controllerName as keyof typeof CONTROLLERS]
+  const controller = controllerName === undefined ? undefined : CONTROLLERS[controllerName]
 
   if (controller === undefined || methodName === undefined) {
     // Not a soft skip: a contributed controller this map does not know is exactly the case that
@@ -106,6 +151,22 @@ describe('OpenAPI contributor (E2E)', () => {
     expect(marked).toBe(true)
   })
 
+  // `AUTH_CONTROLLERS` is the list two gates read as their definition of "every controller this
+  // library has": the route-constant completeness spec and the body check below. A list that
+  // drifts from what the module actually mounts turns both of them into tests that pass by
+  // knowing less — so the list is asserted against the container, on a deployment with every
+  // switch on, rather than trusted.
+  it('registers exactly the controllers AUTH_CONTROLLERS names', async () => {
+    boot = await bootstrapTestApp(EVERY_FEATURE, EVERY_CONTROLLER)
+
+    const registered = new DiscoveryService(boot.app.get(ModulesContainer))
+      .getControllers()
+      .map((wrapper) => wrapper.metatype?.name)
+      .filter((name): name is string => name !== undefined)
+
+    expect([...registered].sort()).toEqual(AUTH_CONTROLLERS.map((c) => c.name).sort())
+  })
+
   // The rule OpenAPI 3.0.3 inherits from RFC 7231: a payload is only defined for methods that
   // define one, and on the others `requestBody` **SHALL be ignored by consumers**. A fragment
   // that contributed one there would describe a request no generated client sends — which is not
@@ -129,7 +190,9 @@ describe('OpenAPI contributor (E2E)', () => {
       .filter(([, operation]) => 'requestBody' in operation)
       .map(([handler]) => handler)
 
-    const offenders = withBody.filter((handler) => BODYLESS_METHODS.has(methodOf(handler)))
+    const offenders = withBody.filter(
+      (handler) => !METHODS_WITH_BODY_SEMANTICS.has(methodOf(handler))
+    )
 
     expect(offenders).toEqual([])
     // The filter must have had something to look at: a fragment contributing no bodies at all

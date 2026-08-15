@@ -6,7 +6,7 @@
  *
  * @layer Module
  */
-import { DynamicModule, Module, type Provider } from '@nestjs/common'
+import { DynamicModule, Module, type Provider, type Type } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 
 import {
@@ -135,6 +135,31 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
  *   admin MFA challenges can resolve the admin identity. Omitting the token causes an
  *   `AUTH_ERROR_CODES.TOKEN_INVALID` response on the first platform MFA challenge.
  */
+
+/**
+ * Every controller this module can mount, whatever the feature flags say.
+ *
+ * The single list the conditional assembly below draws from, so that "which controllers exist"
+ * is stated once. A suite that has to reason about the whole surface — the route-constant
+ * completeness gate, for one — reads this instead of keeping a copy, and an e2e asserts that a
+ * deployment with every flag on registers exactly these classes. Without that pair, a new
+ * controller family reaches production while every gate that was supposed to notice quietly
+ * skips it.
+ *
+ * Internal: exported for those tests, and deliberately absent from the package barrel.
+ */
+export const AUTH_CONTROLLERS: readonly Type<object>[] = [
+  AuthController,
+  MfaController,
+  PasswordResetController,
+  SessionController,
+  PlatformAuthController,
+  PlatformMfaController,
+  OAuthController,
+  InvitationController,
+  EmailChangeController
+]
+
 @Module({})
 export class BymaxAuthModule {
   /**

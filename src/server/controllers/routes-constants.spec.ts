@@ -10,39 +10,19 @@
  * Nothing here reads a list of expected paths: it reads `PATH_METADATA` off the controllers,
  * which is the same metadata Nest routes with. A handler that changes path, or a controller
  * that gains one, fails this test without anyone remembering to update it.
+ *
+ * The controllers come from `AUTH_CONTROLLERS` — the same list `BymaxAuthModule` assembles its
+ * conditional `controllers` array from — rather than from a copy kept here. A copy would have
+ * reintroduced exactly the failure this gate exists to remove: a new controller family absent
+ * from the local list contributes no paths, so both assertions below pass while its routes are
+ * named nowhere. `test/e2e/openapi-contributor.e2e-spec.ts` closes the remaining gap by
+ * asserting, against a deployment with every flag on, that the classes Nest registered are
+ * exactly the ones in that list.
  */
 import { PATH_METADATA } from '@nestjs/common/constants'
 
-import { AuthController } from './auth.controller'
-import { EmailChangeController } from './email-change.controller'
-import { InvitationController } from './invitation.controller'
-import { MfaController } from './mfa.controller'
-import { PasswordResetController } from './password-reset.controller'
-import { PlatformAuthController } from './platform-auth.controller'
-import { PlatformMfaController } from './platform-mfa.controller'
-import { SessionController } from './session.controller'
-import { OAuthController } from '../oauth/oauth.controller'
+import { AUTH_CONTROLLERS } from '../bymax-auth.module'
 import { AUTH_ROUTES } from '../../shared/constants/routes'
-
-/**
- * Every controller this library can mount.
- *
- * Typed as constructors rather than left to inference: the loop below reaches a handler by name
- * off the prototype, which needs an index, and a union of nine instance types has none. Naming
- * the array's element type as the class shape it really is keeps that a single assertion on
- * `object` instead of one laundered through `unknown`.
- */
-const CONTROLLERS: readonly (new (...args: never[]) => object)[] = [
-  AuthController,
-  PasswordResetController,
-  MfaController,
-  SessionController,
-  PlatformAuthController,
-  PlatformMfaController,
-  InvitationController,
-  EmailChangeController,
-  OAuthController
-]
 
 /**
  * Every route path the controllers declare, relative to the auth prefix.
@@ -52,7 +32,7 @@ const CONTROLLERS: readonly (new (...args: never[]) => object)[] = [
 function declaredPaths(): string[] {
   const paths = new Set<string>()
 
-  for (const controller of CONTROLLERS) {
+  for (const controller of AUTH_CONTROLLERS) {
     const prefix: unknown = Reflect.getMetadata(PATH_METADATA, controller)
     const proto = controller.prototype as Record<string, unknown>
 
