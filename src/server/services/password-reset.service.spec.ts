@@ -2070,6 +2070,29 @@ describe('PasswordResetService', () => {
       errorSpy.mockRestore()
     })
 
+    // `userId` is interpolated into the same line as the error, and a reset OTP is short enough
+    // that an identifier containing one is a real possibility rather than a curiosity. Every field
+    // the template interpolates has to be sanitised, not only the one carrying channel text.
+    it('redacts the reset code from the user id as well as from the error', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockOtpService.generate.mockReturnValue('531642')
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u-531642-x',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(new Error('channel down'))
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await otpMethodService.resendOtp(dto, mockReq)
+      await flushMicrotasks()
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('sendPasswordResetOtp failed')
+      expect(logged).not.toContain('531642')
+      errorSpy.mockRestore()
+    })
+
     // A provider that throws SYNCHRONOUSLY rather than rejecting. `Promise.resolve(call())`
     // evaluates the call before the promise wraps it, so the throw skipped the redacting handler
     // entirely and surfaced in `resendOtp`'s outer catch, which logs the error raw — with the code

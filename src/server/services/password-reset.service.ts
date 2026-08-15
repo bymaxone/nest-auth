@@ -30,6 +30,7 @@ import type {
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeError } from '../utils/describe-error'
 import { normalizeEmail } from '../utils/normalize-email'
+import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
@@ -732,8 +733,16 @@ export class PasswordResetService {
       .catch((err: unknown) => {
         // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
         // error, and this token is a working password reset until its TTL expires.
+        // Redacted over the whole line, for the same reason as the OTP path: every field the
+        // template interpolates has to sit inside the redaction boundary, not just the error.
+        // `userId` is NOT redacted here, and the asymmetry with the OTP path below is deliberate.
+        // An OTP is four to eight digits, so an identifier containing one by coincidence is a real
+        // possibility. A reset token is 64 hex characters: for an id to contain it, the id would
+        // have to be derived FROM the token, which no repository does. Redacting it anyway looked
+        // symmetric and was dead — the mutation gate reported it as such, since no realistic test
+        // can reach it.
         this.logger.error(
-          `sendPasswordResetToken failed for user ${userId}: ${describeError(err, [rawToken])}`
+          `sendPasswordResetToken failed for user ${userId}: ` + describeError(err, [rawToken])
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
@@ -766,8 +775,14 @@ export class PasswordResetService {
       .then(() => provider.sendPasswordResetOtp(tenantId, email, otp))
       .catch((err: unknown) => {
         // Redacted, not raw: the quoted body carries this otp, which resets the password.
+        // Redacted over the whole line: `userId` is the consumer's identifier and is
+        // interpolated outside `describeError`'s reach. A reset OTP may be as short as four
+        // digits, so an id containing it is not far-fetched.
+        // Per-field, not whole-line — see the verification-OTP site for why: redacting the
+        // assembled string lets either redaction alone satisfy the test, so neither is proven.
         this.logger.error(
-          `sendPasswordResetOtp failed for user ${userId}: ${describeError(err, [otp])}`
+          `sendPasswordResetOtp failed for user ${redactSecrets(userId, [otp])}: ` +
+            describeError(err, [otp])
         )
       })
   }

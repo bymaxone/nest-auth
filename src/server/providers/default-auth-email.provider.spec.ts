@@ -648,6 +648,21 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<non-error: object>')
   })
 
+  // Redaction runs per component, and things happen AFTER it: `logSafe` replaces a
+  // control-character value with `<malformed>`, a failed link becomes `<malformed-error>`, and the
+  // links are joined with a separator. Each writes text the per-component pass never saw, so a
+  // caller whose declared secret is one of those markers gets it published by the function meant
+  // to remove it. Here the message is a bare newline, `logSafe` turns it into `<malformed>`, and
+  // that string is the declared secret — so the finished line must not contain it.
+  it('removes a secret that redaction itself created downstream', async () => {
+    sink.send.mockRejectedValueOnce(new Error('\n'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '<malformed>')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('<malformed>')
+  })
+
   // The bound is on the WHOLE line, not on each link of the chain. Capping per link lets a
   // three-deep chain contribute three times the budget — measured at 608 characters for a limit
   // of 200 — which defeats the point: the cap exists so a channel cannot relay an unbounded

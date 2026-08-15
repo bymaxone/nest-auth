@@ -77,10 +77,11 @@ describe('redactSecrets', () => {
   })
 
   // Two secrets that overlap without either containing the other, which no ordering fixes. A scan
-  // taking the longest match at each position consumes `1234` at 0, resumes at 4, matches nothing
-  // and emits `<redacted>5` — the tail of the SECOND secret left in the log. Collecting the ranges
-  // against the original text and merging the overlap is what covers it. Found by the
-  // nest-notification seat, which had the identical defect and measured this exact case.
+  // taking the longest match at each position and RESUMING PAST IT consumes `1234` at 0, restarts
+  // at 4, matches nothing, and emits `<redacted>5` — the tail of the SECOND secret left in the
+  // log. What covers it is the inner extension: after claiming a region the scan keeps growing it
+  // while any secret starts inside, so `2345` beginning at index 1 pulls the region out to 5.
+  // Found by the nest-notification seat, which had the identical defect and measured this case.
   it('leaves no fragment when two secrets overlap without nesting', () => {
     const line = redactSecrets('12345', ['1234', '2345'])
 
@@ -102,11 +103,12 @@ describe('redactSecrets', () => {
     )
   })
 
-  // Ranges are collected in the order the SECRETS are declared, which has nothing to do with the
-  // order they appear in the text — a caller passing `[token, otp]` may well hit the otp first.
-  // Merging walks the list assuming ascending starts, so without the sort the second range is
-  // compared against a later one, swallows it, and the earlier secret is emitted verbatim. This
-  // asserts the leaking case rather than the tidy one: unsorted, the output is `aaa <redacted>`.
+  // Declaration order has nothing to do with the order the secrets appear in the text — a caller
+  // passing `[token, otp]` may well hit the otp first. The scan asks for the LONGEST match at each
+  // position, and it gets that by taking the first hit against a list sorted longest-first, so the
+  // sort is what makes "first match" mean "longest match". Without it a shorter secret that is a
+  // prefix of a longer one claims the position, consumes only its own length, and the remainder of
+  // the longer one is emitted verbatim. This asserts absence of the leaked text, not tidiness.
   it('redacts secrets declared in the opposite order to their positions', () => {
     const line = redactSecrets('aaa bbb', ['bbb', 'aaa'])
 

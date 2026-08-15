@@ -67,7 +67,9 @@ function isError(value: unknown): value is Error {
  *
  * @param error - The link being described.
  * @param secrets - Credentials that must not survive into the line.
- * @returns One redacted, bounded, control-character-free line.
+ * @returns One redacted, control-character-free line. NOT length-bounded: the cap is applied
+ *   once to the finished description, because capping each part would let a chain of parts
+ *   return a multiple of the budget.
  */
 function describeOneLink(error: Error, secrets: readonly string[]): string {
   try {
@@ -159,12 +161,22 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
   // (`Promise.reject()` is a valid rejection). Without this, that case returns an empty string
   // and the caller emits `delivery failed for "X": ` with a dangling colon and no diagnosis at
   // all. Reported rather than swallowed: "something rejected with nothing" is itself the finding.
-  if (parts.length === 0) return `<non-error: ${typeof error}>`
+  // Redacted ONCE MORE, over the finished line, and this is not belt-and-braces. Redaction runs
+  // per component, and three things happen after it: `logSafe` REPLACES a control-character value
+  // with `<malformed>`, a failed link becomes `<malformed-error>`, and the parts are joined with
+  // a separator. Each of those writes text the per-component pass never saw, so a caller whose
+  // declared secret is one of those markers — or that spans a join seam — gets it published by
+  // the very function meant to remove it. `redactSecrets` also enforces its own end-to-end check,
+  // so a seam it cannot resolve collapses to an empty diagnostic rather than a leaking one.
+  //
+  // The empty-parts answer goes through it too: `typeof` yields a short word, and "short word a
+  // caller declared as secret" is exactly the case this guard exists for.
+  const line = parts.length === 0 ? `<non-error: ${typeof error}>` : parts.join(' <- ')
 
-  // Capped again on the JOIN, not only per link. The per-link bound alone lets a three-deep chain
+  // Capped on the finished line, not per link. The per-link bound alone lets a three-deep chain
   // return three times the documented budget — measured at 608 characters for the limit of 200 —
   // which is the same "one bound per part multiplies" mistake the comment inside `describeOneLink`
   // warns about, made one level up. The bound exists to stop a channel relaying an unbounded
   // quantity of its own text into a log, and a chain is a channel's text just as a message is.
-  return parts.join(' <- ').slice(0, ERROR_TEXT_LIMIT)
+  return redactSecrets(line, secrets).slice(0, ERROR_TEXT_LIMIT)
 }

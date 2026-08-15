@@ -34,6 +34,7 @@ import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
@@ -1127,8 +1128,20 @@ export class AuthService {
       .catch((err: unknown) => {
         // The error is NOT passed through: a relay that rejects by quoting the message body
         // puts THIS otp into it, and the raw object would carry the quote to the log.
+        // The WHOLE line is redacted, not only the error component. `userId` comes from the
+        // consumer's repository and is interpolated here too — an identifier that happens to
+        // contain the generated code puts it back into the record after `describeError` removed
+        // it. Redacting at the boundary that reaches the logger is the only placement that
+        // covers every field the template interpolates.
+        // Each field is sanitised at ITS OWN boundary rather than the whole line at the end.
+        // `userId` is the consumer's identifier, interpolated outside `describeError`'s reach — an
+        // id that happens to contain the generated code would put it back after the error text was
+        // cleaned. Redacting the assembled line instead would cover it, but then either redaction
+        // alone satisfies the assertion and NEITHER is proven: the mutation gate reported exactly
+        // that, one surviving mutant per argument, each masked by the other.
         this.logger.error(
-          `sendEmailVerificationOtp failed for user ${userId}: ${describeError(err, [otp])}`
+          `sendEmailVerificationOtp failed for user ${redactSecrets(userId, [otp])}: ` +
+            describeError(err, [otp])
         )
       })
   }

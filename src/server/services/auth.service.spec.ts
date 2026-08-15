@@ -405,6 +405,19 @@ describe('AuthService', () => {
       expect(payload['role']).toBeUndefined()
     })
 
+    // The mirror of the case below, and the one that pins the FLAG rather than the send. Without
+    // it, a build that ignored `emailVerification.required` and always sent would pass every other
+    // register test — the default fixture has it off, so nothing else looks at the negative side.
+    // It used to die by accident instead: the send was `provider.send(...).catch(...)`, and a mock
+    // returning a non-promise made `.catch` throw. Deferring the call through `.then` made the
+    // code tolerant of that, which removed the accidental kill and left the rule unasserted.
+    it('sends no verification OTP when emailVerification.required is false', async () => {
+      await service.register(dto, mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
+    })
+
     // Verifies that when emailVerification.required is true, the OTP is generated and stored.
     it('should send verification OTP when emailVerification.required is true', async () => {
       const module = await Test.createTestingModule({
@@ -2472,6 +2485,32 @@ describe('AuthService', () => {
       )
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
       expect(loggerSpy.mock.calls[0]?.[0]).not.toContain('654321')
+      loggerSpy.mockRestore()
+    })
+
+    // `userId` is the consumer's identifier and is interpolated into the same line as the error.
+    // An id that happens to contain the generated code puts it back into the record after the
+    // error text was cleaned — and a six-digit run inside a UUID-shaped id is not exotic. Every
+    // field the template interpolates has to be sanitised, not only the one that obviously
+    // carries channel text.
+    it('redacts the code from the user id as well as from the error', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...USER,
+        id: 'user-864209-abc',
+        emailVerified: false
+      })
+      mockOtpService.generate.mockReturnValue('864209')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('sendEmailVerificationOtp failed')
+      expect(logged).not.toContain('864209')
       loggerSpy.mockRestore()
     })
 
