@@ -332,8 +332,9 @@ describe('DefaultAuthEmailProvider', () => {
   // The rethrown error is the ORIGINAL, unlaundered. Deliberate, and asserted so a later "let us
   // sanitize what we throw too" cannot land silently: a caller opted into this policy to branch on
   // the channel's own codes, and a replacement error takes those away. The consequence — that the
-  // quoted body travels with it — is the caller's to contain, which is why `redactSecrets` is
-  // exported and the option documents the duty.
+  // quoted body travels with it — is the caller's to contain, which is why `describeChannelStatus`
+  // is exported and the option documents the duty. NOT `redactSecrets`: a substring match cannot
+  // remove a body the relay re-encoded, which is the gap this whole change exists for.
   it('re-throws the original error object rather than a sanitized copy', async () => {
     const boom = new Error('550 rejected: "Your code is 424242."')
     sink.send.mockRejectedValueOnce(boom)
