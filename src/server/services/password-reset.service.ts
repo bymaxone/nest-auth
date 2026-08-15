@@ -746,10 +746,8 @@ export class PasswordResetService {
     // does not linger in Redis until natural TTL expiry. A leaked Redis snapshot
     // could otherwise expose unconsumed reset tokens for accounts that never
     // received the email.
-    // `.then(() => call())`, not `Promise.resolve(call())`: the second evaluates the provider
-    // BEFORE the promise wraps it, so a provider that throws SYNCHRONOUSLY bypasses this handler
-    // entirely and lands in `initiateReset`'s outer catch, which logs the error raw — with
-    // `rawToken` inside it. Deferring turns a synchronous throw into a rejection this sees.
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
     const provider = this.emailProvider
 
     // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
@@ -814,12 +812,10 @@ export class PasswordResetService {
     const otp = this.otpService.generate(otpLength)
     await this.otpService.store(PASSWORD_RESET_PURPOSE, identifier, otp, otpTtlSeconds)
 
-    // Captured before deferring: the guard above narrowed `this.emailProvider`, and that narrowing
-    // does not survive into a callback the compiler cannot prove runs before the field changes.
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
     const provider = this.emailProvider
 
-    // Deferred for the same reason as `sendToken` above: a synchronous throw from the provider
-    // would skip this handler and reach `resendOtp`'s outer catch, which logs raw — with the otp.
     // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
     // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
     // the call before the promise wraps it, so the throw skips this handler and reaches the

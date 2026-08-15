@@ -73,28 +73,30 @@ function createCapturingEmailProvider(): CapturingMockEmailProvider {
  * that the provider has been called yet, and a test that reads the captured OTP the instant the
  * response lands is asserting a timing the API never offered.
  *
- * That read used to pass by luck. The send began synchronously, so the provider had almost always
- * recorded the code before the response was awaited. Deferring the call through `.then` — which is
- * what stops a synchronously-throwing provider from bypassing the redacting handler — moved it one
- * microtask later and turned the luck into roughly a one-in-three failure. Polling asks the
- * question the endpoint actually answers: the code arrives, shortly.
+ * Reading it the instant the response lands passes only by luck — the send begins synchronously,
+ * so the provider has USUALLY recorded the code by then. "Usually" is not a contract, and any
+ * change to when the send starts turns that luck into a failure. Polling asks the question the
+ * endpoint actually answers: the code arrives, shortly.
+ *
+ * Note what this deliberately does NOT do: wait for a code different from a previous one. Two
+ * dispatches can legitimately produce the same six digits — `OtpService.generate` draws
+ * independently and does not exclude the last value — so "different" would hang once in a million
+ * runs on a correct implementation. A caller testing a re-dispatch clears the captured entry
+ * first and waits for any code, which asks about the DISPATCH rather than about the draw.
  *
  * @param provider - The capturing provider holding the dispatched codes.
  * @param email - Recipient to wait for.
- * @param previous - When given, waits for a code DIFFERENT from this one, which is what a resend
- *   must produce; without it, waits for any code at all.
  * @returns The dispatched OTP.
  */
 async function awaitDispatchedOtp(
   provider: CapturingMockEmailProvider,
-  email: string,
-  previous?: string
+  email: string
 ): Promise<string> {
   const key = email.toLowerCase()
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const otp = provider.otps.get(key)
-    if (otp !== undefined && otp !== previous) return otp
+    if (otp !== undefined) return otp
     await new Promise((resolve) => setImmediate(resolve))
   }
   throw new Error(`no OTP dispatched to ${key} within the polling budget`)
@@ -284,12 +286,17 @@ describe('email verification flow (E2E)', () => {
       const firstOtp = await awaitDispatchedOtp(fixture.email, email)
       expect(firstOtp).toBeTruthy()
 
+      // Cleared before the resend, so the wait below is for a DISPATCH rather than for a different
+      // draw. Two dispatches can legitimately produce the same six digits, and asking for a
+      // different value would hang once in a million runs against a correct implementation.
+      fixture.email.otps.delete(email)
+
       const resend = await request(fixture.app.getHttpServer())
         .post('/resend-verification')
         .send({ email, tenantId: 'tenant-1' })
       expect([200, 204]).toContain(resend.status)
 
-      const secondOtp = await awaitDispatchedOtp(fixture.email, email, firstOtp)
+      const secondOtp = await awaitDispatchedOtp(fixture.email, email)
       expect(secondOtp).toMatch(/^\d{6}$/)
 
       const res = await request(fixture.app.getHttpServer())

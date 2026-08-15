@@ -1119,9 +1119,8 @@ export class AuthService {
     const otp = this.otpService.generate(length)
     await this.otpService.store('email_verification', identifier, otp, ttl)
 
-    // Deferred through `.then`: calling the provider directly evaluates it before `.catch` is
-    // attached, so a synchronous throw escapes this handler and reaches the caller's own error
-    // path, which logs raw — with `otp` in the message a quoting relay produced.
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
     const provider = this.emailProvider
 
     // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
