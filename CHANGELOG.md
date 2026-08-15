@@ -136,6 +136,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   a property of OpenAPI rather than a shortcut: once a body-borne alternative exists, no
   requirement list can insist on a credential that might be arriving in the body.
 
+  **And `logout` names the access token it revokes.** Also found in review, and the one with a
+  security consequence rather than an ergonomic one: `logout` is `@Public()` — deliberately, so a
+  user whose 15-minute access token expired can still sign out — but it READS that token and
+  blacklists its `jti` for whatever life it has left. Described as refresh-only, a generated
+  client sent no `Authorization` header, so the refresh session was revoked while a valid access
+  token stayed usable until it expired. Every form it reads is now an alternative, richest first,
+  with the empty entry last saying that nothing is required. Its platform twin already worked this
+  way (`[{platformBearer}, {}]`), which is what made the dashboard side look like the oversight it
+  was.
+
   The refresh-cookie scheme is now defined when **any** of the three controllers that reference it
   is mounted, not only `auth` — a deployment mounting the session surface alone was referencing a
   scheme its own document never declared.

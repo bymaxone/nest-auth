@@ -95,8 +95,6 @@ type Credential =
   | 'access'
   /** The refresh credential is REQUIRED: with none of its forms present the operation 401s. */
   | 'refreshRequired'
-  /** The refresh credential is READ but optional: absent, the operation still answers 204. */
-  | 'refreshOptional'
   /**
    * BOTH credentials, and both required: the access token authorises the caller while the refresh
    * token names the session they are calling from. Without it the handler refuses.
@@ -106,7 +104,12 @@ type Credential =
    * The access token is required and the refresh token is READ: present, it identifies the
    * caller's own session; absent, the operation still succeeds with a lesser answer.
    */
-  | 'accessAndRefreshOptional'
+  | 'accessWithOptionalRefresh'
+  /**
+   * Both credentials are READ and NEITHER is required. Each one it receives does more of the job,
+   * and a caller with neither still gets an answer.
+   */
+  | 'optionalAccessAndRefresh'
   | 'platform'
   | 'platformLogout'
   | 'platformRefresh'
@@ -132,7 +135,14 @@ const OPERATIONS: Readonly<
     // Measured, and the two differ: `logout` answers 204 with no credential at all, while
     // `refresh` 401s. Describing them alike would tell a generated client that one demands
     // something it does not, or that the other tolerates something it will refuse.
-    'AuthController.logout': 'refreshOptional',
+    //
+    // `logout` reads the ACCESS token too, and a document that omitted it caused a weaker
+    // logout than the server performs: the handler blacklists that token's `jti` for whatever
+    // life it has left, so a generated client sending no `Authorization` header revokes the
+    // refresh session and leaves a valid access token in circulation until it expires. Neither
+    // credential is required — this is the operation a signed-out-by-expiry user reaches — so
+    // every form is an alternative beside the empty one.
+    'AuthController.logout': 'optionalAccessAndRefresh',
     'AuthController.refresh': 'refreshRequired',
     'AuthController.me': 'access',
     'AuthController.wsTicket': 'access',
@@ -145,7 +155,7 @@ const OPERATIONS: Readonly<
     // Reads the refresh token to spare the caller's own session when it revokes the others, and
     // succeeds without it — a password change from a client that sent none simply signs every
     // session out, including the one that asked.
-    'PasswordResetController.changePassword': 'accessAndRefreshOptional',
+    'PasswordResetController.changePassword': 'accessWithOptionalRefresh',
     'PasswordResetController.verifyOtp': 'none',
     'PasswordResetController.resendOtp': 'none'
   },
@@ -165,7 +175,7 @@ const OPERATIONS: Readonly<
     // without it — it revokes everything EXCEPT the current session, so a request that cannot
     // name the current one would sign the caller out, and it answers `auth.session_not_found`
     // instead. `revokeSession` names its target in the path and reads no refresh token at all.
-    'SessionController.listSessions': 'accessAndRefreshOptional',
+    'SessionController.listSessions': 'accessWithOptionalRefresh',
     'SessionController.revokeAllSessions': 'accessAndRefreshRequired',
     'SessionController.revokeSession': 'access'
   },
@@ -355,17 +365,20 @@ function describe(
           ? { requestBody: cookieDelivery ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
           : {})
       }
-    case 'refreshOptional':
-      // Same channels, no requirement: this operation answers 204 whatever arrives, so every
-      // form is optional and the empty alternative is present in every mode that has a scheme.
-      return {
-        security: cookieDelivery ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}] : [],
-        ...(bearerDelivery ? { requestBody: REFRESH_BODY } : {})
-      }
     case 'accessAndRefreshRequired':
-      return describeTwoCredentials(true, cookieDelivery, bearerDelivery)
-    case 'accessAndRefreshOptional':
-      return describeTwoCredentials(false, cookieDelivery, bearerDelivery)
+      return describeTwoCredentials({ access: true, refresh: true }, cookieDelivery, bearerDelivery)
+    case 'accessWithOptionalRefresh':
+      return describeTwoCredentials(
+        { access: true, refresh: false },
+        cookieDelivery,
+        bearerDelivery
+      )
+    case 'optionalAccessAndRefresh':
+      return describeTwoCredentials(
+        { access: false, refresh: false },
+        cookieDelivery,
+        bearerDelivery
+      )
     case 'platform':
       return { security: [{ [AUTH_SECURITY_SCHEMES.platformBearer]: [] }] }
     case 'platformLogout':
@@ -383,26 +396,32 @@ function describe(
 }
 
 /**
- * The requirement for an operation that needs the access token AND reads the refresh token.
+ * The requirement for an operation that reads BOTH the access and the refresh credential.
  *
  * OpenAPI writes AND as ONE requirement entry carrying both schemes — the opposite of the
- * alternation elsewhere in this file, where each entry is a separate alternative. The access
- * token authorises the caller; the refresh token names the session they are calling from, which
- * is the only reason these handlers read it.
+ * alternation elsewhere in this file, where each entry is a separate alternative. So the list is
+ * the product of the two channels: every access form, once with the refresh cookie beside it and
+ * once without, the second being the body-borne refresh token that `security` cannot name.
  *
- * Under `'both'` the required and the optional case produce the same document, and that is a
- * property of the format rather than a shortcut: once a body-borne alternative exists, no
- * requirement list can insist on a credential that might be arriving in the body. The pair still
- * differs under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
+ * A half that is not required earns its own alternatives — the access form alone, the refresh
+ * cookie alone, and where NEITHER is required the empty entry that says a caller with nothing at
+ * all still gets an answer. Ordering matters to a generated client: a generator attaches the
+ * credentials of the first requirement it can satisfy, so the entry naming both comes first and
+ * the leanest one last, and a client holding both sends both.
+ *
+ * Under `'both'` a required refresh half and an optional one produce the same document, and that
+ * is a property of the format rather than a shortcut: once a body-borne alternative exists, no
+ * requirement list can insist on a credential that might be arriving in the body. The two still
+ * differ under `'cookie'`, where the requirement is expressible, and under `'bearer'`, where the
  * body carries it.
  *
- * @param refreshRequired - Whether the operation refuses without the refresh token.
+ * @param required - Which halves the operation refuses without.
  * @param cookieDelivery - Whether this deployment delivers credentials as cookies.
  * @param bearerDelivery - Whether this deployment delivers them in headers and bodies.
  * @returns The security requirement, plus the request body where one channel is the body.
  */
 function describeTwoCredentials(
-  refreshRequired: boolean,
+  required: { access: boolean; refresh: boolean },
   cookieDelivery: boolean,
   bearerDelivery: boolean
 ): FragmentObject {
@@ -422,15 +441,21 @@ function describeTwoCredentials(
 
   // Each access form alone. Under a mode with a body this is the body-borne refresh token — the
   // same "or a credential this member cannot model" the empty entry states elsewhere; on a
-  // cookie-only deployment it appears only when the operation tolerates no refresh token at all,
-  // which is exactly what separates the two cases.
+  // cookie-only deployment it appears only when the operation tolerates no refresh token at all.
   const accessAlone =
-    bearerDelivery || !refreshRequired ? accessSchemes.map((access) => ({ [access]: [] })) : []
+    bearerDelivery || !required.refresh ? accessSchemes.map((access) => ({ [access]: [] })) : []
+
+  // The refresh cookie without any access token, and then nothing at all. Both exist only where
+  // the access half is optional too — which is `logout`, the operation a user whose access token
+  // expired hours ago still has to be able to reach.
+  const refreshAlone =
+    !required.access && cookieDelivery ? [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }] : []
+  const nothing = !required.access && !required.refresh ? [{}] : []
 
   return {
-    security: [...withRefreshCookie, ...accessAlone],
+    security: [...withRefreshCookie, ...accessAlone, ...refreshAlone, ...nothing],
     ...(bearerDelivery
-      ? { requestBody: cookieDelivery || !refreshRequired ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
+      ? { requestBody: cookieDelivery || !required.refresh ? REFRESH_BODY : REQUIRED_REFRESH_BODY }
       : {})
   }
 }

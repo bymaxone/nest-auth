@@ -161,7 +161,19 @@ describe('buildAuthOpenApiFragment', () => {
     expect(security).toEqual({
       'AuthController.register': PUBLIC,
       'AuthController.login': PUBLIC,
-      'AuthController.logout': [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }, {}],
+      // Every form it reads, richest first, and the empty entry last: `logout` requires nothing
+      // (a user whose access token expired must still be able to sign out) but blacklists the
+      // access token's `jti` when it gets one, so a document that named only the refresh cookie
+      // would have generated clients perform a weaker logout than the server supports.
+      'AuthController.logout': [
+        {
+          [AUTH_SECURITY_SCHEMES.accessCookie]: [],
+          [AUTH_SECURITY_SCHEMES.refreshCookie]: []
+        },
+        { [AUTH_SECURITY_SCHEMES.accessCookie]: [] },
+        { [AUTH_SECURITY_SCHEMES.refreshCookie]: [] },
+        {}
+      ],
       'AuthController.refresh': [{ [AUTH_SECURITY_SCHEMES.refreshCookie]: [] }],
       'AuthController.me': ACCESS,
       'AuthController.wsTicket': ACCESS,
@@ -384,6 +396,15 @@ describe('buildAuthOpenApiFragment', () => {
     // The pair is the point — one required body and one optional, from one delivery mode, because
     // the two operations really do differ.
     it('describes the logout body as optional', () => {
+      // The access half is named here too, and that is the security half of this operation: the
+      // handler blacklists the access token's `jti` for whatever life it has left, so a client
+      // told to send no `Authorization` header would revoke the refresh session and leave a live
+      // access token in circulation until it expires. Neither credential is required — the empty
+      // alternative says so — but both are named, so a generator attaches what it holds.
+      expect(fragment.operations['AuthController.logout']?.['security']).toEqual([
+        { [AUTH_SECURITY_SCHEMES.accessBearer]: [] },
+        {}
+      ])
       expect(fragment.operations['AuthController.logout']?.['requestBody']).toEqual({
         required: false,
         content: {
