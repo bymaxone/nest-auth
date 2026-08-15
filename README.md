@@ -1256,8 +1256,9 @@ it, including cookie names you have since changed.
 > Nothing reports this. No error, no unmatched key, no failing build — the document simply stops
 > asking for credentials on the routes the library never knew about, which are the ones your
 > backend owns. Keep the default, derived from your own delivery mode so it names only a scheme
-> that exists on that deployment; per-operation beats document-level, so it cannot reach these
-> routes.
+> that exists on that deployment. It is what covers your routes, and it cannot disturb this
+> library's: a per-operation requirement outranks a document-level one, and every operation the
+> contributor describes carries its own.
 >
 > **Verify with a diff, not by reasoning.** Render the document with the contributor active and
 > again with your entries in place, and compare only the operations you mount. The consumer who
