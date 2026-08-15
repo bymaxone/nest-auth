@@ -159,7 +159,13 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   be — an HTTP client that echoes the request it failed on is the ordinary shape. The fail-open
   handler passed that error straight to `logger.error(msg, err)`, publishing it with its stack and
   whatever the client hung on it, under a comment claiming the plaintext never reached the logger.
-  It now describes the error the same way every mail path does.
+  **Nothing** from that error reaches the line now — not the object, not a description, not a status
+  parsed off its front. The first fix described it with `describeChannelStatus` and was wrong in a
+  way worth recording: that helper validates the SMTP reply grammar, and a breach checker is not an
+  SMTP channel. A password of `424 Correct Horse!` echoed back parses as the reply `424` and
+  publishes the first three characters of the credential. Right tool, wrong port. No status is lost
+  by dropping it, because an HTTP checker's own code would have to come from a structured field the
+  interface does not expose.
 
   Two DTO comments carried the same over-claim (`RegisterDto.password`,
   `AcceptInvitationDto.password`: _"never logged or persisted in plaintext"_) and now say **by this

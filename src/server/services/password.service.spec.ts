@@ -234,13 +234,18 @@ describe('PasswordService', () => {
     // already learned the same lesson one port over, where a mail relay quoted the body it
     // rejected and put a live OTP in a log.
     it.each([
-      ['quoted verbatim', (p: string) => `POST /range failed for body "${p}"`],
+      ['quoted verbatim', 'a-long-unique-passphrase', (p: string) => `POST /range failed: "${p}"`],
       [
         'quoted re-encoded',
+        'a-long-unique-passphrase',
         (p: string) => `POST /range failed: ${Buffer.from(p).toString('base64')}`
-      ]
-    ])('withholds a password the checker %s in its error', async (_why, build) => {
-      const plain = 'a-long-unique-passphrase'
+      ],
+      // The password's own FIRST THREE CHARACTERS, which is what a reply-code parser publishes
+      // when pointed at a port that speaks no reply codes. `describeChannelStatus` was used here
+      // first and validates the SMTP grammar, so a password of `424 Correct Horse!` parses as the
+      // reply `424`. Right tool, wrong port — the row exists so nobody reaches for it again.
+      ['echoed behind a reply-code prefix', '424 Correct Horse!', (p: string) => p]
+    ])('withholds a password the checker %s in its error', async (_why, plain, build) => {
       mockBreachChecker.isBreached.mockRejectedValue(new Error(build(plain)))
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
 
@@ -259,6 +264,8 @@ describe('PasswordService', () => {
           .map((chunk) => Buffer.from(chunk, 'base64').toString('utf8'))
           .join(' ')
         expect(decoded).not.toContain(plain)
+        // Not even a fragment: three characters of a password is three characters of a password.
+        expect(logged).not.toContain(plain.slice(0, 3))
         // Still a diagnosis: the operator has to be able to tell this from silence.
         expect(logged).toContain('admitting the password')
       } finally {

@@ -14,7 +14,6 @@ import type { ResolvedOptions } from '../config/resolved-options'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { IPasswordBreachChecker } from '../interfaces/password-breach-checker.interface'
-import { describeChannelStatus } from '../utils/describe-error'
 
 // promisify picks the 3-arg overload (no options); cast to the 4-arg form we need.
 const scrypt = promisify(nodeScrypt) as (
@@ -388,18 +387,26 @@ export class PasswordService {
     try {
       breached = await this.breachChecker.isBreached(plain)
     } catch (err: unknown) {
-      // The error object is NOT handed to the logger. A checker is consumer code that received
-      // the plaintext, so its error is a place the plaintext can be — and redacting it would not
-      // be enough for the same reason it was not enough for the mail channel: a client that
-      // echoes what it failed on may echo it encoded, where no substring match reaches it.
-      // `describeChannelStatus` publishes only what it can rebuild from a validated shape.
+      // NOTHING from the error reaches the line — not the object, not a description of it, not a
+      // status parsed off its front. A checker is consumer code that received the plaintext, so
+      // its error is a place the plaintext can be.
+      //
+      // `describeChannelStatus` was used here first and was wrong, which is worth recording
+      // because the mistake is reusable: it validates the SMTP reply grammar, and a breach
+      // checker is not an SMTP channel. Its guarantee is that a relay's prose cannot masquerade
+      // as a reply code; it says nothing about text that is not a reply at all. A password of
+      // `424 Correct Horse!` echoed back as the error message parses as the reply `424` and
+      // publishes the first three characters of the credential. Right tool, wrong port.
+      //
+      // There is no status to preserve here either, so nothing is lost: an HTTP checker's own
+      // code would have to come from a structured field it exposes, never parsed out of prose,
+      // and this interface exposes none. The line already carries the two facts an operator acts
+      // on — the check did not answer, and the password was admitted.
       //
       // Stryker disable next-line StringLiteral: diagnostic-only log text; the behaviour under
       // test is that the password is ADMITTED and a line is emitted, neither of which the
       // wording changes
-      this.logger.error(
-        `breach check threw; admitting the password (the checker fails open): ${describeChannelStatus(err)}`
-      )
+      this.logger.error('breach check threw; admitting the password (the checker fails open)')
       return
     }
     if (breached) {
