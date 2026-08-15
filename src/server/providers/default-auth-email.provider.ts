@@ -465,6 +465,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // Stripped once, then used for both the header and the log line: a subject is a single header,
     // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
     const subject = sanitizeSubject(message.subject)
+
+    // The RECIPIENT joins the values that must not survive into the line, and it is the likeliest
+    // of them to appear. The template deliberately omits the address — a log line reaches a wider
+    // audience than the inbox — but an SMTP rejection routinely NAMES the recipient it refused
+    // (`550 user@example.com: recipient rejected`), so the transport's own diagnostic puts back
+    // what the template left out. Not a quoted body: the ordinary shape of a bounce.
+    const withheldValues = [...secrets, to]
     try {
       await this.sink.send({
         tenantId,
@@ -496,12 +503,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // `logSafe`, because `sanitizeSubject` removes only CR and LF: its job is the mail header,
       // where those two inject one. A log record can be forged by more of the C0/C1 range than
       // that, and an override returns a consumer-built string.
-      const loggedSubject = logSafe(redactSecrets(subject, secrets))
+      const loggedSubject = logSafe(redactSecrets(subject, withheldValues))
 
       this.logger.error(
         safeLogLine(
-          `delivery failed for "${loggedSubject}": ${describeError(error, secrets)}`,
-          secrets
+          `delivery failed for "${loggedSubject}": ${describeError(error, withheldValues)}`,
+          withheldValues
         )
       )
       // Log first, then honour the configured policy: a deployment on 'rethrow' wants the failure

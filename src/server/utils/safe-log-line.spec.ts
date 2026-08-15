@@ -46,6 +46,16 @@ describe('safeLogLine', () => {
     expect(withheld).toContain('must not be logged')
   })
 
+  // The placeholder is text, so the rule it enforces applies to it. A secret of `withheld` occurs
+  // inside the placeholder itself — and a device string is arbitrary, so this is reachable — which
+  // would have the guard publish the very value it detected. The last line out has to satisfy the
+  // contract too.
+  it('does not publish a secret through its own placeholder', () => {
+    const line = safeLogLine('x withheld', ['withheld'])
+
+    expect(line).not.toContain('withheld')
+  })
+
   // More than one value can be in flight, and any of them surviving is enough to withhold.
   it('withholds when any one of several secrets survives', () => {
     expect(safeLogLine('a 111111 b', ['999999', '111111'])).not.toContain('111111')

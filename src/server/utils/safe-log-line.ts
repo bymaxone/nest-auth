@@ -3,6 +3,7 @@
  *
  * @layer Utility
  */
+import { redactSecrets } from './redact-secrets'
 
 /**
  * Emitted in place of a line whose composition reconstructed a value that must not be logged.
@@ -35,5 +36,12 @@ const WITHHELD =
  * @returns The line, or the withheld placeholder.
  */
 export function safeLogLine(line: string, secrets: readonly string[]): string {
-  return secrets.some((secret) => secret.length > 0 && line.includes(secret)) ? WITHHELD : line
+  if (!secrets.some((secret) => secret.length > 0 && line.includes(secret))) return line
+
+  // The placeholder is text like any other, so it is subject to the rule it enforces: a secret of
+  // `withheld` — and a device string is arbitrary — occurs inside it, which would have this guard
+  // publish the value it just detected. `redactSecrets` strips it, and collapses to an empty line
+  // when the collision cannot be resolved, which is the correct end for a line that cannot be
+  // written safely at all.
+  return redactSecrets(WITHHELD, secrets)
 }

@@ -65,6 +65,41 @@ function createCapturingEmailProvider(): CapturingMockEmailProvider {
   }
 }
 
+/**
+ * Waits for the OTP dispatch these endpoints perform WITHOUT awaiting it.
+ *
+ * `/register` and `/resend-verification` both fire the send and return, deliberately: a down
+ * channel must not turn either into a failed request. So the HTTP response carries no promise
+ * that the provider has been called yet, and a test that reads the captured OTP the instant the
+ * response lands is asserting a timing the API never offered.
+ *
+ * That read used to pass by luck. The send began synchronously, so the provider had almost always
+ * recorded the code before the response was awaited. Deferring the call through `.then` — which is
+ * what stops a synchronously-throwing provider from bypassing the redacting handler — moved it one
+ * microtask later and turned the luck into roughly a one-in-three failure. Polling asks the
+ * question the endpoint actually answers: the code arrives, shortly.
+ *
+ * @param provider - The capturing provider holding the dispatched codes.
+ * @param email - Recipient to wait for.
+ * @param previous - When given, waits for a code DIFFERENT from this one, which is what a resend
+ *   must produce; without it, waits for any code at all.
+ * @returns The dispatched OTP.
+ */
+async function awaitDispatchedOtp(
+  provider: CapturingMockEmailProvider,
+  email: string,
+  previous?: string
+): Promise<string> {
+  const key = email.toLowerCase()
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const otp = provider.otps.get(key)
+    if (otp !== undefined && otp !== previous) return otp
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  throw new Error(`no OTP dispatched to ${key} within the polling budget`)
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap with emailVerification.required = true
 // ---------------------------------------------------------------------------
@@ -150,7 +185,7 @@ describe('email verification flow (E2E)', () => {
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Verify User', tenantId: 'tenant-1' })
       expect(reg.status).toBe(201)
 
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       expect(otp).toMatch(/^\d{6}$/)
 
       const res = await request(fixture.app.getHttpServer())
@@ -199,7 +234,7 @@ describe('email verification flow (E2E)', () => {
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Verifies', tenantId: 'tenant-1' })
       const refreshToken = (reg.body as { refreshToken: string }).refreshToken
 
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       await request(fixture.app.getHttpServer())
         .post('/verify-email')
         .send({ email, otp, tenantId: 'tenant-1' })
@@ -246,7 +281,7 @@ describe('email verification flow (E2E)', () => {
         .post('/register')
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Resend User', tenantId: 'tenant-1' })
 
-      const firstOtp = fixture.email.otps.get(email)
+      const firstOtp = await awaitDispatchedOtp(fixture.email, email)
       expect(firstOtp).toBeTruthy()
 
       const resend = await request(fixture.app.getHttpServer())
@@ -254,7 +289,7 @@ describe('email verification flow (E2E)', () => {
         .send({ email, tenantId: 'tenant-1' })
       expect([200, 204]).toContain(resend.status)
 
-      const secondOtp = fixture.email.otps.get(email)
+      const secondOtp = await awaitDispatchedOtp(fixture.email, email, firstOtp)
       expect(secondOtp).toMatch(/^\d{6}$/)
 
       const res = await request(fixture.app.getHttpServer())
@@ -291,7 +326,7 @@ describe('email verification flow (E2E)', () => {
         name: 'Already Verified',
         tenantId: 'tenant-1'
       })
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       await request(fixture.app.getHttpServer())
         .post('/verify-email')
         .send({ email, otp, tenantId: 'tenant-1' })

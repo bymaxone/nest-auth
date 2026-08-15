@@ -681,6 +681,20 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<redacted>')
   })
 
+  // The likeliest shape of all, and it needs no quoted body: an SMTP rejection NAMES the
+  // recipient it refused. The template deliberately omits the address — a log line reaches a
+  // wider audience than the inbox — so the transport's own diagnostic was putting back exactly
+  // what the template left out.
+  it('keeps the recipient out of the log when the transport names it', async () => {
+    sink.send.mockRejectedValueOnce(new Error('550 recipient@example.com: recipient rejected'))
+
+    await provider.sendMfaEnabledNotification('t', 'recipient@example.com')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('recipient@example.com')
+    expect(logged).toContain('<redacted>')
+  })
+
   // The seam ONE LEVEL UP from the composition inside `describeError`: the provider's own template
   // joins a sanitised subject and a sanitised description with `": `, and a value can straddle
   // that. Measured with a device string of `foo": Error: bar` — the subject renders `foo`, the
