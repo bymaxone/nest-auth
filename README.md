@@ -1260,15 +1260,23 @@ it, including cookie names you have since changed.
 > library's: a per-operation requirement outranks a document-level one, and every operation the
 > contributor describes carries its own.
 >
-> **An empty `{}` alternative means one of two things, and the difference matters when you read
-> the rendered document.** Beside a named scheme under `tokenDelivery: 'both'`, it is how OpenAPI
-> says "or a credential this member cannot model" — the refresh token arriving in the request
-> body, which `security` has no vocabulary for. On `logout`, in **every** delivery mode including
-> `cookie`, it means what it says: the operation requires nothing, because a user whose access
-> token expired must still be able to sign out. A consumer measured the second case and expected
-> only the first, so it is worth reading the operation before concluding which one you are
-> looking at. `logout` therefore renders four alternatives under `cookie` — both credentials,
-> each alone, and neither — and `password/change` renders two.
+> **What an empty `{}` alternative says, and where this library uses it as an approximation.**
+> In OpenAPI it means one thing: authentication is **optional** for that operation — a caller
+> presenting none of the named schemes is valid. Tooling reads it as anonymous access and infers
+> nothing about a request body from it.
+>
+> On `logout` that is exactly right, in **every** delivery mode including `cookie`: the operation
+> really does answer a caller who presents nothing, which is why a user whose access token
+> expired can still sign out. It renders four alternatives there — both credentials, each alone,
+> and neither — and `password/change` renders two.
+>
+> On `refresh` under `tokenDelivery: 'both'` it is an **approximation, and a permissive one**.
+> That operation refuses a caller with no credential at all; the token may simply arrive in the
+> request body, which `security` has no vocabulary for. The empty entry is what lets the document
+> describe the body-only caller, and the cost is that it also tells tooling anonymous access is
+> acceptable when it is not. The `requestBody` beside it carries the real requirement. Stated
+> plainly because an earlier version of this note called `{}` "a credential this member cannot
+> model" — that is the intent behind the choice, not what the notation says.
 >
 > **Verify with a diff, not by reasoning.** Render the document with the contributor active and
 > again with your entries in place, and compare only the operations you mount. The consumer who
