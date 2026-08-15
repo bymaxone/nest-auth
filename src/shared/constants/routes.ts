@@ -102,14 +102,19 @@ export const AUTH_PLATFORM_ROUTES = {
 } as const
 
 /**
- * Platform administrator MFA routes (`controllers.platformMfa: true`).
+ * Platform administrator MFA routes (`controllers.platform: true`).
  *
  * Mounted under `platform/mfa/`
- * (`src/server/controllers/platform-mfa.controller.ts`). Separate from
- * {@link AUTH_PLATFORM_ROUTES} because the controller is separate: a deployment can mount the
- * platform surface without its MFA endpoints. The challenge is NOT here — it belongs to the
- * login flow on `PlatformAuthController`, which is why it sits with the routes that issue
- * credentials rather than with the ones that manage them.
+ * (`src/server/controllers/platform-mfa.controller.ts`). A separate family because the
+ * controller is separate, NOT because the switch is: `controllers.platform: true` mounts
+ * `PlatformAuthController` and `PlatformMfaController` together, and there is no
+ * `controllers.platformMfa` option to turn one on without the other. The platform plane requires
+ * MFA of its administrators, so a deployment that could mount the login surface without the
+ * enrollment surface would be one where an operator can be required to present a second factor
+ * they have no endpoint to set up.
+ *
+ * The challenge is NOT here — it belongs to the login flow on `PlatformAuthController`, which is
+ * why it sits with the routes that issue credentials rather than with the ones that manage them.
  */
 export const AUTH_PLATFORM_MFA_ROUTES = {
   /** POST — begin TOTP enrollment for a platform administrator. */

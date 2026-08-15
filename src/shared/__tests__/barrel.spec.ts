@@ -90,6 +90,12 @@ describe('shared barrel — constant exports', () => {
     expect(Object.keys(AUTH_INVITATION_ROUTES).length).toBeGreaterThan(0)
     expect(typeof AUTH_PROXY_ROUTES).toBe('object')
     expect(Object.keys(AUTH_PROXY_ROUTES).length).toBeGreaterThan(0)
+    expect(typeof AUTH_EMAIL_CHANGE_ROUTES).toBe('object')
+    expect(Object.keys(AUTH_EMAIL_CHANGE_ROUTES).length).toBeGreaterThan(0)
+    expect(typeof AUTH_PLATFORM_MFA_ROUTES).toBe('object')
+    expect(Object.keys(AUTH_PLATFORM_MFA_ROUTES).length).toBeGreaterThan(0)
+    expect(typeof AUTH_OAUTH_ROUTES).toBe('object')
+    expect(Object.keys(AUTH_OAUTH_ROUTES).length).toBeGreaterThan(0)
   })
 
   // The aggregate map must contain every NestJS controller route family
@@ -108,8 +114,11 @@ describe('shared barrel — constant exports', () => {
       mfa: AUTH_MFA_ROUTES,
       password: AUTH_PASSWORD_ROUTES,
       platform: AUTH_PLATFORM_ROUTES,
+      platformMfa: AUTH_PLATFORM_MFA_ROUTES,
       sessions: AUTH_SESSION_ROUTES,
-      invitations: AUTH_INVITATION_ROUTES
+      invitations: AUTH_INVITATION_ROUTES,
+      emailChange: AUTH_EMAIL_CHANGE_ROUTES,
+      oauth: AUTH_OAUTH_ROUTES
     })
     expect(AUTH_ROUTES).not.toHaveProperty('proxy')
   })

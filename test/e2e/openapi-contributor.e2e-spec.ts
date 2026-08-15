@@ -178,12 +178,7 @@ describe('OpenAPI contributor (E2E)', () => {
   // a constant in another file. This reads the routes Nest actually registered and crosses them
   // with the operations the fragment contributed.
   it('contributes no request body to a method that has no body semantics', async () => {
-    boot = await bootstrapTestApp(
-      { platform: { enabled: true } },
-      {
-        controllers: { auth: true, passwordReset: true, sessions: true, mfa: true, platform: true }
-      }
-    )
+    boot = await bootstrapTestApp(EVERY_FEATURE, EVERY_CONTROLLER)
 
     const fragment = boot.app.get(AuthOpenApiContributor).contributeOpenApi()
     const withBody = Object.entries(fragment.operations)
