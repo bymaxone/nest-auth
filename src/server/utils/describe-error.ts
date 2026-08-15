@@ -99,7 +99,13 @@ function describeOneLink(
 ): string {
   try {
     const name = nameOf(error, secrets, channelText)
-    const raw = String(error.message)
+
+    // Redacted BEFORE the status is read off it, not after. `statusOf` returns the first three
+    // digits of the message, and a message that BEGINS with the credential — `123456 could not be
+    // delivered`, which a custom provider is free to produce — would hand back half a six-digit
+    // code as if it were a status. A real SMTP reply opens with its own code, so redaction cannot
+    // cost a genuine status; the only thing it removes is a secret masquerading as one.
+    const raw = redactSecrets(String(error.message), secrets)
 
     // WITH a credential in flight, the channel's free text does not reach the line at all — only
     // a status code parsed out of it. Redaction cannot save that text: a relay that returns the
@@ -108,7 +114,7 @@ function describeOneLink(
     // the whole reset-code body is 96 base64 characters, so the first 200 of the line decode
     // straight back to the OTP. A bound on volume was never a bound on disclosure, and describing
     // it as a second lock — as this file did — was the mistake.
-    const detail = channelText === 'drop' ? statusOf(raw) : logSafe(redactSecrets(raw, secrets))
+    const detail = channelText === 'drop' ? statusOf(raw) : logSafe(raw)
 
     return detail === '' ? name : `${name}: ${detail}`
   } catch {

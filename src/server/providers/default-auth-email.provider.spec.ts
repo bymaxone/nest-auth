@@ -432,6 +432,22 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('550 5.7.1')
   })
 
+  // The status is read from what SURVIVED redaction, not from the raw message. A message that
+  // BEGINS with the credential — which a custom provider is free to produce, since only a real
+  // SMTP reply is obliged to open with its own code — would otherwise hand back the first three
+  // digits of a six-digit OTP as if they were a status, cutting the space an attacker searches
+  // from a million to a thousand. Reading the raw message first is what makes that reachable;
+  // the ordering is the guard.
+  it('does not report a status parsed out of a message that begins with the code', async () => {
+    sink.send.mockRejectedValueOnce(new Error('550123 could not be delivered'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('550')
+    expect(logged).toBe('delivery failed for "Your password reset code": Error')
+  })
+
   // The error's NAME is the other field the channel controls, and dropping the message while
   // letting the name through would have moved the leak one field over rather than closing it — an
   // error class built around a relay reply (`name = `SmtpRejection: ${response}``) is a normal
@@ -482,13 +498,15 @@ describe('DefaultAuthEmailProvider', () => {
   // few attempts. The drop is what keeps the body out; this is what keeps a piece of it from
   // coming back through the one field still allowed through.
   it('does not read a status out of digits that belong to the quoted body', async () => {
-    sink.send.mockRejectedValueOnce(new Error('queued as 550123 and then discarded'))
+    // Digits that are NOT the credential, so redaction leaves them and the anchor is the only
+    // thing standing between them and the log. They are still the channel's text, which on this
+    // path does not reach the line at all — the status is an exception carved out for a value
+    // read from a known position, not a licence to publish any three digits in the message.
+    sink.send.mockRejectedValueOnce(new Error('queued as job 550123 and then discarded'))
 
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    // No leading code, so nothing is reported — not the message, and not a fragment of the OTP
-    // dressed up as a status.
     expect(logged).not.toContain('550')
     expect(logged).toBe('delivery failed for "Your password reset code": Error')
   })
