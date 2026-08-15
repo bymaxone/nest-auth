@@ -1265,6 +1265,14 @@ it, including cookie names you have since changed.
 > the exported default, `logout` gaining the access-only and refresh-only alternatives their map
 > called unsatisfiable — and one regression that no status-code probe could have surfaced,
 > because the routes it broke still answered correctly at runtime.
+>
+> **And there is one shape nothing can warn you about, so the diff is the only check that
+> covers it.** If you remove _every_ requirement at once — no library describing anything, no
+> decorator, no override, no document default — what remains is indistinguishable from the
+> document of an API that is public on purpose. Both are a set of operations that ask for
+> nothing. No tool can separate the two without also shouting at every genuinely public API,
+> which is how a warning earns the right to be ignored. Render the document twice and compare;
+> it is the one step that does not depend on somebody having anticipated your case.
 
 **That chain is about `security` alone, and the other members run the opposite rule** — worth
 stating because generalising either one produces a wrong belief about the other. There is no
