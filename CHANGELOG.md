@@ -18,6 +18,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **A table key must now name a route handler, not merely a method that exists.** The conformance
+  spec already checked both directions between the operations table and the controllers — every
+  route handler described, every described key naming a real method — so the second half was
+  looser than it read: `typeof === 'function'` accepts a method carrying no verb decorator, and
+  the lookup resolves through the **prototype chain**, so `toString`, `valueOf` and
+  `hasOwnProperty` answer `'function'` on any class. A typo landing on an inherited member passed
+  here and would have failed in a consumer's document build instead, which is the wrong
+  repository to find out in. It is the same prototype-chain reach that once let a catalog lookup
+  hand a **function** to `HttpException` as a status.
+
+  Both halves falsified before the change was trusted: `'AuthController.toString'` and
+  `'AuthController.onModuleInit'` are now red, and were not.
+
+  Recorded because the first draft of this entry claimed the table could fall behind the
+  controllers unnoticed. It could not — that direction has been covered since the contributor
+  shipped, and removing `AuthController.wsTicket` from the table already failed the conformance
+  spec. Caught in review, verified by running it.
+
 ## [1.4.3] - 2026-08-15
 
 ### Changed
