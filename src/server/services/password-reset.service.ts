@@ -29,6 +29,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeError } from '../utils/describe-error'
+import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
@@ -742,7 +743,8 @@ export class PasswordResetService {
         // symmetric and was dead — the mutation gate reported it as such, since no realistic test
         // can reach it.
         this.logger.error(
-          `sendPasswordResetToken failed for user ${userId}: ` + describeError(err, [rawToken])
+          `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
+            describeError(err, [rawToken])
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
           this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
@@ -781,7 +783,7 @@ export class PasswordResetService {
         // Per-field, not whole-line — see the verification-OTP site for why: redacting the
         // assembled string lets either redaction alone satisfy the test, so neither is proven.
         this.logger.error(
-          `sendPasswordResetOtp failed for user ${redactSecrets(userId, [otp])}: ` +
+          `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
             describeError(err, [otp])
         )
       })

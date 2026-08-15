@@ -1140,7 +1140,7 @@ export class AuthService {
         // alone satisfies the assertion and NEITHER is proven: the mutation gate reported exactly
         // that, one surviving mutant per argument, each masked by the other.
         this.logger.error(
-          `sendEmailVerificationOtp failed for user ${redactSecrets(userId, [otp])}: ` +
+          `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
             describeError(err, [otp])
         )
       })

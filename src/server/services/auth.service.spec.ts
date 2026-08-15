@@ -2488,6 +2488,32 @@ describe('AuthService', () => {
       loggerSpy.mockRestore()
     })
 
+    // `userId` reaches a log template and comes from the consumer's repository, which the
+    // interface places no character constraint on. A CR in it closes the record and opens a
+    // forged one — the attack `logSafe` exists for, and the same reasoning that already puts
+    // `logSafe` around `tenantId` elsewhere in this codebase. Redaction alone does not cover it:
+    // `redactSecrets` removes values, not control characters.
+    it('neutralises a control character in the user id', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...USER,
+        id: 'u1\nLOG [AuthService] login: success userId=victim',
+        emailVerified: false
+      })
+      mockOtpService.generate.mockReturnValue('112358')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('\n')
+      expect(logged).toContain('<malformed>')
+      loggerSpy.mockRestore()
+    })
+
     // `userId` is the consumer's identifier and is interpolated into the same line as the error.
     // An id that happens to contain the generated code puts it back into the record after the
     // error text was cleaned — and a six-digit run inside a UUID-shaped id is not exotic. Every
