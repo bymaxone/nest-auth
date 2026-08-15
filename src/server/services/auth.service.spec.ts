@@ -2475,6 +2475,28 @@ describe('AuthService', () => {
       loggerSpy.mockRestore()
     })
 
+    // The verification path's synchronous-throw case. The rejection tests above pass against the
+    // pre-fix direct call, so without this the deferral here is unpinned and reverting it would
+    // silently restore raw logging of a provider that throws instead of rejecting.
+    it('keeps the verification code out of the log when the provider throws synchronously', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('975310')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockImplementation(() => {
+        throw new Error('550 rejected by policy: "Your code is 975310."')
+      })
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('975310')
+      expect(logged).toContain('<redacted>')
+      loggerSpy.mockRestore()
+    })
+
     // The measured shape of the leak, at this call site. A policy or DLP relay rejects with 550
     // and QUOTES the offending content, so the provider's error carries the verification code
     // this service just generated. The previous version passed that error straight to the logger,

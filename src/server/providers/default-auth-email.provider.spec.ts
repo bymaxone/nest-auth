@@ -648,6 +648,24 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toContain('<non-error: object>')
   })
 
+  // The bound is on the WHOLE line, not on each link of the chain. Capping per link lets a
+  // three-deep chain contribute three times the budget — measured at 608 characters for a limit
+  // of 200 — which defeats the point: the cap exists so a channel cannot relay an unbounded
+  // quantity of its own text into a log, and a cause chain is the channel's text just as its
+  // message is. The single-link cap test above passes either way, so this is what pins it.
+  it('caps the whole chain, not each link of it', async () => {
+    sink.send.mockRejectedValueOnce(
+      new Error('a'.repeat(300), {
+        cause: new Error('b'.repeat(300), { cause: new Error('c'.repeat(300)) })
+      })
+    )
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '246813')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged.length).toBeLessThan(270)
+  })
+
   // A channel can throw an error with no message at all — `new Error()`, or one whose entire
   // message was control characters and got replaced. The name then stands alone rather than
   // trailing a colon with nothing after it, so the line still reads as a diagnosis.

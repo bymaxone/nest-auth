@@ -643,6 +643,39 @@ describe('PasswordResetService', () => {
       }
     })
 
+    // The token path's own synchronous-throw case. The rejection test above passes against the
+    // pre-fix direct call too, so without this the deferral at `sendToken` is unpinned and a
+    // revert to `Promise.resolve(provider.send(...))` would silently restore raw-token logging
+    // through `initiateReset`'s outer catch. A fix at three sites needs a test at three sites.
+    it('keeps the reset token out of the log when the provider throws synchronously', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      try {
+        mockRedis.setnx.mockResolvedValue(true)
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
+        mockEmailProvider.sendPasswordResetToken.mockImplementation(
+          (_t: string, _e: string, token: string) => {
+            throw new Error(`550 rejected by policy: "Use ${token} to reset."`)
+          }
+        )
+
+        await service.initiateReset(dto, mockReq)
+        await flushMicrotasks()
+
+        const sent = mockEmailProvider.sendPasswordResetToken.mock.calls[0]?.[2] as string
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+
+        expect(sent).toMatch(/^[0-9a-f]{64}$/)
+        expect(logged).not.toContain(sent)
+        expect(logged).toContain('<redacted>')
+      } finally {
+        loggerSpy.mockRestore()
+      }
+    })
+
     // Verifies that calls sendToken path (token method) when user exists and is not blocked.
     it('calls sendToken path (token method) when user exists and is not blocked', async () => {
       // Arrange

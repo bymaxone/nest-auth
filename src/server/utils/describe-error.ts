@@ -73,12 +73,13 @@ function describeOneLink(error: Error, secrets: readonly string[]): string {
   try {
     const name = logSafe(redactSecrets(String(error.name), secrets))
     const message = logSafe(redactSecrets(String(error.message), secrets))
-    // Capped once, on the composed piece, rather than on each half: two bounds let one link of
-    // the chain contribute twice the intended budget, and the pair says nothing the single bound
-    // does not. An empty message leaves the name standing alone rather than trailing a colon.
-    const described = message === '' ? name : `${name}: ${message}`
 
-    return described.slice(0, ERROR_TEXT_LIMIT)
+    // Not capped here. The bound is applied once, to the finished line, and a second cap at this
+    // level cannot change what that produces — the first `ERROR_TEXT_LIMIT` characters of the
+    // joined string are the same either way. It only looked like defence in depth; the mutation
+    // gate is what showed no test could tell the two apart. An empty message leaves the name
+    // standing alone rather than trailing a colon.
+    return message === '' ? name : `${name}: ${message}`
   } catch {
     return MALFORMED
   }
@@ -160,5 +161,10 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
   // all. Reported rather than swallowed: "something rejected with nothing" is itself the finding.
   if (parts.length === 0) return `<non-error: ${typeof error}>`
 
-  return parts.join(' <- ')
+  // Capped again on the JOIN, not only per link. The per-link bound alone lets a three-deep chain
+  // return three times the documented budget — measured at 608 characters for the limit of 200 —
+  // which is the same "one bound per part multiplies" mistake the comment inside `describeOneLink`
+  // warns about, made one level up. The bound exists to stop a channel relaying an unbounded
+  // quantity of its own text into a log, and a chain is a channel's text just as a message is.
+  return parts.join(' <- ').slice(0, ERROR_TEXT_LIMIT)
 }
