@@ -137,9 +137,16 @@ recipient rejected`), no quoted body required, which makes it the likeliest expo
   Both descriptions read only `name` and `message` — never `stack`, never the transport's own
   fields, which is where a channel hides the server's full reply (nodemailer hangs it on
   `response`). Both walk the `cause` chain three levels down, because that is where a wrapped
-  client puts the relay's answer, cap the finished line at 200 characters, strip control characters
-  so a relay cannot forge a second log record, and never throw whatever the transport's error does.
-  The log-injection hole was live on the same line and is closed here.
+  client puts the relay's answer, cap the finished line at 200 characters, reject anything that
+  could forge a second log record, and never throw whatever the transport's error does. The
+  log-injection hole was live on the same line and is closed here.
+
+  **`logSafe` rejects `U+2028` and `U+2029` as well as the control ranges.** LINE SEPARATOR and
+  PARAGRAPH SEPARATOR are not control characters, so a class named for C0/C1 missed them entirely —
+  and ECMAScript, JSON and any Unicode-aware log consumer treat them as line terminators. A
+  pipeline that splits records on them accepted a forged one from a value the old rule called safe,
+  which is the same forgery CR and LF are rejected for. This applies everywhere `logSafe` is used,
+  not only on the paths this change touched.
 
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so to
