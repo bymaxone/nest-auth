@@ -747,7 +747,11 @@ export class PasswordResetService {
             describeError(err, [rawToken])
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
-          this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
+          // Only `userId` changes here, which is the finding. `delErr` comes from `redis.del` on a
+          // key that is a SHA-256 of the token, so no quoted-body path can put a credential into
+          // it — and routing it through `describeError` would add an empty-secrets argument whose
+          // mutation no realistic test can kill, for a line that is not what this change is about.
+          this.logger.error(`pw_reset rollback delete failed for user ${logSafe(userId)}`, delErr)
         })
       })
   }
