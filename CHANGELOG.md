@@ -18,6 +18,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **A gate tying the contributed operations table to the handlers the controllers declare.**
+  Every assertion around that table was driven by the table itself — the count, the credential,
+  the per-mode shape — so a handler added to a controller and forgotten in it was described by
+  nothing and noticed by no test: the fragment simply carried one entry fewer and everything
+  still passed. Falsified before being trusted: removing `AuthController.wsTicket` from the table
+  turns the gate red and names it.
+
+  It was a quiet imprecision until now. An operation nobody describes inherits the consumer's
+  document-level default, which is "authenticated" — safe, if vague. It stops being quiet with
+  the change `@bymax-one/nest-core` is preparing, which reports operations that end up requiring
+  nothing: an undescribed route of ours would surface in the **consumer's** warning, attributed
+  to them, on a path they neither own nor can fix. Reported by the seat building that warning,
+  who asked whether we could produce such a route before it surprised somebody.
+
+  Both directions are asserted. A described key naming a handler the scan never produced fails
+  the consumer's document build by contract — a loud failure in the wrong repository, so it
+  belongs here, on the change that introduces it.
+
 ## [1.4.3] - 2026-08-15
 
 ### Changed
