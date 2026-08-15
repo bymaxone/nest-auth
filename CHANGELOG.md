@@ -20,23 +20,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **A gate tying the contributed operations table to the handlers the controllers declare.**
-  Every assertion around that table was driven by the table itself — the count, the credential,
-  the per-mode shape — so a handler added to a controller and forgotten in it was described by
-  nothing and noticed by no test: the fragment simply carried one entry fewer and everything
-  still passed. Falsified before being trusted: removing `AuthController.wsTicket` from the table
-  turns the gate red and names it.
+- **A table key must now name a route handler, not merely a method that exists.** The conformance
+  spec already checked both directions between the operations table and the controllers — every
+  route handler described, every described key naming a real method — so the second half was
+  looser than it read: `typeof === 'function'` accepts a method carrying no verb decorator, and
+  the lookup resolves through the **prototype chain**, so `toString`, `valueOf` and
+  `hasOwnProperty` answer `'function'` on any class. A typo landing on an inherited member passed
+  here and would have failed in a consumer's document build instead, which is the wrong
+  repository to find out in. It is the same prototype-chain reach that once let a catalog lookup
+  hand a **function** to `HttpException` as a status.
 
-  It was a quiet imprecision until now. An operation nobody describes inherits the consumer's
-  document-level default, which is "authenticated" — safe, if vague. It stops being quiet with
-  the change `@bymax-one/nest-core` is preparing, which reports operations that end up requiring
-  nothing: an undescribed route of ours would surface in the **consumer's** warning, attributed
-  to them, on a path they neither own nor can fix. Reported by the seat building that warning,
-  who asked whether we could produce such a route before it surprised somebody.
+  Both halves falsified before the change was trusted: `'AuthController.toString'` and
+  `'AuthController.onModuleInit'` are now red, and were not.
 
-  Both directions are asserted. A described key naming a handler the scan never produced fails
-  the consumer's document build by contract — a loud failure in the wrong repository, so it
-  belongs here, on the change that introduces it.
+  Recorded because the first draft of this entry claimed the table could fall behind the
+  controllers unnoticed. It could not — that direction has been covered since the contributor
+  shipped, and removing `AuthController.wsTicket` from the table already failed the conformance
+  spec. Caught in review, verified by running it.
 
 ## [1.4.3] - 2026-08-15
 

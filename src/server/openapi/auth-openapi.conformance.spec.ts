@@ -98,18 +98,30 @@ describe('OpenAPI contributor — conformance', () => {
     expect(fragment.components.securitySchemes).toEqual(expect.any(Object))
   })
 
-  // Verifies every declared handler key names a method that really exists on the controller it
-  // names. This is the acceptance test the whole table depends on: nest-core fails a consumer's
-  // document build for a key it cannot resolve, so a renamed handler here would not be a stale
-  // comment — it would be a broken build in someone else's repository, on upgrade.
+  // Verifies every declared handler key names a ROUTE handler on the controller it names — not
+  // merely a method. This is the acceptance test the whole table depends on: nest-core fails a
+  // consumer's document build for a key it cannot resolve, so a renamed handler here would not
+  // be a stale comment — it would be a broken build in someone else's repository, on upgrade.
+  //
+  // `typeof === 'function'` was the earlier check and is too loose in two ways that meet. It
+  // accepts a real method that carries no verb decorator, which produces no operation for the
+  // key to match; and the lookup resolves through the PROTOTYPE CHAIN, so `toString`,
+  // `valueOf` and `hasOwnProperty` all answer `'function'` on any class. A typo landing on an
+  // inherited member would therefore pass here and fail in the consumer's build — the same
+  // prototype-chain reach that once let a catalog lookup hand a FUNCTION to `HttpException` as
+  // a status. Requiring the routing metadata closes both: a key must name something Nest
+  // actually routes.
   it.each(Object.keys(buildAuthOpenApiFragment(optionsFor('both'), EVERYTHING).operations))(
-    '%s names a real controller method',
+    '%s names a real route handler',
     (key) => {
       const [controllerName, method] = key.split('.')
       const controller = CONTROLLERS[controllerName!]
 
       expect(controller).toBeDefined()
-      expect(typeof (controller!.prototype as Record<string, unknown>)[method!]).toBe('function')
+      const target = (controller!.prototype as Record<string, unknown>)[method!]
+
+      expect(typeof target).toBe('function')
+      expect(Reflect.hasMetadata('path', target as object)).toBe(true)
     }
   )
 
