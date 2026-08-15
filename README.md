@@ -1242,6 +1242,14 @@ nest-core's policy. So a stale scheme name or an override for an auth route keep
 contributed one never lands — the document goes on describing whatever you wrote when you wrote
 it, including cookie names you have since changed.
 
+**That chain is about `security` alone, and the other members run the opposite rule** — worth
+stating because generalising either one produces a wrong belief about the other. There is no
+configuration channel for a `description`, a `summary` or a tag: `mergeFragment` merges the
+scanned operation **over** the fragment, so a contributed member lands unless the handler itself
+declared that member, and the handler is this library's. Concretely, the `description` on
+`logout` cannot be shadowed by anything in your options — only by an `@ApiOperation` on a handler
+you do not own. Nothing to delete for that half; the deletion above is entirely about `security`.
+
 > **Your own document test will not catch this.** A consumer seat measured it on their own
 > repository: ten `operationSecurity` entries, all for this library's routes, and a suite
 > asserting the operation-to-posture map with `toEqual`. On adoption, every contributed fragment
