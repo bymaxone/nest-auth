@@ -106,6 +106,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   closes the seam, and it fails loudly if a per-field guard is removed, because the value then
   survives and the line is withheld. Every guard stays individually provable.
 
+  **The recipient is withheld on the service paths too, because the provider rethrows.** Under
+  `'rethrow'` the provider strips the address from its own line and hands the ORIGINAL error to
+  the caller, so every service that logs or re-throws it was putting the address back. An SMTP
+  rejection naming the recipient it refused is the ordinary shape of a bounce — no quoted body
+  required — which makes this the likeliest exposure of the set. Five sites now name it.
+
   **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
   channel's original error, deliberately unaltered — a caller that opted into that policy did so
   to branch on the channel's codes, and handing it a laundered replacement would take those away.

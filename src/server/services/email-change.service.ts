@@ -202,7 +202,7 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
     } catch (err: unknown) {
-      throw new Error(describeError(err, [rawToken]))
+      throw new Error(describeError(err, [rawToken, newEmail]))
     }
     this.logger.log(
       `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`

@@ -734,20 +734,20 @@ export class PasswordResetService {
       .then(() => provider.sendPasswordResetToken(tenantId, email, rawToken))
       .catch((err: unknown) => {
         // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
-        // error, and this token is a working password reset until its TTL expires.
-        // Redacted over the whole line, for the same reason as the OTP path: every field the
-        // template interpolates has to sit inside the redaction boundary, not just the error.
-        // `userId` is NOT redacted here, and the asymmetry with the OTP path below is deliberate.
-        // An OTP is four to eight digits, so an identifier containing one by coincidence is a real
-        // possibility. A reset token is 64 hex characters: for an id to contain it, the id would
-        // have to be derived FROM the token, which no repository does. Redacting it anyway looked
-        // symmetric and was dead — the mutation gate reported it as such, since no realistic test
-        // can reach it.
+        // error, and this token is a working password reset until its TTL expires. The recipient
+        // joins it — an SMTP rejection routinely names the address it refused, and the provider
+        // strips that from ITS line but rethrows the original here.
+        //
+        // Per field, with `safeLogLine` checking the assembled result. `userId` is deliberately
+        // NOT redacted against the token, and the asymmetry with the OTP path below is the point:
+        // an OTP is four to eight digits, so an identifier containing one by coincidence is real,
+        // while a 64-hex token can only appear inside an id derived FROM it, which no repository
+        // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
         this.logger.error(
           safeLogLine(
             `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
-              describeError(err, [rawToken]),
-            [rawToken]
+              describeError(err, [rawToken, email]),
+            [rawToken, email]
           )
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
@@ -784,17 +784,19 @@ export class PasswordResetService {
     void Promise.resolve()
       .then(() => provider.sendPasswordResetOtp(tenantId, email, otp))
       .catch((err: unknown) => {
-        // Redacted, not raw: the quoted body carries this otp, which resets the password.
-        // Redacted over the whole line: `userId` is the consumer's identifier and is
-        // interpolated outside `describeError`'s reach. A reset OTP may be as short as four
-        // digits, so an id containing it is not far-fetched.
-        // Per-field, not whole-line — see the verification-OTP site for why: redacting the
-        // assembled string lets either redaction alone satisfy the test, so neither is proven.
+        // Redacted, not raw: the quoted body carries this otp, which resets the password, and an
+        // SMTP rejection commonly names the recipient — which the provider removed from its own
+        // line and then rethrew here.
+        //
+        // Per field, with `safeLogLine` checking the assembled result rather than redacting it —
+        // see the verification-OTP site for why: redacting the assembled string lets either
+        // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
+        // otp because a reset code is short enough for an identifier to contain one.
         this.logger.error(
           safeLogLine(
-            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp]))}: ` +
-              describeError(err, [otp]),
-            [otp]
+            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp, email]))}: ` +
+              describeError(err, [otp, email]),
+            [otp, email]
           )
         )
       })

@@ -605,6 +605,34 @@ describe('PasswordResetService', () => {
       }
     })
 
+    // The same seam at the token site. `userId` is not redacted here (a 64-hex token cannot hide
+    // in an identifier), so the composition is the only guard, and `safeLogLine` is what provides
+    // it — the per-field redactions cannot see across the `: ` the template inserts.
+    it('withholds the line when the identifier and the error compose the address', async () => {
+      const named = new Error('channel down')
+      Object.defineProperty(named, 'name', { value: 'x' })
+
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      try {
+        mockRedis.setnx.mockResolvedValue(true)
+        mockUserRepo.findByEmail.mockResolvedValue({
+          id: 'u1',
+          status: 'active',
+          tenantId: 'tenant1'
+        })
+        mockEmailProvider.sendPasswordResetToken.mockRejectedValue(named)
+
+        await service.initiateReset({ ...dto, email: 'u1: x' }, mockReq)
+        await flushMicrotasks()
+
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+        expect(logged).not.toContain('u1: x')
+        expect(logged).toContain('withheld')
+      } finally {
+        loggerSpy.mockRestore()
+      }
+    })
+
     // Third site of the same leak: `sendPasswordResetToken` hands the provider a raw reset token,
     // and a relay that rejects by quoting the body puts it into the error this path logs. The
     // token is a working password reset until its TTL expires, so it must not survive into the
@@ -2067,6 +2095,65 @@ describe('PasswordResetService', () => {
       // logger, so a relay quoting the body cannot carry the code into the record.
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('sendPasswordResetOtp failed'))
       expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      errorSpy.mockRestore()
+    })
+
+    // The SEAM at this site: the template puts `: ` between the identifier and the description, so
+    // a value ending where the id ends and beginning where the error begins is rebuilt from two
+    // fields that each contain nothing. An address can hold almost anything in a quoted local part
+    // and an identifier is unconstrained, so the composition is constructible. `safeLogLine` is
+    // what catches it — the per-field redactions cannot, by construction.
+    it('withholds the line when the identifier and the error compose a withheld value', async () => {
+      // The address is normalised to lower case before it becomes a withheld value, and the
+      // description opens with the error's NAME — so the composition spells the address only when
+      // that name is lower case too. A custom error class provides exactly that, which is what
+      // makes this reachable rather than theoretical.
+      const named = new Error('channel down')
+      Object.defineProperty(named, 'name', { value: 'x' })
+
+      const seam = { ...dto, email: 'u1: x' }
+      mockRedis.setnx.mockResolvedValue(true)
+      mockOtpService.generate.mockReturnValue('303030')
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(named)
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await otpMethodService.resendOtp(seam, mockReq)
+      await flushMicrotasks()
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('u1: x')
+      expect(logged).toContain('withheld')
+      errorSpy.mockRestore()
+    })
+
+    // The recipient, which needs no quoted body. An SMTP rejection routinely NAMES the address it
+    // refused, and the bundled provider strips it from the provider's own line and then rethrows
+    // the original — so this service receives an error carrying the address and would log it
+    // again. Removing it in one place and not the other removes it nowhere.
+    it('keeps the recipient out of the log when the rejection names it', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockOtpService.generate.mockReturnValue('204060')
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(
+        new Error(`550 ${dto.email}: recipient rejected`)
+      )
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+      await otpMethodService.resendOtp(dto, mockReq)
+      await flushMicrotasks()
+
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('sendPasswordResetOtp failed')
+      expect(logged).not.toContain(dto.email)
       errorSpy.mockRestore()
     })
 

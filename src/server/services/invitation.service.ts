@@ -251,7 +251,7 @@ export class InvitationService {
         expiresAt
       })
     } catch (err: unknown) {
-      throw new Error(describeError(err, [rawToken]))
+      throw new Error(describeError(err, [rawToken, normalizedEmail]))
     }
     this.logger.log(
       `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${logSafe(tenantId)} inviterUserId=${inviterUserId}`
