@@ -2581,7 +2581,11 @@ describe('AuthService', () => {
 
       const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       expect(logged).not.toContain('975310')
-      expect(logged).toContain('<redacted>')
+      // On a credential path the relay's prose does not reach the line at all — only the status
+      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+      // gone, and the diagnosis is not.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).toContain('550')
       loggerSpy.mockRestore()
     })
 
@@ -2595,16 +2599,31 @@ describe('AuthService', () => {
       mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
       mockOtpService.generate.mockReturnValue('654321')
       mockOtpService.store.mockResolvedValue(undefined)
-      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(
-        new Error('550 rejected by policy: "Your code is 654321."')
-      )
+      // The error's NAME carries the code too. A mail client that names its error class after the
+      // response is ordinary, and under the drop policy the name is the only channel-controlled
+      // field still allowed through — so it has to be redacted like the body was.
+      const named = new Error('550 rejected by policy: "Your code is 654321."')
+      named.name = 'E654321'
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
 
       await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
       await new Promise((r) => setImmediate(r))
 
+      // The `secrets` argument to `describeError` is what makes the error's NAME safe, and the name
+      // is the one channel-controlled field the drop policy still lets through — validated by
+      // shape, so a hex token fits it exactly. What this asserts is not the absence of the code
+      // (the outer `safeLogLine` would catch that anyway) but that the ORDINARY line survives: a
+      // call that named no secret leaks the code into the name, `safeLogLine` withholds the whole
+      // record to stop it, and the operator loses the diagnosis to a guard that should not have
+      // had to fire. Measured — without the argument this mutates cleanly and every other
+      // assertion here still passes.
       const logged = loggerSpy.mock.calls[0]?.[0] as string
       expect(logged).not.toContain('654321')
-      expect(logged).toContain('<redacted>')
+      // On a credential path the relay's prose does not reach the line at all — only the status
+      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+      // gone, and the diagnosis is not.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).toContain('550')
       loggerSpy.mockRestore()
     })
   })

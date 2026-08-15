@@ -1137,11 +1137,17 @@ export class AuthService {
         // mutation gate reported exactly that, one surviving mutant per argument, each masked by
         // the other. `safeLogLine` closes the seam between the fields without that cost, because
         // it fails when a per-field guard is removed instead of standing in for it.
+        // One array, named once and handed to every layer that needs it. Written inline at each
+        // layer it read as three independent decisions that happened to agree, and the mutation
+        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
+        // Shared, the list is one decision, and removing a value from it fails.
+        const withheld = [otp, email]
         this.logger.error(
           safeLogLine(
-            `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, [otp, email]))}: ` +
-              describeError(err, [otp, email]),
-            [otp, email]
+            `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
+              describeError(err, withheld, 'drop'),
+            withheld
           )
         )
       })

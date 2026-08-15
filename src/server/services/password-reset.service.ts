@@ -743,11 +743,17 @@ export class PasswordResetService {
         // an OTP is four to eight digits, so an identifier containing one by coincidence is real,
         // while a 64-hex token can only appear inside an id derived FROM it, which no repository
         // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
+        // One array, named once and handed to every layer that needs it. Written inline at each
+        // layer it read as three independent decisions that happened to agree, and the mutation
+        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
+        // Shared, the list is one decision, and removing a value from it fails.
+        const withheld = [rawToken, email]
         this.logger.error(
           safeLogLine(
             `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
-              describeError(err, [rawToken, email]),
-            [rawToken, email]
+              describeError(err, withheld, 'drop'),
+            withheld
           )
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
@@ -792,11 +798,17 @@ export class PasswordResetService {
         // see the verification-OTP site for why: redacting the assembled string lets either
         // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
         // otp because a reset code is short enough for an identifier to contain one.
+        // One array, named once and handed to every layer that needs it. Written inline at each
+        // layer it read as three independent decisions that happened to agree, and the mutation
+        // gate showed the cost: the copy passed to `describeError` could be emptied with nothing
+        // observable changing, because the copy passed to `safeLogLine` still caught what escaped.
+        // Shared, the list is one decision, and removing a value from it fails.
+        const withheld = [otp, email]
         this.logger.error(
           safeLogLine(
-            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, [otp, email]))}: ` +
-              describeError(err, [otp, email]),
-            [otp, email]
+            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
+              describeError(err, withheld, 'drop'),
+            withheld
           )
         )
       })

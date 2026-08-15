@@ -202,7 +202,16 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
     } catch (err: unknown) {
-      throw new Error(describeError(err, [rawToken, newEmail]))
+      // Stryker disable next-line ArrayDeclaration: emptying this list is unobservable HERE, and
+      // the reason is a proof rather than a gap in the suite. Under `'drop'` the only two fields
+      // that reach the line are a status code rebuilt from its own capture and a name bounded to
+      // 48 identifier characters, and neither secret in this list can occupy either: `rawToken` is
+      // 64 hex characters, which exceeds the bound, and an address contains `@`, which the shape
+      // excludes. It is passed because the guarantee belongs to `describeError`, not to this call
+      // site's luck about the shape of what it happens to hold — a policy change to `'redact'`
+      // here would make it load-bearing immediately. Where a secret CAN take a valid name's shape,
+      // the argument is pinned by a test instead: see the verification-OTP site in `auth.service`.
+      throw new Error(describeError(err, [rawToken, newEmail], 'drop'))
     }
     this.logger.log(
       `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`
@@ -373,7 +382,7 @@ export class EmailChangeService implements OnModuleInit {
       // contains it nowhere.
       this.logger.error(
         `confirmChange: notification to the previous address failed: ` +
-          describeError(err, [oldEmail, newEmail])
+          describeError(err, [oldEmail, newEmail], 'redact')
       )
     }
   }

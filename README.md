@@ -301,18 +301,35 @@ Email delivery is fully delegated to the consumer — the library never imports 
 >   } catch (error: unknown) {
 >     // Never `logger.error(msg, error)` here, and never `new Error(msg, { cause: error })`
 >     // into something that logs — both carry the quoted body.
->     this.logger.error(`reset OTP delivery failed: ${describeError(error, [otp])}`)
+>     this.logger.error(`reset OTP delivery failed: ${describeError(error, [otp], 'drop')}`)
 >     throw error
 >   }
 > }
 > ```
 >
-> `describeError` does four things, and redaction alone is not enough without the other three: it
-> strips the credentials you name, reads only `name` and `message` (never `stack`, never the
-> transport's own fields — nodemailer hangs the server's full reply on `response`), **caps the
-> length** so a relay cannot flood your log with a quoted body it re-encoded past matching, and
-> **removes control characters** so it cannot forge extra records in a line-oriented pipeline. It
-> walks the `cause` chain and never throws, whatever the transport's error does.
+> The third argument is the one that matters, and it has no default on purpose — the permissive
+> value has to be chosen, never inherited by a call site that forgot it.
+>
+> **`'drop'` wherever a credential was in flight.** Redaction alone does not close this, and
+> neither does a length cap. A relay may quote the body it rejected in transfer encoding rather
+> than verbatim; base64 is the ordinary case and defeats both at once — substring matching finds
+> nothing because the credential's characters are not in the line, and the cap does not help
+> because the encoding runs from the body's first byte, so the code is in the first sentence.
+> Measured: a reset-code body is 96 base64 characters end to end, and the first 200 characters of
+> the line decode straight back to the OTP. Under `'drop'` the channel's free text does not reach
+> the line at all. What survives is the SMTP status — rebuilt from a pattern's own capture, not
+> sliced out of the input — plus the error's name when it looks like a name, and that is the half
+> of a bounce you act on anyway: `550` is a refusal, `421` a transient outage, `535` a credential
+> problem at your relay.
+>
+> **`'redact'` only where nothing secret was in flight.** There the relay's own words are the
+> diagnosis and there is nothing to protect them from.
+>
+> Under either policy `describeError` reads only `name` and `message` (never `stack`, never the
+> transport's own fields — nodemailer hangs the server's full reply on `response`), strips the
+> credentials you name, caps the length, and removes control characters so a relay cannot forge
+> extra records in a line-oriented pipeline. It walks the `cause` chain and never throws, whatever
+> the transport's error does.
 >
 > `redactSecrets(text, [otp])` is exported too, for when you already have a string and only need
 > the redaction half.

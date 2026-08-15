@@ -177,7 +177,11 @@ describe('EmailChangeService', () => {
 
       expect(sent).toMatch(/^[0-9a-f]{64}$/)
       expect(thrown.message).not.toContain(sent)
-      expect(thrown.message).toContain('<redacted>')
+      // On a credential path the relay's prose does not reach the line at all — only the status
+      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+      // gone, and the diagnosis is not.
+      expect(thrown.message).not.toContain('Confirm with')
+      expect(thrown.message).toContain('550')
     })
 
     // The happy path, and every property of the stored record that the confirmation relies on.

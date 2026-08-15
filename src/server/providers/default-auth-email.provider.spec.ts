@@ -322,9 +322,9 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(strict.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')).rejects.toBe(
       boom
     )
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed for "Reset your password": Error: channel down'
-    )
+    // A credential path, so the channel's text does not reach the line — `channel down` carries
+    // no status code, leaving the error's name alone.
+    expect(errorSpy).toHaveBeenCalledWith('delivery failed for "Reset your password": Error')
   })
 
   // The rethrown error is the ORIGINAL, unlaundered. Deliberate, and asserted so a later "let us
@@ -394,8 +394,117 @@ describe('DefaultAuthEmailProvider', () => {
     await send(provider)
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
+    // The credential is gone AND so is the channel's prose. What survives is the parsed status,
+    // which is the half an operator acts on — `550` is a refusal, `421` a transient outage.
     expect(logged).not.toContain(secret)
-    expect(logged).toContain('<redacted>')
+    expect(logged).not.toContain('rejected by policy')
+    expect(logged).toContain('550 5.7.1')
+  })
+
+  // The measurement that decided the policy, kept as a test because it is the only evidence that
+  // the two obvious defences are NOT enough on their own. A relay is free to quote the body it
+  // rejected in transfer encoding rather than verbatim, and base64 is the ordinary case. Redaction
+  // then matches nothing — the credential's characters are not in the line — and the length cap
+  // does not help either, because the encoding runs from the body's first byte, so the code sits
+  // near the front, well inside any cap. Measured on the real reset-code body: the whole thing is
+  // 96 base64 characters, and the first 200 of the line decode straight back to the OTP. Dropping
+  // the channel's text is what closes it; this test fails if the drop is ever relaxed to a cap or
+  // a redaction.
+  it('does not leak a credential a relay quoted back in base64', async () => {
+    const otp = '135791'
+    const body = Buffer.from(`Your password reset code is ${otp}. It expires in 10 minutes.`)
+    sink.send.mockRejectedValueOnce(
+      new Error(`550 5.7.1 message rejected: ${body.toString('base64')}`)
+    )
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // Asserting the absence of the digits would pass while the leak is live — encoded, they are
+    // not there to find. The assertion has to be the one an attacker would run: decode whatever
+    // survived and look for the code in the plaintext.
+    const decoded = logged
+      .split(/[^A-Za-z0-9+/=]+/)
+      .map((chunk) => Buffer.from(chunk, 'base64').toString('utf8'))
+      .join(' ')
+    expect(decoded).not.toContain(otp)
+    expect(logged).not.toContain(otp)
+    expect(logged).toContain('550 5.7.1')
+  })
+
+  // The error's NAME is the other field the channel controls, and dropping the message while
+  // letting the name through would have moved the leak one field over rather than closing it — an
+  // error class built around a relay reply (`name = `SmtpRejection: ${response}``) is a normal
+  // thing for a mail client to do. So under the drop policy the name is kept only when it LOOKS
+  // like a name, matched whole: an identifier from its first character to its last.
+  //
+  // The name here is bracketed by identifier text on both sides on purpose. Checking only where a
+  // name starts would admit it for its `SmtpError` head, and checking only where it ends would
+  // admit it for its `RelayTail`; either way the relay's own words ride into the log between them.
+  // Anchoring one end is not anchoring.
+  it('publishes no part of a name the channel built out of its reply', async () => {
+    const named = new Error('channel down')
+    named.name = 'SmtpError 550 rejected by policy RelayTail'
+    sink.send.mockRejectedValueOnce(named)
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '112233')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).not.toContain('rejected by policy')
+    expect(logged).not.toContain('SmtpError')
+    expect(logged).not.toContain('RelayTail')
+    // A stand-in that names what happened, not an empty gap: a line reading `delivery failed for
+    // "x": ` tells an operator nothing about why the name is missing.
+    expect(logged).toBe('delivery failed for "Your password reset code": <error>')
+  })
+
+  // The other side of the same switch. Where nothing secret was in flight the channel's own words
+  // ARE the diagnosis, the message is already allowed through, and constraining the name would
+  // cost an operator the class of the failure to buy nothing. A guard that fired on both policies
+  // would read as safer and would simply be deleting information.
+  it('keeps an unusual name when nothing secret was in flight', async () => {
+    const named = new Error('relay unreachable')
+    named.name = 'Smtp Error (timeout)'
+    sink.send.mockRejectedValueOnce(named)
+
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'delivery failed for "Two-factor authentication is on": Smtp Error (timeout): relay unreachable'
+    )
+  })
+
+  // The status is read from the FRONT of the message only, and the anchor is a confidentiality
+  // boundary rather than a parsing nicety. An SMTP reply opens with its code; digits anywhere else
+  // in the line belong to the body the relay quoted — which on these paths is the credential. An
+  // unanchored read of the first three digits it can find returns half of a six-digit OTP, cutting
+  // the space an attacker has to search from a million to a thousand against a code that allows
+  // few attempts. The drop is what keeps the body out; this is what keeps a piece of it from
+  // coming back through the one field still allowed through.
+  it('does not read a status out of digits that belong to the quoted body', async () => {
+    sink.send.mockRejectedValueOnce(new Error('queued as 550123 and then discarded'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    // No leading code, so nothing is reported — not the message, and not a fragment of the OTP
+    // dressed up as a status.
+    expect(logged).not.toContain('550')
+    expect(logged).toBe('delivery failed for "Your password reset code": Error')
+  })
+
+  // An enhanced status code is separated from the basic one by whitespace whose width is the
+  // sender's choice, and RFC 5321 replies are routinely padded. Reading exactly one space would
+  // silently drop the enhanced code — the half that says WHY (`5.7.1` is a policy refusal, `5.1.1`
+  // an unknown recipient) — on any relay that aligns its columns.
+  it('reads the enhanced status code across padded whitespace', async () => {
+    sink.send.mockRejectedValueOnce(new Error('550   5.7.1 message rejected by policy'))
+
+    await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
+
+    const logged = errorSpy.mock.calls[0]?.[0] as string
+    expect(logged).toContain('550 5.7.1')
+    expect(logged).not.toContain('rejected by policy')
   })
 
   // A channel reports "send failed BECAUSE the relay said", and the quoted body lands one level
@@ -411,14 +520,11 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
+    // The whole line. The links stay visibly separated so an operator can tell "the send failed"
+    // from "the relay said" — and on a credential path each link contributes only its name and a
+    // parsed status, never the relay's prose.
     expect(logged).not.toContain('550123')
-    // The whole line, not just the absence of the code: the links must stay visibly separated so
-    // an operator can tell "the send failed" from "the relay said" instead of reading one run-on
-    // sentence stitched from two different errors.
-    expect(logged).toBe(
-      'delivery failed for "Your password reset code": Error: send failed <- ' +
-        'Error: 550 rejected: "Your code is <redacted>."'
-    )
+    expect(logged).toBe('delivery failed for "Your password reset code": Error <- Error: 550')
   })
 
   // Text that came back from a remote relay is untrusted input. A CR/LF in it would close the log
@@ -429,7 +535,10 @@ describe('DefaultAuthEmailProvider', () => {
       new Error('rejected\nLOG [AuthService] login: success userId=victim')
     )
 
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '111111')
+    // A credential-free notice: the control-character strip only has something to act on where
+    // the channel's text is kept, and dropping it on a credential path would pass this for the
+    // wrong reason.
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     // Both halves are needed. Asserting only the absence of a newline passes trivially on any
@@ -446,7 +555,10 @@ describe('DefaultAuthEmailProvider', () => {
   it('caps how much channel text reaches the line', async () => {
     sink.send.mockRejectedValueOnce(new Error('x'.repeat(5_000)))
 
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '222222')
+    // A credential-FREE notice, because the cap is only observable where the channel's text is
+    // kept at all. On a credential path the text is dropped outright, which bounds the line far
+    // below this limit and would make the assertion pass for the wrong reason.
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     // Truncated, not dropped: the second assertion keeps this from passing on a build that omits
@@ -489,20 +601,86 @@ describe('DefaultAuthEmailProvider', () => {
   // `passwordResetOtp: ({ otp }) => ({ subject: `Code ${otp}` })` looks reasonable to write. That
   // used to be documented as a known way to reopen the leak; it is closed instead, since the
   // secrets are already in hand on the line that builds the record.
-  it('redacts a code an override put in the subject', async () => {
-    const messages = {
-      passwordResetOtp: ({ otp }: { otp: string }) => ({
-        subject: `Your code ${otp}`,
-        text: `Your code is ${otp}.`
-      })
-    }
+  //
+  // Every credential-bearing method is covered, and on these paths this is now the ONLY test that
+  // observes the `secrets` argument at all. Dropping the channel's text closed the leak but also
+  // hid the redaction behind it: with the relay's words gone, a method that named no secret would
+  // still keep the token out of the line, and the table above would pass while `secrets` was
+  // empty. Measured — as `[token]` -> `[]` surviving mutation on four of the five methods, killed
+  // on the fifth, which was the one that already had this test. The subject is the surface where
+  // the argument stays observable, so it is where each method has to be pinned.
+  it.each([
+    [
+      'password-reset OTP',
+      {
+        passwordResetOtp: ({ otp }: { otp: string }) => ({
+          subject: `Your code ${otp}`,
+          text: `Your code is ${otp}.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) => p.sendPasswordResetOtp('t', 'u@example.com', '246810'),
+      '246810'
+    ],
+    [
+      'email-verification OTP',
+      {
+        emailVerificationOtp: ({ otp }: { otp: string }) => ({
+          subject: `Verify with ${otp}`,
+          text: `Your code is ${otp}.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) => p.sendEmailVerificationOtp('t', 'u@example.com', '135790'),
+      '135790'
+    ],
+    [
+      'password-reset token',
+      {
+        passwordResetToken: ({ token }: { token: string }) => ({
+          subject: `Reset with ${token}`,
+          text: `Use ${token} to reset.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) =>
+        p.sendPasswordResetToken('t', 'u@example.com', 'b7c8d9e0f1a2b7c8'),
+      'b7c8d9e0f1a2b7c8'
+    ],
+    [
+      'email-change token',
+      {
+        emailChangeVerification: ({ token }: { token: string }) => ({
+          subject: `Confirm with ${token}`,
+          text: `Use ${token} to confirm.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) =>
+        p.sendEmailChangeVerification('t', 'new@example.com', 'c8d9e0f1a2b3c8d9'),
+      'c8d9e0f1a2b3c8d9'
+    ],
+    [
+      'invitation token',
+      {
+        invitation: ({ invite }: { invite: InviteData }) => ({
+          subject: `Join with ${invite.inviteToken}`,
+          text: `Use ${invite.inviteToken} to join.`
+        })
+      },
+      (p: DefaultAuthEmailProvider) =>
+        p.sendInvitation('t', 'u@example.com', {
+          inviterName: 'Ana',
+          tenantName: 'Acme',
+          inviteToken: 'd9e0f1a2b3c4d9e0',
+          expiresAt: new Date('2026-01-01T00:00:00.000Z')
+        }),
+      'd9e0f1a2b3c4d9e0'
+    ]
+  ])('redacts %s an override put in the subject', async (_why, messages, send, secret) => {
     const custom = new DefaultAuthEmailProvider(sink, { messages })
     sink.send.mockRejectedValueOnce(new Error('channel down'))
 
-    await custom.sendPasswordResetOtp('t', 'u@example.com', '246810')
+    await send(custom)
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('246810')
+    expect(logged).not.toContain(secret)
     expect(logged).toContain('<redacted>')
   })
 
@@ -782,7 +960,9 @@ describe('DefaultAuthEmailProvider', () => {
     Object.defineProperty(looped, 'cause', { value: looped })
     sink.send.mockRejectedValueOnce(looped)
 
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '333333')
+    // A credential-free notice, so each link still contributes its text and the repetition is
+    // countable — which is what makes the depth cap observable rather than inferred.
+    await provider.sendMfaEnabledNotification('t', 'u@example.com')
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged.match(/outer/g)).toHaveLength(3)

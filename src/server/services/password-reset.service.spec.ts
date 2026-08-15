@@ -665,7 +665,11 @@ describe('PasswordResetService', () => {
         expect(sent).toMatch(/^[0-9a-f]{64}$/)
         expect(logged).toContain('sendPasswordResetToken failed')
         expect(logged).not.toContain(sent)
-        expect(logged).toContain('<redacted>')
+        // On a credential path the relay's prose does not reach the line at all — only the status
+        // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+        // gone, and the diagnosis is not.
+        expect(logged).not.toContain('rejected by policy')
+        expect(logged).toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }
@@ -698,7 +702,11 @@ describe('PasswordResetService', () => {
 
         expect(sent).toMatch(/^[0-9a-f]{64}$/)
         expect(logged).not.toContain(sent)
-        expect(logged).toContain('<redacted>')
+        // On a credential path the relay's prose does not reach the line at all — only the status
+        // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+        // gone, and the diagnosis is not.
+        expect(logged).not.toContain('rejected by policy')
+        expect(logged).toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }
@@ -2203,7 +2211,11 @@ describe('PasswordResetService', () => {
 
       const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       expect(logged).not.toContain('868686')
-      expect(logged).toContain('<redacted>')
+      // On a credential path the relay's prose does not reach the line at all — only the status
+      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+      // gone, and the diagnosis is not.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -2218,17 +2230,31 @@ describe('PasswordResetService', () => {
         status: 'active',
         tenantId: 'tenant1'
       })
-      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(
-        new Error('550 rejected by policy: "Your code is 424242."')
-      )
+      // The error's NAME carries the code too — the one channel-controlled field the drop policy
+      // still admits, and the reason `describeError` is given the secrets on this path.
+      const named = new Error('550 rejected by policy: "Your code is 424242."')
+      named.name = 'E424242'
+      mockEmailProvider.sendPasswordResetOtp.mockRejectedValue(named)
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
 
       await otpMethodService.resendOtp(dto, mockReq)
       await flushMicrotasks()
 
+      // The `secrets` argument to `describeError` is what makes the error's NAME safe, and the name
+      // is the one channel-controlled field the drop policy still lets through — validated by
+      // shape, so a hex token fits it exactly. What this asserts is not the absence of the code
+      // (the outer `safeLogLine` would catch that anyway) but that the ORDINARY line survives: a
+      // call that named no secret leaks the code into the name, `safeLogLine` withholds the whole
+      // record to stop it, and the operator loses the diagnosis to a guard that should not have
+      // had to fire. Measured — without the argument this mutates cleanly and every other
+      // assertion here still passes.
       const logged = errorSpy.mock.calls[0]?.[0] as string
       expect(logged).not.toContain('424242')
-      expect(logged).toContain('<redacted>')
+      // On a credential path the relay's prose does not reach the line at all — only the status
+      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
+      // gone, and the diagnosis is not.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).toContain('550')
       errorSpy.mockRestore()
     })
   })

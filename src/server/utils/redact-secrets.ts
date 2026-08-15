@@ -31,8 +31,10 @@ const REDACTED = '<redacted>'
  *
  * **This cannot find a secret the channel re-encoded.** A relay that returns the body base64'd
  * defeats substring matching, because the encoding is block-aligned and the secret has no
- * standalone representation inside it. That residual case is why the caller must also bound how
- * much channel text it logs, rather than treating this function as sufficient on its own.
+ * standalone representation inside it. Bounding the text does NOT cover that gap — the encoding
+ * runs from the body's start, so the credential is in the first sentence and survives any cap
+ * that leaves enough to decode. The caller's answer is to not log channel free text at all while
+ * a credential is in flight; this function handles what it can see.
  *
  * Empty secrets are skipped: an empty string matches at every position, so the scan would emit a
  * marker between every character and never advance past one. An empty string also has nothing to

@@ -36,10 +36,39 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   error's `name` and `message` — never its `stack`, never its own properties, which is where a
   channel hides the server's full reply (nodemailer hangs it on `response`). Each piece is
   stripped of the credentials the message carried, walked three levels down the `cause` chain
-  because that is where a wrapped channel puts the relay's answer, bounded to 200 characters so a
-  re-encoded body cannot relay an unbounded quantity of channel text into the log, and passed
-  through `logSafe` — a relay's reply is untrusted input, and a `CR/LF` in it would have forged a
-  second log record. That last one was a live log-injection hole on the same line, closed here.
+  because that is where a wrapped channel puts the relay's answer, bounded to 200 characters, and
+  passed through `logSafe` — a relay's reply is untrusted input, and a `CR/LF` in it would have
+  forged a second log record. That last one was a live log-injection hole on the same line, closed
+  here.
+
+  **On a credential path the channel's free text is not redacted — it is dropped, and only a
+  parsed status survives.** Both obvious defences assume the credential appears in the error the
+  way this library wrote it, and a relay is free to quote the body it rejected in transfer
+  encoding instead. Base64 is the ordinary case, and it defeats both at once: substring matching
+  finds nothing, because the credential's characters are not in the line, and the length cap does
+  not help either, because the encoding runs from the body's FIRST byte, so the code sits in the
+  first sentence, well inside any cap. Measured on the real reset-code body — 96 base64 characters
+  end to end, and the first 200 of the line decode straight back to the OTP. A bound on volume was
+  never a bound on disclosure, and the fix's own first draft described it as one.
+
+  What is kept instead is only what can be independently validated. The status code is rebuilt
+  from a pattern's own capture rather than sliced out of the input — three digits at the very
+  start, optionally an enhanced `X.Y.Z` — so nothing a relay writes after it can ride along,
+  whatever it encoded it in. It is also the half of a bounce an operator acts on: `550` is a
+  refusal, `421` a transient outage, `535` a credential problem on their side. Keeping it is what
+  makes dropping the rest affordable.
+
+  **The error's `name` is the channel's field too, and closing only `message` would have moved the
+  leak one field over.** An error class built around a relay reply — `name = \`SmtpRejection:
+  ${response}\``— is a normal thing for a mail client to do, and every argument above applies to
+it unchanged. So on a credential path the name is kept only when it looks like a name: an
+identifier, matched from its first character to its last, bounded to 48. The bound is a specific
+number rather than a generous one, because it makes the guarantee provable — no credential this
+library issues can occupy a valid name, since every token is 64 hex characters and every OTP is
+digits, which cannot even begin one. Nothing legitimate is lost:`MongoNetworkTimeoutError` is
+  24 characters. Where nothing secret was in flight, both fields pass through as before — the
+  relay's own words are the diagnosis there, and constraining them would cost an operator the
+  reason for the failure to buy nothing.
 
   **The same mistake was in four more places, found by hunting the family rather than the report.**
   `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
@@ -122,8 +151,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
   provider and the log line's shape is the only visible difference. Two things to check. If you
   parse that log line, it changed from `delivery failed for "<subject>"` with the error attached
-  as a second argument to a single string `delivery failed for "<subject>": <Name>: <message>`,
-  with `<-` between cause links. And if you run `onDeliveryError: 'rethrow'`, audit what your
+  as a second argument to a single string. On the notices that carry nothing secret that reads
+  `delivery failed for "<subject>": <Name>: <message>`, with `<-` between cause links; on the
+  five credential-bearing sends the channel's text is absent and it reads `<Name>: <status>`, with
+  `<Name>` replaced by `<error>` when the channel did not supply an identifier-shaped one. And if you run `onDeliveryError: 'rethrow'`, audit what your
   handler does with the error, per the paragraph above.
 
   Not exploitable by an unauthenticated caller on its own — it requires a relay configured to

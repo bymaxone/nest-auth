@@ -45,7 +45,7 @@ import type {
   InviteData,
   SessionInfo
 } from '../interfaces/email-provider.interface'
-import { describeError } from '../utils/describe-error'
+import { describeError, type ChannelTextPolicy } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { redactSecrets } from '../utils/redact-secrets'
 import { safeLogLine } from '../utils/safe-log-line'
@@ -164,6 +164,16 @@ export interface DefaultAuthEmailProviderOptions {
 }
 
 /** How long a verification or reset code stays valid, stated in the message that carries it. */
+/**
+ * Passed as `secrets` by the notices that render nothing which must be withheld.
+ *
+ * One shared constant rather than an `[]` at each call site, so the claim "this message carries no
+ * credential" is made in one place and can be pinned by one test. Three separate literals meant
+ * three separate chances for the array to be something other than empty, each needing its own
+ * assertion to prove it was not.
+ */
+const NO_SECRETS: readonly string[] = []
+
 const CODE_VALIDITY_TEXT = 'It expires shortly, so use it soon.'
 
 /** Closing line on every message announcing a change the recipient may not have made. */
@@ -330,9 +340,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     token: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetToken({ token, locale }), [
-      token
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordResetToken({ token, locale }),
+      [token],
+      'drop'
+    )
   }
 
   /** @inheritdoc */
@@ -342,7 +356,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordResetOtp({ otp, locale }), [otp])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordResetOtp({ otp, locale }),
+      [otp],
+      'drop'
+    )
   }
 
   /** @inheritdoc */
@@ -352,7 +372,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     otp: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.emailVerificationOtp({ otp, locale }), [otp])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.emailVerificationOtp({ otp, locale }),
+      [otp],
+      'drop'
+    )
   }
 
   /** @inheritdoc */
@@ -361,7 +387,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.passwordChanged({ locale }))
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.passwordChanged({ locale }),
+      NO_SECRETS,
+      'redact'
+    )
   }
 
   /** @inheritdoc */
@@ -375,7 +407,8 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       newEmail,
       this.messages.emailChangeVerification({ token, locale }),
-      [token]
+      [token],
+      'drop'
     )
   }
 
@@ -395,7 +428,8 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       tenantId,
       oldEmail,
       this.messages.emailChanged({ oldEmail, newEmail, locale }),
-      [oldEmail, newEmail]
+      [oldEmail, newEmail],
+      'redact'
     )
   }
 
@@ -405,7 +439,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }))
+    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), NO_SECRETS, 'redact')
   }
 
   /** @inheritdoc */
@@ -414,7 +448,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }))
+    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), NO_SECRETS, 'redact')
   }
 
   /** @inheritdoc */
@@ -426,11 +460,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   ): Promise<void> {
     // Device, IP and session hash are rendered into this body, so a quoted rejection carries all
     // three. An IP and a device string identify a person as surely as an address does.
-    await this.deliver(tenantId, email, this.messages.newSessionAlert({ sessionInfo, locale }), [
-      sessionInfo.device,
-      sessionInfo.ip,
-      sessionInfo.sessionHash
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.newSessionAlert({ sessionInfo, locale }),
+      [sessionInfo.device, sessionInfo.ip, sessionInfo.sessionHash],
+      'redact'
+    )
   }
 
   /** @inheritdoc */
@@ -440,9 +476,13 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     inviteData: InviteData,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.invitation({ invite: inviteData, locale }), [
-      inviteData.inviteToken
-    ])
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.invitation({ invite: inviteData, locale }),
+      [inviteData.inviteToken],
+      'drop'
+    )
   }
 
   /**
@@ -454,13 +494,23 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
    * @param message - The rendered subject and body, and optionally its own HTML.
    * @param secrets - Credentials rendered into this message. A channel that rejects by quoting
    *   the body puts them into the error it raises, so they are named here to be stripped from the
-   *   log line. Messages carrying no credential pass nothing.
+   *   log line. Messages carrying no credential pass an empty array — explicitly, because a
+   *   default here would let a body that renders a credential read as correct while naming none.
+   * @param channelText - Whether the channel's own words may reach the log. `'drop'` on every path
+   *   that renders a credential, keeping only the status code: redaction and the length cap both
+   *   assume the credential appears the way this library wrote it, and a relay is free to quote
+   *   the body it rejected in transfer encoding instead — base64 is the ordinary case, it starts
+   *   at the body's first byte, and the code lands well inside any cap while matching no secret.
+   *   `'redact'` only on the notifications that render nothing secret, where the relay's own
+   *   explanation is the diagnosis and redaction is sound. Required for the same reason `secrets`
+   *   is: the permissive value is the dangerous one, so it has to be chosen, never inherited.
    */
   private async deliver(
     tenantId: string,
     to: string,
     message: AuthEmailMessage,
-    secrets: readonly string[] = []
+    secrets: readonly string[],
+    channelText: ChannelTextPolicy
   ): Promise<void> {
     // Stripped once, then used for both the header and the log line: a subject is a single header,
     // and a smuggled CR/LF must reach neither the channel (header injection) nor the logger.
@@ -507,7 +557,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
 
       this.logger.error(
         safeLogLine(
-          `delivery failed for "${loggedSubject}": ${describeError(error, withheldValues)}`,
+          `delivery failed for "${loggedSubject}": ${describeError(error, withheldValues, channelText)}`,
           withheldValues
         )
       )
