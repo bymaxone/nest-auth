@@ -1248,10 +1248,18 @@ it, including cookie names you have since changed.
 > after adopting than before**. The mechanism is in `augmentOperation`: an operation with no
 > requirement of its own, no override and no fragment falls through to `ownRouteSecurity`, which
 > answers `undefined` for anything that is not a health or metrics route — so **your** guarded
-> routes carry no requirement and inherit the document default. Remove that default and every
-> route this library does not describe reads as needing no credential. The health probes lose
-> their explicit `[]` in the same move: `ownRouteSecurity` only returns it when
-> `openapi.security.length > 0`.
+> routes carry no requirement and inherit the document default. Remove that default and every one
+> of those routes reads as needing no credential.
+>
+> **Keep the condition attached, because it decides how much of your API is affected.** This
+> reaches the routes that state nothing of their own — no `@ApiSecurity`-style decorator feeding
+> the scanned operation, no entry in nest-core's `operationSecurity`, and not a health or metrics
+> route under a policy that answers for them. Anything carrying its own requirement outranks the
+> document default and is untouched, which is exactly why the fix works at all. If your backend
+> annotates every guarded route individually, this note does not apply to you; the reason it bit
+> two consumers is that annotating each route is the thing a document-level default exists to
+> avoid. The health probes are the exception that still moves: they lose their explicit `[]`,
+> because `ownRouteSecurity` returns it only when `openapi.security.length > 0`.
 >
 > **On nest-core below 1.5.0, nothing reports this.** No error, no unmatched key, no failing
 > build — the document simply stops asking for credentials on the routes the library never knew
@@ -1291,6 +1299,29 @@ it, including cookie names you have since changed.
 > schemes on a dashboard controller being registered at all, so a deployment mounting only the
 > platform surface declares neither — and `cookie` delivery, which the recipe would call the safe
 > case, throws just as hard as `bearer`.
+>
+> **And that row needs a remedy, not just a warning, because the deployment is legitimate.**
+> `JwtAuthGuard` is registered and exported unconditionally — it is not gated on any controller
+> flag — so mounting no dashboard controller does **not** stop you from guarding your own routes
+> with a dashboard access token. That combination is a real deployment: the platform surface from
+> this library, your own routes on the member credential, no member-facing auth controllers
+> mounted because your app issues those tokens through some other flow. Deriving correctly there
+> lands you on "the scheme I need does not exist", which is an accurate answer and not a usable
+> one.
+>
+> **Declare it yourself, in your own `openapi.securitySchemes`.** This is the one case where
+> "delete your hand-written `securitySchemes`" has an exception, and the exception exists because
+> the contributor deliberately declares only what its own operations reference — defining a
+> dashboard scheme on a deployment with no dashboard operation would put an unreferenced
+> credential in every such document, which is the opposite error and the reason for the gate.
+>
+> Two honest caveats on doing it. **`AUTH_SECURITY_SCHEMES` is not part of the public API today**,
+> so you will be writing the scheme name as a string literal (`bymaxAuthAccessCookie`,
+> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. And your definition must
+> match what the server actually reads — the cookie name is yours to choose, so an `apiKey`-in-
+> cookie scheme has to carry the same `cookies.accessTokenName` you configured, which is the same
+> derivation rule as everywhere else in this note. Exporting those names so this stops being a
+> literal is tracked; until it ships, this paragraph is the whole contract.
 >
 > **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
 > does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —

@@ -291,13 +291,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   with no requirement of its own, no override and no fragment falls through to `ownRouteSecurity`,
   which answers `undefined` for anything that is not a health or metrics route — so a backend's
   **own** guarded routes carry no requirement and inherit the document default. Take the default
-  away and every route this library does not describe reads as public. The health probes lose
-  their explicit `[]` at the same time, since `ownRouteSecurity` returns it only while
-  `openapi.security.length > 0`.
+  away and every one of those routes reads as public. The condition travels with the claim: this
+  reaches routes that state nothing of their own — no decorator feeding the scanned operation, no
+  `operationSecurity` entry, not a health or metrics route a policy answers for. Anything carrying
+  its own requirement outranks the default and is untouched, which is why the fix works at all. A
+  backend that annotates every guarded route individually is unaffected; the reason this bit two
+  consumers is that annotating each route is what a document-level default exists to avoid. The
+  health probes do move, losing their explicit `[]`, since `ownRouteSecurity` returns it only
+  while `openapi.security.length > 0`.
 
   On nest-core below 1.5.0 nothing reports it: no error, no unmatched key, no failing build. The
-  document just stops asking for credentials on the routes the library never knew about — the ones
-  the backend owns. nest-core 1.5.0 warns on this shape and names the bare operations, which makes
+  document just stops asking for credentials on those routes — the ones the backend owns.
+  nest-core 1.5.0 warns on this shape and names the bare operations, which makes
   it visible rather than impossible. Keep the default, and **derive it instead of writing a
   literal** — from the guard your own routes use, your `tokenDelivery`, and the controllers you
   registered, all three. A literal goes wrong in two distinct ways: where the named scheme is not
@@ -309,6 +314,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and a route behind `JwtPlatformGuard` always wants `bymaxPlatformAccessBearer`, since
   `extractPlatformAccessToken` reads the `Authorization` header whatever the mode says. A backend
   guarding different routes with both families needs per-operation `security` for one of them.
+
+  The platform-only case gets a remedy rather than only a diagnosis, because the deployment is
+  legitimate: `JwtAuthGuard` is registered and exported unconditionally, so mounting no dashboard
+  controller does not stop a backend from guarding its own routes with a dashboard access token.
+  Deriving correctly there answers "the scheme does not exist", which is true and unusable — so
+  that deployment **declares the scheme itself** in `openapi.securitySchemes`, matching the
+  `cookies.accessTokenName` it configured. `AUTH_SECURITY_SCHEMES` is not public API today, so the
+  name is written as a literal for now; exporting it is tracked.
+
   Per-operation beats document-level, so the default cannot reach this library's operations.
   Verified on a real adoption: thirteen contributed operations render byte-identical with and
   without it.
