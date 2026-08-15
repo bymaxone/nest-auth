@@ -1555,8 +1555,11 @@ API document, or a test that asserts against it.
 This library logs through `Logger` from `@nestjs/common`, one instance per service, and installs
 no transport of its own. In an application that calls `app.useLogger(...)`, Nest reroutes every
 `Logger` call in the process — **including the ones inside this package** — through whatever
-service you installed. That coupling is real and invisible from this package's `package.json`,
-which lists no logging dependency and never will.
+service you installed. That coupling is invisible from this package's `package.json`: the peer
+list carries `@nestjs/common`, which is where `Logger` comes from, and nothing else about
+logging — no transport, no backend, no formatter, and there never will be. So a dependency read
+tells you which logging _interface_ this library calls and nothing about which implementation
+receives the call.
 
 **Error causes arrive as an `Error` object in the optional params, not as a stack string.**
 
@@ -1580,9 +1583,15 @@ real bridge rather than argued: the object survives both, the string survives on
 value rather than assuming the second positional is a stack. If you also want a context string,
 `logger.error(message, error, 'Context')` is the shape that keeps both.
 
-**What is never logged:** tokens, refresh tokens, session hashes, password hashes, TOTP secrets,
-recovery codes and encryption keys. Log lines carry ids — `userId`, `tenantId`, `jti` — and
-addresses are masked. This does not depend on your logger redacting anything.
+**What is never logged:** tokens, refresh tokens, password hashes, TOTP secrets, recovery codes
+and encryption keys. Log lines carry ids — `userId`, `tenantId`, `jti` — and addresses are
+masked. This does not depend on your logger redacting anything.
+
+One qualification, because the blanket version of that sentence was wrong: a **session hash
+prefix** does appear, as `hash.slice(0, 8)` on the diagnostic line that separates a Redis read
+failure from a pruned stale member. Those eight hex characters are the `id` field `GET /sessions`
+already returns to the client — a display id, deliberately public. The full digest is the
+sibling `sessionHash` field, and that one is never logged.
 
 Stated as the rule it is: a convention this library's code follows and its reviews enforce, **not
 a gate**. Two related things _are_ tested — `logSafe()` refuses a value carrying control
