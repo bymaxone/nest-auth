@@ -1260,6 +1260,16 @@ it, including cookie names you have since changed.
 > library's: a per-operation requirement outranks a document-level one, and every operation the
 > contributor describes carries its own.
 >
+> **An empty `{}` alternative means one of two things, and the difference matters when you read
+> the rendered document.** Beside a named scheme under `tokenDelivery: 'both'`, it is how OpenAPI
+> says "or a credential this member cannot model" — the refresh token arriving in the request
+> body, which `security` has no vocabulary for. On `logout`, in **every** delivery mode including
+> `cookie`, it means what it says: the operation requires nothing, because a user whose access
+> token expired must still be able to sign out. A consumer measured the second case and expected
+> only the first, so it is worth reading the operation before concluding which one you are
+> looking at. `logout` therefore renders four alternatives under `cookie` — both credentials,
+> each alone, and neither — and `password/change` renders two.
+>
 > **Verify with a diff, not by reasoning.** Render the document with the contributor active and
 > again with your entries in place, and compare only the operations you mount. The consumer who
 > did this found their own three differences were improvements — a configured cookie name over
