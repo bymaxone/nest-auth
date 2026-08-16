@@ -30,8 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -141,7 +140,9 @@ export class AuthService {
       }
       await this.userRepo.updatePassword(userId, upgraded)
     } catch (err: unknown) {
-      this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
+      this.logger.error(
+        `rehash on verify failed — the stored hash is unchanged: ${describeError(err, [])}`
+      )
     }
   }
 
@@ -262,7 +263,9 @@ export class AuthService {
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterRegister hook threw', err)
+        this.logger.error(
+          `afterRegister hook threw: ${describeError(err, [safeUser.email, context.ip, context.userAgent])}`
+        )
       })
     }
 
@@ -448,11 +451,13 @@ export class AuthService {
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [logSafe(user.id)])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(
+          `afterLogin hook threw: ${describeError(err, [safeUser.email, context.ip, context.userAgent])}`
+        )
       })
     }
 
@@ -546,7 +551,7 @@ export class AuthService {
     if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
-          this.logger.error('afterLogout hook threw', err)
+          this.logger.error(`afterLogout hook threw: ${describeError(err, [logSafe(userId)])}`)
         }
       )
     }
@@ -831,7 +836,7 @@ export class AuthService {
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [logSafe(user.id)])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
@@ -842,7 +847,9 @@ export class AuthService {
           sanitizedHeaders: {}
         })
       ).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(
+          `afterLogin hook threw: ${describeError(err, [safeUser.email, ip, userAgent])}`
+        )
       })
     }
 
@@ -912,7 +919,7 @@ export class AuthService {
       void Promise.resolve(
         this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
       ).catch((err: unknown) => {
-        this.logger.error('afterEmailVerified hook threw', err)
+        this.logger.error(`afterEmailVerified hook threw: ${describeError(err, [user.email])}`)
       })
     }
   }
@@ -1109,10 +1116,10 @@ export class AuthService {
   private fireAndForget(run: () => Promise<void> | void, name: string): void {
     try {
       void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`${name} hook threw`, err)
+        this.logger.error(`${name} hook threw: ${describeError(err, [])}`)
       })
     } catch (err: unknown) {
-      this.logger.error(`${name} hook threw synchronously`, err)
+      this.logger.error(`${name} hook threw synchronously: ${describeError(err, [])}`)
     }
   }
 

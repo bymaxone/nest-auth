@@ -7,6 +7,7 @@ import { Catch, Logger } from '@nestjs/common'
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
 
 import { AuthException } from '../errors/auth-exception'
+import { describeError } from '../utils/describe-error'
 
 /**
  * A Socket.IO client: dispatch is an event, and the adapter puts it on the wire.
@@ -150,6 +151,21 @@ export class WsAuthExceptionFilter implements ExceptionFilter {
     // Neither shape. Returning quietly is the only option left: throwing here would replace a
     // refusal the caller can see with one nothing catches, inside the layer whose job is to
     // handle failures.
-    this.logger.error('refused a request on a client this filter cannot answer', exception)
+    // Same reasoning as `AuthExceptionFilter`'s unknown-exception branch, one transport over:
+    // whatever reached this filter was thrown by code this library does not own, and its `stack`
+    // is that code's. `describeError` bounds the text, strips control characters and drops the
+    // stack. Nothing is named because the filter cannot know what the thrower held.
+    // Same equivalence as `AuthExceptionFilter`: the caller cannot know what the thrower held, so
+    // there is no value a test could name that a mutant's string would displace.
+    //
+    // The BLOCK form, not `next-line`. This call wraps, so `next-line` binds to
+    // `this.logger.error(` and leaves the array on the line after it untouched — the mutant then
+    // reads as surviving and the directive looks broken rather than misplaced. The region is two
+    // lines, which is as short as it can be while still covering the argument.
+    /* Stryker disable ArrayDeclaration */
+    this.logger.error(
+      `refused a request on a client this filter cannot answer: ${describeError(exception, [])}`
+    )
+    /* Stryker restore ArrayDeclaration */
   }
 }

@@ -261,6 +261,30 @@ describe('log-injection guard (E2E)', () => {
     expect(unguarded.map((u) => `${u.file}:${u.line} \${${u.expression}}`)).toEqual([])
   })
 
+  // A message can be guarded and the call still hand the logger the error object, whose `stack`
+  // this library never chose to publish and whose text is unbounded. Every thrower on these paths
+  // is code this library does not own — a hook, an OAuth plugin, a repository, and in the
+  // exception filter's case literally anything the surrounding application threw.
+  //
+  // The cost is real and was accepted deliberately: an operator loses the stack trace for a hook
+  // or plugin failure. That stack belongs to the consumer's own code, which can log it where the
+  // audience is known — a library's log line reaches a wider one, which is the same argument that
+  // took the recipient address out of the delivery-failure line.
+  //
+  // Counted from `arguments.length`, so no scanner can be confused by a comma in a message. The
+  // name-based version of this check missed `auth-exception.filter.ts` entirely, whose parameter
+  // is called `exception` rather than `err` — and that is the most exposed site of the set, being
+  // where a re-thrown mail-channel error lands under `onDeliveryError: 'rethrow'`.
+  it('passes no error object to the logger', () => {
+    const withError = files.flatMap((file) =>
+      loggerCalls(parse(file))
+        .filter((call) => call.node.arguments.length > 1)
+        .map((call) => `${file.slice(SRC_ROOT.length + 1)}:${call.line}`)
+    )
+
+    expect(withError).toEqual([])
+  })
+
   // The detector has to be able to fail, or the assertions above are decoration. It found 48 real
   // sites when written; asserting a lower bound keeps a later refactor of the walker from silently
   // reducing it to nothing.

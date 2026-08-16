@@ -49,6 +49,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
@@ -337,14 +338,31 @@ export class OAuthService {
     const { tenantId, codeVerifier } = parsedState
 
     // Exchange code and fetch profile — wrap in try/catch for observability.
+    //
+    // `accessToken` is declared OUT here rather than inside the `try` so the handler can name it.
+    // The plugin is consumer code and it RECEIVED three credentials from this block: the
+    // authorization code, the PKCE verifier, and — on the second call — the provider's access
+    // token. An HTTP client that attaches its request config to the error is the ordinary case,
+    // not an exotic one, so the plugin's rejection is a place any of the three can be.
     let profile: Awaited<ReturnType<typeof plugin.fetchProfile>>
+    let accessToken = ''
     try {
       const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-      profile = await plugin.fetchProfile(tokenResponse.access_token)
+      accessToken = tokenResponse.access_token
+      profile = await plugin.fetchProfile(accessToken)
     } catch (err: unknown) {
+      // The error object is NOT passed to the logger. `describeError` bounds the text, strips
+      // control characters so a plugin cannot forge a second record, drops the `stack` — which
+      // belongs to the plugin and can hold its request — and removes the three values by name.
+      //
+      // Naming them is the weaker half and it is deliberate: redaction is a substring match, so
+      // it holds for a value the plugin echoed as given and not for one it re-encoded. The
+      // load-bearing half is that the stack and the unbounded text are gone. A plugin that wants
+      // its own diagnostics logged in full can log them itself, where the operator knows the
+      // audience.
       this.logger.error(
-        `OAuth plugin '${provider}' failed during code exchange or profile fetch`,
-        err
+        `OAuth plugin '${provider}' failed during code exchange or profile fetch: ` +
+          describeError(err, [code, codeVerifier, accessToken])
       )
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }

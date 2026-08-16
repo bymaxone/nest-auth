@@ -20,6 +20,37 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **No error object reaches the logger any more.** Twenty-seven log sites passed the thrown value
+  as Nest's second `Logger` argument, which prints its `stack`. On every one of those paths the
+  thrower is code this library does not own: a hook, an OAuth plugin, the consumer's repository,
+  a Redis client — and in `AuthExceptionFilter`'s case, literally anything the surrounding
+  application threw. All of them now go through `describeError`, which bounds the text, strips
+  control characters, drops the `stack`, and removes any value the site can name.
+
+  **The highest-value site was not in the original report.** `OAuthService.handleCallback` wraps
+  `plugin.exchangeCode(code, codeVerifier)` and `plugin.fetchProfile(accessToken)`. The plugin is
+  consumer code that RECEIVED all three, and an HTTP client attaching its request config to the
+  error is the ordinary case rather than an exotic one — axios does it by default. A live access
+  token could reach the operator's pipeline through a rejection this library then logged in full.
+  The handler now names all three values, and a test drives a plugin that echoes the token back.
+
+  The second was found by the guard rather than by reading: `AuthExceptionFilter`, whose parameter
+  is called `exception`, not `err`. It is the branch a re-thrown mail-channel error lands in under
+  `onDeliveryError: 'rethrow'` — this library's own documentation says so — so it is the most
+  exposed log site of the set, and a name-based sweep walked straight past it.
+
+  **What you lose:** the stack trace for a hook, plugin or repository failure. That stack belongs
+  to the consumer's own code, which can log it where the audience is known; a library's log line
+  reaches a wider one. Same argument that took the recipient address out of the delivery-failure
+  line. The diagnosis remains — the message, the error's class, and the depth of its `cause` chain.
+
+  `redactSecrets` was hardened in the process. It read `.length` off each element, so a single
+  `undefined` in the list threw a `TypeError` — out of a `catch` block, turning a failure the
+  caller meant to absorb into an unhandled rejection with no log line at all, which is worse than
+  the leak it exists to prevent. It is exported, so a consumer reaches that edge from plain
+  JavaScript. Found when a caller named a field the compiler believed was a `string`; the suite
+  did not fail an assertion, it crashed the worker.
+
 - **A consumer-supplied identifier could forge a second record in the log.** Every value this
   library interpolates into a log template now passes a guard: `logSafe` for identifiers,
   `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight

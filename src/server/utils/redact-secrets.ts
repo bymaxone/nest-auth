@@ -60,7 +60,18 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // that is a PREFIX of another cannot claim the position first, consume its own length and leave
   // the remainder of the longer one in the log. Sorting in place is safe here precisely because
   // `filter` already returned a new array; `secrets` itself is never reordered under the caller.
-  const present = secrets.filter((secret) => secret.length > 0).sort((a, b) => b.length - a.length)
+  // `typeof` before `.length`, and the type annotation is not enough of a reason to skip it. This
+  // is an exported function called from inside `catch` blocks, so a `TypeError` here propagates
+  // out of the caller's handler and turns a failure it meant to absorb into an unhandled
+  // rejection with no log line at all — the exact outcome {@link describeError} exists to prevent,
+  // reached through its own dependency.
+  //
+  // Not hypothetical: it crashed a suite the moment a caller named a field the compiler believed
+  // was a `string` and a fixture had left undefined. A consumer reaches the same edge from
+  // plain JavaScript, or from an object cast at any boundary this library does not own.
+  const present = secrets
+    .filter((secret): secret is string => typeof secret === 'string' && secret.length > 0)
+    .sort((a, b) => b.length - a.length)
 
   // Nothing to look for means nothing to do, and returning the input is not merely an
   // optimisation. The scan below walks the string one character at a time, building the output by

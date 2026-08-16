@@ -645,8 +645,7 @@ describe('SessionService', () => {
 
       // Assert — error was logged, not thrown
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'onSessionEvicted hook threw',
-        expect.any(Error)
+        'onSessionEvicted hook threw: Error: hook exploded'
       )
     })
 
@@ -925,8 +924,9 @@ describe('SessionService', () => {
       await service.createSession(userId, rawToken, ip, userAgent)
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        `enforceSessionLimit: failed to evict session ${hashes[0]} for user ${userId}`,
-        expect.any(Error)
+        expect.stringContaining(
+          `enforceSessionLimit: failed to evict session ${hashes[0]} for user ${userId}: `
+        )
       )
     })
 
@@ -946,8 +946,7 @@ describe('SessionService', () => {
       await service.createSession(userId, rawToken, ip, userAgent)
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'maxSessionsResolver threw — falling back to defaultMaxSessions',
-        expect.any(Error)
+        expect.stringContaining(`maxSessionsResolver threw — falling back to defaultMaxSessions: `)
       )
     })
 
@@ -961,8 +960,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'onNewSession hook threw',
-        expect.any(Error)
+        expect.stringContaining(`onNewSession hook threw: `)
       )
     })
 
@@ -976,8 +974,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'onNewSession hook — findById failed',
-        expect.any(Error)
+        expect.stringContaining(`onNewSession hook — findById failed: `)
       )
     })
   })
@@ -1236,8 +1233,7 @@ describe('SessionService', () => {
       // Counted, not named: an operator seeing a run of these needs the scale, and a log line is
       // the wrong place for a session identifier.
       expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'listSessions: failed to prune 1 dead member(s)',
-        expect.any(Error)
+        expect.stringContaining(`listSessions: failed to prune 1 dead member(s): `)
       )
     })
 
@@ -2051,8 +2047,7 @@ describe('SessionService', () => {
         // Named, not merely counted: an operator seeing a run of these needs to know the prune
         // is what failed, not the listing — the two have different remedies.
         expect(warn).toHaveBeenCalledWith(
-          expect.stringContaining('grace-pointer prune failed'),
-          expect.anything()
+          'listSessions: grace-pointer prune failed: Error: redis down'
         )
       } finally {
         warn.mockRestore()

@@ -518,7 +518,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('afterRegister hook threw', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterRegister hook threw: '))
       loggerSpy.mockRestore()
     })
 
@@ -1244,7 +1244,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('updateLastLogin failed', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
       loggerSpy.mockRestore()
     })
 
@@ -1258,7 +1258,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('afterLogin hook threw', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw: '))
       loggerSpy.mockRestore()
     })
 
@@ -1549,7 +1549,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('afterLogout hook threw', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogout hook threw: '))
       loggerSpy.mockRestore()
     })
   })
@@ -2093,7 +2093,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('updateLastLogin failed', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
       loggerSpy.mockRestore()
     })
 
@@ -2115,7 +2115,7 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('afterLogin hook threw', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogin hook threw: '))
       loggerSpy.mockRestore()
     })
 
@@ -2333,7 +2333,9 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
-      expect(loggerSpy).toHaveBeenCalledWith('afterEmailVerified hook threw', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining('afterEmailVerified hook threw: ')
+      )
       loggerSpy.mockRestore()
     })
   })
@@ -3137,8 +3139,7 @@ describe('AuthService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(errorSpy).toHaveBeenCalledWith(
-        'rehash on verify failed — the stored hash is unchanged',
-        expect.any(Error)
+        'rehash on verify failed — the stored hash is unchanged: Error: write failed'
       )
       errorSpy.mockRestore()
     })

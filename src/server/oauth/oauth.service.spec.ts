@@ -1212,9 +1212,12 @@ describe('OAuthService', () => {
       mockPlugin.exchangeCode.mockRejectedValue(new Error('Network timeout'))
 
       await expect(callCallback()).rejects.toThrow(AuthException)
-      expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining("OAuth plugin 'google'"),
-        expect.any(Error)
+      // ONE argument. The error object no longer reaches the logger: a plugin is consumer code
+      // that received the authorization code, the PKCE verifier and the access token, and an
+      // HTTP client attaching its request config to the error is the ordinary case.
+      expect(loggerSpy.mock.calls[0]).toHaveLength(1)
+      expect(loggerSpy.mock.calls[0]?.[0]).toBe(
+        "OAuth plugin 'google' failed during code exchange or profile fetch: Error: Network timeout"
       )
     })
 
@@ -1226,10 +1229,37 @@ describe('OAuthService', () => {
       mockPlugin.fetchProfile.mockRejectedValue(new Error('Unverified email'))
 
       await expect(callCallback()).rejects.toThrow(AuthException)
-      expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining("OAuth plugin 'google'"),
-        expect.any(Error)
+      expect(loggerSpy.mock.calls[0]).toHaveLength(1)
+      expect(loggerSpy.mock.calls[0]?.[0]).toBe(
+        "OAuth plugin 'google' failed during code exchange or profile fetch: Error: Unverified email"
       )
+    })
+
+    // The measured shape of the risk, kept as a test. A plugin that echoes what it was given —
+    // an HTTP client attaching the request, a wrapper quoting the response — puts the provider's
+    // access token into its own rejection. The token is live until the provider expires it, and
+    // this handler is the only thing between it and the operator's pipeline.
+    //
+    // Both halves are asserted: the credentials are gone, AND the diagnosis remains. Asserting
+    // only the absence would pass on a build that logged nothing at all.
+    it('publishes no credential when the plugin echoes what it received', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+      mockRedis.getdel.mockResolvedValue(STORED_STATE)
+      mockPlugin.exchangeCode.mockResolvedValue({
+        access_token: 'ya29.live-access-token',
+        token_type: 'Bearer'
+      })
+      mockPlugin.fetchProfile.mockRejectedValue(
+        new Error('401 from provider: {"authorization":"Bearer ya29.live-access-token"}')
+      )
+
+      await expect(callCallback()).rejects.toThrow(AuthException)
+
+      const logged = String(loggerSpy.mock.calls[0]?.[0])
+      expect(logged).not.toContain('ya29.live-access-token')
+      expect(logged).toContain("OAuth plugin 'google' failed")
+      expect(logged).toContain('<redacted>')
+      loggerSpy.mockRestore()
     })
 
     // Verifies that 'link' action with no existingAuthUser throws OAUTH_FAILED —

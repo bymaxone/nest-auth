@@ -164,7 +164,7 @@ describe('AuthExceptionFilter', () => {
     // not just the call: the response deliberately says nothing about what failed, so this line
     // is the only description of the failure that exists anywhere. An empty one leaves the
     // operator with a bare stack and no statement of what the filter was doing.
-    expect(errorLog).toHaveBeenCalledWith('unhandled exception', expect.any(Error))
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('unhandled exception: '))
   })
 
   it('answers a non-Error throw the same way', () => {
