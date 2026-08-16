@@ -20,6 +20,47 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **`onDeliveryError` takes a per-message map, so an opt-in stops being all-or-nothing.** It was one
+  switch for all ten messages. A deployment sets `'rethrow'` for a specific benefit — deleting an
+  undelivered reset token early, not recording "verification sent" for a send that failed — and the
+  same setting then handed it the channel's **original, unlaundered** error on every other path,
+  including the three whose body renders a live credential. The two flows that motivate the opt-in
+  are not the ones carrying the most sensitive body.
+
+  ```typescript
+  new DefaultAuthEmailProvider(sink, {
+    onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' }
+  })
+  ```
+
+  A message left out keeps `'swallow'`, so the safe value is what you get by saying nothing and
+  widening the opt-in is always explicit. A bare `'swallow' | 'rethrow'` still works and still
+  applies to all ten. A key the catalogue does not know is dropped — a typo leaves the message
+  swallowing, never exposed. The resolved policy is read from a `Map` and built by iterating the
+  deployment's own entries, so no lookup walks a prototype chain.
+
+  `AUTH_EMAIL_KINDS`, `AuthEmailKind` and `DeliveryErrorPolicyMap` are exported. A catalogue entry
+  added without a matching kind fails to compile.
+
+- **`AuthEmailSink.send` now states which message it is carrying and whether the body holds a live
+  credential.** `kind` and `containsCredential` are always set. The obligation is in the port's own
+  documentation, where an implementer meets it: **a sink must not publish the content of a message
+  flagged `containsCredential`** — not in an error it throws, not in a log line, not in an audit
+  record that outlives delivery.
+
+  This is a statement of fact, **not** protection, and the docs say so plainly. Once the body leaves
+  `send`, what happens to it belongs to the sink. It is delivered at the only moment a sink could
+  act on it.
+
+  Why a flag and not a list of values to redact: that was measured and rejected. Redaction is a
+  substring match, so it holds for a value quoted as written and not for the same bytes re-encoded —
+  a relay may answer with the body in base64, and then no list matches. A categorical "publish none
+  of this message" has to find nothing, which is the only shape that survives an encoding it cannot
+  predict. The same reasoning took every channel-authored byte out of this library's own log lines.
+
+  Adding fields to the input is not breaking for a sink: an implementation taking fewer properties
+  still satisfies the port.
+
 - **A one-time code could reach the operator's log in clear text when the mail relay rejected the
   message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
   comment justifying it read "the error is the channel's own, not the rendered body" — and a

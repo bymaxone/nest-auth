@@ -113,12 +113,14 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { NoOpEmailProvider } from './providers/no-op-email.provider'
-export { DefaultAuthEmailProvider } from './providers/default-auth-email.provider'
+export { AUTH_EMAIL_KINDS, DefaultAuthEmailProvider } from './providers/default-auth-email.provider'
 export type {
   AuthEmailSink,
   AuthEmailMessage,
   AuthEmailCatalogue,
+  AuthEmailKind,
   DeliveryErrorPolicy,
+  DeliveryErrorPolicyMap,
   DefaultAuthEmailProviderOptions
 } from './providers/default-auth-email.provider'
 export {
