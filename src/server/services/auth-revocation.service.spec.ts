@@ -13,7 +13,12 @@ import type { RevocableTokenPayload } from './auth-revocation.service'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 
 /** A verified dashboard token payload the check reads. */
-const PAYLOAD: RevocableTokenPayload = { jti: 'jti-1', sub: 'user-1', epoch: 3 }
+const PAYLOAD: RevocableTokenPayload = {
+  jti: 'jti-1',
+  sub: 'user-1',
+  tenantId: 'tenant-1',
+  epoch: 3
+}
 
 /** Builds the service over a redis stub with the two reads it uses, defaulted to "not revoked". */
 function buildService(overrides?: { blacklist?: string | null; epoch?: number }): {
@@ -83,7 +88,7 @@ describe('AuthRevocationService', () => {
 
     await service.isAccessTokenRevoked(PAYLOAD, 'platform')
 
-    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'platform')
+    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'platform')
   })
 
   /**
@@ -95,6 +100,6 @@ describe('AuthRevocationService', () => {
 
     await service.isAccessTokenRevoked(PAYLOAD)
 
-    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
+    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
   })
 })

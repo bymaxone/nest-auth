@@ -972,6 +972,7 @@ describe('OAuthService', () => {
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         SAFE_USER.id,
+        'tenant-1',
         AUTH_RESULT.rawRefreshToken,
         '1.2.3.4',
         'UA'
@@ -1010,6 +1011,7 @@ describe('OAuthService', () => {
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         SAFE_USER.id,
+        'tenant-1',
         AUTH_RESULT.rawRefreshToken,
         '1.2.3.4',
         'UA'

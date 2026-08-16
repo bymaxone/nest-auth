@@ -33,6 +33,8 @@
  * All three are covered by the guard's unit spec.
  */
 
+import { createHash, createHmac } from 'node:crypto'
+
 import type { INestApplication } from '@nestjs/common'
 import { UseFilters, UseGuards } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
@@ -186,6 +188,20 @@ function refusalStatus(error: unknown): unknown {
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
+
+/**
+ * The token-epoch key the library derives for a dashboard account, computed the way the library does.
+ *
+ * The HMAC key is derived from the JWT secret by the same label `resolveOptions` uses, so this
+ * exercises the real derivation end to end rather than restating a hash. A key spelled out as a
+ * literal would pass on a build that derived it differently.
+ */
+function tokenEpochFor(userId: string, tenantId: string): string {
+  const hmacKey = createHash('sha256')
+    .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+    .digest('hex')
+  return `ep:${createHmac('sha256', hmacKey).update(`dashboard:${tenantId}:${userId}`).digest('hex')}`
+}
 
 describe('WsJwtGuard under a real handshake (E2E)', () => {
   let boot: BootstrappedTestApp
@@ -488,7 +504,7 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     const before = await whoami(port, { token: accessToken })
     expect(before.ok).toBe(true)
 
-    await boot.redis.set(`auth:ep:${userId}`, '99')
+    await boot.redis.set(`auth:${tokenEpochFor(userId, 'tenant-1')}`, '99')
 
     const after = await whoami(port, { token: accessToken })
     expect(after.ok).toBe(false)

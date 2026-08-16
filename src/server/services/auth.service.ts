@@ -253,7 +253,13 @@ export class AuthService {
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+      await this.sessionService.createSession(
+        safeUser.id,
+        safeUser.tenantId,
+        result.rawRefreshToken,
+        ip,
+        userAgent
+      )
     }
 
     this.logger.log(
@@ -442,7 +448,13 @@ export class AuthService {
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+      await this.sessionService.createSession(
+        safeUser.id,
+        safeUser.tenantId,
+        result.rawRefreshToken,
+        ip,
+        userAgent
+      )
     }
 
     this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
@@ -490,7 +502,7 @@ export class AuthService {
     // The stored session names its owner. Presenting the refresh token proves possession;
     // the record proves whose it is. Claims from an unverified token would not.
     const sessionHash = sha256(rawRefreshToken)
-    const userId = await this.redis.readSessionOwner(`rt:${sessionHash}`)
+    const { userId, tenantId } = await this.redis.readSessionOwner(`rt:${sessionHash}`)
     this.logger.log(`logout: userId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
@@ -524,22 +536,31 @@ export class AuthService {
     // internal DEL will be a no-op (Redis DEL is idempotent when key is absent).
     // SESSION_NOT_FOUND: session was evicted, already revoked, or the refresh token
     // does not belong to this user — in all cases authentication is already invalidated.
-    if (this.options.sessions.enabled && userId) {
-      await this.sessionService.revokeSession(userId, sessionHash).catch((err: unknown) => {
-        const errCode =
-          err instanceof AuthException
-            ? (err.getResponse() as { error: { code: string } }).error.code
-            : undefined
-        if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
-          // `describeError`, not `String(err)`. The rejection comes from Redis, so its text is not
-          // a channel's quoted body — but `String()` strips nothing, and a value that reaches a
-          // line-oriented pipeline carrying CR/LF closes the record and opens a forged one. This
-          // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
-          // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
-          // empty array is how a caller states that, rather than by omitting the argument.
-          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
-        }
-      })
+    //
+    // The tenant is REQUIRED to name the index, and it comes off the record rather than from the
+    // caller. A record without one is a pre-upgrade write: the contract lists `tenantId` among
+    // the refresh session's fields, so a live record always has it. Skipping the call is the
+    // honest end for one that does not — `rt:{hash}` is already deleted above, so the session is
+    // dead either way, and guessing a tenant would name an index belonging to nobody while
+    // reading like a revocation that happened.
+    if (this.options.sessions.enabled && userId && tenantId !== undefined) {
+      await this.sessionService
+        .revokeSession(userId, tenantId, sessionHash)
+        .catch((err: unknown) => {
+          const errCode =
+            err instanceof AuthException
+              ? (err.getResponse() as { error: { code: string } }).error.code
+              : undefined
+          if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
+            // `describeError`, not `String(err)`. The rejection comes from Redis, so its text is not
+            // a channel's quoted body — but `String()` strips nothing, and a value that reaches a
+            // line-oriented pipeline carrying CR/LF closes the record and opens a forged one. This
+            // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
+            // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
+            // empty array is how a caller states that, rather than by omitting the argument.
+            this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
+          }
+        })
     }
 
     // The hook names the user who was signed out, so it only fires when the session told us
@@ -600,7 +621,7 @@ export class AuthService {
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
-      await this.revokeAllSessions(result.session.userId)
+      await this.revokeAllSessions(result.session.userId, result.session.tenantId)
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     try {
@@ -610,7 +631,7 @@ export class AuthService {
       // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
       // definition of "blocked" — the inline version would have to re-implement the
       // case-insensitive comparison, and a second implementation is a second thing to drift.
-      await this.revokeAllSessions(result.session.userId)
+      await this.revokeAllSessions(result.session.userId, result.session.tenantId)
       throw err
     }
 
@@ -677,7 +698,7 @@ export class AuthService {
         // cleared on this session stays cleared, and re-stamping the authority must not
         // silently demand it again.
         mfaVerified: rotated.mfaVerified,
-        epoch: await this.redis.getUserTokenEpoch(user.id)
+        epoch: await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
       })
     }
 
@@ -727,10 +748,12 @@ export class AuthService {
    * operation visibly incomplete rather than reading as done while the sessions live on.
    *
    * @param userId - The account whose sessions are being ended.
+   * @param tenantId - The tenant that account belongs to; both keyspaces are scoped to it, so
+   *   passing the wrong one revokes the colliding id in another tenant instead.
    */
-  async revokeAllSessions(userId: string): Promise<void> {
-    await this.redis.invalidateUserSessions(userId)
-    await this.redis.bumpUserTokenEpoch(userId)
+  async revokeAllSessions(userId: string, tenantId: string): Promise<void> {
+    await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
   }
 
   // ---------------------------------------------------------------------------
@@ -826,7 +849,13 @@ export class AuthService {
     const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
 
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+      await this.sessionService.createSession(
+        safeUser.id,
+        safeUser.tenantId,
+        result.rawRefreshToken,
+        ip,
+        userAgent
+      )
     }
 
     this.logger.log(

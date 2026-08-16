@@ -1007,7 +1007,11 @@ describe('MfaService', () => {
         'tenant-1',
         expect.objectContaining({ mfaEnabled: true })
       )
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
       // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(tenant-scoped subject).
       expect(mockRedis.get).toHaveBeenCalledWith(
         `mfa_setup:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`
@@ -2583,6 +2587,7 @@ describe('MfaService', () => {
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         SAFE_USER.id,
+        'tenant-1',
         MOCK_AUTH_RESULT.rawRefreshToken,
         '1.2.3.4',
         'Browser'
@@ -2764,8 +2769,12 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
         'tenant-1',
         AUTH_USER_MFA_ENABLED.email
@@ -2807,8 +2816,12 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       // The counterpart of the dashboard assertion above: a platform admin has no tenant, and
       // the projection says so with `''` rather than leaving the field absent. The dashboard
       // projection would leave it `undefined` here, so this is what pins which one ran.
@@ -2837,7 +2850,11 @@ describe('MfaService', () => {
 
       await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
     })
 
     // A consumer that registers no `afterMfaDisabled` at all: the guard must short-circuit
@@ -2965,7 +2982,11 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
       // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
         hmacSha256('disable:dashboard:user-1', HMAC_KEY)
@@ -3178,8 +3199,12 @@ describe('MfaService', () => {
       // Revocation is scoped to the PLATFORM plane, sessions and epoch alike: the two id
       // spaces come from different repositories and may collide, so the dashboard variants
       // here would log out — and un-revoke — the wrong account.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       // A platform admin carries no tenant, so the email port is handed the 'platform' plane
       // sentinel as the notification's attribution — never an empty string.
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
@@ -3380,8 +3405,12 @@ describe('MfaService', () => {
       await service.verifyAndEnable('admin-1', validCode, '1.2.3.4', 'Browser', 'platform')
 
       // Revocation scoped to the platform plane — see the disable counterpart for why.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
 
       expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
         'admin-1',

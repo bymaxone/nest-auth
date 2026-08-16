@@ -14,6 +14,14 @@ export interface RevocableTokenPayload {
   readonly sub: string
   /** The epoch the token was stamped with, if any; an absent or malformed value reads as 0. */
   readonly epoch?: unknown
+  /**
+   * The tenant the token was issued for; part of the per-user epoch key on the dashboard plane.
+   *
+   * Optional because the platform plane has none — its admins are cross-tenant — and the epoch
+   * key derivation drops the segment there. A dashboard token always carries it: the guard
+   * refuses one that does not, before this is ever read.
+   */
+  readonly tenantId?: string | undefined
 }
 
 /**
@@ -58,7 +66,7 @@ export class AuthRevocationService {
     if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
       return true
     }
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub, kind)
+    const epoch = await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind)
     return readStampedEpoch(payload) < epoch
   }
 }

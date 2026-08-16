@@ -867,6 +867,7 @@ describe('InvitationService', () => {
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
       expect(mockSessionService.createSession).toHaveBeenCalledWith(
         AUTH_USER.id,
+        'tenant-1',
         AUTH_RESULT.rawRefreshToken,
         TEST_IP,
         TEST_AGENT

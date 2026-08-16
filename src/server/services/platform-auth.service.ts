@@ -180,7 +180,7 @@ export class PlatformAuthService {
     // believed they had left. The dashboard plane was fixed for exactly this; the platform
     // plane kept the old shape.
     const tokenHash = sha256(rawRefreshToken)
-    const userId = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    const { userId } = await this.redis.readSessionOwner(`prt:${tokenHash}`)
     this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
@@ -354,7 +354,9 @@ export class PlatformAuthService {
    */
 
   async revokeAllPlatformSessions(userId: string): Promise<void> {
-    await this.redis.invalidateUserSessions(userId, 'platform')
-    await this.redis.bumpUserTokenEpoch(userId, 'platform')
+    // The platform plane carries no tenant: its admins are cross-tenant by definition, which
+    // is the same asymmetry `userSubject` encodes for every other user-derived key.
+    await this.redis.invalidateUserSessions(userId, undefined, 'platform')
+    await this.redis.bumpUserTokenEpoch(userId, undefined, 'platform')
   }
 }

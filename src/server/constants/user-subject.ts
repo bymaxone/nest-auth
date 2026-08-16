@@ -1,14 +1,16 @@
 /**
- * The subject every MFA store key and MFA failure counter is derived from.
+ * The subject every user-derived Redis key is HMACed over.
  *
- * One definition rather than eight copies: eight keys share this shape, and a copy that drifts is
- * a key that silently stops matching the one rust-auth derives from the same contract.
+ * One definition rather than a copy per key family, and a copy that drifts is a key that silently
+ * stops matching the one rust-auth derives from the same contract. It started as the MFA subject
+ * and now backs every key that names an account: the five MFA store keys, the three MFA failure
+ * counters, the recent-authentication marker, the session index and the token epoch.
  *
  * @layer Constants
  */
 
 /**
- * Builds the tenant-scoped subject for an MFA-derived Redis key.
+ * Builds the tenant-scoped subject for a user-derived Redis key.
  *
  * The tenant is part of the dashboard arm because the library may not assume the consumer's user
  * ids are unique ACROSS tenants — `findById` takes a tenant precisely because they may not be, and
@@ -28,7 +30,7 @@
  * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
  * @returns The subject string the MFA key HMACs are keyed over.
  */
-export function mfaSubject(
+export function userSubject(
   plane: 'dashboard' | 'platform',
   userId: string,
   tenantId: string | undefined

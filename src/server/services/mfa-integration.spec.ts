@@ -616,7 +616,7 @@ describe('MFA — integration smoke tests', () => {
       'tenant-1'
     )
 
-    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+    expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
     expect(mockRedis.invalidateUserSessions).toHaveBeenCalledTimes(1)
   })
 

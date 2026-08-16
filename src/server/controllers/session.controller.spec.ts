@@ -136,7 +136,11 @@ describe('SessionController', () => {
 
       await controller.listSessions(JWT_PAYLOAD, mockReq as Request)
 
-      expect(mockSessionService.listSessions).toHaveBeenCalledWith(JWT_PAYLOAD.sub, expectedHash)
+      expect(mockSessionService.listSessions).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        'tenant-1',
+        expectedHash
+      )
       expect(mockSessionService.listSessions).not.toHaveBeenCalledWith(JWT_PAYLOAD.sub, rawToken)
     })
 
@@ -147,7 +151,11 @@ describe('SessionController', () => {
 
       await controller.listSessions(JWT_PAYLOAD, mockReq as Request)
 
-      expect(mockSessionService.listSessions).toHaveBeenCalledWith(JWT_PAYLOAD.sub, undefined)
+      expect(mockSessionService.listSessions).toHaveBeenCalledWith(
+        JWT_PAYLOAD.sub,
+        'tenant-1',
+        undefined
+      )
     })
 
     // Verifies that listSessions returns the session list from the service without wrapping or filtering.
@@ -230,6 +238,7 @@ describe('SessionController', () => {
 
       expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
         JWT_PAYLOAD.sub,
+        'tenant-1',
         expectedHash
       )
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalledWith(
@@ -275,6 +284,7 @@ describe('SessionController', () => {
 
       expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith(
         JWT_PAYLOAD.sub,
+        'tenant-1',
         SESSION_ID
       )
     })
@@ -286,7 +296,11 @@ describe('SessionController', () => {
 
       await controller.revokeSession(differentUserPayload, SESSION_ID)
 
-      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith(
+        'attacker-999',
+        'tenant-1',
+        SESSION_ID
+      )
       expect(mockSessionService.revokeOtherSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
     })
 

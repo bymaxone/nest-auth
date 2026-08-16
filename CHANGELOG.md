@@ -39,6 +39,56 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   literals. **That advice is now wrong**; the 1.4.3 section is left as written, because it was
   true when it shipped, and this entry is the correction. The README paragraph is rewritten.
 
+### Security
+
+- **Suspending one tenant's user revoked another tenant's.** The session index and the token
+  epoch were keyed on the bare user id — `sess:{userId}` and `ep:{userId}` — while the status
+  cache beside them had been tenant-scoped for releases. `IUserRepository.findById` takes a
+  `tenantId` precisely because ids may not be unique across tenants, so on a deployment that
+  numbers users per tenant, deleting or suspending `t1/u1` swept the sessions and bumped the
+  token epoch of `t2/u1`. A **credential-free cross-tenant revocation**, reachable by anyone who
+  can get an account suspended in their own tenant.
+
+  Both keys now derive the way every other account-naming key in this library already did:
+  `{prefix}:{hmac_sha256(hmacKey, userSubject)}`, where `userSubject` is
+  `dashboard:{tenantId}:{userId}` or `platform:{userId}`. That shape was not invented here — it
+  is the preimage the five MFA store keys, the three MFA failure counters and the
+  recent-authentication marker have used since they were fixed for the same reason, and the wire
+  contract already carried its argument. The two joining it closes the gap between what
+  `recentAuthKey`'s own documentation claimed — _"keyed by HMAC rather than the raw id, like
+  every other user-derived key in this library"_ — and what was true.
+
+  The HMAC is the second half and it matters on its own: rust-auth reads this keyspace, so a
+  bare id there was an account identifier in the clear to anyone with store access. A user id
+  carries too little entropy for a plain digest to hide, which is why the identifier preimages
+  are HMACed rather than merely hashed.
+
+  The platform plane keeps no tenant segment. Its admins are cross-tenant and have none, exactly
+  as `userSubject`'s platform arm has always said.
+
+  **Apply to a derived backend.** Five methods take the tenant they always needed:
+  `SessionService.createSession`, `.listSessions`, `.revokeSession`, `.revokeOtherSession` and
+  `.revokeAllExceptCurrent`, plus `AuthService.revokeAllSessions` and the three
+  `AuthRedisService` entry points (`invalidateUserSessions`, `getUserTokenEpoch`,
+  `bumpUserTokenEpoch`), whose `kind` argument also **loses its default** — a positional tenant
+  next to a positional plane is a transposition nobody notices, and the two call sites that
+  passed `'platform'` in what became the tenant slot compiled silently until the default was
+  gone. If you call any of these, pass `user.tenantId`; on the platform plane pass `undefined`
+  and name the plane.
+
+  `readSessionOwner` now answers `{ userId, tenantId }`. Logout takes both off the record the
+  refresh token just proved possession of, rather than from a caller who could aim the
+  revocation at a colliding id. A record written before this carries no tenant: the index revoke
+  is skipped rather than guessed, and the session still dies because `rt:{hash}` is deleted
+  either way.
+
+  **This is a paired wire change and it has no compatibility path.** `sess` and `ep` are pinned
+  in `conformance/wire-contract.json` and byte-shared with `@bymax-one/rust-auth`; a backend on
+  the old shape writes `sess:{userId}` while one on the new shape reads `sess:{hmac}`, so
+  sessions survive a revoke-all that never saw them. **Both libraries must ship this in the same
+  release.** Live keyspaces need the old keys dropped or drained — a session index and an epoch
+  both expire on their own TTLs, so dropping costs a forced re-login and never a security hole.
+
 ### Fixed
 
 - **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves

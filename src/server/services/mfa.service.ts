@@ -14,8 +14,8 @@ import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
-import { mfaSubject } from '../constants/mfa-subject'
 import { recentAuthKey } from '../constants/recent-auth'
+import { userSubject } from '../constants/user-subject'
 import { decrypt, encrypt } from '../crypto/aes-gcm'
 import { hmacSha256, timingSafeCompare } from '../crypto/secure-token'
 import {
@@ -370,7 +370,7 @@ export class MfaService {
     // On the platform plane the two keys coincide (the subject never carried a tenant), so the
     // legacy arm is skipped — taking the same lock a second time would always fail and refuse every
     // platform transition.
-    const scopedLockKey = `mfalock:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
+    const scopedLockKey = `mfalock:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
     const legacyLockKey = `mfalock:${hmacSha256(`${context}:${userId}`, this.options.hmacKey)}`
     const acquireLegacy = legacyLockKey !== scopedLockKey
     // Both locks carry a per-call nonce so each can only be released by the call that took it.
@@ -674,7 +674,7 @@ export class MfaService {
     // the upgrade, and both markers are short-lived, so the worst case is that a code in flight
     // across the deploy could be claimed once on each side within the claim TTL. That race is the
     // repository write's to arbitrate; this marker only narrows it.
-    const claimKey = `rcu:${hmacSha256(`${mfaSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
+    const claimKey = `rcu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     return await this.redis.setnx(claimKey, RECOVERY_CODE_CLAIM_TTL_SECONDS)
   }
 
@@ -772,7 +772,7 @@ export class MfaService {
     await this.assertReauthenticated(context, userId, user.passwordHash, password, tenantId)
 
     // Key is HMAC-keyed so the Redis keyspace does not expose user IDs.
-    const setupKey = `mfa_setup:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
 
     // Fast-path idempotency check: if a setup payload already exists for this user,
     // return it without performing the expensive scrypt + AES work. This prevents a
@@ -872,7 +872,7 @@ export class MfaService {
     const user = await this.fetchUserForContext(context, userId, tenantId)
     if (user.mfaEnabled) throw new AuthException(AUTH_ERROR_CODES.MFA_ALREADY_ENABLED)
 
-    const setupKey = `mfa_setup:${hmacSha256(mfaSubject(context, userId, tenantId), this.options.hmacKey)}`
+    const setupKey = `mfa_setup:${hmacSha256(userSubject(context, userId, tenantId), this.options.hmacKey)}`
     const raw = await this.redis.get(setupKey)
     if (raw === null) throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
 
@@ -925,8 +925,8 @@ export class MfaService {
     // moment the user enabled a second factor because they suspected that theft.
     // Scoped to the caller's own plane: the two id spaces come from different repositories
     // and may collide, so an unscoped revoke would log out the unrelated account sharing it.
-    await this.redis.invalidateUserSessions(userId, context)
-    await this.redis.bumpUserTokenEpoch(userId, context)
+    await this.redis.invalidateUserSessions(userId, tenantId, context)
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
 
     this.logger.log(`verifyAndEnable: MFA enabled userId=${logSafe(userId)} context=${context}`)
     this.notify('verifyAndEnable', userId, user, (provider, tenant, email) =>
@@ -1139,7 +1139,13 @@ export class MfaService {
 
       // Track the session when sessions are enabled (enforces concurrent session limit).
       if (this.options.sessions.enabled) {
-        await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+        await this.sessionService.createSession(
+          safeUser.id,
+          safeUser.tenantId,
+          result.rawRefreshToken,
+          ip,
+          userAgent
+        )
       }
 
       if (this.hooks.afterLogin) {
@@ -1260,8 +1266,8 @@ export class MfaService {
     // change revokes everything issued under the previous state, in both directions, the same
     // rule the password-reset flow already applies.
     // Scoped to the caller's own identity plane (see verifyAndEnable).
-    await this.redis.invalidateUserSessions(userId, context)
-    await this.redis.bumpUserTokenEpoch(userId, context)
+    await this.redis.invalidateUserSessions(userId, tenantId, context)
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
 
     this.logger.log(`disable: MFA disabled userId=${logSafe(userId)} context=${context}`)
     this.notify('disable', userId, user, (provider, tenant, email) =>
@@ -1350,8 +1356,8 @@ export class MfaService {
       mfaRecoveryCodes: null
     }))
 
-    await this.redis.invalidateUserSessions(userId, context)
-    await this.redis.bumpUserTokenEpoch(userId, context)
+    await this.redis.invalidateUserSessions(userId, tenantId, context)
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, context)
 
     this.logger.warn(
       `resetMfa: MFA removed administratively userId=${logSafe(userId)} context=${context}`
@@ -1567,7 +1573,7 @@ export class MfaService {
     // cross-tenant AND cross-plane replay, and avoiding plaintext code storage in Redis. Two
     // tenants' user `1` no longer share a marker, so one cannot burn the other's code.
     const ttl = totpAntiReplayTtlSeconds(window)
-    const scopedReplayKey = `tu:${hmacSha256(`${mfaSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
+    const scopedReplayKey = `tu:${hmacSha256(`${userSubject(context, userId, tenantId)}:${code}`, this.options.hmacKey)}`
     const legacyReplayKey = `tu:${hmacSha256(`${context}:${userId}:${code}`, this.options.hmacKey)}`
     // Fresh only when unclaimed on BOTH keys: during the rolling upgrade an old pod claims only the
     // legacy key and a new pod only the scoped one, so consulting a single key would let the same
@@ -1730,7 +1736,7 @@ export class MfaService {
    *
    * A rolling upgrade runs old and new code against one Redis at once: on the dashboard plane an
    * old pod counts a failure under `{flow}:{plane}:{userId}` while a new pod counts it under
-   * `{flow}:{mfaSubject}`, and either alone leaves a hole — a lockout an old pod filled would not
+   * `{flow}:{userSubject}`, and either alone leaves a hole — a lockout an old pod filled would not
    * stop a new pod, and a success on one would not clear the other. For one release every read
    * consults both and every write touches both, so the two move as one; a later release drops the
    * legacy arm. On the platform plane the two ids are identical (no tenant ever entered the
@@ -1746,7 +1752,7 @@ export class MfaService {
   ): { legacy: string; scoped: string } {
     return {
       legacy: hmacSha256(`${flow}:${context}:${userId}`, this.options.hmacKey),
-      scoped: hmacSha256(`${flow}:${mfaSubject(context, userId, tenantId)}`, this.options.hmacKey)
+      scoped: hmacSha256(`${flow}:${userSubject(context, userId, tenantId)}`, this.options.hmacKey)
     }
   }
 
