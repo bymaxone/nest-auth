@@ -59,6 +59,16 @@ type ChannelTextPolicy = 'redact' | 'drop'
 const MALFORMED = '<malformed-error>'
 
 /**
+ * Written where an error is reported but none of its own text is.
+ *
+ * Two paths reach it, and they are the same statement about the error rather than two: the `'drop'`
+ * policy, where the channel's text must not be published, and a link that rendered to nothing
+ * because the error carries no text to publish. Distinct from {@link MALFORMED}, which means
+ * reading the error THREW — here nothing failed.
+ */
+const OPAQUE_NAME = '<error>'
+
+/**
  * Classifies a thrown value without letting the classification itself throw.
  *
  * `instanceof` invokes the prototype lookup, and a `Proxy` can install a `getPrototypeOf` trap
@@ -124,14 +134,24 @@ function describeOneLink(
     const detail =
       channelText === 'drop' ? '' : logSafe(redactSecrets(String(error.message), secrets))
 
-    return detail === '' ? name : `${name}: ${detail}`
+    const link = detail === '' ? name : `${name}: ${detail}`
+
+    // A link that renders to nothing becomes the opaque stand-in rather than an empty string.
+    // `name` is normally non-empty — `new Error()` names itself `Error` — but it is a writable
+    // property, so `e.name = ''` on an error with no message produces a link with no characters
+    // in it. That is not a hypothetical shape: the walker below joins links with ` <- `, so one
+    // empty link inside a chain emits `Error: outer <- ` with a dangling separator and nothing
+    // after it, and an empty link alone returns the empty description that this module's own
+    // empty-parts guard exists to prevent. The two cases were guarded one level apart.
+    //
+    // `<error>` rather than `<malformed-error>`, and the distinction is worth keeping: nothing
+    // failed here. The error simply carries no text, which is a fact about it, whereas
+    // `<malformed-error>` means reading it threw.
+    return link === '' ? OPAQUE_NAME : link
   } catch {
     return MALFORMED
   }
 }
-
-/** Stands in for a name on a path where nothing the channel wrote may be published. */
-const OPAQUE_NAME = '<error>'
 
 /**
  * The error's name, or an opaque stand-in when the channel's text is not trusted.

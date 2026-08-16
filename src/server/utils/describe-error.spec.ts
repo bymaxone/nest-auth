@@ -121,6 +121,26 @@ describe('describeError', () => {
     expect(describeError(new Error('boom'), ['Error: boom'])).not.toContain('Error: boom')
   })
 
+  // `name` is a writable property, so an error can carry no text at all. Without a guard the link
+  // renders to an empty string, and the two shapes that produces are both diagnosis-free: alone it
+  // returns an empty description, and inside a chain the ` <- ` join emits a dangling separator
+  // with nothing after it. The module already refused to return nothing for a thrown non-Error;
+  // this is the same refusal one level down, where the link rather than the parts list is empty.
+  it('reports an error carrying no text', () => {
+    const empty = new Error()
+    empty.name = ''
+
+    expect(describeError(empty, [])).toBe('<error>')
+  })
+
+  // The same error one level down, where an empty link would leave the join dangling.
+  it('reports an empty link inside a chain rather than trailing the separator', () => {
+    const empty = new Error()
+    empty.name = ''
+
+    expect(describeError(new Error('outer', { cause: empty }), [])).toBe('Error: outer <- <error>')
+  })
+
   // A thrown non-Error has no contract at all — a string, an object, a rejected promise's value.
   // Its type is the most that can be said without stringifying something whose `toString` belongs
   // to whoever threw it.
