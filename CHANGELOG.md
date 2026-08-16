@@ -41,6 +41,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   being attempted while reading like one. The form is now banned outright and the guard suite
   enforces it.
 
+  **A partial list is the same defect with a longer sleeve.** Seven more sites named one to three
+  fields while the thrower had been handed a whole object: every `afterRegister`, `afterLogin`,
+  `afterEmailVerified`, `afterPasswordReset`, `afterInvitationAccepted` and `onNewSession` hook
+  receives the complete `SafeAuthUser`, so a hook throwing `new Error(user.name)` published a name
+  that no list mentioned. Those are opaque now too. What survives is the rule the list was always
+  meant to express — **name the values the thrower actually received** — which three sites can
+  still satisfy honestly, because they hand a repository or a hook exactly one identifier and
+  name exactly that.
+
+  Those three also had the list naming the wrong string: `describeError(err, [logSafe(user.id)])`
+  redacted the SANITISED id, and `logSafe` returns `<malformed>` for precisely the ids worth
+  worrying about — so the value the repository was handed was not in the list at all. They name
+  the value as passed now, and the guard rejects any redaction list containing a call.
+
   **The highest-value site was not in the original report.** `OAuthService.handleCallback` wraps
   `plugin.exchangeCode(code, codeVerifier)` and `plugin.fetchProfile(accessToken)`. The plugin is
   consumer code that RECEIVED all three, and an HTTP client attaching its request config to the

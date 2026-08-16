@@ -20,7 +20,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -727,9 +727,7 @@ export class InvitationService {
           sanitizedHeaders: sanitizeHeaders(headers)
         })
       ).catch((err: unknown) => {
-        this.logger.error(
-          `afterInvitationAccepted hook threw: ${describeError(err, [safeUser.email, ip, userAgent])}`
-        )
+        this.logger.error(`afterInvitationAccepted hook threw: ${describeChannelStatus(err)}`)
       })
     }
 

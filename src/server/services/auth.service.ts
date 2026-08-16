@@ -263,9 +263,7 @@ export class AuthService {
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
-        this.logger.error(
-          `afterRegister hook threw: ${describeError(err, [safeUser.email, context.ip, context.userAgent])}`
-        )
+        this.logger.error(`afterRegister hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -451,13 +449,11 @@ export class AuthService {
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeError(err, [logSafe(user.id)])}`)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
-        this.logger.error(
-          `afterLogin hook threw: ${describeError(err, [safeUser.email, context.ip, context.userAgent])}`
-        )
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -551,7 +547,7 @@ export class AuthService {
     if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
-          this.logger.error(`afterLogout hook threw: ${describeError(err, [logSafe(userId)])}`)
+          this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
         }
       )
     }
@@ -838,7 +834,7 @@ export class AuthService {
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeError(err, [logSafe(user.id)])}`)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
@@ -849,9 +845,7 @@ export class AuthService {
           sanitizedHeaders: {}
         })
       ).catch((err: unknown) => {
-        this.logger.error(
-          `afterLogin hook threw: ${describeError(err, [safeUser.email, ip, userAgent])}`
-        )
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -921,7 +915,7 @@ export class AuthService {
       void Promise.resolve(
         this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
       ).catch((err: unknown) => {
-        this.logger.error(`afterEmailVerified hook threw: ${describeError(err, [user.email])}`)
+        this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
       })
     }
   }

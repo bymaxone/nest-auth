@@ -329,20 +329,36 @@ describe('log-injection guard (E2E)', () => {
   // redaction helper and stops asking. Twenty sites had it. `describeChannelStatus` is the form
   // for a thrower whose contents you cannot name, and a non-empty list stays legal because naming
   // values IS a claim a caller can make about what it passed in.
-  it('never asks for redaction while naming nothing to redact', () => {
-    const empty = files.flatMap((file) => {
+  // A second rule rides along on the same walk: the list must name values AS THE THROWER RECEIVED
+  // THEM. `describeError(err, [logSafe(user.id)])` redacted a DIFFERENT string from the one the
+  // repository was handed — `logSafe` returns `<malformed>` for exactly the ids worth worrying
+  // about — so the list named a value that could not appear in the error. A transformed name is
+  // the same mistake as an empty list wearing a longer sleeve, and both are call shapes rather
+  // than judgement, so both are checked here.
+  it.each([
+    [
+      'never asks for redaction while naming nothing to redact',
+      (list: ts.ArrayLiteralExpression) => list.elements.length === 0
+    ],
+    [
+      'never names a transformed value in a redaction list',
+      (list: ts.ArrayLiteralExpression) => list.elements.some((e) => ts.isCallExpression(e))
+    ]
+  ])('%s', (_why, offends) => {
+    const offenders = files.flatMap((file) => {
       const source = parse(file)
       const found: string[] = []
       const visit = (node: ts.Node): void => {
+        const list = node
         if (
-          ts.isCallExpression(node) &&
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === 'describeError' &&
-          node.arguments[1] !== undefined &&
-          ts.isArrayLiteralExpression(node.arguments[1]) &&
-          node.arguments[1].elements.length === 0
+          ts.isCallExpression(list) &&
+          ts.isIdentifier(list.expression) &&
+          list.expression.text === 'describeError' &&
+          list.arguments[1] !== undefined &&
+          ts.isArrayLiteralExpression(list.arguments[1]) &&
+          offends(list.arguments[1])
         ) {
-          const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+          const line = source.getLineAndCharacterOfPosition(list.getStart(source)).line + 1
           found.push(`${file.slice(SRC_ROOT.length + 1)}:${line}`)
         }
         ts.forEachChild(node, visit)
@@ -351,7 +367,7 @@ describe('log-injection guard (E2E)', () => {
       return found
     })
 
-    expect(empty).toEqual([])
+    expect(offenders).toEqual([])
   })
 
   // The shape the arity check could not see, and the reason it was replaced. Held synthetically

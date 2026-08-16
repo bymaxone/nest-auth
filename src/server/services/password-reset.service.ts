@@ -28,7 +28,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
 import { redactSecrets } from '../utils/redact-secrets'
@@ -708,7 +708,7 @@ export class PasswordResetService {
         void Promise.resolve(
           this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
         ).catch((err: unknown) => {
-          this.logger.error(`afterPasswordReset hook threw: ${describeError(err, [user.email])}`)
+          this.logger.error(`afterPasswordReset hook threw: ${describeChannelStatus(err)}`)
         })
       }
     }

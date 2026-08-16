@@ -913,9 +913,7 @@ describe('InvitationService', () => {
 
       // Assert
       expect(result).toBe(AUTH_RESULT)
-      expect(loggerSpy).toHaveBeenCalledWith(
-        'afterInvitationAccepted hook threw: Error: hook failed'
-      )
+      expect(loggerSpy).toHaveBeenCalledWith('afterInvitationAccepted hook threw: <error>')
       loggerSpy.mockRestore()
     })
   })

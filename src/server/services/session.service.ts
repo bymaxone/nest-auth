@@ -17,7 +17,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 
 // ---------------------------------------------------------------------------
@@ -285,9 +285,7 @@ export class SessionService {
           // codebase (auth.service afterLogin/afterRegister, mfa.service afterLogin).
           void Promise.resolve(onNewSession(toSafeUser(user), minimalSessionInfo, context)).catch(
             (err: unknown) => {
-              this.logger.error(
-                `onNewSession hook threw: ${describeError(err, [user.email, context.ip, context.userAgent])}`
-              )
+              this.logger.error(`onNewSession hook threw: ${describeChannelStatus(err)}`)
             }
           )
         })
