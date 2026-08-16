@@ -177,11 +177,13 @@ describe('EmailChangeService', () => {
 
       expect(sent).toMatch(/^[0-9a-f]{64}$/)
       expect(thrown.message).not.toContain(sent)
-      // On a credential path the relay's prose does not reach the line at all — only the status
-      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
-      // gone, and the diagnosis is not.
+      // On a credential path nothing the relay wrote reaches the message at all. Asserted as a
+      // VALUE rather than as two absences: `new Error('')` would satisfy "does not contain the
+      // token" and "does not contain 550" while destroying the diagnosis the comment claims to
+      // protect. The absences stay because they name what the fixture actually put in the error.
       expect(thrown.message).not.toContain('Confirm with')
       expect(thrown.message).not.toContain('550')
+      expect(thrown.message).toBe('<error>')
     })
 
     // The happy path, and every property of the stored record that the confirmation relies on.

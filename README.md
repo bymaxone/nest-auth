@@ -327,7 +327,7 @@ Email delivery is fully delegated to the consumer — the library never imports 
 >
 > **`describeError(error, [values])` for errors whose text you have a reason to trust**, where the
 > values you name appear the way you wrote them and redaction reaches them. The bundled provider
-> uses it nowhere — every one of its paths uses the status-only form, including the notices that
+> uses it nowhere — every one of its paths uses the opaque form, including the notices that
 > render nothing secret, because a relay may re-encode whatever it quotes and the recipient address
 > is in the message either way. If you can say the same about your channel, prefer
 > `describeChannelStatus` and keep this one for strings you built yourself.

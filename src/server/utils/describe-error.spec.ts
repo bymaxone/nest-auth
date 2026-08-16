@@ -8,10 +8,12 @@
  * no internal user is exactly the shape that rots unnoticed, so it is tested directly here rather
  * than through whatever happens to call it.
  *
- * {@link describeChannelStatus} is exercised end to end through `DefaultAuthEmailProvider`, where
- * its contract is what the log line actually reads.
+ * {@link describeChannelStatus}'s per-message behaviour is exercised end to end through
+ * `DefaultAuthEmailProvider`, where its contract is what the log line actually reads. What lives
+ * here instead is its INVARIANT, asserted over adversarial input rather than over the fixtures a
+ * test happened to choose — see the suite at the bottom for why that distinction earned a suite.
  */
-import { describeError } from './describe-error'
+import { describeChannelStatus, describeError } from './describe-error'
 
 describe('describeError', () => {
   // The common shape, and the reason this form exists at all: where nothing withheld was rendered,
@@ -171,5 +173,83 @@ describe('describeError', () => {
     })
 
     expect(describeError(hostile, [])).toBe('<non-error: object>')
+  })
+})
+
+/**
+ * The output grammar, asserted as a property.
+ *
+ * Every earlier attempt to bound what this function publishes was a rule that had to predict the
+ * form the secret would take — strip these values, cap the length, validate the name's shape, allow
+ * a status matching this grammar. Each held for the case that motivated it and fell to the next
+ * one, and the last of them fell to a credential the relay had merely grouped: an OTP of `424242`
+ * quoted as `424-242` parsed as the reply `424`, so the output varied with the secret.
+ *
+ * The rule that finally has no exception is that the output is drawn from a fixed alphabet this
+ * file owns. That is checkable, and checking it is worth more than the prose saying so — the prose
+ * had drifted in thirteen places across nine files, and three separate sweeps for the wording each
+ * left members of the family alive. A test does not care how the claim is worded.
+ *
+ * The `<non-error: …>` arm is here because this suite found it: the first grammar written from what
+ * the documentation described omitted it, and three inputs failed. The word after the colon is a
+ * `typeof`, so it is one of a fixed set and identical for every value of that type — `typeof` a
+ * quoted OTP is `string` whatever the digits are. It passes the same independence test the status
+ * failed, which is why it stays and the status did not.
+ */
+const OPAQUE_GRAMMAR =
+  /^(<(error|malformed-error)>|<non-error: [a-z]+>)( <- (<(error|malformed-error)>|<non-error: [a-z]+>))*$/
+
+describe('describeChannelStatus invariant', () => {
+  /** A hostile value whose own accessors run code when the description reads them. */
+  const boobyTrapped = {
+    get name(): string {
+      throw new Error('name getter is hostile')
+    },
+    get message(): string {
+      throw new Error('message getter is hostile')
+    }
+  }
+  Object.setPrototypeOf(boobyTrapped, Error.prototype)
+
+  // Each input is a form that defeated one of the removed rules, plus the shapes that never had a
+  // rule at all. The assertion is the same for all of them, which is the point: the guarantee does
+  // not depend on recognising which attack an input is.
+  const adversarial: ReadonlyArray<readonly [string, unknown]> = [
+    ['a plain failure', new Error('relay unreachable')],
+    ['an SMTP reply', new Error('550 5.7.1 message rejected by policy')],
+    ['a grouped credential at the head', new Error('424-242 is your code, quoted back')],
+    ['a space-grouped credential', new Error('424 242 is your code, quoted back')],
+    ['a base64 body', new Error(Buffer.from('Your code is 123456.').toString('base64'))],
+    ['a name built from the reply', Object.assign(new Error('rejected'), { name: 'E424242' })],
+    ['a unicode line separator', new Error('550 rejected\u2028injected: 424242')],
+    ['a cause chain', new Error('send failed', { cause: new Error('550 424-242 quoted') })],
+    [
+      'a chain past the depth cap',
+      new Error('a', {
+        cause: new Error('b', { cause: new Error('c', { cause: new Error('550 424242') }) })
+      })
+    ],
+    ['a hostile accessor', boobyTrapped],
+    ['a thrown string', '550 424-242 is your code'],
+    ['a thrown null', null],
+    ['a thrown number', 424242]
+  ]
+
+  it.each(adversarial)('publishes only the opaque grammar for %s', (_label, thrown) => {
+    const line = describeChannelStatus(thrown)
+
+    expect(line).toMatch(OPAQUE_GRAMMAR)
+  })
+
+  // The independence test, run rather than described. Two different secrets rendered into the same
+  // position must produce the SAME line — output that varies with the secret is derivation, which
+  // is exactly what took the status out. A grammar check alone would not catch it: `424` and `551`
+  // both match a reply-code pattern.
+  it('produces a line that does not vary with the secret', () => {
+    const lines = ['424242', '551234', '999999'].map((otp) =>
+      describeChannelStatus(new Error(`${otp.slice(0, 3)}-${otp.slice(3)} is your code`))
+    )
+
+    expect(new Set(lines).size).toBe(1)
   })
 })

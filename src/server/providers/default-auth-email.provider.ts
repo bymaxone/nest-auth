@@ -289,10 +289,13 @@ function sanitizeSubject(subject: string): string {
  * }
  * ```
  *
- * No method throws on a delivery failure — the library awaits several of these calls (sending an
- * invitation, confirming an address change), so a channel that is down would turn each into a
- * failed request over a message that is a notification rather than the operation itself. The
- * failure is logged and the flow continues. The MFA notices are not awaited at all; see below.
+ * Under the default `onDeliveryError: 'swallow'`, no method throws on a delivery failure — the
+ * library awaits several of these calls (sending an invitation, confirming an address change), so
+ * a channel that is down would turn each into a failed request over a message that is a
+ * notification rather than the operation itself. The failure is logged and the flow continues. The
+ * MFA notices are not awaited at all, and do not throw under EITHER policy; see below. Setting
+ * `'rethrow'` makes every other method reject with the channel's original error, which is the
+ * whole point of the option and is documented with the duty it carries.
  *
  * That choice has a cost worth stating, because two flows react to a *throw* from the port. A
  * reset-token send that rejects lets `PasswordResetService` delete the stored token early rather
@@ -516,8 +519,8 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       })
     } catch (error: unknown) {
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
-      // a status rebuilt from a pattern's own capture. The error object is not passed to the
-      // logger, and neither is anything read off it beyond that status.
+      // one `<error>` stand-in per link of the cause chain. The error object is not passed to the
+      // logger, and nothing is read off it — not its text, and nothing parsed out of its text.
       //
       // This line used to read `logger.error(msg, error)` on the reasoning that "the error is the
       // channel's own, not the rendered body" — which a measurement against a real relay

@@ -366,7 +366,7 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
-      // The status-only description, matching what the provider does for this same message. The
+      // The opaque description, matching what the provider does for this same message. The
       // notification RENDERS the new address, so a relay that rejects by quoting the body puts it
       // into this error — and quoting it RE-ENCODED puts it past any redaction, which is why the
       // rule is to publish none of the channel's text rather than to strip parts of it. This is

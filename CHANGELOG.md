@@ -109,8 +109,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
   provider, and the log line's shape is the only visible difference. Two things to check. If you
   parse that line, it changed from `delivery failed for "<subject>"` with the error attached as a
-  second argument to a single string, `delivery failed sending <label>: <error>` or
-  `…: <error>: <status>`, with `<-` between cause links; `<label>` is a fixed name this library
+  second argument to a single string, `delivery failed sending <label>: <error>`, with `<-`
+  between cause links and no status anywhere in it; `<label>` is a fixed name this library
   owns (`passwordResetOtp`, `mfaEnabled`, …) and the rendered subject is gone. And if you run
   `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the paragraph
   above.
