@@ -24,10 +24,44 @@ const SRC_ROOT = join(__dirname, '../../src')
 
 /**
  * Calls whose output is safe to interpolate: each either strips control characters or replaces the
- * value outright. Matched as a substring of the expression, so `logSafe(user.id)` and
- * `maskEmail(dto.email)` both qualify.
+ * value outright.
  */
 const GUARDS = ['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError', 'safeLogLine']
+
+/**
+ * Whether the WHOLE expression is one guard call.
+ *
+ * Substring matching was the first version and it is not fail-closed, which was the entire claim
+ * made for this suite. `${logSafe(a) || attackerValue}` contains `logSafe` and publishes
+ * `attackerValue`; so do `${x + logSafe(y)}` and `${cond ? logSafe(a) : raw}`, and a helper merely
+ * NAMED `logSafeish(v)` would have passed on its name alone. Three of those five shapes are things
+ * a person writes without thinking about it.
+ *
+ * So the guard call must BE the expression: it starts at position zero and its own closing
+ * parenthesis is the last character. Anything else — a fallback, a concatenation, a ternary —
+ * fails and has to be rewritten so the guard wraps the whole value, which is what the rule meant
+ * all along.
+ *
+ * @param expression - The text between `${` and `}`.
+ * @returns `true` only when the expression is exactly one call to a guard.
+ */
+function isFullyGuarded(expression: string): boolean {
+  return GUARDS.some((guard) => {
+    if (!expression.startsWith(`${guard}(`)) return false
+
+    let depth = 0
+    for (let i = guard.length; i < expression.length; i++) {
+      const ch = expression[i]
+      if (ch === '(') depth++
+      else if (ch === ')') {
+        depth--
+        // The call closed. Only a guard whose close is the final character wraps everything.
+        if (depth === 0) return i === expression.length - 1
+      }
+    }
+    return false
+  })
+}
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -126,8 +160,7 @@ describe('log-injection guard (E2E)', () => {
   // failure message names it so the reviewer can make the call rather than guess at the rule.
   it('guards every interpolation that this library did not author', () => {
     const unguarded = everything.filter(
-      ({ expression }) =>
-        !GUARDS.some((guard) => expression.includes(guard)) && !LIBRARY_AUTHORED.has(expression)
+      ({ expression }) => !isFullyGuarded(expression) && !LIBRARY_AUTHORED.has(expression)
     )
 
     expect(unguarded.map((u) => `${u.file}:${u.line} \${${u.expression}}`)).toEqual([])
@@ -139,6 +172,23 @@ describe('log-injection guard (E2E)', () => {
   it('actually inspects the logger calls it claims to', () => {
     expect(everything.length).toBeGreaterThan(80)
     expect(everything.some((i) => i.expression.includes('logSafe'))).toBe(true)
+  })
+
+  // The shapes that made the first version of this suite NOT fail-closed, which was the whole
+  // claim made for it. Substring matching accepted every one of the rejected cases below while
+  // the unguarded half of the expression went to the log. None of them is exotic — a fallback, a
+  // concatenation and a ternary are things a person writes without thinking about it, and a
+  // helper whose NAME merely starts with a guard's would have passed on the name alone.
+  it.each([
+    ['a bare guard call', 'logSafe(user.id)', true],
+    ['a guard wrapping a nested call', 'logSafe(redactSecrets(v, s))', true],
+    ['a guard with a fallback beside it', 'logSafe(a) || attackerValue', false],
+    ['a guard concatenated with raw text', 'x + logSafe(y)', false],
+    ['a guard on one arm of a ternary', 'cond ? logSafe(a) : raw', false],
+    ['a helper whose name starts with a guard', 'logSafeish(value)', false],
+    ['an unguarded value', 'user.id', false]
+  ])('accepts only a whole-expression guard: %s', (_why, expression, expected) => {
+    expect(isFullyGuarded(expression)).toBe(expected)
   })
 
   // `String(err)` is deliberately absent from the allowlist. An error's text belongs to whoever

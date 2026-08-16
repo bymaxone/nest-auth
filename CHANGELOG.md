@@ -43,7 +43,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   A guard suite (`test/e2e/log-injection-guard.e2e-spec.ts`) now walks every `this.logger.*` call
   in `src/` and fails on any interpolation that is neither guarded nor named in an explicit
   allowlist of values this library authors. It fails **closed**: a new interpolation breaks the
-  build until somebody decides which it is. It caught the two `String(err)` sites on its first
+  build until somebody decides which it is. The guard call must BE the whole expression —
+  `${logSafe(a) || attackerValue}` is rejected, as are a concatenation, a ternary arm, and a
+  helper whose name merely starts with a guard's. It caught the two `String(err)` sites on its first
   run, which is the argument for it — forty-eight had drifted silently under a convention that
   lived only in reviewers' heads.
 
