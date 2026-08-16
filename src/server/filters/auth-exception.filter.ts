@@ -9,7 +9,7 @@ import type { Response } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 
 /** The body shape every auth error serializes to. */
 interface AuthErrorEnvelope {
@@ -110,18 +110,17 @@ export class AuthExceptionFilter implements ExceptionFilter {
     // `onDeliveryError: 'rethrow'` a mail channel's ORIGINAL error — the one a relay may have
     // filled with a quoted body — reaches this line from any code path this library does not own.
     //
-    // So the object does not go to the logger. `describeError` bounds the text, strips control
-    // characters, and drops the `stack`, which on this path belongs to whichever consumer or
-    // dependency threw. Nothing is named: the filter cannot know what the thrower held, and
-    // pretending otherwise with a guessed list would read as a guarantee it cannot make.
-    // Equivalence, stated before the directive so the directive stays adjacent to its line: no
-    // test can kill a non-empty list here. The list names values the CALLER knows the thrower
-    // held, and this branch is reached by anything the surrounding application threw — the filter
-    // knows nothing about it by construction, which is the same reason the array is empty. Any
-    // string a mutant puts in produces an identical line unless the error happens to contain that
-    // string, and there is no value a test could name that would.
-    // Stryker disable next-line ArrayDeclaration
-    this.logger.error(`unhandled exception: ${describeError(exception, [])}`)
+    // So nothing the thrower authored is published. `describeChannelStatus` reports the SHAPE of
+    // the failure — that a throw happened, and how many links its `cause` chain has — and reads
+    // neither `message` nor `name` nor the `stack`.
+    //
+    // The previous shape was `describeError(exception, [])`: the thrower's text, with an empty
+    // list asserting there was nothing to redact. That assertion is one this filter cannot make.
+    // Naming values requires knowing what the thrower held, and this branch is reached by
+    // anything the surrounding application threw — including, under `onDeliveryError: 'rethrow'`,
+    // a relay error quoting a live OTP. An empty list did not make the line safe; it only removed
+    // the one defence that was being attempted.
+    this.logger.error(`unhandled exception: ${describeChannelStatus(exception)}`)
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {
         code: AUTH_ERROR_CODES.INTERNAL,

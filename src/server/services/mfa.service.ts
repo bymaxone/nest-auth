@@ -42,7 +42,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus, describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { safeLogLine } from '../utils/safe-log-line'
 
@@ -313,7 +313,9 @@ export class MfaService {
         await this.userRepo.updateMfa(userId, tenantId, update)
       }
     } catch (err: unknown) {
-      this.logger.error(`re-encryption under the current MFA key failed: ${describeError(err, [])}`)
+      this.logger.error(
+        `re-encryption under the current MFA key failed: ${describeChannelStatus(err)}`
+      )
     }
   }
 

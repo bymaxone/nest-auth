@@ -1217,7 +1217,7 @@ describe('OAuthService', () => {
       // HTTP client attaching its request config to the error is the ordinary case.
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
       expect(loggerSpy.mock.calls[0]?.[0]).toBe(
-        "OAuth plugin 'google' failed during code exchange or profile fetch: Error: Network timeout"
+        "OAuth plugin 'google' failed during code exchange or profile fetch: <error>"
       )
     })
 
@@ -1231,7 +1231,7 @@ describe('OAuthService', () => {
       await expect(callCallback()).rejects.toThrow(AuthException)
       expect(loggerSpy.mock.calls[0]).toHaveLength(1)
       expect(loggerSpy.mock.calls[0]?.[0]).toBe(
-        "OAuth plugin 'google' failed during code exchange or profile fetch: Error: Unverified email"
+        "OAuth plugin 'google' failed during code exchange or profile fetch: <error>"
       )
     })
 
@@ -1240,8 +1240,13 @@ describe('OAuthService', () => {
     // access token into its own rejection. The token is live until the provider expires it, and
     // this handler is the only thing between it and the operator's pipeline.
     //
-    // Both halves are asserted: the credentials are gone, AND the diagnosis remains. Asserting
-    // only the absence would pass on a build that logged nothing at all.
+    // The echo is TRANSFORMED here, not verbatim: the token arrives base64url-encoded inside the
+    // quoted request. That is the case redaction cannot reach, because a substring match looks
+    // for the value as this library wrote it — which is why the line publishes nothing the plugin
+    // authored rather than naming the three values it was given.
+    //
+    // Both halves are asserted: the credential is gone, AND the diagnosis remains. Asserting only
+    // the absence would pass on a build that logged nothing at all.
     it('publishes no credential when the plugin echoes what it received', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
       mockRedis.getdel.mockResolvedValue(STORED_STATE)
@@ -1249,16 +1254,19 @@ describe('OAuthService', () => {
         access_token: 'ya29.live-access-token',
         token_type: 'Bearer'
       })
+      const encoded = Buffer.from('ya29.live-access-token').toString('base64url')
       mockPlugin.fetchProfile.mockRejectedValue(
-        new Error('401 from provider: {"authorization":"Bearer ya29.live-access-token"}')
+        new Error(`401 from provider: {"authorization":"Basic ${encoded}"}`)
       )
 
       await expect(callCallback()).rejects.toThrow(AuthException)
 
       const logged = String(loggerSpy.mock.calls[0]?.[0])
       expect(logged).not.toContain('ya29.live-access-token')
+      // The transformed form is absent too, which a named-value redaction could not have managed.
+      expect(logged).not.toContain(encoded)
       expect(logged).toContain("OAuth plugin 'google' failed")
-      expect(logged).toContain('<redacted>')
+      expect(logged).toContain('<error>')
       loggerSpy.mockRestore()
     })
 

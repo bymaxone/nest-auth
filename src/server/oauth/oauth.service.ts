@@ -49,7 +49,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { SessionService } from '../services/session.service'
 import { TokenManagerService } from '../services/token-manager.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
@@ -351,18 +351,23 @@ export class OAuthService {
       accessToken = tokenResponse.access_token
       profile = await plugin.fetchProfile(accessToken)
     } catch (err: unknown) {
-      // The error object is NOT passed to the logger. `describeError` bounds the text, strips
-      // control characters so a plugin cannot forge a second record, drops the `stack` — which
-      // belongs to the plugin and can hold its request — and removes the three values by name.
+      // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
+      // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
+      // request config to the error is the ordinary case rather than an exotic one — axios does
+      // it by default.
       //
-      // Naming them is the weaker half and it is deliberate: redaction is a substring match, so
-      // it holds for a value the plugin echoed as given and not for one it re-encoded. The
-      // load-bearing half is that the stack and the unbounded text are gone. A plugin that wants
-      // its own diagnostics logged in full can log them itself, where the operator knows the
-      // audience.
+      // Naming the three values was the previous shape, and the comment justifying it conceded
+      // the defect in its own second sentence: redaction is a substring match, so it holds for a
+      // value the plugin echoed as given and not for one it re-encoded. A token in a base64 or
+      // URL-encoded request body is not present as written, so no list finds it — the same
+      // measurement that took the mail channel's text out of these lines. There is nothing to
+      // name because nothing the plugin authored comes through.
+      //
+      // A plugin that wants its own diagnostics logged in full can log them itself, where the
+      // operator knows the audience.
       this.logger.error(
         `OAuth plugin '${provider}' failed during code exchange or profile fetch: ` +
-          describeError(err, [code, codeVerifier, accessToken])
+          describeChannelStatus(err)
       )
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }

@@ -271,18 +271,107 @@ describe('log-injection guard (E2E)', () => {
   // audience is known — a library's log line reaches a wider one, which is the same argument that
   // took the recipient address out of the delivery-failure line.
   //
-  // Counted from `arguments.length`, so no scanner can be confused by a comma in a message. The
-  // name-based version of this check missed `auth-exception.filter.ts` entirely, whose parameter
-  // is called `exception` rather than `err` — and that is the most exposed site of the set, being
-  // where a re-thrown mail-channel error lands under `onDeliveryError: 'rethrow'`.
-  it('passes no error object to the logger', () => {
-    const withError = files.flatMap((file) =>
+  // Stated as a SHAPE rather than as an argument count. Counting was the first version and it was
+  // a proxy for the rule, not the rule: `this.logger.error(err)` has one argument, so it passed
+  // both this check and the interpolation check — the template walk only inspects template spans,
+  // and a bare identifier is not one — while handing Nest the whole error object. Arity is also
+  // wrong in the other direction, since a second argument that is plain context is harmless.
+  //
+  // What the rule actually says is that every argument must be text this library composed. A
+  // template or a string literal is; an identifier, an object literal and a call are not. Read
+  // structurally, so no scanner can be confused by a comma in a message — the name-based version
+  // missed `auth-exception.filter.ts` entirely, whose parameter is called `exception` rather than
+  // `err`, and that is the most exposed site of the set, being where a re-thrown mail-channel
+  // error lands under `onDeliveryError: 'rethrow'`.
+  //
+  // The cost is real and was accepted deliberately: an operator loses the stack trace for a hook
+  // or plugin failure. That stack belongs to the consumer's own code, which can log it where the
+  // audience is known — a library's log line reaches a wider one, which is the same argument that
+  // took the recipient address out of the delivery-failure line.
+  it('passes the logger nothing but text it composed', () => {
+    const composed = (node: ts.Expression): boolean =>
+      ts.isTemplateExpression(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isStringLiteral(node) ||
+      // `'a' + describeChannelStatus(e)` — a concatenation is composed when both halves are.
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+        composed(node.left) &&
+        composed(node.right)) ||
+      // `safeLogLine(line, secrets)` returns either `line` or a constant this library wrote, so
+      // its output is composed exactly when its INPUT is. Recursing rather than accepting the
+      // name keeps `safeLogLine(rawThing, [])` a failure, which is the shape that made it wrong
+      // to list as a field guard in the first place.
+      (ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'safeLogLine' &&
+        node.arguments[0] !== undefined &&
+        composed(node.arguments[0])) ||
+      isGuardCall(node)
+
+    const raw = files.flatMap((file) =>
       loggerCalls(parse(file))
-        .filter((call) => call.node.arguments.length > 1)
+        .filter((call) => !call.node.arguments.every(composed))
         .map((call) => `${file.slice(SRC_ROOT.length + 1)}:${call.line}`)
     )
 
-    expect(withError).toEqual([])
+    expect(raw).toEqual([])
+  })
+
+  // `describeError(x, [])` publishes the thrower's `name` and `message` with an empty list
+  // asserting there is nothing to remove. No call site in this library can make that assertion:
+  // every thrower on these paths is consumer code, and a consumer error that quotes its own input
+  // carries whatever this library handed it — a repository given `findByEmail(dto.email,
+  // tenantId)`, a hook given the IP and user agent, a `maxSessionsResolver` given the full
+  // `AuthUser` including the password hash.
+  //
+  // It read as a defence and was the absence of one, which is the worse half: a reader sees a
+  // redaction helper and stops asking. Twenty sites had it. `describeChannelStatus` is the form
+  // for a thrower whose contents you cannot name, and a non-empty list stays legal because naming
+  // values IS a claim a caller can make about what it passed in.
+  it('never asks for redaction while naming nothing to redact', () => {
+    const empty = files.flatMap((file) => {
+      const source = parse(file)
+      const found: string[] = []
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === 'describeError' &&
+          node.arguments[1] !== undefined &&
+          ts.isArrayLiteralExpression(node.arguments[1]) &&
+          node.arguments[1].elements.length === 0
+        ) {
+          const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+          found.push(`${file.slice(SRC_ROOT.length + 1)}:${line}`)
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
+      return found
+    })
+
+    expect(empty).toEqual([])
+  })
+
+  // The shape the arity check could not see, and the reason it was replaced. Held synthetically
+  // because `src/` has no example — which is what made the gap invisible rather than harmless.
+  it.each([
+    ['a bare error as the only argument', 'this.logger.error(err)'],
+    ['an error wrapped in an object', 'this.logger.error({ err })'],
+    ['a call this library did not author', 'this.logger.error(inspect(err))']
+  ])('rejects %s', (_why, code) => {
+    const source = ts.createSourceFile(
+      'synthetic.ts',
+      `class C { m() { ${code} } }`,
+      ts.ScriptTarget.ESNext,
+      true
+    )
+    const call = loggerCalls(source)[0]
+
+    expect(call?.node.arguments.every((a) => ts.isTemplateExpression(a) || isGuardCall(a))).toBe(
+      false
+    )
   })
 
   // The detector has to be able to fail, or the assertions above are decoration. It found 48 real

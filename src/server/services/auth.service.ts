@@ -141,7 +141,7 @@ export class AuthService {
       await this.userRepo.updatePassword(userId, upgraded)
     } catch (err: unknown) {
       this.logger.error(
-        `rehash on verify failed — the stored hash is unchanged: ${describeError(err, [])}`
+        `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
       )
     }
   }
@@ -541,7 +541,7 @@ export class AuthService {
           // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
           // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
           // empty array is how a caller states that, rather than by omitting the argument.
-          this.logger.warn(`logout: session cleanup failed — ${describeError(err, [])}`)
+          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
         }
       })
     }
@@ -700,7 +700,9 @@ export class AuthService {
         .catch((err: unknown) => {
           // Same reasoning as the logout path above: bounded, control-character-free, and no
           // secret in flight to name.
-          this.logger.warn(`refresh: session detail rotation failed — ${describeError(err, [])}`)
+          this.logger.warn(
+            `refresh: session detail rotation failed — ${describeChannelStatus(err)}`
+          )
         })
     }
 
@@ -1116,10 +1118,10 @@ export class AuthService {
   private fireAndForget(run: () => Promise<void> | void, name: string): void {
     try {
       void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`${name} hook threw: ${describeError(err, [])}`)
+        this.logger.error(`${name} hook threw: ${describeChannelStatus(err)}`)
       })
     } catch (err: unknown) {
-      this.logger.error(`${name} hook threw synchronously: ${describeError(err, [])}`)
+      this.logger.error(`${name} hook threw synchronously: ${describeChannelStatus(err)}`)
     }
   }
 

@@ -17,7 +17,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 
 // ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ export class SessionService {
           )
         })
         .catch((err: unknown) => {
-          this.logger.error(`onNewSession hook — findById failed: ${describeError(err, [])}`)
+          this.logger.error(`onNewSession hook — findById failed: ${describeChannelStatus(err)}`)
         })
     }
 
@@ -324,7 +324,7 @@ export class SessionService {
     // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
     // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
     void this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:').catch((err: unknown) => {
-      this.logger.warn(`listSessions: grace-pointer prune failed: ${describeError(err, [])}`)
+      this.logger.warn(`listSessions: grace-pointer prune failed: ${describeChannelStatus(err)}`)
     })
 
     const members = await this.redis.smembers(`sess:${userId}`)
@@ -406,7 +406,7 @@ export class SessionService {
     // rotating, and merely opening this listing would be what orphaned it.
     void this.redis.pruneDeadMembers(`sess:${userId}`, staleKeys).catch((err: unknown) => {
       this.logger.error(
-        `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeError(err, [])}`
+        `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeChannelStatus(err)}`
       )
     })
 
@@ -762,7 +762,7 @@ export class SessionService {
       } catch (err: unknown) {
         this.logger.error(
           `enforceSessionLimit: failed to evict session ${entry.memberHash} ` +
-            `for user ${logSafe(userId)}: ${describeError(err, [])}`
+            `for user ${logSafe(userId)}: ${describeChannelStatus(err)}`
         )
         continue
       }
@@ -772,7 +772,7 @@ export class SessionService {
         // Note: entry.memberHash is SHA-256 (not HMAC-SHA-256) of the refresh token.
         void Promise.resolve(this.hooks.onSessionEvicted(userId, entry.memberHash, context)).catch(
           (err: unknown) => {
-            this.logger.error(`onSessionEvicted hook threw: ${describeError(err, [])}`)
+            this.logger.error(`onSessionEvicted hook threw: ${describeChannelStatus(err)}`)
           }
         )
       }
@@ -820,7 +820,7 @@ export class SessionService {
       return resolved
     } catch (err: unknown) {
       this.logger.error(
-        `maxSessionsResolver threw — falling back to defaultMaxSessions: ${describeError(err, [])}`
+        `maxSessionsResolver threw — falling back to defaultMaxSessions: ${describeChannelStatus(err)}`
       )
       return defaultMaxSessions
     }

@@ -3139,7 +3139,7 @@ describe('AuthService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(errorSpy).toHaveBeenCalledWith(
-        'rehash on verify failed — the stored hash is unchanged: Error: write failed'
+        'rehash on verify failed — the stored hash is unchanged: <error>'
       )
       errorSpy.mockRestore()
     })

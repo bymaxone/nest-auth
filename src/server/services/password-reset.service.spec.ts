@@ -897,9 +897,7 @@ describe('PasswordResetService', () => {
       await service.initiateReset(dto, mockReq)
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith(
-        'initiateReset: unexpected error: Error: Database connection failed'
-      )
+      expect(errorSpy).toHaveBeenCalledWith('initiateReset: unexpected error: <error>')
       expect(mockSleep).toHaveBeenCalledTimes(1)
       errorSpy.mockRestore()
     })
@@ -2138,9 +2136,7 @@ describe('PasswordResetService', () => {
       await otpMethodService.resendOtp(dto, mockReq)
 
       // Assert
-      expect(errorSpy).toHaveBeenCalledWith(
-        'resendOtp: unexpected error: Error: Unexpected failure'
-      )
+      expect(errorSpy).toHaveBeenCalledWith('resendOtp: unexpected error: <error>')
       errorSpy.mockRestore()
     })
 

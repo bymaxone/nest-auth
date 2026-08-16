@@ -644,9 +644,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       // Assert — error was logged, not thrown
-      expect(Logger.prototype.error).toHaveBeenCalledWith(
-        'onSessionEvicted hook threw: Error: hook exploded'
-      )
+      expect(Logger.prototype.error).toHaveBeenCalledWith('onSessionEvicted hook threw: <error>')
     })
 
     // Verifies that a user-agent containing Edg/ is stored with an Edge browser label.
@@ -2046,9 +2044,7 @@ describe('SessionService', () => {
         await Promise.resolve()
         // Named, not merely counted: an operator seeing a run of these needs to know the prune
         // is what failed, not the listing — the two have different remedies.
-        expect(warn).toHaveBeenCalledWith(
-          'listSessions: grace-pointer prune failed: Error: redis down'
-        )
+        expect(warn).toHaveBeenCalledWith('listSessions: grace-pointer prune failed: <error>')
       } finally {
         warn.mockRestore()
       }

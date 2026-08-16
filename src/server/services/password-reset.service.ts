@@ -208,7 +208,7 @@ export class PasswordResetService {
         }
       }
     } catch (err: unknown) {
-      this.logger.error(`initiateReset: unexpected error: ${describeError(err, [])}`)
+      this.logger.error(`initiateReset: unexpected error: ${describeChannelStatus(err)}`)
     } finally {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
     }
@@ -392,7 +392,7 @@ export class PasswordResetService {
         await this.sendOtp(dto.email, tenantId, user.id)
       }
     } catch (err: unknown) {
-      this.logger.error(`resendOtp: unexpected error: ${describeError(err, [])}`)
+      this.logger.error(`resendOtp: unexpected error: ${describeChannelStatus(err)}`)
     } finally {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
     }
@@ -792,7 +792,7 @@ export class PasswordResetService {
           // library's to publish — an ioredis rejection is unbounded, carries no guarantee about
           // control characters, and names the key, which embeds the consumer's user id.
           this.logger.error(
-            `pw_reset rollback delete failed for user ${logSafe(userId)}: ${describeError(delErr, [])}`
+            `pw_reset rollback delete failed for user ${logSafe(userId)}: ${describeChannelStatus(delErr)}`
           )
         })
       }

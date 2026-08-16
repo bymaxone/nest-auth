@@ -20,7 +20,7 @@ import type {
 } from '../interfaces/platform-user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -151,7 +151,7 @@ export class PlatformAuthService {
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
     void this.platformUserRepo.updateLastLogin(admin.id).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeError(err, [])}`)
+      this.logger.error(`updateLastLogin failed: ${describeChannelStatus(err)}`)
     })
 
     return result
