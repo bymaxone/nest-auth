@@ -372,7 +372,12 @@ export class PasswordService {
    * documented behaviour, and worst during an incident, when changing the password is the
    * urgent thing. A refusal to answer is not evidence against the password.
    *
-   * The plaintext is never passed to the logger; only the checker's own error is.
+   * The plaintext is not passed to the logger, and neither is the checker's ERROR — which is the
+   * part that took a measurement to learn. A breach checker receives the plaintext by contract, so
+   * an error it raises is a place the plaintext can be: an HTTP client that echoes the request it
+   * failed on, a validation error quoting the value it rejected. `logger.error(msg, err)` then
+   * publishes that, plus the stack and whatever properties the client hung on it. Same shape as
+   * the mail-channel leak this library fixed in `DefaultAuthEmailProvider`, one port over.
    *
    * @param plain - The plaintext password the user is trying to set.
    * @throws {@link AuthException} with `PASSWORD_COMPROMISED` when the corpus knows it.
@@ -381,11 +386,31 @@ export class PasswordService {
     let breached: boolean
     try {
       breached = await this.breachChecker.isBreached(plain)
-    } catch (err: unknown) {
+    } catch {
+      // NOTHING from the error reaches the line — not the object, not a description of it, not a
+      // status parsed off its front. A checker is consumer code that received the plaintext, so
+      // its error is a place the plaintext can be. There is no binding at all, so that is a
+      // property of the code rather than a promise in a comment: a later edit that wants the error
+      // has to reintroduce it and meet this paragraph on the way.
+      //
+      // `describeChannelStatus` was used here first and was wrong, which is worth recording
+      // because the mistake is reusable. That function then kept a status parsed off the SMTP
+      // reply grammar, and a breach checker is not an SMTP channel: the guarantee was that a
+      // relay's prose could not masquerade as a reply code, which said nothing about text that is
+      // not a reply at all. A password of `424 Correct Horse!` echoed back as the error message
+      // parsed as the reply `424` and published the first three characters of the credential.
+      // Right tool, wrong port — and the parse is gone from that function now, for a related
+      // reason, but choosing it here would still have been wrong on the day.
+      //
+      // There is no status to preserve here either, so nothing is lost: an HTTP checker's own
+      // code would have to come from a structured field it exposes, never parsed out of prose,
+      // and this interface exposes none. The line already carries the two facts an operator acts
+      // on — the check did not answer, and the password was admitted.
+      //
       // Stryker disable next-line StringLiteral: diagnostic-only log text; the behaviour under
       // test is that the password is ADMITTED and a line is emitted, neither of which the
       // wording changes
-      this.logger.error('breach check threw; admitting the password (the checker fails open)', err)
+      this.logger.error('breach check threw; admitting the password (the checker fails open)')
       return
     }
     if (breached) {

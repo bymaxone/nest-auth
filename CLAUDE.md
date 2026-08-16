@@ -87,6 +87,30 @@ pnpm mutation:full        # cold run — deletes that baseline first. The one th
 pnpm mutation:dry-run     # fast sandbox/config smoke test (no mutants); use to verify config health
 ```
 
+**The sandbox must not survive the run.** `cleanTempDir` is `"always"`, not `true`. `true` deletes
+`.stryker-tmp` only after a run that PASSED — and a run that fails the 100 threshold is the normal
+state while iterating, so it left a 45 MB copy of `src/` on disk after every failed run.
+`jest.coverage.config.ts` names it in `modulePathIgnorePatterns` precisely because a second copy of
+`src/` in the tree is hazardous; not having it there at all is cheaper than ignoring it correctly.
+
+This does **not** explain the intermittent failure in the merged coverage run — that is still open,
+and the honest summary is that it resisted three separate explanations.
+
+The symptom is always transport-level: `socket hang up` on one request in a random e2e suite, or a
+request that failed silently and starved a downstream assertion. It never reproduces under
+`pnpm test:e2e` alone, only in the merged run.
+
+What was ruled out: worker contention (`--maxWorkers=3` still failed), the 1 GB
+`workerIdleMemoryLimit` (raising it to 4 GB still failed), unhandled rejections
+(`--unhandled-rejections=warn` printed none), and the leftover sandbox — which looked convincing
+at 4 failures in 11 runs with one present versus 0 in 5 with it removed, and then failed again
+with no sandbox on disk.
+
+The trap worth remembering is the shape of the data. Failures arrive in **bursts**: 2 in 3 runs,
+then 8 consecutive clean. Any batch of 5 proves nothing, and a batch of 15 taken at one sitting —
+which is how `main` was measured — is not comparable to a branch measured across a different hour.
+Comparing batches from different times is how three wrong causes each looked established.
+
 **Config invariants (Node 24 + pnpm — do not regress).** Stryker loads `jest.stryker.config.ts`
 via native ESM `import()` in a child process, so relative imports MUST carry an explicit
 extension (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess extensions

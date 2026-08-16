@@ -65,6 +65,43 @@ function createCapturingEmailProvider(): CapturingMockEmailProvider {
   }
 }
 
+/**
+ * Waits for the OTP dispatch these endpoints perform WITHOUT awaiting it.
+ *
+ * `/register` and `/resend-verification` both fire the send and return, deliberately: a down
+ * channel must not turn either into a failed request. So the HTTP response carries no promise
+ * that the provider has been called yet, and a test that reads the captured OTP the instant the
+ * response lands is asserting a timing the API never offered.
+ *
+ * Reading it the instant the response lands passes only by luck — the send begins synchronously,
+ * so the provider has USUALLY recorded the code by then. "Usually" is not a contract, and any
+ * change to when the send starts turns that luck into a failure. Polling asks the question the
+ * endpoint actually answers: the code arrives, shortly.
+ *
+ * Note what this deliberately does NOT do: wait for a code different from a previous one. Two
+ * dispatches can legitimately produce the same six digits — `OtpService.generate` draws
+ * independently and does not exclude the last value — so "different" would hang once in a million
+ * runs on a correct implementation. A caller testing a re-dispatch clears the captured entry
+ * first and waits for any code, which asks about the DISPATCH rather than about the draw.
+ *
+ * @param provider - The capturing provider holding the dispatched codes.
+ * @param email - Recipient to wait for.
+ * @returns The dispatched OTP.
+ */
+async function awaitDispatchedOtp(
+  provider: CapturingMockEmailProvider,
+  email: string
+): Promise<string> {
+  const key = email.toLowerCase()
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const otp = provider.otps.get(key)
+    if (otp !== undefined) return otp
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  throw new Error(`no OTP dispatched to ${key} within the polling budget`)
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap with emailVerification.required = true
 // ---------------------------------------------------------------------------
@@ -150,7 +187,7 @@ describe('email verification flow (E2E)', () => {
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Verify User', tenantId: 'tenant-1' })
       expect(reg.status).toBe(201)
 
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       expect(otp).toMatch(/^\d{6}$/)
 
       const res = await request(fixture.app.getHttpServer())
@@ -199,7 +236,7 @@ describe('email verification flow (E2E)', () => {
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Verifies', tenantId: 'tenant-1' })
       const refreshToken = (reg.body as { refreshToken: string }).refreshToken
 
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       await request(fixture.app.getHttpServer())
         .post('/verify-email')
         .send({ email, otp, tenantId: 'tenant-1' })
@@ -246,15 +283,20 @@ describe('email verification flow (E2E)', () => {
         .post('/register')
         .send({ email, password: 'VerifyPass1!-xyz', name: 'Resend User', tenantId: 'tenant-1' })
 
-      const firstOtp = fixture.email.otps.get(email)
+      const firstOtp = await awaitDispatchedOtp(fixture.email, email)
       expect(firstOtp).toBeTruthy()
+
+      // Cleared before the resend, so the wait below is for a DISPATCH rather than for a different
+      // draw. Two dispatches can legitimately produce the same six digits, and asking for a
+      // different value would hang once in a million runs against a correct implementation.
+      fixture.email.otps.delete(email)
 
       const resend = await request(fixture.app.getHttpServer())
         .post('/resend-verification')
         .send({ email, tenantId: 'tenant-1' })
       expect([200, 204]).toContain(resend.status)
 
-      const secondOtp = fixture.email.otps.get(email)
+      const secondOtp = await awaitDispatchedOtp(fixture.email, email)
       expect(secondOtp).toMatch(/^\d{6}$/)
 
       const res = await request(fixture.app.getHttpServer())
@@ -291,7 +333,7 @@ describe('email verification flow (E2E)', () => {
         name: 'Already Verified',
         tenantId: 'tenant-1'
       })
-      const otp = fixture.email.otps.get(email)
+      const otp = await awaitDispatchedOtp(fixture.email, email)
       await request(fixture.app.getHttpServer())
         .post('/verify-email')
         .send({ email, otp, tenantId: 'tenant-1' })

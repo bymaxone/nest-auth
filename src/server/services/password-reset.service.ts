@@ -28,8 +28,12 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
+import { logSafe } from '../utils/log-safe'
 import { normalizeEmail } from '../utils/normalize-email'
+import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -604,11 +608,33 @@ export class PasswordResetService {
   private async notifyPasswordChanged(user: AuthUser): Promise<void> {
     const send = this.emailProvider?.sendPasswordChangedNotification
     if (send === undefined) return
-    void Promise.resolve(send.call(this.emailProvider, user.tenantId, user.email)).catch(
-      (err: unknown) => {
-        this.logger.error('notifyPasswordChanged: delivery failed', err)
+
+    const provider = this.emailProvider
+    const withheld = [user.email]
+
+    // An async IIFE rather than `Promise.resolve(send.call(...))`: the second evaluates the call
+    // before the promise wraps it, so a provider that throws SYNCHRONOUSLY skipped this handler
+    // and reached the caller. Inside the IIFE the call is still made synchronously and the `try`
+    // still catches the throw.
+    void (async (): Promise<void> => {
+      try {
+        await send.call(provider, user.tenantId, user.email)
+      } catch (err: unknown) {
+        // The error is NOT handed to the logger, and nothing the channel wrote reaches this line:
+        // `describeChannelStatus` publishes nothing it authored. An SMTP rejection routinely
+        // NAMES the recipient it refused (`550 user@example.com: recipient rejected`) with no
+        // quoted body involved, which makes it the likeliest exposure of the set — and the
+        // provider strips the address from ITS line and rethrows the original under
+        // `onDeliveryError: 'rethrow'`, so this line was putting back what that one removed.
+        this.logger.error(
+          safeLogLine(
+            `notifyPasswordChanged: delivery failed for user ${logSafe(user.id)}: ` +
+              describeChannelStatus(err),
+            withheld
+          )
+        )
       }
-    )
+    })()
   }
 
   /**
@@ -720,14 +746,52 @@ export class PasswordResetService {
     // does not linger in Redis until natural TTL expiry. A leaked Redis snapshot
     // could otherwise expose unconsumed reset tokens for accounts that never
     // received the email.
-    void Promise.resolve(
-      this.emailProvider.sendPasswordResetToken(tenantId, email, rawToken)
-    ).catch((err: unknown) => {
-      this.logger.error(`sendPasswordResetToken failed for user ${userId}`, err)
-      void this.redis.del(tokenKey).catch((delErr: unknown) => {
-        this.logger.error(`pw_reset rollback delete failed for user ${userId}`, delErr)
-      })
-    })
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
+    const provider = this.emailProvider
+
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendPasswordResetToken(tenantId, email, rawToken)
+      } catch (err: unknown) {
+        // Redacted, not raw: a relay that rejects by quoting the body puts `rawToken` into the
+        // error, and this token is a working password reset until its TTL expires. The recipient
+        // joins it — an SMTP rejection routinely names the address it refused, and the provider
+        // strips that from ITS line but rethrows the original here.
+        //
+        // Per field, with `safeLogLine` checking the assembled result. `userId` is deliberately
+        // NOT redacted against the token, and the asymmetry with the OTP path below is the point:
+        // an OTP is four to eight digits, so an identifier containing one by coincidence is real,
+        // while a 64-hex token can only appear inside an id derived FROM it, which no repository
+        // does. Redacting it anyway looked symmetric and was dead code the mutation gate found.
+        //
+        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
+        // wrote reaches the description at all, so there is nothing there to name.
+        const withheld = [rawToken, email]
+        this.logger.error(
+          safeLogLine(
+            `sendPasswordResetToken failed for user ${logSafe(userId)}: ` +
+              describeChannelStatus(err),
+            withheld
+          )
+        )
+        void this.redis.del(tokenKey).catch((delErr: unknown) => {
+          // Only `userId` changes here, which is the finding. `delErr` comes from `redis.del` on a
+          // key that is a SHA-256 of the token, so no quoted-body path can put a credential into
+          // it, and Redis is not a channel that quotes what it rejected — this is the one error
+          // object in this file that reaches a logger, and it reaches it deliberately.
+          this.logger.error(`pw_reset rollback delete failed for user ${logSafe(userId)}`, delErr)
+        })
+      }
+    })()
   }
 
   /**
@@ -745,11 +809,43 @@ export class PasswordResetService {
     const otp = this.otpService.generate(otpLength)
     await this.otpService.store(PASSWORD_RESET_PURPOSE, identifier, otp, otpTtlSeconds)
 
-    void Promise.resolve(this.emailProvider.sendPasswordResetOtp(tenantId, email, otp)).catch(
-      (err: unknown) => {
-        this.logger.error(`sendPasswordResetOtp failed for user ${userId}`, err)
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
+    const provider = this.emailProvider
+
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendPasswordResetOtp(tenantId, email, otp)
+      } catch (err: unknown) {
+        // Redacted, not raw: the quoted body carries this otp, which resets the password, and an
+        // SMTP rejection commonly names the recipient — which the provider removed from its own
+        // line and then rethrew here.
+        //
+        // Per field, with `safeLogLine` checking the assembled result rather than redacting it —
+        // see the verification-OTP site for why: redacting the assembled string lets either
+        // redaction alone satisfy the test, so neither is proven. `userId` is redacted against the
+        // otp because a reset code is short enough for an identifier to contain one.
+        //
+        // `withheld` is for the fields THIS line composes, not for the error: nothing the channel
+        // wrote reaches the description at all, so there is nothing there to name.
+        const withheld = [otp, email]
+        this.logger.error(
+          safeLogLine(
+            `sendPasswordResetOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
+              describeChannelStatus(err),
+            withheld
+          )
+        )
       }
-    )
+    })()
   }
 
   // ---------------------------------------------------------------------------

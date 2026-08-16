@@ -405,6 +405,20 @@ describe('AuthService', () => {
       expect(payload['role']).toBeUndefined()
     })
 
+    // The mirror of the case below, and the one that pins the FLAG rather than the send. Without
+    // it, a build that ignored `emailVerification.required` and always sent would pass every other
+    // register test — the default fixture has it off, so nothing else looks at the negative side.
+    // It used to die by accident instead: the send was `provider.send(...).catch(...)`, and a mock
+    // returning a non-promise made `.catch` throw. Moving the call inside an async IIFE's `try`
+    // made the code tolerant of that, which removed the accidental kill and left the rule
+    // unasserted — so the rule needed asserting on purpose.
+    it('sends no verification OTP when emailVerification.required is false', async () => {
+      await service.register(dto, mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      expect(mockEmailProvider.sendEmailVerificationOtp).not.toHaveBeenCalled()
+    })
+
     // Verifies that when emailVerification.required is true, the OTP is generated and stored.
     it('should send verification OTP when emailVerification.required is true', async () => {
       const module = await Test.createTestingModule({
@@ -2464,10 +2478,183 @@ describe('AuthService', () => {
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
+      // One argument, not two: the error object is never handed to the logger, because a relay
+      // that rejects by quoting the message body would carry the OTP into the record Nest prints
+      // from it. The description replaces it, and the code must not appear anywhere in the line.
       expect(loggerSpy).toHaveBeenCalledWith(
-        expect.stringContaining('sendEmailVerificationOtp failed'),
-        expect.any(Error)
+        expect.stringContaining('sendEmailVerificationOtp failed')
       )
+      expect(loggerSpy.mock.calls[0]).toHaveLength(1)
+      expect(loggerSpy.mock.calls[0]?.[0]).not.toContain('654321')
+      loggerSpy.mockRestore()
+    })
+
+    // The seam at this site: the template puts `: ` between the identifier and the description,
+    // so a withheld value spanning both is rebuilt from two fields that each contain nothing.
+    // Reachable because the description opens with the error's NAME, which a custom class controls.
+    it('withholds the line when the identifier and the error compose the address', async () => {
+      // The composed value straddles the template's own `': '` separator: the identifier ends
+      // one field and the description begins the next, and neither field contains the value.
+      // The description opens with the opaque stand-in — nothing the channel wrote gets in — so
+      // straddling value has to be built from.
+      const named = new Error('channel down')
+
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'u1', emailVerified: false })
+      mockOtpService.generate.mockReturnValue('414141')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
+
+      await service.resendVerificationEmail('tenant-1', 'u1: <error>', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('u1: <error>')
+      expect(logged).toContain('withheld')
+      loggerSpy.mockRestore()
+    })
+
+    // `userId` reaches a log template and comes from the consumer's repository, which the
+    // interface places no character constraint on. A CR in it closes the record and opens a
+    // forged one — the attack `logSafe` exists for, and the same reasoning that already puts
+    // `logSafe` around `tenantId` elsewhere in this codebase. Redaction alone does not cover it:
+    // `redactSecrets` removes values, not control characters.
+    it('neutralises a control character in the user id', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...USER,
+        id: 'u1\nLOG [AuthService] login: success userId=victim',
+        emailVerified: false
+      })
+      mockOtpService.generate.mockReturnValue('112358')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('\n')
+      expect(logged).toContain('<malformed>')
+      loggerSpy.mockRestore()
+    })
+
+    // `userId` is the consumer's identifier and is interpolated into the same line as the error.
+    // An id that happens to contain the generated code puts it back into the record after the
+    // error text was cleaned — and a six-digit run inside a UUID-shaped id is not exotic. Every
+    // field the template interpolates has to be sanitised, not only the one that obviously
+    // carries channel text.
+    it('redacts the code from the user id as well as from the error', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...USER,
+        id: 'user-864209-abc',
+        emailVerified: false
+      })
+      mockOtpService.generate.mockReturnValue('864209')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(new Error('channel down'))
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('sendEmailVerificationOtp failed')
+      expect(logged).not.toContain('864209')
+      loggerSpy.mockRestore()
+    })
+
+    // The verification path's synchronous-throw case. The rejection tests above pass against the
+    // pre-fix direct call, so without this the deferral here is unpinned and reverting it would
+    // silently restore raw logging of a provider that throws instead of rejecting.
+    it('keeps the verification code out of the log when the provider throws synchronously', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('975310')
+      mockOtpService.store.mockResolvedValue(undefined)
+      mockEmailProvider.sendEmailVerificationOtp.mockImplementation(() => {
+        throw new Error('550 rejected by policy: "Your code is 975310."')
+      })
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('975310')
+      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
+      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
+      // diagnosis: it says the send failed and how deep the failure was reported from.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
+      loggerSpy.mockRestore()
+    })
+
+    // The measured shape of the leak, at this call site. A policy or DLP relay rejects with 550
+    // and QUOTES the offending content, so the provider's error carries the verification code
+    // this service just generated. The previous version passed that error straight to the logger,
+    // which put a working credential into the operator's pipeline until it expired.
+    // Same distinction as the password-reset paths: a rejection test cannot see it, because a
+    // rejection settles. A verification send that stalls must not hold the response open — the
+    // account is already registered by then and the code is already stored.
+    it('answers without waiting for a send that never settles', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('112358')
+      mockOtpService.store.mockResolvedValue(undefined)
+      // Initialised to a no-op rather than declared with `!`: the executor below runs
+      // SYNCHRONOUSLY, so the real resolver is in place before this line's promise is returned.
+      // The no-op is unreachable, and it keeps a definite-assignment assertion out of the file.
+      let release = (): void => {}
+      mockEmailProvider.sendEmailVerificationOtp.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await expect(
+        service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      ).resolves.toBeUndefined()
+
+      expect(mockEmailProvider.sendEmailVerificationOtp).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
+    it('keeps the verification code out of the log when the relay quotes it back', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('654321')
+      mockOtpService.store.mockResolvedValue(undefined)
+      // The error's NAME carries the code too. A mail client that names its error class after the
+      // response is ordinary, and the name is as much the channel's field to fill as the message
+      // is — which is why neither reaches the line.
+      const named = new Error('550 rejected by policy: "Your code is 654321."')
+      named.name = 'E654321'
+      mockEmailProvider.sendEmailVerificationOtp.mockRejectedValue(named)
+
+      await service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      // The error's NAME carries the code here, and no part of it reaches the line: the
+      // description carries nothing the channel authored. The assertion is not merely that the
+      // code is absent — it is that the ORDINARY line survives, because a build that let the name
+      // through would have `safeLogLine` withhold the whole record to stop it, and the operator
+      // would lose the diagnosis to a guard that should never have had to fire.
+      const logged = loggerSpy.mock.calls[0]?.[0] as string
+      expect(logged).not.toContain('654321')
+      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
+      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
+      // diagnosis: it says the send failed and how deep the failure was reported from.
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
       loggerSpy.mockRestore()
     })
   })

@@ -159,6 +159,33 @@ describe('EmailChangeService', () => {
   describe('requestChange', () => {
     const dto = { newEmail: NEW_EMAIL, currentPassword: 'right' }
 
+    // This send is AWAITED, so a rejection leaves the service and reaches `AuthExceptionFilter`,
+    // which logs an unknown exception. A relay that rejects by quoting the body puts the raw
+    // change token into that error — so propagating the provider's error unchanged would publish
+    // the credential through this library's own filter, with no consumer able to intervene. What
+    // escapes is redacted, and the assertion is that the token the provider was handed is absent.
+    it('does not let a quoted token escape in the error it propagates', async () => {
+      mockEmailProvider.sendEmailChangeVerification.mockImplementation(
+        (_t: string, _e: string, token: string) =>
+          Promise.reject(new Error(`550 rejected: "Confirm with ${token}."`))
+      )
+
+      // One call, and the error from THAT call — a second `requestChange` would mint a different
+      // token, so comparing the first token against the second error could pass by accident.
+      const thrown = (await service.requestChange('user-1', dto).catch((e: unknown) => e)) as Error
+      const sent = mockEmailProvider.sendEmailChangeVerification.mock.calls[0]?.[2] as string
+
+      expect(sent).toMatch(/^[0-9a-f]{64}$/)
+      expect(thrown.message).not.toContain(sent)
+      // On a credential path nothing the relay wrote reaches the message at all. Asserted as a
+      // VALUE rather than as two absences: `new Error('')` would satisfy "does not contain the
+      // token" and "does not contain 550" while destroying the diagnosis the comment claims to
+      // protect. The absences stay because they name what the fixture actually put in the error.
+      expect(thrown.message).not.toContain('Confirm with')
+      expect(thrown.message).not.toContain('550')
+      expect(thrown.message).toBe('<error>')
+    })
+
     // The happy path, and every property of the stored record that the confirmation relies on.
     it('mails a token to the new address and stores the pending change', async () => {
       await service.requestChange('user-1', dto)
@@ -393,6 +420,33 @@ describe('EmailChangeService', () => {
       })
       expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendEmailChangedNotification).not.toHaveBeenCalled()
+    })
+
+    // The SECOND log line the same failure reaches. The provider strips the addresses from its
+    // own line, but under `onDeliveryError: 'rethrow'` the original error arrives here and this
+    // catch logs it too — and this notification renders the new address into its body, so a relay
+    // that rejects by quoting it puts the address into this entry. Containing a value in one place
+    // and not the other contains it nowhere, and that applies to the POLICY as much as to the list
+    // of values: this line drops the channel's text like the provider's does, because a body
+    // quoted back re-encoded walks past redaction on this path exactly as it does on that one.
+    it('keeps the addresses out of the notification-failure log', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      try {
+        mockEmailProvider.sendEmailChangedNotification.mockRejectedValue(
+          new Error(`550 rejected: "... changed to ${NEW_EMAIL} ..."`)
+        )
+
+        await service.confirmChange({ token: TOKEN })
+
+        const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+        expect(logged).toContain('notification to the previous address failed')
+        expect(logged).not.toContain(NEW_EMAIL)
+        expect(logged).not.toContain('rejected')
+        expect(logged).not.toContain('550')
+        expect(logged).toBe('confirmChange: notification to the previous address failed: <error>')
+      } finally {
+        loggerSpy.mockRestore()
+      }
     })
 
     // The old address is read from the ACCOUNT at confirm time, not from the token. A record

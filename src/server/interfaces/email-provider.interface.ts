@@ -205,6 +205,22 @@ export interface IEmailProvider {
    * security alert — if the user did not initiate this change, they should be
    * directed to contact support or reset their credentials.
    *
+   * **This library does NOT await these three notices** (`sendMfaEnabledNotification`,
+   * `sendMfaDisabledNotification`, and the administrative reset that also uses the latter). By the
+   * time one is sent the factor is already enabled or removed, every session is invalidated and
+   * the token epoch is bumped — the change has happened — so awaiting would let a bounced notice
+   * answer the caller with an error for an operation that succeeded, which is how a user ends up
+   * locked out of the account they just secured.
+   *
+   * The consequence is yours to handle, and it is why it is documented here rather than assumed:
+   * an implementation that sends INLINE (an awaited HTTP call to a mail API, as the README's own
+   * example does) can lose the notice to a process shutdown or a serverless freeze that arrives
+   * between the response and the send completing. Where these alerts matter — and the
+   * administrative reset is the one that makes a support-desk takeover detectable — enqueue
+   * durably and resolve, rather than sending inline. The library cannot supply that on your
+   * behalf, and awaiting would not supply it either: a freeze mid-await loses the notice AND the
+   * caller's response.
+   *
    * @param tenantId - The tenant the account belongs to, so a multi-tenant provider can
    *   attribute and route the message. Resolved by the auth flow; a single-tenant provider ignores it.
    * @param email - Recipient's email address.

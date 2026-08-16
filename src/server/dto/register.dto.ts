@@ -50,7 +50,14 @@ export class RegisterDto {
    *
    * Maximum 128 characters as a practical
    * input bound. The service layer hashes this value immediately after receipt —
-   * it is never logged or persisted in plaintext.
+   * it is never logged or persisted in plaintext BY THIS LIBRARY.
+   *
+   * **Exactly one consumer-supplied component receives it: the breach checker.** Both paths that
+   * create a user hash first and pass only `passwordHash` to `IUserRepository.create`, and that
+   * interface forbids receiving or storing plaintext. Naming the repository here would invite a
+   * consumer to build one that takes it, which is the opposite of what the contract says — so the
+   * only place the plaintext can surface is an error the breach checker raises. See
+   * `PasswordService.assertNotCompromised` for the ceiling and how the library holds its own half.
    */
   @IsString()
   @MinLength(8)

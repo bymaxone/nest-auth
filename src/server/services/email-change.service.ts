@@ -18,6 +18,7 @@ import type { IEmailProvider } from '../interfaces/email-provider.interface'
 import type { AuthUser, IUserRepository } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeChannelStatus } from '../utils/describe-error'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -191,7 +192,18 @@ export class EmailChangeService implements OnModuleInit {
     )
 
     // Non-null by construction: `onModuleInit` refuses to boot without it.
-    await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
+    //
+    // The rejection is re-thrown REDACTED rather than propagated as-is. This send is awaited so a
+    // failure surfaces instead of reporting "sent", which means the provider's error travels up to
+    // the controller and is logged by `AuthExceptionFilter`'s unknown-exception path. A relay that
+    // rejects by quoting the body puts `rawToken` into that error, so propagating the original
+    // publishes the credential through this library's own filter — the caller never gets a chance
+    // to contain it, because the caller is this library.
+    try {
+      await this.emailProvider.sendEmailChangeVerification?.(user.tenantId, newEmail, rawToken)
+    } catch (err: unknown) {
+      throw new Error(describeChannelStatus(err))
+    }
     this.logger.log(
       `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`
     )
@@ -354,7 +366,15 @@ export class EmailChangeService implements OnModuleInit {
     try {
       await this.emailProvider.sendEmailChangedNotification(tenantId, oldEmail, newEmail)
     } catch (err: unknown) {
-      this.logger.error('confirmChange: notification to the previous address failed', err)
+      // The opaque description, matching what the provider does for this same message. The
+      // notification RENDERS the new address, so a relay that rejects by quoting the body puts it
+      // into this error — and quoting it RE-ENCODED puts it past any redaction, which is why the
+      // rule is to publish none of the channel's text rather than to strip parts of it. This is
+      // the second line the same failure reaches under `onDeliveryError: 'rethrow'`, and
+      // containing a value in one place and not the other contains it nowhere.
+      this.logger.error(
+        `confirmChange: notification to the previous address failed: ` + describeChannelStatus(err)
+      )
     }
   }
 }

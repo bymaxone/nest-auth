@@ -223,6 +223,33 @@ describe('InvitationService', () => {
       mockEmailProvider.sendInvitation.mockResolvedValue(undefined)
     })
 
+    // The send is AWAITED, so a rejection leaves the service, reaches `AuthExceptionFilter`, and
+    // is logged there as an unknown exception. A relay that rejects by quoting the body puts the
+    // raw invitation token into that error — propagating it unchanged would publish a credential
+    // that provisions an account, through this library's own filter.
+    it('does not let a quoted invitation token escape in the error it propagates', async () => {
+      mockEmailProvider.sendInvitation.mockImplementation(
+        (_t: string, _e: string, invite: { inviteToken: string }) =>
+          Promise.reject(new Error(`550 rejected: "Join with ${invite.inviteToken}."`))
+      )
+
+      const thrown = (await service
+        .invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')
+        .catch((e: unknown) => e)) as Error
+      const sent = (mockEmailProvider.sendInvitation.mock.calls[0]?.[2] as { inviteToken: string })
+        .inviteToken
+
+      expect(sent).toMatch(/^[0-9a-f]{64}$/)
+      expect(thrown.message).not.toContain(sent)
+      // On a credential path nothing the relay wrote reaches the message at all. Asserted as a
+      // VALUE rather than as two absences: `new Error('')` would satisfy "does not contain the
+      // token" and "does not contain 550" while destroying the diagnosis the comment claims to
+      // protect. The absences stay because they name what the fixture actually put in the error.
+      expect(thrown.message).not.toContain('Join with')
+      expect(thrown.message).not.toContain('550')
+      expect(thrown.message).toBe('<error>')
+    })
+
     // Verifies the happy path: a valid admin inviting a member stores the token and sends the email.
     it('should store token in Redis and send invitation email on success', async () => {
       await service.invite('inviter-1', 'invited@example.com', 'member', 'tenant-1')

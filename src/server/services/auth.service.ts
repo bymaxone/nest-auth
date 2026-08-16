@@ -30,10 +30,13 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { redactSecrets } from '../utils/redact-secrets'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { safeLogLine } from '../utils/safe-log-line'
 import { createEmptyHookContext, sanitizeHeaders } from '../utils/sanitize-headers'
 import { sleep } from '../utils/sleep'
 import { tenantScoped } from '../utils/tenant-scoped'
@@ -1116,9 +1119,44 @@ export class AuthService {
     const otp = this.otpService.generate(length)
     await this.otpService.store('email_verification', identifier, otp, ttl)
 
-    void this.emailProvider.sendEmailVerificationOtp(tenantId, email, otp).catch((err: unknown) => {
-      this.logger.error(`sendEmailVerificationOtp failed for user ${userId}`, err)
-    })
+    // Captured out of the field: the guard above narrowed `this.emailProvider`, and that narrowing
+    // does not survive into a handler the compiler cannot prove runs before the field changes.
+    const provider = this.emailProvider
+
+    // An async IIFE, NOT `Promise.resolve().then(...)`. Both catch a provider that throws
+    // SYNCHRONOUSLY — which `Promise.resolve(provider.send(...))` does not, because it evaluates
+    // the call before the promise wraps it, so the throw skips this handler and reaches the
+    // caller's own error path, which logs raw. The difference is WHEN the send starts: `.then`
+    // defers it by a microtask, so the response leaves before the provider is even called. That
+    // is observable — it broke an e2e that read the dispatched code the instant the response
+    // landed — and the delay buys nothing. Inside the IIFE the call is made synchronously and
+    // the `try` still catches a synchronous throw.
+    void (async (): Promise<void> => {
+      try {
+        await provider.sendEmailVerificationOtp(tenantId, email, otp)
+      } catch (err: unknown) {
+        // The error is NOT passed through, and nothing it carried reaches this line:
+        // `describeChannelStatus` publishes nothing the channel wrote, because a relay that
+        // rejects by quoting the message body puts THIS otp into the error, and a quote can arrive
+        // re-encoded where no substring match reaches it.
+        //
+        // `withheld` is for the fields THIS line composes, not for the error. `userId` is the
+        // consumer's identifier, interpolated here rather than inside the description, and an id
+        // that happens to contain the generated code would put it back beside a description that
+        // never had it. `safeLogLine` then checks the assembled result, because two fields that
+        // each contain nothing can spell a value across the text between them — and it CHECKS
+        // rather than redacting again, so removing the per-field guard fails loudly instead of
+        // being silently covered by a second pass.
+        const withheld = [otp, email]
+        this.logger.error(
+          safeLogLine(
+            `sendEmailVerificationOtp failed for user ${logSafe(redactSecrets(userId, withheld))}: ` +
+              describeChannelStatus(err),
+            withheld
+          )
+        )
+      }
+    })()
   }
 }
 

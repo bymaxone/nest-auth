@@ -4,6 +4,12 @@
 > **Goal:** Install and configure Stryker mutation testing, then iterate to reach the highest realistic mutation score (target ≥ 95%) before publishing v1 of this library to npm.
 > **Status at time of writing (2026-05-19):** Line coverage is **100% in every metric** (statements, branches, functions, lines) across 1564 tests in 90 suites. Mutation testing is now the next quality gate.
 >
+> **Outcome (supersedes the target above).** The plan completed and landed ABOVE it. The gate in
+> `stryker.config.json` is `high`/`low`/`break` all at **100**, and the suite holds 100% with no
+> survivors. Every "≥ 95%" and every instruction to set `thresholds.break` to 90 below is the
+> plan's ORIGINAL target, kept as the record of what was planned — none of it is the current gate,
+> and lowering the config to match any of them would weaken a gate that is already met.
+>
 > This document is the **single source of truth** for the task. Read it fully before executing — do not improvise.
 
 ---
@@ -118,13 +124,18 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
   // --- Project ---
   "packageManager": "pnpm",
+  "plugins": ["@stryker-mutator/jest-runner", "@stryker-mutator/typescript-checker"],
 
   // --- Test runner ---
   "testRunner": "jest",
   "coverageAnalysis": "perTest",
+  // `jest.stryker.config.ts`, NOT `jest.config.ts`. Stryker loads it through native ESM
+  // `import()` in a child process, so its own relative imports must carry an explicit extension
+  // (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess one, and an
+  // extensionless specifier throws ERR_MODULE_NOT_FOUND inside the sandbox.
   "jest": {
     "projectType": "custom",
-    "configFile": "jest.config.ts",
+    "configFile": "jest.stryker.config.ts",
     "enableFindRelatedTests": true
   },
 
@@ -168,12 +179,13 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
   //   low    — between low and high, report shows orange ("warning")
   //   break  — below this, `stryker run` exits non-zero (CI fails)
   //
-  // Starting values: break=80 to allow first run to land without
-  // failing. After Phase 4 we raise break to 90.
+  // All three are 100. The suite holds it: no survivors, nothing uncovered. A survivor is either
+  // a missing test or an equivalent mutant that must carry its reason inline, so there is no band
+  // of "acceptable" score to leave room for — anything under 100 is a finding, not a warning.
   "thresholds": {
-    "high": 95,
-    "low": 85,
-    "break": 80
+    "high": 100,
+    "low": 100,
+    "break": 100
   },
 
   // --- Performance ---
@@ -182,6 +194,10 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
   // Raise to 6-8 only if `free -h` (Linux) / Activity Monitor (macOS)
   // shows headroom.
   "concurrency": 4,
+
+  // Recycle each test-runner process after 20 mutants. Jest workers accumulate module state
+  // across runs, and a fresh process is cheaper than the flake a leaked one eventually produces.
+  "maxTestRunnerReuse": 20,
 
   // NestJS module compilation in `beforeEach` is slow on cold start.
   // 5 s (Stryker default) produces false-positive Timeouts. 30 s is safe.
@@ -206,7 +222,10 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
   // --- Sandbox ---
   "tempDirName": ".stryker-tmp",
-  "cleanTempDir": true
+  // "always", not true: `true` deletes the sandbox only after a run that PASSED, and a run that
+  // fails the 100 threshold is the normal state while iterating — so it left a 45 MB copy of src/
+  // on disk after every failed run.
+  "cleanTempDir": "always"
 }
 ```
 
@@ -458,18 +477,22 @@ These directories are highest priority because of security impact. Survived muta
 5. `src/nextjs/internal/proxyHandlers.ts` — cookie forwarding (recently changed, commit `9e1393e`)
 6. `src/client/createAuthFetch.ts`, `createLogoutHandler.ts` (recently changed, commit `9e1393e`)
 
-Tackle these in this order. After each is at ≥ 95%, raise `thresholds.break` in `stryker.config.json` and re-run to lock in progress.
+Tackle these in this order. This was the ratchet used to reach the gate; it is at 100 now, so
+raising `thresholds.break` is no longer a step — never LOWER it to match a number in this section.
 
 ### 8.6 Cycle target
 
 Repeat **§8.1 → §8.5** until either:
 
-- (a) Overall mutation score ≥ 95% **and** every hot-path directory in §8.5 is ≥ 95%, **or**
+- (a) Overall mutation score ≥ 95% **and** every hot-path directory in §8.5 is ≥ 95% — the
+  original bar; the achieved gate is 100 and that is what `stryker.config.json` enforces, **or**
 - (b) Every remaining survived mutant is a documented equivalent in §8.3 / §8.4 with an inline reason.
 
 Whichever comes first.
 
-After hitting the target, **raise `thresholds.break` to 90** and commit `stryker.config.json` so the value is enforced for future contributors.
+After hitting the target, raise `thresholds.break` and commit `stryker.config.json` so the value is
+enforced for future contributors. **Historical: this said "to 90".** It went to 95 and then to 100,
+which is where it stands — treat this line as the ratchet's description, not as a value to set.
 
 ---
 
@@ -539,7 +562,7 @@ pnpm mutation # incremental (reuses reports/stryker-incremental.json)
 pnpm mutation:full # cold run — deletes that baseline first
 \`\`\`
 
-Mutation score must be ≥ 95% before tagging a release. See
+Mutation score must be 100% before tagging a release — `break: 100` fails the run below it. See
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md).
 ```
 

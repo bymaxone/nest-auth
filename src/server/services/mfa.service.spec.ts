@@ -1103,6 +1103,107 @@ describe('MfaService', () => {
       )
     })
 
+    // Two properties, and the first one is why the second exists. This send used to be AWAITED
+    // with no `catch`, so a rejected delivery left the service and reached `AuthExceptionFilter`:
+    // the caller was answered with an error for an operation that had already completed — the
+    // secret written, the sessions invalidated, the epoch bumped. Telling a user their second
+    // factor failed to enable when it did is how they end up locked out of the account they just
+    // secured. And the filter logged that error raw, so the bounce — which NAMES the recipient it
+    // refused, needing no quoted body — put the address into a second record after the provider
+    // had stripped it from its own.
+    // The same distinction on the enable path — see the reset test for why an immediately
+    // rejecting mock cannot make it. A hanging channel here would hold the request open over a
+    // notice about a factor that is already written, encrypted and epoch-bumped.
+    it('completes the enable without waiting for a notice that never settles', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          hashedCodes: [],
+          encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+        })
+      )
+      mockRedis.setnx.mockResolvedValue(true)
+      // Initialised to a no-op rather than declared with `!`: the executor below runs
+      // SYNCHRONOUSLY, so the real resolver is in place before this line's promise is returned.
+      // The no-op is unreachable, and it keeps a definite-assignment assertion out of the file.
+      let release = (): void => {}
+      mockEmailProvider.sendMfaEnabledNotification.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      expect(mockEmailProvider.sendMfaEnabledNotification).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
+    it('completes the enable and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaEnabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      )
+
+      // A bare `await`, and that IS the assertion that it does not reject: before the fix this
+      // threw here, and the caller was told the enable failed for an enable already written.
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
+      // Microtasks, NOT `setImmediate`: this describe runs on fake timers, so a macrotask never
+      // fires and the wait would hang the test rather than flush it. The handler sits two awaits
+      // down the notify chain, and real promises still settle under fake timers.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      // The ORIGIN is named, not just the fact of the failure. Three flows send an MFA notice and
+      // they are different incidents: an administrative reset whose notice never arrives is how an
+      // account takeover through the support desk stays silent.
+      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
+      errorSpy.mockRestore()
+    })
+
     // Verifies that errors thrown by afterMfaEnabled hook are silently suppressed (fire-and-forget).
     it('should complete successfully even when afterMfaEnabled hook rejects', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
@@ -2583,6 +2684,67 @@ describe('MfaService', () => {
     // `mfaVerified: true` valid past the factor they attest to; skipping the notification
     // makes this an account-takeover path, because an attacker who reaches the support desk
     // removes the second factor with nothing reaching the owner.
+    // The notice on this path is what makes a support-desk takeover detectable, so a bounce here
+    // is the one an operator most needs named — and it is also where the recipient most easily
+    // leaks, because an SMTP rejection quotes the address it refused with no body involved.
+    it('completes the reset and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      mockEmailProvider.sendMfaDisabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_ENABLED.email}: recipient rejected`)
+      )
+
+      await service.resetMfa('user-1', 'dashboard', 'tenant-1')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('resetMfa: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_ENABLED.email)
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('resetMfa: MFA notice delivery failed for user user-1: <error>')
+      warnSpy.mockRestore()
+      errorSpy.mockRestore()
+    })
+
+    // The property none of the tests above can see. Every one of them rejects or throws
+    // IMMEDIATELY, so an implementation that awaited the notice inside a `try/catch` would satisfy
+    // all of them — the operation would still complete and the failure would still be logged. What
+    // "detached" actually means is that the operation does not WAIT, and only a send that has not
+    // settled can tell the two apart.
+    //
+    // A channel that hangs is the realistic case: a relay that accepts the connection and stalls,
+    // a DNS lookup with no answer. Awaiting it would hold the request open for as long as the
+    // channel takes, over a notice about a change already written.
+    it('completes the reset without waiting for a notice that never settles', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
+      let release = (): void => {}
+      mockEmailProvider.sendMfaDisabledNotification.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      // Resolves at all ONLY because the send is detached. Awaited, this would sit here until the
+      // suite's timeout — the failure mode is a hang, which is the point.
+      await service.resetMfa('user-1', 'dashboard', 'tenant-1')
+
+      // The state change is already durable while the notice is still in flight.
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+      warnSpy.mockRestore()
+    })
+
     it('clears the factor, kills the sessions and notifies the account holder', async () => {
       mockUserRepo.findById.mockResolvedValue(AUTH_USER_MFA_ENABLED)
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
@@ -2839,6 +3001,120 @@ describe('MfaService', () => {
         'tenant-1',
         AUTH_USER_MFA_DISABLED.email
       )
+    })
+
+    // A provider that throws SYNCHRONOUSLY rather than rejecting, which is the whole reason the
+    // send runs inside an async IIFE. `Promise.resolve(send(...))` evaluates the call before the
+    // promise wraps it, so the throw would skip the handler entirely and fail an MFA transition
+    // that already completed — and the three rejection tests stay green through that regression,
+    // which is what makes this one load-bearing rather than redundant. A provider is consumer code
+    // and may do either; the outcome must not depend on which.
+    it('completes the enable when the notice throws synchronously', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      const setupData = {
+        encryptedSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        hashedCodes: [],
+        encryptedPlainCodes: encrypt('[]', VALID_ENCRYPTION_KEY)
+      }
+      mockRedis.get.mockResolvedValue(JSON.stringify(setupData))
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaEnabledNotification.mockImplementationOnce(() => {
+        throw new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      })
+
+      await service.verifyAndEnable(
+        'user-1',
+        validCode,
+        '1.2.3.4',
+        'Browser',
+        'dashboard',
+        'tenant-1'
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      // One argument, not two: the error object never reaches the logger.
+      expect(errorSpy.mock.calls[0]).toHaveLength(1)
+      expect(logged).toContain('verifyAndEnable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
+      errorSpy.mockRestore()
+    })
+
+    // The same two properties the enable path asserts, at the site that matters as much: the
+    // factor is already gone, so answering the caller with an error for a notice that bounced
+    // would report a removal that happened as one that did not. And a bounce NAMES the recipient.
+    // And on the disable path, for the same reason.
+    it('completes the disable without waiting for a notice that never settles', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      let release = (): void => {}
+      mockEmailProvider.sendMfaDisabledNotification.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
+    it('completes the disable and withholds the recipient when the notice is rejected', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY)
+      })
+      mockRedis.setnx.mockResolvedValue(true)
+      mockEmailProvider.sendMfaDisabledNotification.mockRejectedValueOnce(
+        new Error(`550 ${AUTH_USER_MFA_DISABLED.email}: recipient rejected`)
+      )
+
+      await service.disable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockUserRepo.updateMfa).toHaveBeenCalled()
+      const logged = errorSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).toContain('disable: MFA notice delivery failed')
+      expect(logged).not.toContain(AUTH_USER_MFA_DISABLED.email)
+      // Nothing the transport wrote reaches the line, so the address cannot — not because it was
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
+      expect(logged).not.toContain('recipient rejected')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe('disable: MFA notice delivery failed for user user-1: <error>')
+      errorSpy.mockRestore()
     })
 
     // Verifies that disable throws MFA_INVALID_CODE and records a brute-force failure for a wrong code.

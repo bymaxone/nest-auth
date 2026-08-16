@@ -226,6 +226,52 @@ describe('PasswordService', () => {
         errorSpy.mockRestore()
       }
     })
+
+    // The case the assertion above passes vacuously on: none of those fixtures put the password
+    // IN the error, so "not.toContain" held because the danger was never present. A breach checker
+    // receives the plaintext by contract, so its error is exactly where the plaintext can be — an
+    // HTTP client that echoes the request it failed on is the ordinary shape, and this library
+    // already learned the same lesson one port over, where a mail relay quoted the body it
+    // rejected and put a live OTP in a log.
+    it.each([
+      ['quoted verbatim', 'a-long-unique-passphrase', (p: string) => `POST /range failed: "${p}"`],
+      [
+        'quoted re-encoded',
+        'a-long-unique-passphrase',
+        (p: string) => `POST /range failed: ${Buffer.from(p).toString('base64')}`
+      ],
+      // The password's own FIRST THREE CHARACTERS, which is what a reply-code parser publishes
+      // when pointed at a port that speaks no reply codes. `describeChannelStatus` was used here
+      // first and validates the SMTP grammar, so a password of `424 Correct Horse!` parses as the
+      // reply `424`. Right tool, wrong port — the row exists so nobody reaches for it again.
+      ['echoed behind a reply-code prefix', '424 Correct Horse!', (p: string) => p]
+    ])('withholds a password the checker %s in its error', async (_why, plain, build) => {
+      mockBreachChecker.isBreached.mockRejectedValue(new Error(build(plain)))
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+
+      try {
+        await expect(service.assertNotCompromised(plain)).resolves.toBeUndefined()
+
+        const logged = String(errorSpy.mock.calls[0]?.[0])
+        // One argument: the error object never reaches the logger, which would print its stack
+        // and whatever properties the client hung on it.
+        expect(errorSpy.mock.calls[0]).toHaveLength(1)
+        expect(logged).not.toContain(plain)
+        // The attacker's own test, since the encoded row would satisfy the line above while the
+        // password was still recoverable.
+        const decoded = logged
+          .split(/[^A-Za-z0-9+/=]+/)
+          .map((chunk) => Buffer.from(chunk, 'base64').toString('utf8'))
+          .join(' ')
+        expect(decoded).not.toContain(plain)
+        // Not even a fragment: three characters of a password is three characters of a password.
+        expect(logged).not.toContain(plain.slice(0, 3))
+        // Still a diagnosis: the operator has to be able to tell this from silence.
+        expect(logged).toContain('admitting the password')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
   })
 
   // ---------------------------------------------------------------------------

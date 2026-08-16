@@ -5,11 +5,17 @@
  */
 
 /**
- * Matches any C0 or C1 control character, including CR, LF, NUL and the DEL byte — the
- * characters that let a value forge a record boundary in a line-oriented log pipeline.
+ * Matches any character that can forge a record boundary in a line-oriented log pipeline.
+ *
+ * The C0 and C1 ranges, including CR, LF, NUL and the DEL byte — and `U+2028` LINE SEPARATOR and
+ * `U+2029` PARAGRAPH SEPARATOR, which are neither. Those two are printable-category characters
+ * that ECMAScript, JSON and any Unicode-aware consumer treat as line terminators, so a pipeline
+ * that splits records on them accepts a forged one from a value this rule would otherwise have
+ * called safe. A character class named for control characters is not the same as one named for
+ * what breaks a line, and the second is what this guards.
  */
 // eslint-disable-next-line no-control-regex -- matching control characters is the whole point
-const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/
+const RECORD_BREAKING_CHARACTERS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/
 
 /**
  * Returns `value` when it is safe to interpolate into a log line, and `'<malformed>'` otherwise.
@@ -32,8 +38,8 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/
  * reached a log line without passing a DTO would otherwise have no guard at all.
  *
  * @param value - The value about to be interpolated.
- * @returns The value, or `'<malformed>'` when it carries a control character.
+ * @returns The value, or `'<malformed>'` when it carries a character that could break a record.
  */
 export function logSafe(value: string): string {
-  return CONTROL_CHARACTERS.test(value) ? '<malformed>' : value
+  return RECORD_BREAKING_CHARACTERS.test(value) ? '<malformed>' : value
 }

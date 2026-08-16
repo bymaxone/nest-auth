@@ -18,6 +18,139 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Security
+
+- **A one-time code could reach the operator's log in clear text when the mail relay rejected the
+  message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
+  comment justifying it read "the error is the channel's own, not the rendered body" — and a
+  measurement against a real relay disproved exactly that premise. A policy, DLP or anti-spam
+  relay answering `550` **quotes the offending content**, so the channel's error _is_ the rendered
+  body, and for this provider that body carries a live password-reset OTP, an email-verification
+  OTP, a reset token, an email-change token or an invitation token. The credential landed in the
+  log pipeline valid until it expired. Reported by the `@bymax-one/nest-notification` seat from a
+  run measured on a real relay, where the code captured from the SMTP `DATA` appeared verbatim in
+  the consumer's error entry under the same request id.
+
+  **The rule that came out of it, after four weaker ones failed: this library publishes nothing a
+  mail channel authored.** Not the error's `message`, not its `name`, not the rendered subject —
+  and not on "credential paths" only, but on every path. What a delivery failure logs is the
+  message's own label and, per link of the error's cause chain, an opaque stand-in:
+
+  ```
+  delivery failed sending passwordResetOtp: <error>
+  ```
+
+  Every part of that line is text this library wrote. The guarantee is simpler to hold than any
+  amount of stripping, and it is what the four earlier attempts each failed to reach.
+
+  **Why redaction is not enough.** It is a substring match, so it assumes the credential reaches
+  the error the way this library wrote it. A relay is free to quote what it rejected in transfer
+  encoding instead, and base64 is the ordinary case. Measured: the whole reset-code body is 96
+  base64 characters, and the first 200 characters of the line decode straight back to the OTP.
+
+  **Why a length cap is not enough either.** The encoding runs from the body's FIRST byte, so the
+  code sits in the first sentence, well inside any cap that leaves enough text to decode. A bound
+  on volume was never a bound on disclosure, and this changelog described it as a second lock
+  before the measurement above.
+
+  **Why validating the `name` by shape is not enough.** Closing only `message` moves the leak one
+  field over: an error class built around a relay reply is a normal thing for a mail client to do.
+  Requiring the name to look like an identifier excludes a quoted body and does **not** exclude an
+  encoded one — `MTIzNDU2` is the base64 of the OTP `123456`, eight characters, alphanumeric,
+  leading letter, a valid identifier by any such rule, and reversible by anyone reading the log.
+
+  **Why redacting the rendered subject is not enough.** A subject comes from the `messages`
+  catalogue, which a consumer may override with arbitrary code. Redaction only ever covered a
+  subject that reproduced a value verbatim, and `Code 123-456` for the OTP `123456` is a
+  reasonable-looking thing to write. The line carries a fixed label instead, which also identifies
+  the message more stably for anyone parsing it.
+
+  **Nothing is kept.** The line carries the message's label and, when the chain has one, the
+  `<error>` stand-in per link — no status, no name, no message. A parsed SMTP status survived
+  several rounds on the reasoning that a value rebuilt from a validated grammar cannot carry body
+  content, and the test that finally settled it is whether the output DEPENDS on the secret. It
+  does: an OTP of `424242` grouped as `424-242` at the head of a quoted body publishes `424`, and a
+  different code publishes different digits. That is derivation, not the coincidence that `550
+5.7.1` reassembling into `550571` turned out to be — and no grammar separates a reply from body
+  text shaped like one, because a reply code and a grouped credential prefix are the same three
+  digits and a separator.
+
+  What an operator loses is the transient-versus-permanent split, which their mail provider's own
+  dashboard carries. What they keep is which message failed, which is the half this library is the
+  only source for.
+
+  **The same defect was one port over, in the breach checker.** `IPasswordBreachChecker.isBreached`
+  receives the PLAINTEXT PASSWORD by contract, so an error it raises is a place the plaintext can
+  be — an HTTP client that echoes the request it failed on is the ordinary shape. The fail-open
+  handler passed that error straight to `logger.error(msg, err)`, publishing it with its stack and
+  whatever the client hung on it, under a comment claiming the plaintext never reached the logger.
+  **Nothing** from that error reaches the line now — not the object, not a description, not a status
+  parsed off its front. The first fix described it with `describeChannelStatus` and was wrong in a
+  way worth recording: that helper validates the SMTP reply grammar, and a breach checker is not an
+  SMTP channel. A password of `424 Correct Horse!` echoed back parses as the reply `424` and
+  publishes the first three characters of the credential. Right tool, wrong port. No status is lost
+  by dropping it, because an HTTP checker's own code would have to come from a structured field the
+  interface does not expose.
+
+  Two DTO comments carried the same over-claim (`RegisterDto.password`,
+  `AcceptInvitationDto.password`: _"never logged or persisted in plaintext"_) and now say **by this
+  library**, pointing at the ceiling. Found by sweeping for the CLAIM rather than for the wording
+  already corrected — the method comes from the `@bymax-one/nest-notification` seat, who found two
+  more in their own README the same way. A sweep by phrase misses the siblings written in other
+  words, and the most scannable claim in a file is rarely worded like the one you just fixed.
+
+  **What still needs you: `onDeliveryError: 'rethrow'`.** What the provider re-throws is the
+  channel's original error, deliberately unaltered — a caller that opted into that policy did so to
+  branch on the channel's codes, and handing it a laundered replacement would take those away. So
+  the quoted body travels with it. Whatever catches it must not log it raw, and must not merely
+  redact it either: describe it with **`describeChannelStatus`**, which is exported for exactly
+  this. Deployments on the default `'swallow'` policy need no action.
+
+  **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
+  provider. **Three** things to check.
+
+  If you parse the log line, it changed from `delivery failed for "<subject>"` with the error
+  attached as a second argument to a single string, `delivery failed sending <label>: <error>`,
+  with `<-` between cause links and no status anywhere in it; `<label>` is a fixed name this
+  library owns (`passwordResetOtp`, `mfaEnabled`, …) and the rendered subject is gone.
+
+  If you run `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the
+  paragraph above.
+
+  And **the three MFA notices no longer reject the operation that triggered them** — enabling a
+  factor, disabling one, and resetting one now send detached, with the failure logged instead. A
+  deployment on `'rethrow'` that relied on an undelivered MFA notice failing the request will stop
+  seeing that failure. The change is deliberate: by the time the notice is sent, the factor is
+  already enabled or removed, and answering the caller with an error reports a change that HAPPENED
+  as one that did not. The other seven messages are unaffected — `'rethrow'` still surfaces their
+  failures, which is the whole reason the two flows that react to a throw opt in.
+
+  One more, if you catch errors from `EmailChangeService.requestChange` or
+  `InvitationService.invite`: **what they throw is now laundered.** Both awaited the provider with
+  no handler, so a rejection travelled to your code carrying the channel's own error — its
+  `message`, its `name`, whatever fields your mailer attached. They now throw
+  `new Error(describeChannelStatus(err))`, whose message is the opaque description and nothing
+  else. This is not about `'rethrow'`: a custom `IEmailProvider` that throws is laundered here too.
+  The reason is that on these two paths the caller **is this library** — the rejection reaches
+  `AuthExceptionFilter`'s unknown-exception branch, which logs it — so propagating the original
+  publishes the credential through this library's own filter, with no consumer given a chance to
+  contain it. The HTTP response is unchanged: that branch answered `auth.internal` with the generic
+  message before and does now.
+
+  Not exploitable by an unauthenticated caller on its own — it requires a relay configured to
+  quote rejected content — but it needs no attacker at all where such a relay is in the path, and
+  the value exposed is a working credential.
+
+### Changed
+
+- **Stryker deletes its sandbox even when the run fails (`cleanTempDir: "always"`).** `true` — the
+  previous value, and the default — deletes `.stryker-tmp` only after a run that PASSED, and a run
+  that fails the 100 threshold is the normal state while iterating, so a 45 MB copy of `src/` was
+  left behind on every failed run. Wanted on its own terms: `jest.coverage.config.ts` has to name
+  it in `modulePathIgnorePatterns` precisely because a second copy of `src/` in the tree is
+  hazardous, and the cheapest way to hold that is for it not to be there. Contributor-facing only;
+  nothing ships differently.
+
 ### Added
 
 - **A table key must now name a route handler, not merely a method that exists.** The conformance
