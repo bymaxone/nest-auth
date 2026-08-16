@@ -212,25 +212,7 @@ export const AUTH_EMAIL_KINDS = [
 Object.freeze(AUTH_EMAIL_KINDS)
 
 /**
- * Compile-time proof that {@link AUTH_EMAIL_KINDS} lists EVERY catalogue entry.
- *
- * `satisfies` above proves each entry is a valid key; it does not prove none is missing, and a
- * missing one fails silently in the direction that matters: expanding a bare `'rethrow'` iterates
- * this list, so a catalogue entry absent from it would keep swallowing on a deployment that asked
- * for the throw everywhere. A runtime test could catch that too, but only by importing the private
- * default catalogue; this costs nothing and fails at the keyboard rather than in CI.
- *
- * Adding a message to {@link AuthEmailCatalogue} makes `Missing` non-`never` and this line stops
- * compiling until the name is added above.
- */
-/**
- * {@link AUTH_EMAIL_KINDS} as a set, for the membership test in the constructor.
- *
- * A `Set` rather than `Array.includes`, so recognising a key costs the same whatever the catalogue
- * grows to, and so the check reads as membership rather than as a search.
- */
-/**
- * Messages whose rendered body carries a live credential.
+ * Messages that render a live credential.
  *
  * Enumerated rather than inferred, because "does this body contain a secret" is a fact about the
  * COPY and a consumer may replace any entry through `messages`. An override that stops rendering
@@ -252,8 +234,26 @@ const CREDENTIAL_BEARING_KINDS: ReadonlySet<AuthEmailKind> = new Set([
   'invitation'
 ])
 
+/**
+ * {@link AUTH_EMAIL_KINDS} as a set, for the membership test in the constructor.
+ *
+ * A `Set` rather than `Array.includes`, so recognising a key costs the same whatever the catalogue
+ * grows to, and so the check reads as membership rather than as a search.
+ */
 const KNOWN_EMAIL_KINDS: ReadonlySet<string> = new Set(AUTH_EMAIL_KINDS)
 
+/**
+ * Compile-time proof that {@link AUTH_EMAIL_KINDS} lists EVERY catalogue entry.
+ *
+ * `satisfies` on the array proves each entry is a valid key; it does not prove none is missing,
+ * and a missing one fails silently in the direction that matters: expanding a bare `'rethrow'`
+ * iterates that list, so a catalogue entry absent from it would keep swallowing on a deployment
+ * that asked for the throw everywhere. A runtime test could catch that too, but only by importing
+ * the private default catalogue; this costs nothing and fails at the keyboard rather than in CI.
+ *
+ * Adding a message to {@link AuthEmailCatalogue} makes `MissingEmailKind` non-`never` and the
+ * declaration below stops compiling until the name is added to {@link AUTH_EMAIL_KINDS}.
+ */
 type MissingEmailKind = Exclude<keyof AuthEmailCatalogue, (typeof AUTH_EMAIL_KINDS)[number]>
 const _everyKindIsListed: MissingEmailKind extends never ? true : never = true
 void _everyKindIsListed
