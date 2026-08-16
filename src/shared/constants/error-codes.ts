@@ -121,3 +121,59 @@ export const AUTH_ERROR_CODES = {
  * compile time.
  */
 export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]
+
+/**
+ * HTTP status each error code answers with, mirrored from the server declaration.
+ *
+ * Duplicated rather than imported for the same reason {@link AUTH_ERROR_CODES} is: this subpath
+ * must compile in a browser, and the server entry carries the NestJS peer dependencies. The
+ * drift-guard spec beside this file is the only place the two declarations meet.
+ *
+ * It lives here because the three uses the README invites — a typed client, an API document, a
+ * test asserting against the mapping — are exactly the ones that must not pull the server entry.
+ * It shipped only from there, next to a paragraph correctly saying `AUTH_ERROR_CODES` comes from
+ * `/shared`, so the adjacency invited the assumption that this did too.
+ *
+ * These are WIRE statuses: an internal-only code carries the status of the public code it
+ * collapses onto, not one of its own.
+ */
+export const AUTH_ERROR_STATUS: Readonly<Record<AuthErrorCode, number>> = {
+  'auth.invalid_credentials': 401,
+  'auth.account_locked': 429,
+  'auth.account_inactive': 403,
+  'auth.account_suspended': 403,
+  'auth.account_banned': 403,
+  'auth.pending_approval': 403,
+  'auth.token_expired': 401,
+  'auth.token_revoked': 401,
+  'auth.token_invalid': 401,
+  'auth.token_missing': 401,
+  'auth.refresh_token_invalid': 401,
+  'auth.session_not_found': 404,
+  'auth.email_already_exists': 409,
+  'auth.email_not_verified': 403,
+  'auth.email_change_token_invalid': 400,
+  'auth.mfa_required': 403,
+  'auth.mfa_invalid_code': 401,
+  'auth.mfa_already_enabled': 409,
+  'auth.mfa_not_enabled': 400,
+  'auth.mfa_setup_required': 400,
+  'auth.mfa_temp_token_invalid': 401,
+  'auth.mfa_state_conflict': 409,
+  'auth.password_compromised': 400,
+  'auth.password_reset_token_invalid': 400,
+  'auth.otp_invalid': 401,
+  'auth.otp_expired': 401,
+  'auth.otp_max_attempts': 401,
+  'auth.insufficient_role': 403,
+  'auth.forbidden': 403,
+  'auth.validation': 400,
+  'auth.too_many_requests': 429,
+  'auth.untrusted_origin': 403,
+  'auth.reauthentication_required': 403,
+  'auth.invalid_invitation_token': 400,
+  'auth.oauth_failed': 401,
+  'auth.oauth_email_mismatch': 409,
+  'auth.platform_auth_required': 401,
+  'auth.internal': 500
+}

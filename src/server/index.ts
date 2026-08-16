@@ -50,6 +50,21 @@ export {
 // ---------------------------------------------------------------------------
 
 export { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './errors'
+
+/**
+ * The OpenAPI security-scheme NAMES, so a consumer never spells one as a string literal.
+ *
+ * A platform-only deployment guarding its own routes with `JwtAuthGuard` has to declare the
+ * dashboard access scheme itself — `schemesFor` gates dashboard schemes on `dashboardMounted`,
+ * so the fragment will not define one. Before this was exported the README told that consumer
+ * to write `bymaxAuthAccessCookie` by hand, with nothing checking the spelling, in a section
+ * whose whole subject is that literals drift from configuration.
+ *
+ * The names are stable identifiers — renaming one is a break a generated client feels — while
+ * their DEFINITIONS are derived from configuration. That asymmetry is why the names are worth
+ * exporting and the definitions are not.
+ */
+export { AUTH_SECURITY_SCHEMES } from './openapi/auth-openapi-fragment'
 export type { AuthErrorCode } from './errors'
 export { AuthException } from './errors'
 

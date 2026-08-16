@@ -1278,6 +1278,18 @@ The four names — `bymaxAuthAccessCookie`, `bymaxAuthAccessBearer`, `bymaxAuthR
 `bymaxPlatformAccessBearer` — are stable identifiers. Renaming one is a break a generated client
 feels, so they will not change; their **definitions** are config-derived.
 
+Import them rather than spelling them. A platform-only deployment guarding its own routes with
+`JwtAuthGuard` has to declare the dashboard access scheme itself — the fragment will not, because
+`schemesFor` gates dashboard schemes on what you mounted — and a hand-written literal in a section
+about literals drifting from configuration is the wrong instruction:
+
+```typescript
+import { AUTH_SECURITY_SCHEMES } from '@bymax-one/nest-auth'
+
+// [{ bymaxAuthAccessCookie: [] }], spelled by the package that owns the name
+const security = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
+```
+
 > **This package does not depend on `@bymax-one/nest-core`** — not as a dependency, a peer, or a
 > devDependency. The contract revision is inlined, the discovery marker is the documented string
 > literal, and a gate fails the build if any file here imports another Bymax library. That keeps
@@ -1710,7 +1722,7 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 |  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                  |
 |  `500` | `auth.internal`                                                                                                                                                                                                                                                   |
 
-`AUTH_ERROR_STATUS` is exported if you need the mapping at runtime — for a typed client, an
+`AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you need the mapping at runtime — for a typed client, an
 API document, or a test that asserts against it.
 
 > **Assert your fixtures against the catalogue, not against string literals.** `AUTH_ERROR_CODES`
