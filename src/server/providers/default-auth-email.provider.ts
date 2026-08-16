@@ -272,7 +272,7 @@ export interface DefaultAuthEmailProviderOptions {
    * logs and then re-throws, restoring the throw the two flows that react to one expect —
    * `PasswordResetService` deletes an undelivered reset token early, and `EmailChangeService` lets
    * a failed verification send surface rather than reporting "sent". The trade is narrower than it
-   * looks: an invitation send fails under `'rethrow'` too, but the three MFA notices do NOT — they
+   * looks: an invitation send fails under `'rethrow'` too, but the MFA notices do NOT — they
    * are detached and their failure is caught, because by the time one is sent the factor is
    * already enabled or removed, and answering the caller with an error would report a change that
    * happened as one that did not. Pick the failure mode the deployment's channel warrants, knowing
@@ -290,10 +290,11 @@ export interface DefaultAuthEmailProviderOptions {
    * that. `redactSecrets` is for strings you know contain the literal value. This is the one
    * credential this library cannot contain on your behalf.
    *
-   * **Which is why this takes a MAP as well as a bare policy.** A bare `'rethrow'` opts every
-   * message in, including the three that carry a credential in their body — and the two flows that
-   * motivate the opt-in are not those three. Naming the flows keeps the unlaundered error on the
-   * paths a deployment asked for and leaves it off the rest:
+   * **Which is why this takes a MAP as well as a bare policy.** Five messages carry a credential
+   * in their body, and the two flows that motivate the opt-in are two of them — so a bare
+   * `'rethrow'` reaches three MORE credential-bearing paths than anyone asked for, on top of every
+   * message that carries none. Naming the flows keeps the unlaundered error where a deployment
+   * wanted it and leaves it off the rest:
    *
    * ```typescript
    * new DefaultAuthEmailProvider(sink, {
@@ -453,9 +454,10 @@ function sanitizeSubject(subject: string): string {
  * verification the recipient never got, so it cannot complete. A deployment that wants the throw
  * back on those two flows names them:
  * `{ onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' } }`.
- * A bare `'rethrow'` also works and opts in every message, including the three that render a
- * credential — which is a wider trade than those two flows ask for. The default optimizes for the
- * common case: a transient channel outage must not fail the user's action.
+ * A bare `'rethrow'` also works and opts in every message. Five of them render a credential, and
+ * those two flows are two of the five — so the bare form reaches three further credential-bearing
+ * paths, a wider trade than either flow asks for. The default optimizes for the common case: a
+ * transient channel outage must not fail the user's action.
  *
  * The MFA notices are the exception in the other direction: `MfaService` does not await them under
  * either policy. By the time one is sent the secret is written, every session is invalidated and

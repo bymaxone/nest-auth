@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { Logger } from '@nestjs/common'
 
 import type { InviteData, SessionInfo } from '../interfaces/email-provider.interface'
@@ -1153,5 +1156,46 @@ describe('DefaultAuthEmailProvider', () => {
       mfaEnabled: 'es-ES',
       mfaDisabled: 'fr-FR'
     })
+  })
+
+  // How many messages carry a credential is stated twice in this file's own documentation, and it
+  // has been wrong twice — a reviewer caught "three" when the set held five, in two separate
+  // rounds. Prose does not close by grep and it does not close by reading harder: only an
+  // invariant a machine can check converges. This one fails the build when a sixth
+  // credential-bearing kind is added without the sentences moving with it.
+  //
+  // Read from the source text rather than asserted against a copy of it, because a copy is one
+  // more thing that can drift from what ships in the `.d.ts` a consumer actually reads.
+  it('states the credential-bearing count consistently in its own documentation', async () => {
+    sink.send.mockResolvedValue(undefined)
+
+    // Counted from what the provider actually declares, not from a constant restated here — a
+    // restated number is one more copy that can drift from the one the sentences describe.
+    await provider.sendPasswordResetToken('t', 'u@e.com', 'tok')
+    await provider.sendPasswordResetOtp('t', 'u@e.com', '424242')
+    await provider.sendEmailVerificationOtp('t', 'u@e.com', '424242')
+    await provider.sendPasswordChangedNotification('t', 'u@e.com')
+    await provider.sendEmailChangeVerification('t', 'u@e.com', 'tok')
+    await provider.sendEmailChangedNotification('t', 'old@e.com', 'new@e.com')
+    await provider.sendMfaEnabledNotification('t', 'u@e.com')
+    await provider.sendMfaDisabledNotification('t', 'u@e.com')
+    await provider.sendNewSessionAlert('t', 'u@e.com', SESSION)
+    await provider.sendInvitation('t', 'u@e.com', INVITE)
+
+    const bearing = sink.send.mock.calls.filter(([input]) => input.containsCredential).length
+    const source = readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8')
+    const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven']
+    const expected = NUMBER_WORDS[bearing]
+
+    const claims = source
+      .split('\n')
+      .filter((line) => /(carry|render) a credential/.test(line))
+      .map((line) => line.trim())
+
+    // Both sentences exist, so deleting one cannot make this pass vacuously.
+    expect(claims).toHaveLength(2)
+    for (const claim of claims) {
+      expect(claim.toLowerCase()).toContain(expected)
+    }
   })
 })
