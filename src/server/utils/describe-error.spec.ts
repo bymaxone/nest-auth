@@ -245,11 +245,15 @@ describe('describeChannelStatus invariant', () => {
   // position must produce the SAME line — output that varies with the secret is derivation, which
   // is exactly what took the status out. A grammar check alone would not catch it: `424` and `551`
   // both match a reply-code pattern.
+  //
+  // The value is asserted as well as the sameness. "All three agree" is satisfied by a build that
+  // returns the empty string for everything, which would agree perfectly and diagnose nothing —
+  // the same vacuity as an absence assertion, one level up.
   it('produces a line that does not vary with the secret', () => {
     const lines = ['424242', '551234', '999999'].map((otp) =>
       describeChannelStatus(new Error(`${otp.slice(0, 3)}-${otp.slice(3)} is your code`))
     )
 
-    expect(new Set(lines).size).toBe(1)
+    expect(new Set(lines)).toEqual(new Set(['<error>']))
   })
 })
