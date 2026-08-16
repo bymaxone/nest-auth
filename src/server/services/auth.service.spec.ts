@@ -2584,11 +2584,12 @@ describe('AuthService', () => {
 
       const logged = loggerSpy.mock.calls.map((c) => String(c[0])).join(' | ')
       expect(logged).not.toContain('975310')
-      // On a credential path the relay's prose does not reach the line at all — only the status
-      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
-      // gone, and the diagnosis is not.
+      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
+      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
+      // diagnosis: it says the send failed and how deep the failure was reported from.
       expect(logged).not.toContain('rejected by policy')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
       loggerSpy.mockRestore()
     })
 
@@ -2619,11 +2620,12 @@ describe('AuthService', () => {
       // would lose the diagnosis to a guard that should never have had to fire.
       const logged = loggerSpy.mock.calls[0]?.[0] as string
       expect(logged).not.toContain('654321')
-      // On a credential path the relay's prose does not reach the line at all — only the status
-      // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
-      // gone, and the diagnosis is not.
+      // On a credential path nothing the relay wrote reaches the line, and nothing is parsed off it
+      // either. What remains is the label this library owns plus the opaque stand-in — which IS the
+      // diagnosis: it says the send failed and how deep the failure was reported from.
       expect(logged).not.toContain('rejected by policy')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('sendEmailVerificationOtp failed for user user-1: <error>')
       loggerSpy.mockRestore()
     })
   })

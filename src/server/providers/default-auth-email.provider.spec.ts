@@ -359,24 +359,28 @@ describe('DefaultAuthEmailProvider', () => {
     [
       'password-reset OTP',
       (p: DefaultAuthEmailProvider) => p.sendPasswordResetOtp('t', 'u@example.com', '699647'),
-      '699647'
+      '699647',
+      'passwordResetOtp'
     ],
     [
       'email-verification OTP',
       (p: DefaultAuthEmailProvider) => p.sendEmailVerificationOtp('t', 'u@example.com', '318250'),
-      '318250'
+      '318250',
+      'emailVerificationOtp'
     ],
     [
       'password-reset token',
       (p: DefaultAuthEmailProvider) =>
         p.sendPasswordResetToken('t', 'u@example.com', 'a1b2c3d4e5f6a1b2'),
-      'a1b2c3d4e5f6a1b2'
+      'a1b2c3d4e5f6a1b2',
+      'passwordResetToken'
     ],
     [
       'email-change token',
       (p: DefaultAuthEmailProvider) =>
         p.sendEmailChangeVerification('t', 'new@example.com', 'f6e5d4c3b2a1f6e5'),
-      'f6e5d4c3b2a1f6e5'
+      'f6e5d4c3b2a1f6e5',
+      'emailChangeVerification'
     ],
     [
       'invitation token',
@@ -387,22 +391,30 @@ describe('DefaultAuthEmailProvider', () => {
           inviteToken: '0f1e2d3c4b5a0f1e',
           expiresAt: new Date('2026-01-01T00:00:00.000Z')
         }),
-      '0f1e2d3c4b5a0f1e'
+      '0f1e2d3c4b5a0f1e',
+      'invitation'
     ]
-  ])('keeps the %s out of the log when the relay quotes it back', async (_why, send, secret) => {
-    sink.send.mockRejectedValueOnce(
-      new Error(`550 5.7.1 rejected by policy: "Your code is ${secret}. It expires soon."`)
-    )
+    // The fourth column is the label the line must carry. Asserted per case rather than as one
+    // literal, because that is what pins the MAPPING from message to label — a send wired to the
+    // wrong label would still satisfy every absence, and would satisfy a single shared literal too.
+  ])(
+    'keeps the %s out of the log when the relay quotes it back',
+    async (_why, send, secret, label) => {
+      sink.send.mockRejectedValueOnce(
+        new Error(`550 5.7.1 rejected by policy: "Your code is ${secret}. It expires soon."`)
+      )
 
-    await send(provider)
+      await send(provider)
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    // The credential is gone AND so is the channel's prose. What survives is the message's own
-    // label, which this file wrote, and the stand-in saying a throw happened.
-    expect(logged).not.toContain(secret)
-    expect(logged).not.toContain('rejected by policy')
-    expect(logged).not.toContain('550')
-  })
+      const logged = errorSpy.mock.calls[0]?.[0] as string
+      // The credential is gone AND so is the channel's prose. What survives is the message's own
+      // label, which this file wrote, and the stand-in saying a throw happened.
+      expect(logged).not.toContain(secret)
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe(`delivery failed sending ${label}: <error>`)
+    }
+  )
 
   // The measurement that decided the policy, kept as a test because it is the only evidence that
   // the two obvious defences are NOT enough on their own. A relay is free to quote the body it
@@ -433,6 +445,7 @@ describe('DefaultAuthEmailProvider', () => {
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain(otp)
     expect(logged).not.toContain('550')
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
   // The measurement that killed the shape check, kept as a test because the shape check LOOKED
@@ -716,14 +729,15 @@ describe('DefaultAuthEmailProvider', () => {
   // Redacting them is not enough, and "not a credential" was never the standard. A relay is as
   // free to quote THIS body re-encoded as it is to quote a reset code's, and redaction sees
   // through neither — so an IP, which is personal data, would reach the log by the same route the
-  // credential fix closed. The text goes; the status stays, and the status is the half an operator
-  // acts on either way.
+  // credential fix closed. All of the channel's text goes; what stays is this library's own label,
+  // which is the half that says WHICH message failed and the half no relay can forge.
   it.each([
     [
       'the addresses the email-changed notice renders',
       (p: DefaultAuthEmailProvider) =>
         p.sendEmailChangedNotification('t', 'old@example.com', 'new@example.com'),
-      'new@example.com'
+      'new@example.com',
+      'emailChanged'
     ],
     [
       'the IP the new-session alert renders',
@@ -733,18 +747,23 @@ describe('DefaultAuthEmailProvider', () => {
           ip: '203.0.113.7',
           sessionHash: 'deadbeef'
         }),
-      '203.0.113.7'
+      '203.0.113.7',
+      'newSessionAlert'
     ]
-  ])('keeps %s out of the log when the relay quotes it back', async (_why, send, rendered) => {
-    sink.send.mockRejectedValueOnce(new Error(`550 rejected by policy: "... ${rendered} ..."`))
+  ])(
+    'keeps %s out of the log when the relay quotes it back',
+    async (_why, send, rendered, label) => {
+      sink.send.mockRejectedValueOnce(new Error(`550 rejected by policy: "... ${rendered} ..."`))
 
-    await send(provider)
+      await send(provider)
 
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain(rendered)
-    expect(logged).not.toContain('rejected by policy')
-    expect(logged).not.toContain('550')
-  })
+      const logged = errorSpy.mock.calls[0]?.[0] as string
+      expect(logged).not.toContain(rendered)
+      expect(logged).not.toContain('rejected by policy')
+      expect(logged).not.toContain('550')
+      expect(logged).toBe(`delivery failed sending ${label}: <error>`)
+    }
+  )
 
   // The likeliest shape of all, and it needs no quoted body: an SMTP rejection NAMES the
   // recipient it refused. The template deliberately omits the address — a log line reaches a
@@ -757,11 +776,15 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-    // matched and removed, but because its carrier was never published. The status is what
-    // survives, and asserting it is what keeps this from passing on a build that logs nothing.
+    // matched and removed, but because its carrier was never published.
+    //
+    // The three absences name what the fixture actually put in the error, and the final equality
+    // is what keeps this from passing on a build that logs nothing at all: every absence below is
+    // satisfied by an empty line, which would destroy the diagnosis this test exists to protect.
     expect(logged).not.toContain('recipient@example.com')
     expect(logged).not.toContain('recipient rejected')
     expect(logged).not.toContain('550')
+    expect(logged).toBe('delivery failed sending mfaEnabled: <error>')
   })
 
   // The COMPOSITION of two clean components can spell a secret neither contains. `name` and

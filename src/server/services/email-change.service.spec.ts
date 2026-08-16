@@ -443,6 +443,7 @@ describe('EmailChangeService', () => {
         expect(logged).not.toContain(NEW_EMAIL)
         expect(logged).not.toContain('rejected')
         expect(logged).not.toContain('550')
+        expect(logged).toBe('confirmChange: notification to the previous address failed: <error>')
       } finally {
         loggerSpy.mockRestore()
       }

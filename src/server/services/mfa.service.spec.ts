@@ -1157,6 +1157,7 @@ describe('MfaService', () => {
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
       errorSpy.mockRestore()
     })
 
@@ -2664,6 +2665,7 @@ describe('MfaService', () => {
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('resetMfa: MFA notice delivery failed for user user-1: <error>')
       warnSpy.mockRestore()
       errorSpy.mockRestore()
     })
@@ -2972,6 +2974,7 @@ describe('MfaService', () => {
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('verifyAndEnable: MFA notice delivery failed for user user-1: <error>')
       errorSpy.mockRestore()
     })
 
@@ -3007,6 +3010,7 @@ describe('MfaService', () => {
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
       expect(logged).not.toContain('550')
+      expect(logged).toBe('disable: MFA notice delivery failed for user user-1: <error>')
       errorSpy.mockRestore()
     })
 
