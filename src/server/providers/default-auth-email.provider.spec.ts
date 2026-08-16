@@ -1,10 +1,15 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { Logger } from '@nestjs/common'
 
 import type { InviteData, SessionInfo } from '../interfaces/email-provider.interface'
 import {
+  AUTH_EMAIL_KINDS,
   DefaultAuthEmailProvider,
   type AuthEmailSink,
-  type AuthEmailCatalogue
+  type AuthEmailCatalogue,
+  type DeliveryErrorPolicyMap
 } from './default-auth-email.provider'
 
 // ---------------------------------------------------------------------------
@@ -92,7 +97,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Reset your password',
       html: html(text),
-      text
+      text,
+      kind: 'passwordResetToken',
+      containsCredential: true
     })
   })
 
@@ -105,7 +112,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Your password reset code',
       html: html(text),
-      text
+      text,
+      kind: 'passwordResetOtp',
+      containsCredential: true
     })
   })
 
@@ -118,7 +127,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Verify your email address',
       html: html(text),
-      text
+      text,
+      kind: 'emailVerificationOtp',
+      containsCredential: true
     })
   })
 
@@ -131,7 +142,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Your password was changed',
       html: html(text),
-      text
+      text,
+      kind: 'passwordChanged',
+      containsCredential: false
     })
   })
 
@@ -144,7 +157,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'new@example.com',
       subject: 'Confirm your new email address',
       html: html(text),
-      text
+      text,
+      kind: 'emailChangeVerification',
+      containsCredential: true
     })
   })
 
@@ -157,7 +172,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'old@example.com',
       subject: 'Your email address was changed',
       html: html(text),
-      text
+      text,
+      kind: 'emailChanged',
+      containsCredential: false
     })
   })
 
@@ -170,7 +187,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Two-factor authentication is on',
       html: html(text),
-      text
+      text,
+      kind: 'mfaEnabled',
+      containsCredential: false
     })
   })
 
@@ -183,7 +202,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Two-factor authentication is off',
       html: html(text),
-      text
+      text,
+      kind: 'mfaDisabled',
+      containsCredential: false
     })
   })
 
@@ -196,7 +217,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'New sign-in to your account',
       html: html(text),
-      text
+      text,
+      kind: 'newSessionAlert',
+      containsCredential: false
     })
   })
 
@@ -209,7 +232,9 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'invitee@example.com',
       subject: 'Ada invited you to Acme',
       html: html(text),
-      text
+      text,
+      kind: 'invitation',
+      containsCredential: true
     })
   })
 
@@ -313,6 +338,217 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendPasswordResetToken('tenant-1', 'secret@example.com', 'TOK')
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain('secret@example.com')
+  })
+
+  // The exported list is frozen at RUNTIME, not merely `as const`. It is exported, and expanding
+  // a bare `'rethrow'` iterates it — a consumer splicing an entry out would silently stop that
+  // message being covered by a policy the deployment believes is global.
+  it('cannot be edited by a consumer', () => {
+    expect(Object.isFrozen(AUTH_EMAIL_KINDS)).toBe(true)
+    // `Reflect.set` rather than an assignment through a cast: it reports the refusal as a return
+    // value, so the write is proved rejected without widening the type to something the compiler
+    // is right to reject.
+    expect(Reflect.set(AUTH_EMAIL_KINDS, 0, 'forged')).toBe(false)
+    expect(AUTH_EMAIL_KINDS[0]).toBe('passwordResetToken')
+    expect(AUTH_EMAIL_KINDS).toHaveLength(10)
+  })
+
+  // WHICH messages declare a credential, pinned as a whole set rather than one at a time. A new
+  // message added to the catalogue without a decision here shows up as a diff on this list, which
+  // is the point: "does this body carry something that unlocks an account" is a question somebody
+  // has to answer per message, and a default of `false` would answer it silently.
+  //
+  // The five that do are the ones whose body renders a value a recipient can use: two codes, two
+  // tokens, and the invitation. The five that do not are notices about a change that already
+  // happened — they still carry personal data, which is why this library publishes none of a
+  // channel's text for them either.
+  it('declares a credential for exactly the five messages that render one', async () => {
+    sink.send.mockResolvedValue(undefined)
+
+    await provider.sendPasswordResetToken('t', 'u@e.com', 'tok')
+    await provider.sendPasswordResetOtp('t', 'u@e.com', '424242')
+    await provider.sendEmailVerificationOtp('t', 'u@e.com', '424242')
+    await provider.sendPasswordChangedNotification('t', 'u@e.com')
+    await provider.sendEmailChangeVerification('t', 'u@e.com', 'tok')
+    await provider.sendEmailChangedNotification('t', 'old@e.com', 'new@e.com')
+    await provider.sendMfaEnabledNotification('t', 'u@e.com')
+    await provider.sendMfaDisabledNotification('t', 'u@e.com')
+    await provider.sendNewSessionAlert('t', 'u@e.com', SESSION)
+    await provider.sendInvitation('t', 'u@e.com', INVITE)
+
+    const declared = sink.send.mock.calls.map(([input]) => [input.kind, input.containsCredential])
+
+    expect(declared).toEqual([
+      ['passwordResetToken', true],
+      ['passwordResetOtp', true],
+      ['emailVerificationOtp', true],
+      ['passwordChanged', false],
+      ['emailChangeVerification', true],
+      ['emailChanged', false],
+      ['mfaEnabled', false],
+      ['mfaDisabled', false],
+      ['newSessionAlert', false],
+      ['invitation', true]
+    ])
+    // Every catalogue entry is represented, so a message added without a line here is visible as
+    // a length mismatch rather than as a silent omission.
+    expect(declared).toHaveLength(AUTH_EMAIL_KINDS.length)
+  })
+
+  // The case the kind cannot see. `messages` replaces a renderer outright, so a product whose own
+  // `mfaEnabled` copy hands the user recovery codes has made a notice credential-bearing while
+  // its kind still reads `mfaEnabled`. Without the rendering's own declaration the sink is told
+  // `false` about a body carrying a live secret — the flag being WRONG, which is worse than the
+  // flag being merely non-protective.
+  it('lets a rendering declare a credential the kind does not imply', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const withRecoveryCodes = new DefaultAuthEmailProvider(sink, {
+      messages: {
+        mfaEnabled: () => ({
+          subject: 'Two-factor is on',
+          text: 'Recovery codes: 11111-22222',
+          containsCredential: true
+        })
+      }
+    })
+
+    await withRecoveryCodes.sendMfaEnabledNotification('t', 'u@e.com')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'mfaEnabled', containsCredential: true })
+    )
+  })
+
+  // The other direction, which must not work. The kind is a baseline a renderer cannot weaken:
+  // an override for a credential-bearing flow that omits the credential from ITS copy still
+  // reaches a sink that may be reused for the default rendering, and a downgrade here would be a
+  // consumer silently turning off a statement this library makes about its own messages.
+  it('never lets a rendering downgrade a credential the kind implies', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const downgrading = new DefaultAuthEmailProvider(sink, {
+      messages: {
+        passwordResetOtp: () => ({
+          subject: 'Reset',
+          text: 'Open the app to continue',
+          containsCredential: false
+        })
+      }
+    })
+
+    await downgrading.sendPasswordResetOtp('t', 'u@e.com', '424242')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'passwordResetOtp', containsCredential: true })
+    )
+  })
+
+  // An override that says nothing about credentials is the ordinary case — branding and copy,
+  // no security claim — and must leave the kind's answer exactly as it was.
+  it('leaves the kind to decide when a rendering says nothing', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const rebranded = new DefaultAuthEmailProvider(sink, {
+      messages: { mfaEnabled: () => ({ subject: 'Two-factor is on', text: 'All set.' }) }
+    })
+
+    await rebranded.sendMfaEnabledNotification('t', 'u@e.com')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'mfaEnabled', containsCredential: false })
+    )
+  })
+
+  // The reason the option takes a map. A deployment opts into the throw for ONE flow — the reset
+  // token, so the stored token can be deleted early — and a bare `'rethrow'` would hand it the
+  // unlaundered channel error on the OTP paths too, which are the ones carrying a credential in
+  // the body. Naming the flow keeps the opt-in where it was asked for.
+  it('re-throws only for the message the map names', async () => {
+    const selective = new DefaultAuthEmailProvider(sink, {
+      onDeliveryError: { passwordResetToken: 'rethrow' }
+    })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    await expect(selective.sendPasswordResetToken('t', 'u@e.com', 'tok')).rejects.toThrow()
+    // The credential-bearing sibling is NOT opted in and still resolves.
+    await expect(selective.sendPasswordResetOtp('t', 'u@e.com', '424242')).resolves.toBeUndefined()
+  })
+
+  // The direction of the default, which is the property that makes the map safe to widen: a
+  // message left out keeps swallowing. A map that opted everything in by omission would make
+  // every catalogue addition a silent behaviour change.
+  it('leaves an unnamed message swallowing', async () => {
+    const selective = new DefaultAuthEmailProvider(sink, {
+      onDeliveryError: { passwordResetToken: 'rethrow' }
+    })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    await expect(selective.sendMfaEnabledNotification('t', 'u@e.com')).resolves.toBeUndefined()
+    await expect(selective.sendInvitation('t', 'u@e.com', INVITE)).resolves.toBeUndefined()
+  })
+
+  // An explicit `'swallow'` in the map is not the same statement as omission, and both must work —
+  // a deployment writing the safe value down deserves the same behaviour as one leaving it out.
+  it('honours an explicit swallow in the map', async () => {
+    const selective = new DefaultAuthEmailProvider(sink, {
+      onDeliveryError: { passwordResetToken: 'swallow', passwordResetOtp: 'rethrow' }
+    })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    await expect(selective.sendPasswordResetToken('t', 'u@e.com', 'tok')).resolves.toBeUndefined()
+    await expect(selective.sendPasswordResetOtp('t', 'u@e.com', '424242')).rejects.toThrow()
+  })
+
+  // A key the catalogue does not know is dropped, and it lands on the SAFE side: the message keeps
+  // swallowing. TypeScript rejects the typo outright, so this is the JavaScript caller's path —
+  // and the direction is what matters. A deployment that mistypes gets less throwing than it
+  // meant, never a credential-bearing error handed to a handler that did not ask for one.
+  it('drops a key the catalogue does not know, leaving it on swallow', async () => {
+    const typo = new DefaultAuthEmailProvider(sink, {
+      onDeliveryError: { passwordReset: 'rethrow' } as DeliveryErrorPolicyMap
+    })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    await expect(typo.sendPasswordResetToken('t', 'u@e.com', 'tok')).resolves.toBeUndefined()
+    await expect(typo.sendPasswordResetOtp('t', 'u@e.com', '424242')).resolves.toBeUndefined()
+  })
+
+  // The prototype is not a source of policy. A plain object inherits `toString`, and none of the
+  // ten names collides with an inherited one today — this pins that the resolution never reads
+  // the chain at all, so a later rename cannot make it matter.
+  it('takes no policy from the prototype chain', async () => {
+    const inherited = Object.create({ passwordResetToken: 'rethrow' }) as DeliveryErrorPolicyMap
+    const viaPrototype = new DefaultAuthEmailProvider(sink, { onDeliveryError: inherited })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    await expect(
+      viaPrototype.sendPasswordResetToken('t', 'u@e.com', 'tok')
+    ).resolves.toBeUndefined()
+  })
+
+  // The bare policy still reaches every method. Completeness of the kind list is proved by the
+  // compiler in the source; what a type cannot show is that expanding it actually covers each send
+  // path, so that is asserted behaviourally — one call per method, all of them rejecting.
+  it('applies a bare policy to every message', async () => {
+    const everywhere = new DefaultAuthEmailProvider(sink, { onDeliveryError: 'rethrow' })
+    sink.send.mockRejectedValue(new Error('550 rejected'))
+
+    const sends: readonly Promise<void>[] = [
+      everywhere.sendPasswordResetToken('t', 'u@e.com', 'tok'),
+      everywhere.sendPasswordResetOtp('t', 'u@e.com', '424242'),
+      everywhere.sendEmailVerificationOtp('t', 'u@e.com', '424242'),
+      everywhere.sendPasswordChangedNotification('t', 'u@e.com'),
+      everywhere.sendEmailChangeVerification('t', 'u@e.com', 'tok'),
+      everywhere.sendEmailChangedNotification('t', 'old@e.com', 'new@e.com'),
+      everywhere.sendMfaEnabledNotification('t', 'u@e.com'),
+      everywhere.sendMfaDisabledNotification('t', 'u@e.com'),
+      everywhere.sendNewSessionAlert('t', 'u@e.com', SESSION),
+      everywhere.sendInvitation('t', 'u@e.com', INVITE)
+    ]
+
+    // As many sends as the catalogue has entries: a method added without a line here leaves the
+    // count short, and the assertion says so.
+    expect(sends).toHaveLength(AUTH_EMAIL_KINDS.length)
+    const settled = await Promise.allSettled(sends)
+    expect(settled.every((r) => r.status === 'rejected')).toBe(true)
   })
 
   // On the 'rethrow' policy the failure is logged AND propagated, so a caller that reacts to a
@@ -857,7 +1093,12 @@ describe('DefaultAuthEmailProvider', () => {
       to: 'user@example.com',
       subject: 'Custom MFA on',
       html: html('Branded body.'),
-      text: 'Branded body.'
+      text: 'Branded body.',
+      // Overriding the copy does not change WHICH message this is, and the credential fact is
+      // taken from the kind rather than from the rendered words — a consumer rewriting a notice
+      // cannot make the provider misdeclare what the body carries, in either direction.
+      kind: 'mfaEnabled',
+      containsCredential: false
     })
 
     // A non-overridden event still uses the built-in copy.
@@ -915,5 +1156,55 @@ describe('DefaultAuthEmailProvider', () => {
       mfaEnabled: 'es-ES',
       mfaDisabled: 'fr-FR'
     })
+  })
+
+  // How many messages carry a credential is stated twice in this file's own documentation, and it
+  // has been wrong twice — a reviewer caught "three" when the set held five, in two separate
+  // rounds. Prose does not close by grep and it does not close by reading harder: only an
+  // invariant a machine can check converges. This one fails the build when a sixth
+  // credential-bearing kind is added without the sentences moving with it.
+  //
+  // Read from the source text rather than asserted against a copy of it, because a copy is one
+  // more thing that can drift from what ships in the `.d.ts` a consumer actually reads.
+  it('states the credential-bearing count consistently in its own documentation', async () => {
+    sink.send.mockResolvedValue(undefined)
+
+    // Counted from what the provider actually declares, not from a constant restated here — a
+    // restated number is one more copy that can drift from the one the sentences describe.
+    await provider.sendPasswordResetToken('t', 'u@e.com', 'tok')
+    await provider.sendPasswordResetOtp('t', 'u@e.com', '424242')
+    await provider.sendEmailVerificationOtp('t', 'u@e.com', '424242')
+    await provider.sendPasswordChangedNotification('t', 'u@e.com')
+    await provider.sendEmailChangeVerification('t', 'u@e.com', 'tok')
+    await provider.sendEmailChangedNotification('t', 'old@e.com', 'new@e.com')
+    await provider.sendMfaEnabledNotification('t', 'u@e.com')
+    await provider.sendMfaDisabledNotification('t', 'u@e.com')
+    await provider.sendNewSessionAlert('t', 'u@e.com', SESSION)
+    await provider.sendInvitation('t', 'u@e.com', INVITE)
+
+    const bearing = sink.send.mock.calls.filter(([input]) => input.containsCredential).length
+    const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven']
+    const expected = NUMBER_WORDS[bearing]
+
+    // Both files, because scoping this to the source is how the previous round left the same
+    // wrong number alive: the JSDoc was corrected and the CHANGELOG entry describing the same
+    // change still said "three". A claim guarded in one file and loose in another drifts at the
+    // loose one, which is the file a consumer reads first.
+    // The number is captured as the one GOVERNING the claim, not merely present on its line. A
+    // `toContain` was tried and is unsound here: "Five messages render a credential ... two of
+    // the five" names the count twice, so rewriting the first to "Three" left the second to
+    // satisfy the check and the mutation passed. A test that cannot fail is the thing this whole
+    // exercise exists to avoid, and it was the first version of this one.
+    const COUNTED_CLAIM =
+      /\b(zero|one|two|three|four|five|six|seven)\b[^.]*?(carry|render)s? a credential/gi
+    const claims = [
+      readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8'),
+      readFileSync(join(__dirname, '../../../CHANGELOG.md'), 'utf8')
+    ].flatMap((text) => [...text.matchAll(COUNTED_CLAIM)].map((match) => match[1]?.toLowerCase()))
+
+    // Two sentences in the source and one in the CHANGELOG, so deleting any of them cannot make
+    // this pass vacuously — an empty list satisfies a for-loop and proves nothing.
+    expect(claims).toHaveLength(3)
+    expect(claims).toEqual([expected, expected, expected])
   })
 })

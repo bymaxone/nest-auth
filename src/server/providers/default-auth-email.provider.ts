@@ -72,6 +72,43 @@ export interface AuthEmailSink {
     html: string
     /** Plain-text body. */
     text: string
+    /** Which message this is, so a sink can act per flow. Always one of {@link AUTH_EMAIL_KINDS}. */
+    kind: AuthEmailKind
+    /**
+     * `true` when the rendered message carries a live credential — a reset code, a verification
+     * code, a reset or invitation token.
+     *
+     * **The whole message, not only the bodies.** `subject`, `html` and `text` are all rendered by
+     * the same renderer and all handed to the sink, so a credential in the subject is exactly as
+     * published as one in the body. Scoping this to "the body" would have a renderer that puts a
+     * code in its subject line correctly leave the flag unset by the contract's own words, which
+     * is the flag being wrong by construction rather than by mistake. (The built-in copy states
+     * every code in the body and none in a subject; this is about what an override may do.)
+     *
+     * Two sources, combined so that neither can weaken the other. The message KIND supplies the
+     * baseline, which is what the built-in copy carries. A rendering may additionally declare
+     * itself credential-bearing through {@link AuthEmailMessage.containsCredential}, because
+     * `messages` replaces a renderer outright and a product's own copy for a normally harmless
+     * kind can put a live secret in the body — the kind alone cannot see that, and would state
+     * `false` about it.
+     *
+     * **What a sink must do with it: do not publish this message's content anywhere.** Not in an
+     * error it throws, not in a log line, not in an audit record that outlives delivery. A sink
+     * that quotes what it was given is the ordinary shape — an SMTP relay answering `550` quotes
+     * the offending body, and a client that wraps one usually passes that text through.
+     *
+     * **What this flag is NOT.** It is not protection, and this library cannot make it one: once
+     * the body leaves `send`, what happens to it belongs to the sink. It is a statement of fact
+     * about the payload, delivered at the only moment a sink could act on it.
+     *
+     * **Why a flag and not a list of values to redact.** That was measured and rejected. Redaction
+     * is a substring match, so it holds for a value quoted the way it was written and not for the
+     * same bytes re-encoded — a relay is free to answer with the body in base64, and then no list
+     * matches. A categorical "publish none of this message" needs to find nothing, which is the
+     * only shape that survives an encoding it cannot predict. The same reasoning took every
+     * channel-authored byte out of this library's own log lines.
+     */
+    containsCredential: boolean
   }): Promise<unknown>
 }
 
@@ -88,6 +125,23 @@ export interface AuthEmailMessage {
    * unset to have the provider render {@link text} into safe, escaped paragraphs.
    */
   readonly html?: string | undefined
+  /**
+   * Set to `true` when this rendering puts a live credential anywhere in the message — in
+   * {@link subject} as much as in {@link text} or {@link html}. All three are handed to the sink,
+   * so a code in the subject line is exactly as published as one in the body.
+   *
+   * The provider already knows which KINDS carry one by default, and a renderer cannot make that
+   * baseline weaker: this value is OR-ed with it, so `false` on `passwordResetOtp` is ignored and
+   * the sink is still told `true`. It exists for the other direction, which the kind alone cannot
+   * see. Overrides replace a renderer outright, so a product that puts recovery codes into its
+   * own `mfaEnabled` copy has turned a notice into a credential-bearing message — the kind still
+   * says `mfaEnabled` and, without this, the sink would be told `false` about a body that carries
+   * a live secret. That is the flag being wrong rather than merely non-protective, which is worse
+   * than not having it.
+   *
+   * Leave it unset on a rendering that carries no credential; the kind decides.
+   */
+  readonly containsCredential?: boolean | undefined
 }
 
 /**
@@ -130,6 +184,88 @@ export interface AuthEmailCatalogue {
 /** How the provider reacts to a delivery failure. */
 export type DeliveryErrorPolicy = 'swallow' | 'rethrow'
 
+/** Every message the provider can send, named by its entry in {@link AuthEmailCatalogue}. */
+export type AuthEmailKind = keyof AuthEmailCatalogue
+
+/**
+ * Every message kind, as a value.
+ *
+ * Declared here rather than derived, because a type cannot be iterated at runtime and expanding a
+ * bare `'rethrow'` needs the list. Kept adjacent to {@link AuthEmailCatalogue} so the two are read
+ * together; a catalogue entry added without a matching entry here fails the test that compares them.
+ */
+export const AUTH_EMAIL_KINDS = [
+  'passwordResetToken',
+  'passwordResetOtp',
+  'emailVerificationOtp',
+  'passwordChanged',
+  'emailChangeVerification',
+  'emailChanged',
+  'mfaEnabled',
+  'mfaDisabled',
+  'newSessionAlert',
+  'invitation'
+] as const satisfies readonly (keyof AuthEmailCatalogue)[]
+// Frozen, because `as const` is a TYPE-level claim and this array is exported. A JavaScript
+// consumer could otherwise splice a kind out of it, and a later bare `'rethrow'` would silently
+// stop covering that message — a security-relevant expansion driven by a value anyone can edit.
+Object.freeze(AUTH_EMAIL_KINDS)
+
+/**
+ * Messages that render a live credential.
+ *
+ * Enumerated rather than inferred, because "does this body contain a secret" is a fact about the
+ * COPY and a consumer may replace any entry through `messages`. An override that stops rendering
+ * the code does not make the flag wrong — it only makes it cautious, and cautious is the direction
+ * this list is allowed to be wrong in.
+ *
+ * The other FIVE are absent deliberately — `passwordChanged`, `emailChanged`, `mfaEnabled`,
+ * `mfaDisabled` and `newSessionAlert`. Each announces a change that already happened and renders
+ * no value that unlocks anything. They still carry personal data, which is why this library
+ * publishes none of a channel's text for them either. Named rather than counted, because a count
+ * is the kind of claim that goes wrong quietly: this sentence said "four notices and two alerts",
+ * which is six, and there are five.
+ */
+const CREDENTIAL_BEARING_KINDS: ReadonlySet<AuthEmailKind> = new Set([
+  'passwordResetToken',
+  'passwordResetOtp',
+  'emailVerificationOtp',
+  'emailChangeVerification',
+  'invitation'
+])
+
+/**
+ * {@link AUTH_EMAIL_KINDS} as a set, for the membership test in the constructor.
+ *
+ * A `Set` rather than `Array.includes`, so recognising a key costs the same whatever the catalogue
+ * grows to, and so the check reads as membership rather than as a search.
+ */
+const KNOWN_EMAIL_KINDS: ReadonlySet<string> = new Set(AUTH_EMAIL_KINDS)
+
+/**
+ * Compile-time proof that {@link AUTH_EMAIL_KINDS} lists EVERY catalogue entry.
+ *
+ * `satisfies` on the array proves each entry is a valid key; it does not prove none is missing,
+ * and a missing one fails silently in the direction that matters: expanding a bare `'rethrow'`
+ * iterates that list, so a catalogue entry absent from it would keep swallowing on a deployment
+ * that asked for the throw everywhere. A runtime test could catch that too, but only by importing
+ * the private default catalogue; this costs nothing and fails at the keyboard rather than in CI.
+ *
+ * Adding a message to {@link AuthEmailCatalogue} makes `MissingEmailKind` non-`never` and the
+ * declaration below stops compiling until the name is added to {@link AUTH_EMAIL_KINDS}.
+ */
+type MissingEmailKind = Exclude<keyof AuthEmailCatalogue, (typeof AUTH_EMAIL_KINDS)[number]>
+const _everyKindIsListed: MissingEmailKind extends never ? true : never = true
+void _everyKindIsListed
+
+/**
+ * A delivery-error policy chosen per message.
+ *
+ * Any message left out keeps `'swallow'`, so a map only ever names the flows that want the throw.
+ * That direction matters: the safe value is what you get by saying nothing.
+ */
+export type DeliveryErrorPolicyMap = Partial<Record<AuthEmailKind, DeliveryErrorPolicy>>
+
 /** Options for {@link DefaultAuthEmailProvider}. */
 export interface DefaultAuthEmailProviderOptions {
   /**
@@ -145,7 +281,7 @@ export interface DefaultAuthEmailProviderOptions {
    * logs and then re-throws, restoring the throw the two flows that react to one expect —
    * `PasswordResetService` deletes an undelivered reset token early, and `EmailChangeService` lets
    * a failed verification send surface rather than reporting "sent". The trade is narrower than it
-   * looks: an invitation send fails under `'rethrow'` too, but the three MFA notices do NOT — they
+   * looks: an invitation send fails under `'rethrow'` too, but the MFA notices do NOT — they
    * are detached and their failure is caught, because by the time one is sent the factor is
    * already enabled or removed, and answering the caller with an error would report a change that
    * happened as one that did not. Pick the failure mode the deployment's channel warrants, knowing
@@ -162,8 +298,25 @@ export interface DefaultAuthEmailProviderOptions {
    * may quote what it rejected in transfer encoding, and a substring match cannot see through
    * that. `redactSecrets` is for strings you know contain the literal value. This is the one
    * credential this library cannot contain on your behalf.
+   *
+   * **Which is why this takes a MAP as well as a bare policy.** Five messages carry a credential
+   * in their body, and the two flows that motivate the opt-in are two of them — so a bare
+   * `'rethrow'` reaches three MORE credential-bearing paths than anyone asked for, on top of every
+   * message that carries none. Naming the flows keeps the unlaundered error where a deployment
+   * wanted it and leaves it off the rest:
+   *
+   * ```typescript
+   * new DefaultAuthEmailProvider(sink, {
+   *   onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' }
+   * })
+   * ```
+   *
+   * A message left out of the map keeps `'swallow'`, so the safe value is what you get by saying
+   * nothing, and widening the opt-in is always an explicit act. A bare policy still works and
+   * still applies to all ten — it is the coarse form, kept because it is the honest way to say
+   * "this deployment wants the throw everywhere".
    */
-  readonly onDeliveryError?: DeliveryErrorPolicy
+  readonly onDeliveryError?: DeliveryErrorPolicy | DeliveryErrorPolicyMap
 }
 
 /** How long a verification or reset code stays valid, stated in the message that carries it. */
@@ -308,8 +461,12 @@ function sanitizeSubject(subject: string): string {
  * "verification sent". Under the default both degrade gracefully rather than break: the reset token
  * still expires at its TTL and was never delivered to anyone, and the change still requires the
  * verification the recipient never got, so it cannot complete. A deployment that wants the throw
- * back on those flows constructs the provider with `{ onDeliveryError: 'rethrow' }`. The default
- * optimizes for the common case: a transient channel outage must not fail the user's action.
+ * back on those two flows names them:
+ * `{ onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' } }`.
+ * A bare `'rethrow'` also works and opts in every message. Five of them render a credential, and
+ * those two flows are two of the five — so the bare form reaches three further credential-bearing
+ * paths, a wider trade than either flow asks for. The default optimizes for the common case: a
+ * transient channel outage must not fail the user's action.
  *
  * The MFA notices are the exception in the other direction: `MfaService` does not await them under
  * either policy. By the time one is sent the secret is written, every session is invalidated and
@@ -324,8 +481,16 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   /** The copy in effect: the defaults, with any provided overrides layered on top. */
   private readonly messages: AuthEmailCatalogue
 
-  /** Whether a rejected send is re-thrown after logging; `false` (swallow) unless asked otherwise. */
-  private readonly rethrowOnError: boolean
+  /**
+   * The resolved per-message policy.
+   *
+   * A `Map`, not the plain object the option accepts. An object lookup walks the prototype chain,
+   * so `policy['toString']` answers with a function rather than `undefined` — unreachable here,
+   * because the key is a closed union of ten literals this file writes, but "the key cannot be
+   * dangerous" is a property of today's call sites and not of the lookup. A `Map` has no prototype
+   * chain to walk, which makes it a property of the data structure instead.
+   */
+  private readonly deliveryErrorPolicy: ReadonlyMap<AuthEmailKind, DeliveryErrorPolicy>
 
   /**
    * @param sink - The delivery channel to send through.
@@ -336,7 +501,32 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     options?: DefaultAuthEmailProviderOptions
   ) {
     this.messages = { ...DEFAULT_MESSAGES, ...options?.messages }
-    this.rethrowOnError = options?.onDeliveryError === 'rethrow'
+    // A bare policy is expanded to cover every message, so the resolution below reads one shape.
+    // Expanding here rather than branching at the throw site keeps the per-send path free of the
+    // question "which form did the deployment use", which is where a wrong answer would be silent.
+    const configured = options?.onDeliveryError
+    this.deliveryErrorPolicy = new Map(
+      typeof configured === 'string'
+        ? AUTH_EMAIL_KINDS.map((kind) => [kind, configured])
+        : // Read by ITERATING what the deployment wrote, never by probing the object with a key.
+          // `Object.entries` yields own enumerable properties only, so an inherited `toString` is
+          // not reachable by construction rather than by a guard someone has to remember.
+          //
+          // A key the catalogue does not know is dropped, and the direction of that is deliberate:
+          // a typo leaves the message on `'swallow'`, which is the safe value. A deployment gets
+          // less throwing than it meant, never more exposure. TypeScript rejects the typo outright;
+          // this is what happens to a JavaScript caller.
+          Object.entries(configured ?? {}).filter(
+            // The KEY is checked and nothing else. Filtering `undefined` values out as well was
+            // tried and is dead code: a `Map` holding `[key, undefined]` and a `Map` without the
+            // key both answer `undefined`, so no test can tell them apart — which the mutation
+            // gate said, three times over. The value type is the one `Object.entries` gives for a
+            // `Partial<Record<…>>`, so the predicate asserts nothing the compiler has not already
+            // concluded; what it narrows is the key, and that IS checked.
+            (entry): entry is [AuthEmailKind, DeliveryErrorPolicy] =>
+              KNOWN_EMAIL_KINDS.has(entry[0])
+          )
+    )
   }
 
   /** @inheritdoc */
@@ -507,7 +697,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     tenantId: string,
     to: string,
     message: AuthEmailMessage,
-    label: string
+    label: AuthEmailKind
   ): Promise<void> {
     // For the mail HEADER, which is where a smuggled CR/LF injects one. It no longer needs
     // stripping for the log, because the subject does not go there any more — the message's label
@@ -520,7 +710,20 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
         to,
         subject,
         html: message.html ?? toHtml(message.text),
-        text: message.text
+        text: message.text,
+        kind: label,
+        // Stated at the only moment a sink could act on it. Whether it DOES is the sink's to
+        // answer — see the field's own documentation for why this is a statement of fact rather
+        // than a control, and why it is a flag rather than a list of values to redact.
+        //
+        // OR-ed rather than taken from either side alone, and the direction matters. The kind is
+        // the baseline a renderer cannot weaken, so an override returning `false` on
+        // `passwordResetOtp` changes nothing. The rendering can only ADD, which is the case the
+        // kind cannot see: `options.messages` replaces a renderer outright, so a product whose
+        // own `mfaEnabled` copy includes recovery codes has made a notice credential-bearing
+        // while its kind still reads `mfaEnabled`.
+        containsCredential:
+          CREDENTIAL_BEARING_KINDS.has(label) || message.containsCredential === true
       })
     } catch (error: unknown) {
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
@@ -552,7 +755,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // caller's to contain, and redaction is NOT the way — this file's own history is why. Run it
       // through `describeChannelStatus`, which is exported for exactly this and publishes nothing
       // the channel wrote. See the option's own documentation.
-      if (this.rethrowOnError) {
+      if (this.deliveryErrorPolicy.get(label) === 'rethrow') {
         throw error
       }
     }
