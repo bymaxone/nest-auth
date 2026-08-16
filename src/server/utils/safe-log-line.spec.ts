@@ -19,14 +19,17 @@ describe('safeLogLine', () => {
     expect(safeLogLine(line, [device])).not.toContain(device)
   })
 
-  // The composition joins NUMBERS as well as text, and the punctuation between them is no barrier
-  // to anyone reading the record. This line contains neither the literal `4550` nor anything
-  // resembling it, and stripping every non-digit yields exactly that — a live four-digit reset
-  // code, assembled from a consumer's user id and a relay's status, neither of which is a leak on
-  // its own. It is the same arithmetic that took the enhanced SMTP code out of the description,
-  // one level up.
+  // Punctuation between digits is no barrier to anyone reading the record, and redaction is a
+  // substring match that cannot see through it. The fixture is the REACHABLE route, not an
+  // illustration: this is what the real template composes when a consumer's user id is punctuated
+  // and the OTP in flight is `4550`. `redactSecrets` passes it through because the literal is not
+  // present; stripping every non-digit yields a live reset code.
+  //
+  // It was a SEAM between two fields until the description stopped publishing a parsed status —
+  // `<error>` contributes no digits now, so a fixture spelling the code across the seam would pin
+  // a composition this library can no longer produce.
   it('withholds a line whose digits reassemble a numeric value', () => {
-    const line = 'sendPasswordResetOtp failed for user u4: <error>: 550'
+    const line = 'sendPasswordResetOtp failed for user u-4-5-5-0: <error>'
 
     expect(line).not.toContain('4550')
     expect(line.replace(/\D/g, '')).toContain('4550')
@@ -39,7 +42,7 @@ describe('safeLogLine', () => {
   // normalising them would compare fragments rather than values — `a1b2` would match any line
   // holding a `1` and a `2` in order — and withhold diagnoses for no reason at all.
   it('does not normalise a value that is not all digits', () => {
-    const line = 'sendPasswordResetToken failed for user 1234: <error>: 550'
+    const line = 'sendPasswordResetToken failed for user 1234: <error>'
 
     expect(safeLogLine(line, ['a1b2'])).toBe(line)
   })

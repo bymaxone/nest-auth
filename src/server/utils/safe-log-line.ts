@@ -17,13 +17,18 @@ const WITHHELD =
 /**
  * Whether a value survived into a line, verbatim or reassembled from its digits.
  *
- * The literal check is the obvious half. The digit-normalised one exists because the composition
- * this function guards against does not only join text — it joins NUMBERS, and punctuation between
- * them is not a barrier to anyone reading the record. `sendPasswordResetOtp failed for user u4:
- * <error> (attempt 550)` contains neither the literal `4550` nor anything resembling it, and
- * stripping every non-digit yields exactly that: a live four-digit reset code, assembled from a
- * consumer's user id and a counter this library composed. Both halves are ordinary and neither is
- * a leak on its own.
+ * The literal check is the obvious half. The digit-normalised one exists because punctuation
+ * between digits is no barrier to anyone reading the record, and redaction — a substring match —
+ * cannot see through it. Measured on the real template: a consumer whose user id is `u-4-5-5-0`
+ * while the OTP in flight is `4550` produces `sendPasswordResetOtp failed for user u-4-5-5-0:
+ * <error>`, which `redactSecrets` passes through untouched because the literal `4550` is not in it.
+ * Strip every non-digit and the line yields exactly that: a live reset code.
+ *
+ * The route matters and it narrowed. This was first justified by a SEAM — digits from two fields
+ * joined by the template's own punctuation, one of them a status parsed off the channel's reply.
+ * No status is published now, so `<error>` contributes no digits and that seam is closed by
+ * construction. What remains is a single field whose own punctuation hides it, which is
+ * consumer-controlled text and therefore not something this library gets to rule out.
  *
  * Values that are not all digits need no exclusion, and adding one would be dead code dressed as a
  * guard: a token is hex and an address has letters, and neither can be found inside a haystack of
@@ -64,8 +69,8 @@ function survives(line: string, secret: string): boolean {
  * // => 'delivery details withheld: the composed line matched a value that must not be logged'
  *
  * // The common path — an ordinary line is passed through untouched.
- * safeLogLine('sending failed: 535', ['699647'])
- * // => 'sending failed: 535'
+ * safeLogLine('sending failed for user u42: <error>', ['699647'])
+ * // => 'sending failed for user u42: <error>'
  * ```
  *
  * @param line - The fully composed line.

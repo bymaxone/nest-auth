@@ -386,10 +386,12 @@ export class PasswordService {
     let breached: boolean
     try {
       breached = await this.breachChecker.isBreached(plain)
-    } catch (err: unknown) {
+    } catch {
       // NOTHING from the error reaches the line — not the object, not a description of it, not a
       // status parsed off its front. A checker is consumer code that received the plaintext, so
-      // its error is a place the plaintext can be.
+      // its error is a place the plaintext can be. There is no binding at all, so that is a
+      // property of the code rather than a promise in a comment: a later edit that wants the error
+      // has to reintroduce it and meet this paragraph on the way.
       //
       // `describeChannelStatus` was used here first and was wrong, which is worth recording
       // because the mistake is reusable. That function then kept a status parsed off the SMTP
