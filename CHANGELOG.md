@@ -107,17 +107,49 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   this. Deployments on the default `'swallow'` policy need no action.
 
   **Apply to a derived backend:** nothing to change for the fix itself — it is internal to the
-  provider, and the log line's shape is the only visible difference. Two things to check. If you
-  parse that line, it changed from `delivery failed for "<subject>"` with the error attached as a
-  second argument to a single string, `delivery failed sending <label>: <error>`, with `<-`
-  between cause links and no status anywhere in it; `<label>` is a fixed name this library
-  owns (`passwordResetOtp`, `mfaEnabled`, …) and the rendered subject is gone. And if you run
-  `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the paragraph
-  above.
+  provider. **Three** things to check.
+
+  If you parse the log line, it changed from `delivery failed for "<subject>"` with the error
+  attached as a second argument to a single string, `delivery failed sending <label>: <error>`,
+  with `<-` between cause links and no status anywhere in it; `<label>` is a fixed name this
+  library owns (`passwordResetOtp`, `mfaEnabled`, …) and the rendered subject is gone.
+
+  If you run `onDeliveryError: 'rethrow'`, audit what your handler does with the error, per the
+  paragraph above.
+
+  And **the three MFA notices no longer reject the operation that triggered them** — enabling a
+  factor, disabling one, and resetting one now send detached, with the failure logged instead. A
+  deployment on `'rethrow'` that relied on an undelivered MFA notice failing the request will stop
+  seeing that failure. The change is deliberate: by the time the notice is sent, the factor is
+  already enabled or removed, and answering the caller with an error reports a change that HAPPENED
+  as one that did not. The other seven messages are unaffected — `'rethrow'` still surfaces their
+  failures, which is the whole reason the two flows that react to a throw opt in.
+
+  One more, if you catch errors from `EmailChangeService.requestChange` or
+  `InvitationService.invite`: **what they throw is now laundered.** Both awaited the provider with
+  no handler, so a rejection travelled to your code carrying the channel's own error — its
+  `message`, its `name`, whatever fields your mailer attached. They now throw
+  `new Error(describeChannelStatus(err))`, whose message is the opaque description and nothing
+  else. This is not about `'rethrow'`: a custom `IEmailProvider` that throws is laundered here too.
+  The reason is that on these two paths the caller **is this library** — the rejection reaches
+  `AuthExceptionFilter`'s unknown-exception branch, which logs it — so propagating the original
+  publishes the credential through this library's own filter, with no consumer given a chance to
+  contain it. The HTTP response is unchanged: that branch answered `auth.internal` with the generic
+  message before and does now.
 
   Not exploitable by an unauthenticated caller on its own — it requires a relay configured to
   quote rejected content — but it needs no attacker at all where such a relay is in the path, and
   the value exposed is a working credential.
+
+### Changed
+
+- **Stryker deletes its sandbox even when the run fails (`cleanTempDir: "always"`).** `true` — the
+  previous value, and the default — deletes `.stryker-tmp` only after a run that PASSED, and a run
+  that fails the 100 threshold is the normal state while iterating, so a 45 MB copy of `src/` was
+  left behind on every failed run. Wanted on its own terms: `jest.coverage.config.ts` has to name
+  it in `modulePathIgnorePatterns` precisely because a second copy of `src/` in the tree is
+  hazardous, and the cheapest way to hold that is for it not to be there. Contributor-facing only;
+  nothing ships differently.
 
 ### Added
 
@@ -142,14 +174,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ## [1.4.3] - 2026-08-15
 
 ### Changed
-
-- **Stryker deletes its sandbox even when the run fails (`cleanTempDir: "always"`).** `true` — the
-  previous value, and the default — deletes `.stryker-tmp` only after a run that PASSED, and a run
-  that fails the 100 threshold is the normal state while iterating, so a 45 MB copy of `src/` was
-  left behind on every failed run. Wanted on its own terms: `jest.coverage.config.ts` has to name
-  it in `modulePathIgnorePatterns` precisely because a second copy of `src/` in the tree is
-  hazardous, and the cheapest way to hold that is for it not to be there. Contributor-facing only;
-  nothing ships differently.
 
 - **BREAKING — the bulk session revocation moved to `POST {prefix}/sessions/revoke-all`.** It was
   `DELETE {prefix}/sessions/all`, and the verb was the defect. The handler reads the refresh token
