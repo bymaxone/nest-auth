@@ -24,6 +24,9 @@ import { join } from 'node:path'
 /** Repository root, from this suite's location under `test/e2e/`. */
 const REPO_ROOT = join(__dirname, '../..')
 
+/** The config Stryker actually loads — the side of the contract that is not negotiable. */
+const CONFIG_PATH = join(REPO_ROOT, 'stryker.config.json')
+
 /**
  * Strips whole-line `//` comments so a JSONC block can be parsed as JSON.
  *
@@ -53,11 +56,16 @@ function extractConfigBlock(markdown: string): string {
     .map((match) => match[1] ?? '')
     .filter((block) => block.includes('"cleanTempDir"'))
 
-  if (blocks.length !== 1) {
+  const [block, ...rest] = blocks
+
+  // Destructured rather than indexed-and-asserted: under `noUncheckedIndexedAccess` a `[0]` read
+  // needs a cast to type-check, and a cast here would be the one place this file stopped proving
+  // things and started claiming them.
+  if (block === undefined || rest.length > 0) {
     throw new Error(`expected exactly one Stryker config block in the plan, found ${blocks.length}`)
   }
 
-  return blocks[0] as string
+  return block
 }
 
 describe('Stryker config contract (E2E)', () => {
@@ -67,7 +75,7 @@ describe('Stryker config contract (E2E)', () => {
   it('keeps the plan snippet identical to the config that runs', () => {
     const plan = readFileSync(join(REPO_ROOT, 'docs/mutation_testing_plan.md'), 'utf8')
     const documented: unknown = JSON.parse(stripLineComments(extractConfigBlock(plan)))
-    const actual: unknown = JSON.parse(readFileSync(join(REPO_ROOT, 'stryker.config.json'), 'utf8'))
+    const actual: unknown = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
 
     expect(documented).toEqual(actual)
   })
@@ -76,21 +84,17 @@ describe('Stryker config contract (E2E)', () => {
   // makes a survivor fail the run; `high`/`low` only colour the report, so all three are pinned
   // to keep the report from calling 96% "good" while the run correctly fails it.
   it('keeps every mutation threshold at 100', () => {
-    const actual = JSON.parse(readFileSync(join(REPO_ROOT, 'stryker.config.json'), 'utf8')) as {
-      thresholds: { high: number; low: number; break: number }
-    }
+    const actual: unknown = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
 
-    expect(actual.thresholds).toEqual({ high: 100, low: 100, break: 100 })
+    expect(actual).toMatchObject({ thresholds: { high: 100, low: 100, break: 100 } })
   })
 
   // `"always"`, never `true`. `true` cleans only after a run that PASSED, and a run that fails the
   // 100 threshold is the normal state while iterating — which is how a second copy of `src/` came
   // to be left in the tree, the exact hazard `jest.coverage.config.ts` names in its ignore list.
   it('cleans the sandbox after a failing run too', () => {
-    const actual = JSON.parse(readFileSync(join(REPO_ROOT, 'stryker.config.json'), 'utf8')) as {
-      cleanTempDir: unknown
-    }
+    const actual: unknown = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
 
-    expect(actual.cleanTempDir).toBe('always')
+    expect(actual).toMatchObject({ cleanTempDir: 'always' })
   })
 })
