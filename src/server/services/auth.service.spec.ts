@@ -1248,6 +1248,26 @@ describe('AuthService', () => {
       loggerSpy.mockRestore()
     })
 
+    // The redaction list on that line is the only reason it names a value, so something has to
+    // prove it removes one. A repository quoting the parameter it failed on is the ordinary shape
+    // — an ORM error routinely carries the failing query's arguments — and `user.id` is the single
+    // value this call passed it, which is what makes naming it a claim this site can honestly
+    // make. Without this the list was unobservable: emptying it changed no assertion.
+    it('removes the id it handed the repository from an error that quotes it', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockUserRepo.updateLastLogin.mockRejectedValue(
+        new Error(`UPDATE users SET last_login WHERE id = '${USER.id}' failed`)
+      )
+
+      await service.login(dto, mockReq)
+      await new Promise((r) => setImmediate(r))
+
+      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
+      expect(logged).toContain('updateLastLogin failed: ')
+      expect(logged).not.toContain(USER.id)
+      loggerSpy.mockRestore()
+    })
+
     // Verifies that an error thrown by the afterLogin hook is logged and does not propagate (fire-and-forget).
     it('should log and swallow afterLogin hook errors (fire-and-forget)', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -1550,6 +1570,30 @@ describe('AuthService', () => {
       await new Promise((r) => setImmediate(r))
 
       expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('afterLogout hook threw: '))
+      loggerSpy.mockRestore()
+    })
+
+    // Same duty on the hook path. `afterLogout(userId, createEmptyHookContext())` hands over
+    // exactly one value and an empty context, which is why this is one of the three sites that
+    // may still name what it passed rather than going opaque — and naming it only means something
+    // if a test drives an error that contains it.
+    it('removes the id it handed the hook from an error that quotes it', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
+        jti: 'some-jti',
+        sub: 'user-1',
+        exp: Math.floor(Date.now() / 1000) + 900
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+      mockHooks.afterLogout.mockRejectedValue(new Error('audit sink refused user-1'))
+
+      await service.logout('access.token', 'raw-refresh')
+      await new Promise((r) => setImmediate(r))
+
+      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
+      expect(logged).toContain('afterLogout hook threw: ')
+      expect(logged).not.toContain('user-1')
       loggerSpy.mockRestore()
     })
   })
@@ -2094,6 +2138,27 @@ describe('AuthService', () => {
       await new Promise((r) => setImmediate(r))
 
       expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
+      loggerSpy.mockRestore()
+    })
+
+    // The second `updateLastLogin` site, and it needs its own case: the first one lives in
+    // `login()` and a test there proves nothing about this method's list. Both name `user.id`
+    // because both hand the repository exactly that, and both were unobservable until an error
+    // quoted it — a repository echoing the parameter it failed on is the ordinary ORM shape.
+    it('removes the id it handed the repository from an error that quotes it', async () => {
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
+      mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
+      mockUserRepo.updateLastLogin.mockRejectedValue(
+        new Error(`UPDATE users SET last_login WHERE id = '${USER.id}' failed`)
+      )
+
+      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await new Promise((r) => setImmediate(r))
+
+      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
+      expect(logged).toContain('updateLastLogin failed: ')
+      expect(logged).not.toContain(USER.id)
       loggerSpy.mockRestore()
     })
 

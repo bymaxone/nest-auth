@@ -339,17 +339,15 @@ export class OAuthService {
 
     // Exchange code and fetch profile — wrap in try/catch for observability.
     //
-    // `accessToken` is declared OUT here rather than inside the `try` so the handler can name it.
-    // The plugin is consumer code and it RECEIVED three credentials from this block: the
-    // authorization code, the PKCE verifier, and — on the second call — the provider's access
-    // token. An HTTP client that attaches its request config to the error is the ordinary case,
-    // not an exotic one, so the plugin's rejection is a place any of the three can be.
+    // The access token stays INSIDE the `try`. It was hoisted out for one reason — so the catch
+    // could name it in a redaction list — and that list is gone, because nothing the plugin wrote
+    // is published any more. Left hoisted, its `''` initialiser would be a value no test can
+    // observe, which is a mutation survivor and, more plainly, a variable whose scope no longer
+    // matches its use.
     let profile: Awaited<ReturnType<typeof plugin.fetchProfile>>
-    let accessToken = ''
     try {
       const tokenResponse = await plugin.exchangeCode(code, codeVerifier)
-      accessToken = tokenResponse.access_token
-      profile = await plugin.fetchProfile(accessToken)
+      profile = await plugin.fetchProfile(tokenResponse.access_token)
     } catch (err: unknown) {
       // Nothing the plugin wrote is published. This path holds a LIVE ACCESS TOKEN: the plugin
       // received `code`, `codeVerifier` and `accessToken`, and an HTTP client attaching its
