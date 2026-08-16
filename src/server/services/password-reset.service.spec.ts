@@ -384,6 +384,31 @@ describe('PasswordResetService', () => {
     // it, so the throw would skip the handler and fail a password change that already completed —
     // and the rejection test below stays green through that regression, which is what makes this
     // one load-bearing. A provider is consumer code and may do either.
+    // The property no rejection test can see: every one of those settles IMMEDIATELY, so an
+    // implementation that awaited the send inside a `try/catch` satisfies them all — the operation
+    // still completes and the failure is still logged. "Detached" means the operation does not
+    // WAIT, and only a send that has not settled distinguishes the two. A relay that accepts the
+    // connection and stalls is the realistic case.
+    it('completes the change without waiting for a notice that never settles', async () => {
+      // Initialised to a no-op rather than declared with `!`: the executor below runs
+      // SYNCHRONOUSLY, so the real resolver is in place before this line's promise is returned.
+      // The no-op is unreachable, and it keeps a definite-assignment assertion out of the file.
+      let release = (): void => {}
+      mockEmailProvider.sendPasswordChangedNotification.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+
+      expect(mockUserRepo.updatePassword).toHaveBeenCalled()
+      expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
     it('records a synchronous throw without failing the change', async () => {
       const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockEmailProvider.sendPasswordChangedNotification.mockImplementationOnce(() => {
@@ -399,8 +424,8 @@ describe('PasswordResetService', () => {
       expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
       expect(logged).not.toContain('user@example.com')
       // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the status is
-      // what keeps this from passing on a build that logs nothing at all.
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
       expect(logged).not.toContain('550')
       expect(logged).toBe('notifyPasswordChanged: delivery failed for user u1: <error>')
@@ -430,8 +455,8 @@ describe('PasswordResetService', () => {
       // way to reach the affected user.
       expect(logged).toContain('notifyPasswordChanged: delivery failed for user u1')
       // Nothing the transport wrote reaches the line, so the address cannot — not because it was
-      // matched and removed, but because its carrier was never published. Asserting the status is
-      // what keeps this from passing on a build that logs nothing at all.
+      // matched and removed, but because its carrier was never published. Asserting the exact line
+      // is what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('user@example.com')
       expect(logged).not.toContain('smtp down')
       expect(logged).not.toContain('550')
@@ -577,6 +602,31 @@ describe('PasswordResetService', () => {
 
       // Act & Assert
       await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
+    })
+
+    // The token variant of the same property, and the anti-enumeration argument applies here too:
+    // the send is reached only for an address that exists, so awaiting a stalled channel would
+    // make the response time carry the distinction the identical body is there to hide.
+    it('answers without waiting for a token send that never settles', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      let release = (): void => {}
+      mockEmailProvider.sendPasswordResetToken.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await expect(service.initiateReset(dto, mockReq)).resolves.toBeUndefined()
+
+      expect(mockEmailProvider.sendPasswordResetToken).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
     })
 
     // Verifies that does NOT throw when user is suspended (blocked status).
@@ -2274,6 +2324,33 @@ describe('PasswordResetService', () => {
     // The measured shape of the leak, at this call site: a relay rejecting with 550 while quoting
     // the body puts the reset code into the provider's error. This code resets a password, so a
     // log line carrying it is a credential in the operator's pipeline until its TTL expires.
+    // Detachment matters MORE here than on the notice paths, and for a reason beyond latency.
+    // This endpoint answers identically whether or not the address exists — that is the
+    // anti-enumeration guarantee. Awaiting the send would make the response time depend on the
+    // channel, and the channel is only reached for an address that EXISTS, so a stalled relay
+    // would turn a timing difference into the very distinction the identical body hides.
+    it('answers without waiting for a send that never settles', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: 'u1',
+        status: 'active',
+        tenantId: 'tenant1'
+      })
+      let release = (): void => {}
+      mockEmailProvider.sendPasswordResetOtp.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await expect(otpMethodService.resendOtp(dto, mockReq)).resolves.toBeUndefined()
+
+      expect(mockEmailProvider.sendPasswordResetOtp).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
     it('keeps the reset code out of the log when the relay quotes it back', async () => {
       mockRedis.setnx.mockResolvedValue(true)
       mockOtpService.generate.mockReturnValue('424242')

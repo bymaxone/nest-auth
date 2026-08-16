@@ -2598,6 +2598,34 @@ describe('AuthService', () => {
     // and QUOTES the offending content, so the provider's error carries the verification code
     // this service just generated. The previous version passed that error straight to the logger,
     // which put a working credential into the operator's pipeline until it expired.
+    // Same distinction as the password-reset paths: a rejection test cannot see it, because a
+    // rejection settles. A verification send that stalls must not hold the response open — the
+    // account is already registered by then and the code is already stored.
+    it('answers without waiting for a send that never settles', async () => {
+      mockRedis.setnx.mockResolvedValue(true)
+      mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
+      mockOtpService.generate.mockReturnValue('112358')
+      mockOtpService.store.mockResolvedValue(undefined)
+      // Initialised to a no-op rather than declared with `!`: the executor below runs
+      // SYNCHRONOUSLY, so the real resolver is in place before this line's promise is returned.
+      // The no-op is unreachable, and it keeps a definite-assignment assertion out of the file.
+      let release = (): void => {}
+      mockEmailProvider.sendEmailVerificationOtp.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+      )
+
+      await expect(
+        service.resendVerificationEmail('tenant-1', 'user@example.com', mockReq)
+      ).resolves.toBeUndefined()
+
+      expect(mockEmailProvider.sendEmailVerificationOtp).toHaveBeenCalled()
+
+      release()
+      await Promise.resolve()
+    })
+
     it('keeps the verification code out of the log when the relay quotes it back', async () => {
       const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
       mockRedis.setnx.mockResolvedValue(true)
