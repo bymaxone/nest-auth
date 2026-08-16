@@ -337,6 +337,19 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).not.toContain('secret@example.com')
   })
 
+  // The exported list is frozen at RUNTIME, not merely `as const`. It is exported, and expanding
+  // a bare `'rethrow'` iterates it — a consumer splicing an entry out would silently stop that
+  // message being covered by a policy the deployment believes is global.
+  it('cannot be edited by a consumer', () => {
+    expect(Object.isFrozen(AUTH_EMAIL_KINDS)).toBe(true)
+    // `Reflect.set` rather than an assignment through a cast: it reports the refusal as a return
+    // value, so the write is proved rejected without widening the type to something the compiler
+    // is right to reject.
+    expect(Reflect.set(AUTH_EMAIL_KINDS, 0, 'forged')).toBe(false)
+    expect(AUTH_EMAIL_KINDS[0]).toBe('passwordResetToken')
+    expect(AUTH_EMAIL_KINDS).toHaveLength(10)
+  })
+
   // WHICH messages declare a credential, pinned as a whole set rather than one at a time. A new
   // message added to the catalogue without a decision here shows up as a diff on this list, which
   // is the point: "does this body carry something that unlocks an account" is a question somebody

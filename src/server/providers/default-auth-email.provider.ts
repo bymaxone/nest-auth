@@ -175,6 +175,10 @@ export const AUTH_EMAIL_KINDS = [
   'newSessionAlert',
   'invitation'
 ] as const satisfies readonly (keyof AuthEmailCatalogue)[]
+// Frozen, because `as const` is a TYPE-level claim and this array is exported. A JavaScript
+// consumer could otherwise splice a kind out of it, and a later bare `'rethrow'` would silently
+// stop covering that message — a security-relevant expansion driven by a value anyone can edit.
+Object.freeze(AUTH_EMAIL_KINDS)
 
 /**
  * Compile-time proof that {@link AUTH_EMAIL_KINDS} lists EVERY catalogue entry.
@@ -202,9 +206,12 @@ export const AUTH_EMAIL_KINDS = [
  * the code does not make the flag wrong — it only makes it cautious, and cautious is the direction
  * this list is allowed to be wrong in.
  *
- * The four notices and the two alerts are absent deliberately: they announce a change that already
- * happened and render no value that unlocks anything. They still carry personal data, which is why
- * this library publishes none of a channel's text for them either.
+ * The other FIVE are absent deliberately — `passwordChanged`, `emailChanged`, `mfaEnabled`,
+ * `mfaDisabled` and `newSessionAlert`. Each announces a change that already happened and renders
+ * no value that unlocks anything. They still carry personal data, which is why this library
+ * publishes none of a channel's text for them either. Named rather than counted, because a count
+ * is the kind of claim that goes wrong quietly: this sentence said "four notices and two alerts",
+ * which is six, and there are five.
  */
 const CREDENTIAL_BEARING_KINDS: ReadonlySet<AuthEmailKind> = new Set([
   'passwordResetToken',
@@ -422,8 +429,11 @@ function sanitizeSubject(subject: string): string {
  * "verification sent". Under the default both degrade gracefully rather than break: the reset token
  * still expires at its TTL and was never delivered to anyone, and the change still requires the
  * verification the recipient never got, so it cannot complete. A deployment that wants the throw
- * back on those flows constructs the provider with `{ onDeliveryError: 'rethrow' }`. The default
- * optimizes for the common case: a transient channel outage must not fail the user's action.
+ * back on those two flows names them:
+ * `{ onDeliveryError: { passwordResetToken: 'rethrow', emailChangeVerification: 'rethrow' } }`.
+ * A bare `'rethrow'` also works and opts in every message, including the three that render a
+ * credential — which is a wider trade than those two flows ask for. The default optimizes for the
+ * common case: a transient channel outage must not fail the user's action.
  *
  * The MFA notices are the exception in the other direction: `MfaService` does not await them under
  * either policy. By the time one is sent the secret is written, every session is invalidated and
@@ -438,7 +448,6 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   /** The copy in effect: the defaults, with any provided overrides layered on top. */
   private readonly messages: AuthEmailCatalogue
 
-  /** Whether a rejected send is re-thrown after logging; `false` (swallow) unless asked otherwise. */
   /**
    * The resolved per-message policy.
    *
