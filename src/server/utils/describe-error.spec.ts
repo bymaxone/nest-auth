@@ -90,10 +90,14 @@ describe('describeError', () => {
 
   // A bound on VOLUME. Truncated rather than dropped, so the diagnosis survives: the second
   // assertion is what keeps this from passing on a build that omits the channel's text altogether.
+  //
+  // The length is asserted EXACTLY. `slice` on an overflowing input lands on the limit itself, so
+  // there is no slack to leave, and a threshold with slack is a threshold that does not test the
+  // bound — `< 210` passes on a build that relaxed the cap to 205.
   it('caps how much channel text reaches the line', () => {
     const line = describeError(new Error('x'.repeat(5_000)), [])
 
-    expect(line.length).toBeLessThan(210)
+    expect(line.length).toBe(200)
     expect(line).toContain('xxx')
   })
 
@@ -104,7 +108,7 @@ describe('describeError', () => {
       cause: new Error('b'.repeat(300), { cause: new Error('c'.repeat(300)) })
     })
 
-    expect(describeError(deep, []).length).toBeLessThan(210)
+    expect(describeError(deep, []).length).toBe(200)
   })
 
   // The COMPOSITION of two clean parts can spell a value neither contains: `name` and `message`

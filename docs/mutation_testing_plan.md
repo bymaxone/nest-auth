@@ -206,7 +206,10 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
   // --- Sandbox ---
   "tempDirName": ".stryker-tmp",
-  "cleanTempDir": true
+  // "always", not true: `true` deletes the sandbox only after a run that PASSED, and a run that
+  // fails the 100 threshold is the normal state while iterating — so it left a 45 MB copy of src/
+  // on disk after every failed run.
+  "cleanTempDir": "always"
 }
 ```
 
