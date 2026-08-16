@@ -15,6 +15,7 @@ export { createAuthFetch } from './createAuthFetch'
 export type {
   AuthFetch,
   AuthFetchConfig,
+  RefreshFailure,
   RefreshFailureReason,
   RefreshOutcome
 } from './createAuthFetch'

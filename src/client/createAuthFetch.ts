@@ -75,6 +75,22 @@ export interface AuthFetchConfig {
   onSessionExpired?: () => void
 
   /**
+   * Callback invoked when a refresh attempt did not produce a session, whatever the reason.
+   *
+   * Fires for every failure, including the one that also triggers {@link onSessionExpired} — and
+   * before it, so a consumer sees the reason first. This is what makes the answer to *why* usable
+   * rather than merely internal: a rate limit deserves "retrying in a moment", a dropped
+   * connection deserves "you appear to be offline", and only a refused credential deserves the
+   * sign-in screen.
+   *
+   * Errors thrown here are swallowed and reported through `console.warn`, on the same reasoning as
+   * {@link onSessionExpired}: a broken consumer callback must not mask the underlying response.
+   *
+   * @param failure - Why the attempt failed, and the status behind it when there was one.
+   */
+  onRefreshFailed?: (failure: RefreshFailure) => void
+
+  /**
    * Per-request timeout in milliseconds.
    *
    * Default: `30_000` (30s). Pass `0` to disable the timeout.
@@ -338,17 +354,6 @@ function attachTimeout(
 }
 
 /**
- * Fire the refresh endpoint and resolve to `true` on success.
- *
- * Sends an empty POST and discards the response body — the auth
- * cookies are the carrier in cookie-mode deployments, and a
- * non-cookie bearer flow needs to call `refresh()` on the
- * higher-level `AuthClient` directly anyway. The body stream is
- * cancelled explicitly to release the underlying connection in
- * runtimes (Node 18+, Cloudflare Workers) where it would otherwise
- * remain open until garbage collection.
- */
-/**
  * Why a refresh attempt did not produce a new session.
  *
  * Three answers, not a boolean, because the caller acts differently on each and a boolean forces
@@ -356,10 +361,15 @@ function attachTimeout(
  * `429`, the boolean made that identical to `401`, and the caller signed the user out of a session
  * whose credential was still valid.
  *
- * - `rejected` — the server looked at the credential and refused it (401/403). The session is over.
- * - `unavailable` — the server answered, but not with a session: a 429, a 5xx, a 404 from a
- *   mistyped `routePrefix`. It says nothing about the credential.
+ * - `rejected` — 401. The server looked at the credential and refused it. The session is over.
+ * - `unavailable` — it answered, but not with a session: a 429, a 5xx, a 403 from an origin guard,
+ *   a 404 from a mistyped `routePrefix`. None of those is a statement about the credential.
  * - `unreachable` — no answer at all: offline, DNS, CORS, an aborted request.
+ *
+ * 403 sits under `unavailable` on purpose. `TrustedOriginGuard` covers `/refresh` and answers
+ * `auth.untrusted_origin` with 403, so a misconfigured deployment would otherwise sign out every
+ * user. Some 403s DO mean the session is finished — a banned account — and separating those needs
+ * the response body, which the caller has and this wrapper does not read.
  */
 export type RefreshFailureReason = 'rejected' | 'unavailable' | 'unreachable'
 
@@ -371,15 +381,28 @@ export type RefreshFailureReason = 'rejected' | 'unavailable' | 'unreachable'
  * shape for whichever status turns out to matter next — the refresh has to report WHY it failed,
  * not whether.
  */
-export type RefreshOutcome =
-  | { readonly ok: true }
-  | {
-      readonly ok: false
-      readonly reason: RefreshFailureReason
-      /** HTTP status the server answered with, or `null` when there was no answer. */
-      readonly status: number | null
-    }
+export interface RefreshFailure {
+  readonly ok: false
+  readonly reason: RefreshFailureReason
+  /** HTTP status the server answered with, or `null` when there was no answer. */
+  readonly status: number | null
+}
 
+export type RefreshOutcome = { readonly ok: true } | RefreshFailure
+
+/**
+ * Fire the refresh endpoint and report what came back.
+ *
+ * Sends an empty POST and discards the response body — the auth cookies are the carrier in
+ * cookie-mode deployments, and a non-cookie bearer flow needs to call `refresh()` on the
+ * higher-level `AuthClient` directly anyway. The body stream is cancelled explicitly to release
+ * the underlying connection in runtimes (Node 18+, Cloudflare Workers) where it would otherwise
+ * remain open until garbage collection.
+ *
+ * @param endpoint - Absolute or relative URL of the refresh route.
+ * @param credentials - The `RequestCredentials` mode the wrapper was configured with.
+ * @returns `{ ok: true }`, or the reason it did not produce a session.
+ */
 async function performRefresh(
   endpoint: string,
   credentials: RequestCredentials
@@ -402,14 +425,17 @@ async function performRefresh(
 
     if (ok) return { ok: true }
 
-    // 401 and 403 are the server saying it looked at the credential and refused it. Everything
-    // else it answered — 429, 5xx, a 404 from a mistyped `routePrefix` — says nothing about the
-    // credential, only that this attempt did not produce a session.
-    return {
-      ok: false,
-      reason: status === 401 || status === 403 ? 'rejected' : 'unavailable',
-      status
-    }
+    // 401 ONLY. A 403 does not prove the credential was examined: this package puts
+    // `TrustedOriginGuard` on the whole `AuthController`, `/refresh` included, and it answers
+    // `auth.untrusted_origin` with 403. Treating that as expiry signs every user of a
+    // misconfigured deployment out — the same defect this function was rewritten to remove,
+    // reappearing one status over.
+    //
+    // Other 403s exist and some of them do mean the session is finished — a banned or suspended
+    // account among them. Telling those apart needs the response BODY, which this function
+    // deliberately does not read: the status is enough to decide whether to retry, and a caller
+    // that wants the code has the original response in hand.
+    return { ok: false, reason: status === 401 ? 'rejected' : 'unavailable', status }
   } catch {
     // No answer at all: offline, DNS, CORS, an aborted request. The session is very likely intact
     // and the next attempt may well succeed.
@@ -439,6 +465,7 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     ? { ...DEFAULT_HEADERS, ...config.defaultHeaders }
     : DEFAULT_HEADERS
   const onSessionExpired = config.onSessionExpired
+  const onRefreshFailed = config.onRefreshFailed
   const timeoutMs = config.timeout ?? 30_000
   const skipRefreshSuffixes = buildAuthRefreshSkipSuffixes(config.routePrefix)
 
@@ -519,6 +546,18 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     //
     // The caller still receives the original 401, so a failed request stays a failed request.
     // What it no longer receives is a claim that the session is over.
+    if (!outcome.ok) {
+      // Every failure, before the expiry decision, so a consumer that wants to distinguish
+      // "retrying" from "signed out" is told the reason rather than left to infer it.
+      try {
+        onRefreshFailed?.(outcome)
+        // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it; emptying the body leaves the same swallow, observable only via a console spy
+      } catch (err: unknown) {
+        // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
+        console.warn('[nest-auth] onRefreshFailed callback threw:', err)
+      }
+    }
+
     if (!outcome.ok && outcome.reason === 'rejected') {
       // Isolate consumer-side errors: a throwing callback must not
       // mask the underlying 401 Response from the caller. Surface

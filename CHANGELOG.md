@@ -27,9 +27,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   browser specs passed on both runs that produced the finding, so no green suite covered it.
 
   `performRefresh` now returns a `RefreshOutcome`: `{ ok: true }`, or `{ ok: false, reason, status }`
-  where `reason` is `'rejected'` (401/403 — the server looked at the credential and refused it),
-  `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at all).
+  where `reason` is `'rejected'` (**401 only** — the server looked at the credential and refused
+  it), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at all).
   **`onSessionExpired` now fires only on `'rejected'`.**
+
+  403 is deliberately **not** expiry: `TrustedOriginGuard` covers `/refresh` and answers
+  `auth.untrusted_origin` with 403, so classifying it as a refused credential would sign out every
+  user of a deployment whose `trustedOrigins` is wrong. Some 403s do end a session — a banned
+  account — and telling those apart needs the response body, which the caller has.
+
+  A new `onRefreshFailed?: (failure: RefreshFailure) => void` reports **every** failure with its
+  reason and status, before the expiry decision. That is what makes the answer to _why_ usable: a
+  rate limit deserves "retrying", a dropped connection deserves "you appear to be offline", and
+  only a refused credential deserves the sign-in screen.
 
   A `429` branch was offered and declined by the consumer who found it: _"the refresh needs to
   report why it failed, not whether"_. A boolean with one carve-out reproduces the same defect for
