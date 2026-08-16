@@ -520,7 +520,9 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     } catch (error: unknown) {
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and
       // one `<error>` stand-in per link of the cause chain. The error object is not passed to the
-      // logger, and nothing is read off it — not its text, and nothing parsed out of its text.
+      // logger, and the only thing read from it is `cause`, walked to count the links. Its
+      // `message` and its `name` are not read at all on this policy — not published, not parsed,
+      // not even coerced.
       //
       // This line used to read `logger.error(msg, error)` on the reasoning that "the error is the
       // channel's own, not the rendered body" — which a measurement against a real relay

@@ -649,6 +649,11 @@ describe('DefaultAuthEmailProvider', () => {
 
   // A `toString` that throws is the same hazard one level down: `String()` on a non-string field
   // runs code the channel wrote. The description still has to come back as a description.
+  //
+  // On THIS path the coercion is never reached, and that is the assertion. A credential is in
+  // flight, so the policy discards the message — and reading it anyway, only to throw it away,
+  // would let the channel pick which stand-in the log shows by throwing on demand. The line is
+  // `<error>` because the hostile field was not touched, not because touching it was survived.
   it('survives an error whose message coercion throws', async () => {
     const hostile = new Error('placeholder')
     Object.defineProperty(hostile, 'message', {
@@ -663,7 +668,7 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(
       provider.sendPasswordResetOtp('t', 'u@example.com', '888888')
     ).resolves.toBeUndefined()
-    expect(errorSpy.mock.calls[0]?.[0]).toContain('<malformed-error>')
+    expect(errorSpy.mock.calls[0]?.[0]).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
   // Even asking "is this an Error?" runs code the thrower controls: `instanceof` performs the

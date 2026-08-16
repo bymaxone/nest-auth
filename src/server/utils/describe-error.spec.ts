@@ -243,6 +243,16 @@ describe('describeChannelStatus invariant', () => {
     expect(line).toMatch(OPAQUE_GRAMMAR)
   })
 
+  // Stronger than the grammar, and true only since the drop path stopped reading the message: on
+  // this policy `describeOneLink` reads NOTHING that can throw — the name is a constant and the
+  // message is never touched — so no error can drive it into the `<malformed-error>` arm. That
+  // matters beyond tidiness: while the message was read and discarded, a relay could pick which
+  // stand-in the log showed by throwing from its own getter, which is a choice a channel does not
+  // get to make about this library's output.
+  it.each(adversarial)('cannot be driven into the malformed arm by %s', (_label, thrown) => {
+    expect(describeChannelStatus(thrown)).not.toContain('<malformed-error>')
+  })
+
   // The independence test, run rather than described. Two different secrets rendered into the same
   // position must produce the SAME line — output that varies with the secret is derivation, which
   // is exactly what took the status out. A grammar check alone would not catch it: `424` and `551`

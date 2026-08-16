@@ -103,20 +103,26 @@ function describeOneLink(
   try {
     const name = nameOf(error, secrets, channelText)
 
-    // Unconditional, with no branch on the policy: the drop path passes no secrets, and
-    // `redactSecrets` returns its input untouched when there is nothing to look for, so the walk
-    // over remote-controlled text never happens there. Branching here instead would have made the
-    // guard conditional on a policy rather than on whether anything needs guarding.
-    const raw = redactSecrets(String(error.message), secrets)
-
-    // WITH a credential in flight, the channel's free text does not reach the line at all, and
-    // nothing is parsed off it. Redaction cannot save that text: a relay that returns the
-    // body RE-ENCODED defeats substring matching, and the length cap does not help either, because
-    // the encoding is of the body FROM ITS START and the code sits in the first sentence. Measured:
-    // the whole reset-code body is 96 base64 characters, so the first 200 of the line decode
-    // straight back to the OTP. A bound on volume was never a bound on disclosure, and describing
-    // it as a second lock — as this file did — was the mistake.
-    const detail = channelText === 'drop' ? '' : logSafe(raw)
+    // Read ONLY when the policy will publish it. An earlier version read it unconditionally,
+    // reasoning that `redactSecrets` returns its input untouched when there is nothing to look
+    // for, so the drop path did no scanning work. True of the scan and beside the point: the
+    // `String()` coercion still ran the channel's own `message` accessor. Under `'drop'` that
+    // result is discarded, so it was remote-controlled code executed for nothing — with an
+    // observable consequence. A getter that throws is caught below and turns the link into
+    // `<malformed-error>`, so a relay could choose which of the two stand-ins the log shows by
+    // throwing on demand. Not a disclosure, and not a channel's decision to make either.
+    //
+    // With this, the only thing `'drop'` reads from the error is its `cause`, walked by the
+    // caller — the message is not read, and {@link nameOf} does not read the name.
+    //
+    // Redaction could not have saved that text anyway: a relay that returns the body RE-ENCODED
+    // defeats substring matching, and the length cap does not help either, because the encoding is
+    // of the body FROM ITS START and the code sits in the first sentence. Measured: the whole
+    // reset-code body is 96 base64 characters, so the first 200 of the line decode straight back
+    // to the OTP. A bound on volume was never a bound on disclosure, and describing it as a second
+    // lock — as this file did — was the mistake.
+    const detail =
+      channelText === 'drop' ? '' : logSafe(redactSecrets(String(error.message), secrets))
 
     return detail === '' ? name : `${name}: ${detail}`
   } catch {
