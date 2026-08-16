@@ -19,6 +19,7 @@ import type { AuthUser, IUserRepository } from '../interfaces/user-repository.in
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -160,14 +161,14 @@ export class EmailChangeService implements OnModuleInit {
     // the account under attack. Namespaced by flow so it cannot lock the owner out of `login`.
     const bfIdentifier = hmacSha256(`reauth:email-change:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
-      this.logger.warn(`requestChange: account locked userId=${userId}`)
+      this.logger.warn(`requestChange: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`requestChange: current password rejected userId=${userId}`)
+      this.logger.warn(`requestChange: current password rejected userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -205,7 +206,7 @@ export class EmailChangeService implements OnModuleInit {
       throw new Error(describeChannelStatus(err))
     }
     this.logger.log(
-      `requestChange: verification sent userId=${userId} newEmail=${maskEmail(newEmail)}`
+      `requestChange: verification sent userId=${logSafe(userId)} newEmail=${maskEmail(newEmail)}`
     )
   }
 
@@ -253,7 +254,7 @@ export class EmailChangeService implements OnModuleInit {
     const oldEmail = user.email
     await this.userRepo.updateEmail(context.userId, context.newEmail)
     this.logger.log(
-      `confirmChange: address changed userId=${context.userId} ` +
+      `confirmChange: address changed userId=${logSafe(context.userId)} ` +
         `from=${maskEmail(oldEmail)} to=${maskEmail(context.newEmail)}`
     )
 
@@ -323,7 +324,7 @@ export class EmailChangeService implements OnModuleInit {
     // not to change the answer
     if (current === null || stored !== current) {
       this.logger.warn(
-        `confirmChange: token no longer bound to the account password userId=${context.userId}`
+        `confirmChange: token no longer bound to the account password userId=${logSafe(context.userId)}`
       )
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }

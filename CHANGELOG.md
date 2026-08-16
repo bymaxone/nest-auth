@@ -20,6 +20,37 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **A consumer-supplied identifier could forge a second record in the log.** Every value this
+  library interpolates into a log template now passes a guard: `logSafe` for identifiers,
+  `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight
+  interpolations did not, across six files.
+
+  `IUserRepository` places no character constraint on `id`, `role` or `tenantId` — `role` is a
+  bare `string` in the interface — so a value carrying CR/LF closes the log record and opens one
+  the reader attributes to this library. That is the attack `logSafe` was written for.
+
+  **The convention already existed and had been applied to `tenantId` at fourteen sites.** It was
+  never extended to anything else, and the omission was invisible because it sat on the SAME
+  LINES: `userId=${user.id} tenantId=${logSafe(tenantId)}` reads as deliberate until you ask why
+  one half is wrapped and the other is not.
+
+  Two sites went further and stringified a rejection straight into the line
+  (`logout: session cleanup failed — ${String(err)}`). `String()` strips nothing and bounds
+  nothing; those now go through `describeError`, which does both. The rejection is Redis's rather
+  than a mail channel's, so no credential is implied — but the failing key it names embeds the
+  consumer's user id.
+
+  A guard suite (`test/e2e/log-injection-guard.e2e-spec.ts`) now walks every `this.logger.*` call
+  in `src/` and fails on any interpolation that is neither guarded nor named in an explicit
+  allowlist of values this library authors. It fails **closed**: a new interpolation breaks the
+  build until somebody decides which it is. It caught the two `String(err)` sites on its first
+  run, which is the argument for it — forty-eight had drifted silently under a convention that
+  lived only in reviewers' heads.
+
+  Requires no action from a consumer: `logSafe` returns an ordinary identifier unchanged, so log
+  lines are byte-identical unless a value actually carried a control character, in which case the
+  field is replaced with `<malformed>` and the record stays one record.
+
 - **A one-time code could reach the operator's log in clear text when the mail relay rejected the
   message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
   comment justifying it read "the error is the channel's own, not the rendered body" — and a

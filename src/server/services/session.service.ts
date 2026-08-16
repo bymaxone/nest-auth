@@ -17,6 +17,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { logSafe } from '../utils/log-safe'
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -755,7 +756,7 @@ export class SessionService {
         await this.redis.del(`sd:${entry.memberHash}`)
       } catch (err: unknown) {
         this.logger.error(
-          `enforceSessionLimit: failed to evict session ${entry.memberHash} for user ${userId}`,
+          `enforceSessionLimit: failed to evict session ${entry.memberHash} for user ${logSafe(userId)}`,
           err
         )
         continue

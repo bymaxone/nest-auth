@@ -1,0 +1,153 @@
+/**
+ * @fileoverview Fails when a value this library did not author reaches a log template unguarded.
+ *
+ * A log line is a record in a line-oriented pipeline. A value carrying CR/LF closes the record and
+ * opens a forged one, so anything interpolated into a template must either be text this library
+ * wrote or pass through a guard — `logSafe` for identifiers, `maskEmail` for addresses, the
+ * `describe*` helpers for a channel's own error.
+ *
+ * The convention already existed and was applied to `tenantId` at fourteen sites. It had never
+ * been applied to any other repository-supplied field, and the omission was invisible because it
+ * sat on the SAME LINES: `userId=${user.id} tenantId=${logSafe(tenantId)}` reads as deliberate
+ * until you ask why one half is wrapped. Forty-eight interpolations had drifted, across six files.
+ *
+ * So the convention is a gate rather than a habit. Every interpolation in a logger template must
+ * be either guarded or named in {@link LIBRARY_AUTHORED} below — which fails CLOSED: a new one is
+ * a test failure until somebody decides which it is, and that decision is the point. Adding a name
+ * to the allowlist is a claim that this library controls the value, and it belongs in review.
+ */
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+
+/** Source root, from this suite's location under `test/e2e/`. */
+const SRC_ROOT = join(__dirname, '../../src')
+
+/**
+ * Calls whose output is safe to interpolate: each either strips control characters or replaces the
+ * value outright. Matched as a substring of the expression, so `logSafe(user.id)` and
+ * `maskEmail(dto.email)` both qualify.
+ */
+const GUARDS = ['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError', 'safeLogLine']
+
+/**
+ * Expressions this library authors, so no guard applies.
+ *
+ * Each is a constant, an enum this library owns, a number, or a value this library computed — a
+ * hash it derived, a count it took. None can carry a byte a consumer or a remote chose. A name
+ * added here must satisfy that, and nothing weaker: "it is probably fine" is how the forty-eight
+ * accumulated.
+ */
+const LIBRARY_AUTHORED = new Set([
+  // Flow and plane discriminators — string-literal unions declared in this package.
+  'context',
+  'kind',
+  'flow',
+  'purpose',
+  'origin',
+  'label',
+  'provider',
+  'hookResult.action',
+  // Configuration keys and values, read from options this library validates at boot.
+  'name',
+  'option',
+  'value',
+  'MAX_IDENTIFIER_LENGTH',
+  // Values this library computed rather than received.
+  'entry.memberHash',
+  'hash.slice(0, 8)',
+  'staleKeys.length',
+  'response.status',
+  // Already-described errors. `String(err)` is NOT here: see the test below.
+  'String(resolved)'
+])
+
+/**
+ * Every `.ts` file under a directory, excluding specs.
+ *
+ * @param dir - Directory to walk.
+ * @returns Absolute paths of the source files found.
+ */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) return sourceFiles(full)
+    return entry.endsWith('.ts') && !entry.endsWith('.spec.ts') ? [full] : []
+  })
+}
+
+/** One interpolation found inside a logger call. */
+interface Interpolation {
+  file: string
+  line: number
+  expression: string
+}
+
+/**
+ * Finds every `${...}` inside a `this.logger.*(...)` call.
+ *
+ * The call is followed until its parentheses balance, because a template long enough to matter is
+ * usually wrapped across lines — reading only the line that names the logger would miss most of
+ * them, which is how a line-based grep under-counted this family by more than half.
+ *
+ * @param source - File contents.
+ * @param file - Path, for the failure message.
+ * @returns Every interpolation inside a logger call, in file order.
+ */
+function interpolationsInLoggerCalls(source: string, file: string): Interpolation[] {
+  const lines = source.split('\n')
+  const inLoggerCall = new Set<number>()
+
+  lines.forEach((line, index) => {
+    if (!/this\.logger\.(log|warn|error|debug|verbose)\(/.test(line)) return
+    let depth = 0
+    for (let cursor = index; cursor < lines.length; cursor++) {
+      inLoggerCall.add(cursor)
+      const text = lines[cursor] ?? ''
+      depth += (text.match(/\(/g) ?? []).length - (text.match(/\)/g) ?? []).length
+      if (depth <= 0) break
+    }
+  })
+
+  const found: Interpolation[] = []
+  for (const index of [...inLoggerCall].sort((a, b) => a - b)) {
+    for (const match of (lines[index] ?? '').matchAll(/\$\{([^}]+)\}/g)) {
+      found.push({ file, line: index + 1, expression: (match[1] ?? '').trim() })
+    }
+  }
+  return found
+}
+
+describe('log-injection guard (E2E)', () => {
+  const everything = sourceFiles(SRC_ROOT).flatMap((file) =>
+    interpolationsInLoggerCalls(readFileSync(file, 'utf8'), file.slice(SRC_ROOT.length + 1))
+  )
+
+  // The gate. Anything neither guarded nor claimed as this library's own is a finding, and the
+  // failure message names it so the reviewer can make the call rather than guess at the rule.
+  it('guards every interpolation that this library did not author', () => {
+    const unguarded = everything.filter(
+      ({ expression }) =>
+        !GUARDS.some((guard) => expression.includes(guard)) && !LIBRARY_AUTHORED.has(expression)
+    )
+
+    expect(unguarded.map((u) => `${u.file}:${u.line} \${${u.expression}}`)).toEqual([])
+  })
+
+  // The detector has to be able to fail, or the assertion above is decoration. It found 48 real
+  // sites when written; asserting a lower bound on what it sees keeps a later refactor of the
+  // walker from silently reducing it to nothing.
+  it('actually inspects the logger calls it claims to', () => {
+    expect(everything.length).toBeGreaterThan(80)
+    expect(everything.some((i) => i.expression.includes('logSafe'))).toBe(true)
+  })
+
+  // `String(err)` is deliberately absent from the allowlist. An error's text belongs to whoever
+  // constructed it — for a channel that is a third-party client, and PR #135 measured a relay
+  // putting a live credential there. `describeError`/`describeChannelStatus` exist for it, and
+  // both strip control characters; `String()` strips nothing. This pins the exclusion so nobody
+  // resolves a future failure by adding the easy name to the allowlist.
+  it('never treats a raw stringified error as this library’s own text', () => {
+    expect(LIBRARY_AUTHORED.has('String(err)')).toBe(false)
+    expect(LIBRARY_AUTHORED.has('String(error)')).toBe(false)
+  })
+})
