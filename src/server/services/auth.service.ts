@@ -30,7 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
+import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -133,12 +133,16 @@ export class AuthService {
       // drops a legitimate upgrade or admits a write the guard exists to refuse.
       const current = await this.userRepo.findById(userId, tenantId)
       if (current?.passwordHash !== verifiedHash) {
-        this.logger.log(`rehash on verify skipped — the stored hash changed userId=${userId}`)
+        this.logger.log(
+          `rehash on verify skipped — the stored hash changed userId=${logSafe(userId)}`
+        )
         return
       }
       await this.userRepo.updatePassword(userId, upgraded)
     } catch (err: unknown) {
-      this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
+      this.logger.error(
+        `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
+      )
     }
   }
 
@@ -252,12 +256,14 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`register: user registered userId=${newUser.id} tenantId=${logSafe(tenantId)}`)
+    this.logger.log(
+      `register: user registered userId=${logSafe(newUser.id)} tenantId=${logSafe(tenantId)}`
+    )
 
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterRegister hook threw', err)
+        this.logger.error(`afterRegister hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -425,7 +431,9 @@ export class AuthService {
         'dashboard',
         user.tenantId
       )
-      this.logger.log(`login: MFA challenge issued userId=${user.id} tenantId=${logSafe(tenantId)}`)
+      this.logger.log(
+        `login: MFA challenge issued userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
+      )
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -437,15 +445,15 @@ export class AuthService {
       await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
     }
 
-    this.logger.log(`login: success userId=${safeUser.id} tenantId=${logSafe(tenantId)}`)
+    this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -483,7 +491,7 @@ export class AuthService {
     // the record proves whose it is. Claims from an unverified token would not.
     const sessionHash = sha256(rawRefreshToken)
     const userId = await this.redis.readSessionOwner(`rt:${sessionHash}`)
-    this.logger.log(`logout: userId=${userId || '(no live session)'}`)
+    this.logger.log(`logout: userId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
     // a forged one must not be able to blacklist an id it does not own.
@@ -523,7 +531,13 @@ export class AuthService {
             ? (err.getResponse() as { error: { code: string } }).error.code
             : undefined
         if (errCode !== AUTH_ERROR_CODES.SESSION_NOT_FOUND) {
-          this.logger.warn(`logout: session cleanup failed — ${String(err)}`)
+          // `describeError`, not `String(err)`. The rejection comes from Redis, so its text is not
+          // a channel's quoted body — but `String()` strips nothing, and a value that reaches a
+          // line-oriented pipeline carrying CR/LF closes the record and opens a forged one. This
+          // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
+          // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
+          // empty array is how a caller states that, rather than by omitting the argument.
+          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
         }
       })
     }
@@ -533,7 +547,7 @@ export class AuthService {
     if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
-          this.logger.error('afterLogout hook threw', err)
+          this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
         }
       )
     }
@@ -680,7 +694,11 @@ export class AuthService {
       void this.sessionService
         .rotateSession(sha256(oldRefreshToken), sha256(result.rawRefreshToken), ip, userAgent)
         .catch((err: unknown) => {
-          this.logger.warn(`refresh: session detail rotation failed — ${String(err)}`)
+          // Same reasoning as the logout path above: bounded, control-character-free, and no
+          // secret in flight to name.
+          this.logger.warn(
+            `refresh: session detail rotation failed — ${describeChannelStatus(err)}`
+          )
         })
     }
 
@@ -812,11 +830,11 @@ export class AuthService {
     }
 
     this.logger.log(
-      `issueTokensForUserId: success userId=${safeUser.id} tenantId=${logSafe(safeUser.tenantId)}`
+      `issueTokensForUserId: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(safeUser.tenantId)}`
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
@@ -827,7 +845,7 @@ export class AuthService {
           sanitizedHeaders: {}
         })
       ).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -889,13 +907,15 @@ export class AuthService {
     // the TTL expires. The guard refreshes the flag from the repository on the miss this creates.
     await this.redis.del(`uev:${encodeURIComponent(tenantId)}:${encodeURIComponent(user.id)}`)
 
-    this.logger.log(`verifyEmail: email verified userId=${user.id} tenantId=${logSafe(tenantId)}`)
+    this.logger.log(
+      `verifyEmail: email verified userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
+    )
 
     if (this.hooks?.afterEmailVerified) {
       void Promise.resolve(
         this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
       ).catch((err: unknown) => {
-        this.logger.error('afterEmailVerified hook threw', err)
+        this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
       })
     }
   }
@@ -1092,10 +1112,10 @@ export class AuthService {
   private fireAndForget(run: () => Promise<void> | void, name: string): void {
     try {
       void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`${name} hook threw`, err)
+        this.logger.error(`${name} hook threw: ${describeChannelStatus(err)}`)
       })
     } catch (err: unknown) {
-      this.logger.error(`${name} hook threw synchronously`, err)
+      this.logger.error(`${name} hook threw synchronously: ${describeChannelStatus(err)}`)
     }
   }
 

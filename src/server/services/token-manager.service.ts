@@ -24,6 +24,7 @@ import type {
 import type { SafeAuthPlatformUser } from '../interfaces/platform-user-repository.interface'
 import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { readStampedEpoch } from '../utils/stamped-epoch'
@@ -492,10 +493,12 @@ export class TokenManagerService {
       void Promise.resolve(
         this.hooks.onRefreshTokenReuseDetected({ userId, familyId }, createEmptyHookContext())
       ).catch((err: unknown) => {
-        this.logger.error('onRefreshTokenReuseDetected hook threw', err)
+        this.logger.error(`onRefreshTokenReuseDetected hook threw: ${describeChannelStatus(err)}`)
       })
     } catch (err: unknown) {
-      this.logger.error('onRefreshTokenReuseDetected hook threw synchronously', err)
+      this.logger.error(
+        `onRefreshTokenReuseDetected hook threw synchronously: ${describeChannelStatus(err)}`
+      )
     }
   }
 

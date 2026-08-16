@@ -143,8 +143,7 @@ describe('WsAuthExceptionFilter', () => {
     expect(() => filter.catch(exception, hostWithClient(client))).not.toThrow()
 
     expect(Logger.prototype.error).toHaveBeenCalledWith(
-      'refused a request on a client this filter cannot answer',
-      exception
+      'refused a request on a client this filter cannot answer: <error>'
     )
   })
 })

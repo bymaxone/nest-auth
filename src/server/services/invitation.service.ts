@@ -254,7 +254,7 @@ export class InvitationService {
       throw new Error(describeChannelStatus(err))
     }
     this.logger.log(
-      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${role} tenantId=${logSafe(tenantId)} inviterUserId=${inviterUserId}`
+      `invite: invitation created email=${maskEmail(normalizedEmail)} role=${logSafe(role)} tenantId=${logSafe(tenantId)} inviterUserId=${logSafe(inviterUserId)}`
     )
   }
 
@@ -523,7 +523,7 @@ export class InvitationService {
     if (invitation !== null && !this.mayWithdraw(revoker, invitation)) {
       this.logger.warn(
         `revokeInvitation: refused email=${maskEmail(normalizedEmail)} ` +
-          `tenantId=${logSafe(tenantId)} revokerUserId=${revokerUserId} — outranked by the invitation`
+          `tenantId=${logSafe(tenantId)} revokerUserId=${logSafe(revokerUserId)} — outranked by the invitation`
       )
       return false
     }
@@ -532,7 +532,7 @@ export class InvitationService {
     const removed = await this.redis.del(`inv:${tokenHash}`)
     this.logger.log(
       `revokeInvitation: invitation withdrawn email=${maskEmail(normalizedEmail)} ` +
-        `tenantId=${logSafe(tenantId)} revokerUserId=${revokerUserId}`
+        `tenantId=${logSafe(tenantId)} revokerUserId=${logSafe(revokerUserId)}`
     )
     return removed
   }
@@ -604,7 +604,7 @@ export class InvitationService {
     if (!stillAuthorised) {
       this.logger.warn(
         `acceptInvitation: the inviter can no longer grant this invitation ` +
-          `inviterUserId=${invitation.inviterUserId} role=${invitation.role}`
+          `inviterUserId=${logSafe(invitation.inviterUserId)} role=${logSafe(invitation.role)}`
       )
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
@@ -715,7 +715,7 @@ export class InvitationService {
     }
 
     this.logger.log(
-      `acceptInvitation: invitation accepted userId=${safeUser.id} tenantId=${invitation.tenantId} role=${invitation.role}`
+      `acceptInvitation: invitation accepted userId=${logSafe(safeUser.id)} tenantId=${logSafe(invitation.tenantId)} role=${logSafe(invitation.role)}`
     )
 
     // afterInvitationAccepted — fire-and-forget; errors must not propagate.
@@ -727,7 +727,7 @@ export class InvitationService {
           sanitizedHeaders: sanitizeHeaders(headers)
         })
       ).catch((err: unknown) => {
-        this.logger.error('afterInvitationAccepted hook threw', err)
+        this.logger.error(`afterInvitationAccepted hook threw: ${describeChannelStatus(err)}`)
       })
     }
 

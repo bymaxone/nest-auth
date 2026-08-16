@@ -208,7 +208,7 @@ export class PasswordResetService {
         }
       }
     } catch (err: unknown) {
-      this.logger.error('initiateReset: unexpected error', err)
+      this.logger.error(`initiateReset: unexpected error: ${describeChannelStatus(err)}`)
     } finally {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
     }
@@ -392,7 +392,7 @@ export class PasswordResetService {
         await this.sendOtp(dto.email, tenantId, user.id)
       }
     } catch (err: unknown) {
-      this.logger.error('resendOtp: unexpected error', err)
+      this.logger.error(`resendOtp: unexpected error: ${describeChannelStatus(err)}`)
     } finally {
       await sleep(Math.max(0, ANTI_ENUM_MIN_MS - (Date.now() - start)))
     }
@@ -564,14 +564,14 @@ export class PasswordResetService {
     // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
     const bfIdentifier = hmacSha256(`reauth:change-password:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
-      this.logger.warn(`changePassword: account locked userId=${userId}`)
+      this.logger.warn(`changePassword: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`changePassword: current password rejected userId=${userId}`)
+      this.logger.warn(`changePassword: current password rejected userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -679,7 +679,7 @@ export class PasswordResetService {
 
     this.logger.warn(
       `reset: refusing a token issued against a password that has since changed ` +
-        `userId=${context.userId}`
+        `userId=${logSafe(context.userId)}`
     )
     throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }
@@ -708,7 +708,7 @@ export class PasswordResetService {
         void Promise.resolve(
           this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
         ).catch((err: unknown) => {
-          this.logger.error('afterPasswordReset hook threw', err)
+          this.logger.error(`afterPasswordReset hook threw: ${describeChannelStatus(err)}`)
         })
       }
     }
@@ -784,11 +784,16 @@ export class PasswordResetService {
           )
         )
         void this.redis.del(tokenKey).catch((delErr: unknown) => {
-          // Only `userId` changes here, which is the finding. `delErr` comes from `redis.del` on a
-          // key that is a SHA-256 of the token, so no quoted-body path can put a credential into
-          // it, and Redis is not a channel that quotes what it rejected — this is the one error
-          // object in this file that reaches a logger, and it reaches it deliberately.
-          this.logger.error(`pw_reset rollback delete failed for user ${logSafe(userId)}`, delErr)
+          // `delErr` comes from `redis.del` on a key that is a SHA-256 of the token, so no
+          // quoted-body path can put a credential into it. That argument is still true and it is
+          // no longer sufficient: the SAME argument was made for the session-cleanup handlers in
+          // `AuthService`, which were also Redis and also stringified the rejection raw. What
+          // decides it is not whether a credential can be there but whether the text is this
+          // library's to publish — an ioredis rejection is unbounded, carries no guarantee about
+          // control characters, and names the key, which embeds the consumer's user id.
+          this.logger.error(
+            `pw_reset rollback delete failed for user ${logSafe(userId)}: ${describeChannelStatus(delErr)}`
+          )
         })
       }
     })()
