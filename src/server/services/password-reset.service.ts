@@ -564,14 +564,14 @@ export class PasswordResetService {
     // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
     const bfIdentifier = hmacSha256(`reauth:change-password:${userId}`, this.options.hmacKey)
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
-      this.logger.warn(`changePassword: account locked userId=${userId}`)
+      this.logger.warn(`changePassword: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
     const matches = await this.passwordService.compare(dto.currentPassword, user.passwordHash)
     if (!matches) {
       await this.bruteForce.recordFailure(bfIdentifier)
-      this.logger.warn(`changePassword: current password rejected userId=${userId}`)
+      this.logger.warn(`changePassword: current password rejected userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS)
     }
 
@@ -679,7 +679,7 @@ export class PasswordResetService {
 
     this.logger.warn(
       `reset: refusing a token issued against a password that has since changed ` +
-        `userId=${context.userId}`
+        `userId=${logSafe(context.userId)}`
     )
     throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }

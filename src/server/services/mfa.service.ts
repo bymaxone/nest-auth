@@ -495,7 +495,9 @@ export class MfaService {
       // trace of an event the docstring above calls either a downgrade of the stored value or an
       // internal bug. Both are things an operator needs to see, and neither is visible anywhere
       // else.
-      this.logger.warn(`parseSetupData: pending-setup payload is not valid JSON userId=${userId}`)
+      this.logger.warn(
+        `parseSetupData: pending-setup payload is not valid JSON userId=${logSafe(userId)}`
+      )
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
@@ -526,7 +528,7 @@ export class MfaService {
       // ciphertext, so a decrypted value that will not parse means the plaintext itself was
       // written wrong. That is an internal bug, and it is otherwise silent.
       this.logger.warn(
-        `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${userId}`
+        `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${logSafe(userId)}`
       )
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
@@ -822,7 +824,7 @@ export class MfaService {
     }
 
     const qrCodeUri = buildTotpUri(secretBase32, user.email, this.mfaOptions.issuer)
-    this.logger.log(`setup: MFA setup initiated userId=${userId} context=${context}`)
+    this.logger.log(`setup: MFA setup initiated userId=${logSafe(userId)} context=${context}`)
     return { secret: secretBase32, qrCodeUri, recoveryCodes: plainCodes }
   }
 
@@ -887,7 +889,7 @@ export class MfaService {
       tenantId
     )
     if (!codeValid) {
-      this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${userId}`)
+      this.logger.warn(`verifyAndEnable: invalid TOTP code userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
@@ -898,7 +900,9 @@ export class MfaService {
     // preventing duplicate `updateMfa` writes and duplicate enablement emails.
     const consumed = await this.redis.getdel(setupKey)
     if (consumed === null) {
-      this.logger.warn(`verifyAndEnable: setup key consumed by concurrent request userId=${userId}`)
+      this.logger.warn(
+        `verifyAndEnable: setup key consumed by concurrent request userId=${logSafe(userId)}`
+      )
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
 
@@ -922,7 +926,7 @@ export class MfaService {
     await this.redis.invalidateUserSessions(userId, context)
     await this.redis.bumpUserTokenEpoch(userId, context)
 
-    this.logger.log(`verifyAndEnable: MFA enabled userId=${userId} context=${context}`)
+    this.logger.log(`verifyAndEnable: MFA enabled userId=${logSafe(userId)} context=${context}`)
     this.notify('verifyAndEnable', userId, user, (provider, tenant, email) =>
       provider.sendMfaEnabledNotification(tenant, email)
     )
@@ -993,7 +997,7 @@ export class MfaService {
     // from different consumer repositories and may collide, so a counter keyed on the id
     // alone lets either party exhaust — or clear — the other's lockout budget.
     if (await this.isMfaFlowLockedOut('challenge', context, userId, tenantId)) {
-      this.logger.warn(`challenge: account locked userId=${userId}`)
+      this.logger.warn(`challenge: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
@@ -1044,7 +1048,7 @@ export class MfaService {
 
     if (!codeValid) {
       await this.recordMfaFlowFailure('challenge', context, userId, tenantId)
-      this.logger.warn(`challenge: invalid MFA code userId=${userId} context=${context}`)
+      this.logger.warn(`challenge: invalid MFA code userId=${logSafe(userId)} context=${context}`)
       // Keep the MFA temp token alive — the user can retry with the next
       // TOTP window or a different recovery code under the same token.
       // bruteForce.recordFailure will eventually surface `ACCOUNT_LOCKED`
@@ -1122,7 +1126,7 @@ export class MfaService {
       )
     }
 
-    this.logger.log(`challenge: MFA challenge passed userId=${userId} context=${context}`)
+    this.logger.log(`challenge: MFA challenge passed userId=${logSafe(userId)} context=${context}`)
 
     // Step 6: Issue full tokens with mfaVerified: true.
     if (context === 'dashboard') {
@@ -1213,7 +1217,7 @@ export class MfaService {
     // preventing a pre-auth attacker from exhausting the lockout threshold via the
     // challenge endpoint and blocking the authenticated user from disabling MFA.
     if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
-      this.logger.warn(`disable: account locked userId=${userId} context=${context}`)
+      this.logger.warn(`disable: account locked userId=${logSafe(userId)} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 
@@ -1235,7 +1239,7 @@ export class MfaService {
     )
     if (!codeValid) {
       await this.recordMfaFlowFailure('disable', context, userId, tenantId)
-      this.logger.warn(`disable: invalid MFA code userId=${userId} context=${context}`)
+      this.logger.warn(`disable: invalid MFA code userId=${logSafe(userId)} context=${context}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
 
@@ -1257,7 +1261,7 @@ export class MfaService {
     await this.redis.invalidateUserSessions(userId, context)
     await this.redis.bumpUserTokenEpoch(userId, context)
 
-    this.logger.log(`disable: MFA disabled userId=${userId} context=${context}`)
+    this.logger.log(`disable: MFA disabled userId=${logSafe(userId)} context=${context}`)
     this.notify('disable', userId, user, (provider, tenant, email) =>
       provider.sendMfaDisabledNotification(tenant, email)
     )
@@ -1330,7 +1334,9 @@ export class MfaService {
     const user = await this.fetchUserForContext(context, userId, tenantId)
 
     if (!user.mfaEnabled) {
-      this.logger.log(`resetMfa: no second factor to remove userId=${userId} context=${context}`)
+      this.logger.log(
+        `resetMfa: no second factor to remove userId=${logSafe(userId)} context=${context}`
+      )
       return
     }
 
@@ -1345,7 +1351,9 @@ export class MfaService {
     await this.redis.invalidateUserSessions(userId, context)
     await this.redis.bumpUserTokenEpoch(userId, context)
 
-    this.logger.warn(`resetMfa: MFA removed administratively userId=${userId} context=${context}`)
+    this.logger.warn(
+      `resetMfa: MFA removed administratively userId=${logSafe(userId)} context=${context}`
+    )
     this.notify('resetMfa', userId, user, (provider, tenant, email) =>
       provider.sendMfaDisabledNotification(tenant, email)
     )
@@ -1449,7 +1457,7 @@ export class MfaService {
     // counter exhaustion vector.
     if (await this.isMfaFlowLockedOut('disable', context, userId, tenantId)) {
       this.logger.warn(
-        `regenerateRecoveryCodes: account locked userId=${userId} context=${context}`
+        `regenerateRecoveryCodes: account locked userId=${logSafe(userId)} context=${context}`
       )
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
@@ -1473,7 +1481,7 @@ export class MfaService {
     if (!codeValid) {
       await this.recordMfaFlowFailure('disable', context, userId, tenantId)
       this.logger.warn(
-        `regenerateRecoveryCodes: invalid MFA code userId=${userId} context=${context}`
+        `regenerateRecoveryCodes: invalid MFA code userId=${logSafe(userId)} context=${context}`
       )
       throw new AuthException(AUTH_ERROR_CODES.MFA_INVALID_CODE)
     }
@@ -1507,7 +1515,7 @@ export class MfaService {
     if (!replaced) throw new AuthException(AUTH_ERROR_CODES.MFA_NOT_ENABLED)
 
     this.logger.log(
-      `regenerateRecoveryCodes: recovery codes regenerated userId=${userId} context=${context}`
+      `regenerateRecoveryCodes: recovery codes regenerated userId=${logSafe(userId)} context=${context}`
     )
 
     // Fire-and-forget hook — errors must not undo a completed regeneration.
@@ -1627,7 +1635,7 @@ export class MfaService {
       )
       if (recent === null) {
         this.logger.warn(
-          `reauthenticate: no recent authentication userId=${userId} context=${context}`
+          `reauthenticate: no recent authentication userId=${logSafe(userId)} context=${context}`
         )
         throw new AuthException(AUTH_ERROR_CODES.REAUTHENTICATION_REQUIRED)
       }
@@ -1635,7 +1643,9 @@ export class MfaService {
     }
 
     if (await this.isMfaFlowLockedOut('reauth', context, userId, tenantId)) {
-      this.logger.warn(`reauthenticate: account locked userId=${userId} context=${context}`)
+      this.logger.warn(
+        `reauthenticate: account locked userId=${logSafe(userId)} context=${context}`
+      )
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
     }
 

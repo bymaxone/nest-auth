@@ -20,6 +20,7 @@ import type {
 } from '../interfaces/platform-user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
 
@@ -132,7 +133,7 @@ export class PlatformAuthService {
     // MFA challenge path: issue a short-lived temp token and stop here.
     if (admin.mfaEnabled) {
       const mfaTempToken = await this.tokenManager.issueMfaTempToken(admin.id, 'platform')
-      this.logger.log(`login: MFA challenge issued adminId=${admin.id}`)
+      this.logger.log(`login: MFA challenge issued adminId=${logSafe(admin.id)}`)
       return { mfaRequired: true, mfaTempToken }
     }
 
@@ -145,7 +146,7 @@ export class PlatformAuthService {
     } = admin
 
     const result = await this.tokenManager.issuePlatformTokens(safeAdmin, ip, userAgent)
-    this.logger.log(`login: success adminId=${admin.id}`)
+    this.logger.log(`login: success adminId=${logSafe(admin.id)}`)
 
     // Fire-and-forget: a slow or failing DB update must not block the auth response.
     void this.platformUserRepo.updateLastLogin(admin.id).catch((err: unknown) => {
@@ -179,7 +180,7 @@ export class PlatformAuthService {
     // plane kept the old shape.
     const tokenHash = sha256(rawRefreshToken)
     const userId = await this.redis.readSessionOwner(`prt:${tokenHash}`)
-    this.logger.log(`logout: adminId=${userId || '(no live session)'}`)
+    this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
     // a forged one must not be able to blacklist an id it does not own.

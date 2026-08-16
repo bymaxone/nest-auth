@@ -20,6 +20,67 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **A consumer-supplied identifier could forge a second record in the log.** Every value this
+  library interpolates into a log template now passes a guard: `logSafe` for identifiers,
+  `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight
+  interpolations did not, across nine files.
+
+  `IUserRepository` places no character constraint on `id`, `role` or `tenantId` — `role` is a
+  bare `string` in the interface — so a value carrying CR/LF closes the log record and opens one
+  the reader attributes to this library. That is the attack `logSafe` was written for.
+
+  **The convention already existed and had been applied to `tenantId` at fourteen sites.** It was
+  never extended to anything else, and the omission was invisible because it sat on the SAME
+  LINES: `userId=${user.id} tenantId=${logSafe(tenantId)}` reads as deliberate until you ask why
+  one half is wrapped and the other is not.
+
+  Two sites went further and stringified a rejection straight into the line
+  (`logout: session cleanup failed — ${String(err)}`). `String()` strips nothing and bounds
+  nothing; those now go through `describeError`, which does both. The rejection is Redis's rather
+  than a mail channel's, so no credential is implied — but the failing key it names embeds the
+  consumer's user id.
+
+  A guard suite (`test/e2e/log-injection-guard.e2e-spec.ts`) now walks every `this.logger.*` call
+  in `src/` and fails on any interpolation that is neither guarded nor named in an explicit
+  allowlist of values this library authors. It fails **closed**: a new interpolation breaks the
+  build until somebody decides which it is. The guard call must BE the whole expression —
+  `${logSafe(a) || attackerValue}` is rejected, as are a concatenation, a ternary arm, and a
+  helper whose name merely starts with a guard's.
+
+  It reads the **TypeScript AST**, not the text. Three hand-rolled scanners preceded it and each
+  was fooled by ordinary punctuation: a comma inside a message read as an argument separator, a
+  `)` inside a template's literal text ended the call early, and a guard's name matched anywhere
+  in the expression. Parentheses and quotes inside string literals defeat every version of that
+  approach, and a gate whose parser can be fooled by punctuation is not a gate. It caught the two `String(err)` sites on its first
+  run, which is the argument for it — forty-eight had drifted silently under a convention that
+  lived only in reviewers' heads.
+
+  Two corrections to the walker itself, both held by synthetic fixtures because `src/` has no
+  example of either. It now knows `fatal`, the sixth level Nest 11's `Logger` exposes — a level
+  list has to be complete rather than sufficient, and the first `this.logger.fatal(...)` anyone
+  wrote would otherwise have been invisible to a gate claiming to walk them all. And it no longer
+  descends into a guard's argument: what reaches the record is the guard's OUTPUT, so
+  ``logSafe(`id=${user.id}`)`` was being reported twice, once as guarded and once as bare, failing
+  a line that cannot carry a control character. A false positive on correct code is how a gate
+  gets weakened by whoever hits it next.
+
+  Requires no action from a consumer: `logSafe` returns an ordinary identifier unchanged, so log
+  lines are byte-identical unless a value actually carried a control character, in which case the
+  field is replaced with `<malformed>` and the record stays one record.
+
+  **`maskEmail` was one of those guards and did not enforce the boundary.** It preserves the
+  domain verbatim to keep the line useful to an operator, so `a@example.com\nforged` masked to
+  `a***@example.com\nforged`: the address was hidden and the injection was not, and being on the
+  allowlist meant the gate reported those sites as safe. Masking and record safety are two
+  separate duties and the helper owed both; it now passes its result through `logSafe`. The
+  addresses reaching those lines are not all DTO-validated — `profile.email` is whatever an OAuth
+  provider's userinfo response contained and `oldEmail` is whatever the host's repository stored,
+  so `@IsEmail()` saw neither. The allowlist's claim is now a test rather than a sentence: every
+  name on it is fed a value carrying LF, CR, NEL and both Unicode separators, and must return
+  something that cannot end a record. `safeLogLine` was removed from the allowlist in the same
+  pass — it is a check on a fully composed line, not a field guard (`safeLogLine(raw, [])` is
+  `raw`), and it appears inside no interpolation in `src/`.
+
 - **A one-time code could reach the operator's log in clear text when the mail relay rejected the
   message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
   comment justifying it read "the error is the channel's own, not the rendered body" — and a

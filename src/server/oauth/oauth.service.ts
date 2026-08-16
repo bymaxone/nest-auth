@@ -405,7 +405,7 @@ export class OAuthService {
         // the race to the constraint.
         if (await this.userRepo.findByEmail(profile.email, tenantId)) {
           this.logger.warn(
-            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${tenantId}`
+            `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
           )
           throw new AuthException(AUTH_ERROR_CODES.OAUTH_EMAIL_MISMATCH)
         }
@@ -481,7 +481,7 @@ export class OAuthService {
         authUser.tenantId
       )
       this.logger.log(
-        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${authUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
+        `handleCallback: OAuth MFA challenge issued provider=${provider} userId=${logSafe(authUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
       )
       return { mfaRequired: true, mfaTempToken }
     }
@@ -497,7 +497,7 @@ export class OAuthService {
     }
 
     this.logger.log(
-      `handleCallback: OAuth login success provider=${provider} userId=${safeUser.id} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
+      `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
     )
     return result
   }
