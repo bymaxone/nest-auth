@@ -235,6 +235,8 @@ describe('describeChannelStatus invariant', () => {
     ['a thrown number', 424242]
   ]
 
+  // One assertion for every input above: whatever was thrown, the line is drawn only from the
+  // alphabet this file owns. A failure here means something the channel authored found a way out.
   it.each(adversarial)('publishes only the opaque grammar for %s', (_label, thrown) => {
     const line = describeChannelStatus(thrown)
 
