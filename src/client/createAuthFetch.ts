@@ -212,6 +212,21 @@ const ERROR_BODY_READ_TIMEOUT_MS = 2_000
  * @returns `true` when a refresh could plausibly help.
  */
 async function isExpiredSessionResponse(response: Response): Promise<boolean> {
+  const code = await readErrorCode(response)
+
+  return code === undefined || code === AUTH_ERROR_CODES.TOKEN_INVALID
+}
+
+/**
+ * The error code inside an auth envelope, or `undefined` when there is none to be had.
+ *
+ * Extracted so the 401 gate and the refresh classifier read a body the same way. They ask
+ * different questions of the answer and neither should own the reading.
+ *
+ * @param response - Any response, unconsumed. Read from a CLONE, so the caller keeps its body.
+ * @returns The `code`, or `undefined` if the body is absent, unreadable, slow, or not an envelope.
+ */
+async function readErrorCode(response: Response): Promise<string | undefined> {
   const clone = response.clone()
   let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -237,12 +252,12 @@ async function isExpiredSessionResponse(response: Response): Promise<boolean> {
 
   clearTimeout(timer)
 
-  if (typeof body !== 'object' || body === null) return true
+  if (typeof body !== 'object' || body === null) return undefined
 
   const envelope = body as { code?: unknown; error?: { code?: unknown } }
   const code = envelope.error?.code ?? envelope.code
 
-  return typeof code !== 'string' || code === AUTH_ERROR_CODES.TOKEN_INVALID
+  return typeof code === 'string' ? code : undefined
 }
 
 /**
@@ -354,6 +369,25 @@ function attachTimeout(
 }
 
 /**
+ * The 403 codes that mean the session is over rather than this attempt being refused.
+ *
+ * `AuthService.refresh` revokes EVERY session for the user before rethrowing a blocked-status
+ * error, so by the time one of these reaches a client there is nothing left to refresh. Treating
+ * them as retryable would leave a signed-out user staring at failures with no redirect.
+ *
+ * The other 403 a refresh can answer is `auth.untrusted_origin`, from the origin guard that covers
+ * the whole controller. That one says nothing about the credential — a deployment with a wrong
+ * `trustedOrigins` would sign out every user if 403 were read as expiry — which is why the code
+ * decides and the status alone does not.
+ */
+const TERMINAL_REFRESH_CODES: ReadonlySet<string> = new Set([
+  AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
+  AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+  AUTH_ERROR_CODES.ACCOUNT_BANNED,
+  AUTH_ERROR_CODES.PENDING_APPROVAL
+])
+
+/**
  * Why a refresh attempt did not produce a new session.
  *
  * Three answers, not a boolean, because the caller acts differently on each and a boolean forces
@@ -366,10 +400,13 @@ function attachTimeout(
  *   a 404 from a mistyped `routePrefix`. None of those is a statement about the credential.
  * - `unreachable` — no answer at all: offline, DNS, CORS, an aborted request.
  *
- * 403 sits under `unavailable` on purpose. `TrustedOriginGuard` covers `/refresh` and answers
- * `auth.untrusted_origin` with 403, so a misconfigured deployment would otherwise sign out every
- * user. Some 403s DO mean the session is finished — a banned account — and separating those needs
- * the response body, which the caller has and this wrapper does not read.
+ * 403 is decided by the error CODE rather than the status, because the route answers it for two
+ * unrelated reasons. `TrustedOriginGuard` covers `/refresh` and answers `auth.untrusted_origin`
+ * with 403 — reading that as expiry would sign out every user of a deployment with a wrong
+ * `trustedOrigins`. But `refresh` also revokes every session before rethrowing a blocked-account
+ * status, and there a 403 genuinely IS the end of the session. This wrapper reads the code
+ * itself: it drains the refresh body, and the caller receives the original resource response, so
+ * there is nothing left for it to consult.
  */
 export type RefreshFailureReason = 'rejected' | 'unavailable' | 'unreachable'
 
@@ -414,6 +451,13 @@ async function performRefresh(
       headers: { 'Content-Type': 'application/json' }
     })
     const { ok, status } = response
+
+    // The 403 code is read BEFORE the drain below, and the order is load-bearing: `cancel()`
+    // disturbs the body, and `clone()` on a disturbed response throws. Getting this backwards
+    // turned every 403 into `unreachable` with a null status — the read threw, the outer `catch`
+    // caught it, and the classification silently became "no answer at all".
+    const code = status === 403 ? await readErrorCode(response) : undefined
+
     // Deliberately NOT awaited. Draining releases the connection in runtimes that hold it
     // open until the stream ends, and nothing downstream needs the drain to have COMPLETED —
     // the status has already been read. Under request interception (MSW, undici in jsdom)
@@ -425,17 +469,26 @@ async function performRefresh(
 
     if (ok) return { ok: true }
 
-    // 401 ONLY. A 403 does not prove the credential was examined: this package puts
-    // `TrustedOriginGuard` on the whole `AuthController`, `/refresh` included, and it answers
-    // `auth.untrusted_origin` with 403. Treating that as expiry signs every user of a
-    // misconfigured deployment out — the same defect this function was rewritten to remove,
-    // reappearing one status over.
+    if (status === 401) return { ok: false, reason: 'rejected', status }
+
+    // 403 is decided by the CODE, because the status is overloaded on this route. The origin
+    // guard covers the whole controller and answers `auth.untrusted_origin` with 403 — reading
+    // that as expiry signs out every user of a deployment with a wrong `trustedOrigins`. But
+    // `refresh` also revokes every session before rethrowing a blocked-account status, and by
+    // then there is genuinely nothing left to refresh.
     //
-    // Other 403s exist and some of them do mean the session is finished — a banned or suspended
-    // account among them. Telling those apart needs the response BODY, which this function
-    // deliberately does not read: the status is enough to decide whether to retry, and a caller
-    // that wants the code has the original response in hand.
-    return { ok: false, reason: status === 401 ? 'rejected' : 'unavailable', status }
+    // This wrapper has to read it: the body is drained here, and the caller receives the ORIGINAL
+    // resource response rather than the refresh's, so there is no code left for it to consult.
+    // An earlier version of this comment claimed otherwise and was simply wrong.
+    // No second `status === 403` here: `code` is read only on that status, so a defined code
+    // already means the account gate ran. The duplicate check was there and the mutation gate
+    // showed it dead — which also showed what the guard above is really holding, and it now has
+    // a test of its own.
+    if (code !== undefined && TERMINAL_REFRESH_CODES.has(code)) {
+      return { ok: false, reason: 'rejected', status }
+    }
+
+    return { ok: false, reason: 'unavailable', status }
   } catch {
     // No answer at all: offline, DNS, CORS, an aborted request. The session is very likely intact
     // and the next attempt may well succeed.

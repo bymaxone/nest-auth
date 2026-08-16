@@ -923,6 +923,61 @@ describe('createAuthFetch — refresh failure paths', () => {
     warn.mockRestore()
   })
 
+  // 403 on this route is overloaded, so the CODE decides. `AuthService.refresh` revokes every
+  // session for the user before rethrowing a blocked-account status, so by the time one of these
+  // reaches the client there is nothing left to refresh — treating it as retryable would leave a
+  // signed-out user staring at failures with no redirect.
+  it.each([
+    ['suspended', 'auth.account_suspended'],
+    ['banned', 'auth.account_banned'],
+    ['inactive', 'auth.account_inactive'],
+    ['awaiting approval', 'auth.pending_approval']
+  ])('ends the session on a 403 for an account that is %s', async (_why, code) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(403, { error: { code } }))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+  })
+
+  // Only a 403 means the account gate ran, so a body carrying an account code on any OTHER status
+  // must not end the session. Contrived on purpose: it pins that the read is gated on the status
+  // rather than fishing for a code in whatever came back, which is what keeps a rate limiter's
+  // response from being read as a verdict about the account.
+  it('ignores an account code on a status the account gate never produced', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(429, { error: { code: 'auth.account_banned' } }))
+
+    const onSessionExpired = jest.fn()
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired, onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(onRefreshFailed).toHaveBeenCalledWith({ ok: false, reason: 'unavailable', status: 429 })
+  })
+
+  // The other side of the same status, and the reason the code has to decide rather than the
+  // number: a wrong `trustedOrigins` would otherwise sign out every user of the deployment.
+  it('does not end the session on a 403 naming an untrusted origin', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(403, { error: { code: 'auth.untrusted_origin' } }))
+
+    const onSessionExpired = jest.fn()
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired, onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(onRefreshFailed).toHaveBeenCalledWith({ ok: false, reason: 'unavailable', status: 403 })
+  })
+
   // 403 is NOT expiry, and the reason is specific rather than cautious: `TrustedOriginGuard` sits
   // on the whole `AuthController`, `/refresh` included, and answers `auth.untrusted_origin` with
   // 403. Classifying that as a refused credential would sign out every user of a deployment whose

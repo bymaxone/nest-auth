@@ -31,10 +31,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   it), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at all).
   **`onSessionExpired` now fires only on `'rejected'`.**
 
-  403 is deliberately **not** expiry: `TrustedOriginGuard` covers `/refresh` and answers
-  `auth.untrusted_origin` with 403, so classifying it as a refused credential would sign out every
-  user of a deployment whose `trustedOrigins` is wrong. Some 403s do end a session — a banned
-  account — and telling those apart needs the response body, which the caller has.
+  403 is decided by the error **code**, because the route answers it for two unrelated reasons.
+  `TrustedOriginGuard` covers `/refresh` and answers `auth.untrusted_origin` with 403 — reading
+  that as expiry would sign out every user of a deployment whose `trustedOrigins` is wrong. But
+  `refresh` also revokes every session before rethrowing a blocked-account status
+  (`auth.account_suspended`, `auth.account_banned`, `auth.account_inactive`,
+  `auth.pending_approval`), and there the session really is over. The wrapper reads the code
+  itself, since it drains the refresh body and the caller only ever sees the original response.
 
   A new `onRefreshFailed?: (failure: RefreshFailure) => void` reports **every** failure with its
   reason and status, before the expiry decision. That is what makes the answer to _why_ usable: a
