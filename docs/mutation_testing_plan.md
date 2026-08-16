@@ -4,6 +4,12 @@
 > **Goal:** Install and configure Stryker mutation testing, then iterate to reach the highest realistic mutation score (target ≥ 95%) before publishing v1 of this library to npm.
 > **Status at time of writing (2026-05-19):** Line coverage is **100% in every metric** (statements, branches, functions, lines) across 1564 tests in 90 suites. Mutation testing is now the next quality gate.
 >
+> **Outcome (supersedes the target above).** The plan completed and landed ABOVE it. The gate in
+> `stryker.config.json` is `high`/`low`/`break` all at **100**, and the suite holds 100% with no
+> survivors. Every "≥ 95%" and every instruction to set `thresholds.break` to 90 below is the
+> plan's ORIGINAL target, kept as the record of what was planned — none of it is the current gate,
+> and lowering the config to match any of them would weaken a gate that is already met.
+>
 > This document is the **single source of truth** for the task. Read it fully before executing — do not improvise.
 
 ---
@@ -471,18 +477,22 @@ These directories are highest priority because of security impact. Survived muta
 5. `src/nextjs/internal/proxyHandlers.ts` — cookie forwarding (recently changed, commit `9e1393e`)
 6. `src/client/createAuthFetch.ts`, `createLogoutHandler.ts` (recently changed, commit `9e1393e`)
 
-Tackle these in this order. After each is at ≥ 95%, raise `thresholds.break` in `stryker.config.json` and re-run to lock in progress.
+Tackle these in this order. This was the ratchet used to reach the gate; it is at 100 now, so
+raising `thresholds.break` is no longer a step — never LOWER it to match a number in this section.
 
 ### 8.6 Cycle target
 
 Repeat **§8.1 → §8.5** until either:
 
-- (a) Overall mutation score ≥ 95% **and** every hot-path directory in §8.5 is ≥ 95%, **or**
+- (a) Overall mutation score ≥ 95% **and** every hot-path directory in §8.5 is ≥ 95% — the
+  original bar; the achieved gate is 100 and that is what `stryker.config.json` enforces, **or**
 - (b) Every remaining survived mutant is a documented equivalent in §8.3 / §8.4 with an inline reason.
 
 Whichever comes first.
 
-After hitting the target, **raise `thresholds.break` to 90** and commit `stryker.config.json` so the value is enforced for future contributors.
+After hitting the target, raise `thresholds.break` and commit `stryker.config.json` so the value is
+enforced for future contributors. **Historical: this said "to 90".** It went to 95 and then to 100,
+which is where it stands — treat this line as the ratchet's description, not as a value to set.
 
 ---
 
@@ -552,7 +562,7 @@ pnpm mutation # incremental (reuses reports/stryker-incremental.json)
 pnpm mutation:full # cold run — deletes that baseline first
 \`\`\`
 
-Mutation score must be ≥ 95% before tagging a release. See
+Mutation score must be 100% before tagging a release — `break: 100` fails the run below it. See
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md).
 ```
 

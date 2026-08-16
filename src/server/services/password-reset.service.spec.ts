@@ -2241,8 +2241,9 @@ describe('PasswordResetService', () => {
     // A provider that throws SYNCHRONOUSLY rather than rejecting. `Promise.resolve(call())`
     // evaluates the call before the promise wraps it, so the throw skipped the redacting handler
     // entirely and surfaced in `resendOtp`'s outer catch, which logs the error raw — with the code
-    // in it. Deferring through `.then` turns the throw into a rejection the handler sees. A
-    // provider is consumer code and may do either; the log line must not depend on which.
+    // in it. The async IIFE the production path uses calls the provider INSIDE its own `try`, so a
+    // synchronous throw and a rejection reach the same handler. A provider is consumer code and may
+    // do either; the log line must not depend on which.
     it('keeps the reset code out of the log when the provider throws synchronously', async () => {
       mockRedis.setnx.mockResolvedValue(true)
       mockOtpService.generate.mockReturnValue('868686')

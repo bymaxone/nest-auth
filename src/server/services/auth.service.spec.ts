@@ -409,8 +409,9 @@ describe('AuthService', () => {
     // it, a build that ignored `emailVerification.required` and always sent would pass every other
     // register test — the default fixture has it off, so nothing else looks at the negative side.
     // It used to die by accident instead: the send was `provider.send(...).catch(...)`, and a mock
-    // returning a non-promise made `.catch` throw. Deferring the call through `.then` made the
-    // code tolerant of that, which removed the accidental kill and left the rule unasserted.
+    // returning a non-promise made `.catch` throw. Moving the call inside an async IIFE's `try`
+    // made the code tolerant of that, which removed the accidental kill and left the rule
+    // unasserted — so the rule needed asserting on purpose.
     it('sends no verification OTP when emailVerification.required is false', async () => {
       await service.register(dto, mockReq)
       await new Promise((r) => setImmediate(r))
