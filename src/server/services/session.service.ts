@@ -806,7 +806,7 @@ export class SessionService {
       const resolved = await maxSessionsResolver(user)
       if (!Number.isInteger(resolved) || resolved < 1) {
         this.logger.error(
-          `maxSessionsResolver returned ${String(resolved)}, which is not a positive whole ` +
+          `maxSessionsResolver returned ${logSafe(String(resolved))}, which is not a positive whole ` +
             `number of sessions — falling back to defaultMaxSessions. A cap that silently ` +
             `stops applying is worse than one that is merely wrong.`
         )

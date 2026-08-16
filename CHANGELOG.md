@@ -23,7 +23,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **A consumer-supplied identifier could forge a second record in the log.** Every value this
   library interpolates into a log template now passes a guard: `logSafe` for identifiers,
   `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight
-  interpolations did not, across six files.
+  interpolations did not, across nine files.
 
   `IUserRepository` places no character constraint on `id`, `role` or `tenantId` — `role` is a
   bare `string` in the interface — so a value carrying CR/LF closes the log record and opens one

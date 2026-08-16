@@ -90,9 +90,13 @@ const LIBRARY_AUTHORED = new Set([
   'entry.memberHash',
   'hash.slice(0, 8)',
   'staleKeys.length',
-  'response.status',
-  // Already-described errors. `String(err)` is NOT here: see the test below.
-  'String(resolved)'
+  'response.status'
+  // Nothing else. `String(err)` and `String(resolved)` are both ABSENT and both were once
+  // candidates: the first is a channel's text, and the second is what a consumer-supplied
+  // `maxSessionsResolver` returned — on the branch that exists precisely because the value can
+  // violate its own TypeScript contract, so a JavaScript caller can return a string with CR/LF
+  // in it. Allowlisting it was the "it is probably fine" this comment warns against, written by
+  // the same hand that wrote the warning.
 ])
 
 /**
@@ -129,25 +133,33 @@ interface Interpolation {
  */
 function interpolationsInLoggerCalls(source: string, file: string): Interpolation[] {
   const lines = source.split('\n')
-  const inLoggerCall = new Set<number>()
+  const found: Interpolation[] = []
 
   lines.forEach((line, index) => {
     if (!/this\.logger\.(log|warn|error|debug|verbose)\(/.test(line)) return
+
+    // The call is collected as ONE string and scanned whole. Matching per line required `${` and
+    // its `}` to sit together, so an interpolation prettier had wrapped was invisible — a false
+    // negative in a gate, and the shape appears whenever a long expression meets the print width.
+    let text = ''
     let depth = 0
     for (let cursor = index; cursor < lines.length; cursor++) {
-      inLoggerCall.add(cursor)
-      const text = lines[cursor] ?? ''
-      depth += (text.match(/\(/g) ?? []).length - (text.match(/\)/g) ?? []).length
+      const current = lines[cursor] ?? ''
+      text += current + '\n'
+      depth += (current.match(/\(/g) ?? []).length - (current.match(/\)/g) ?? []).length
       if (depth <= 0) break
+    }
+
+    for (const match of text.matchAll(/\$\{([\s\S]*?)\}/g)) {
+      // Whitespace collapsed so a wrapped expression compares against the allowlist as one line.
+      found.push({
+        file,
+        line: index + 1,
+        expression: (match[1] ?? '').trim().replace(/\s+/g, ' ')
+      })
     }
   })
 
-  const found: Interpolation[] = []
-  for (const index of [...inLoggerCall].sort((a, b) => a - b)) {
-    for (const match of (lines[index] ?? '').matchAll(/\$\{([^}]+)\}/g)) {
-      found.push({ file, line: index + 1, expression: (match[1] ?? '').trim() })
-    }
-  }
   return found
 }
 
@@ -189,6 +201,24 @@ describe('log-injection guard (E2E)', () => {
     ['an unguarded value', 'user.id', false]
   ])('accepts only a whole-expression guard: %s', (_why, expression, expected) => {
     expect(isFullyGuarded(expression)).toBe(expected)
+  })
+
+  // The detector's own reach, pinned against a synthetic source rather than against `src/`. A
+  // fixture is the only way to test the negative here: `src/` has no wrapped interpolation today,
+  // so a suite that only walks it would have passed either way and did — this shape was reported
+  // by review, not caught by the gate.
+  it('sees an interpolation prettier wrapped across lines', () => {
+    const wrapped = [
+      '    this.logger.error(',
+      '      `session cap refused for ${',
+      '        attackerControlledValue',
+      '      }`',
+      '    )'
+    ].join('\n')
+
+    const found = interpolationsInLoggerCalls(wrapped, 'synthetic.ts')
+
+    expect(found.map((f) => f.expression)).toEqual(['attackerControlledValue'])
   })
 
   // `String(err)` is deliberately absent from the allowlist. An error's text belongs to whoever
