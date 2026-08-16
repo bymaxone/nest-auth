@@ -27,8 +27,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   browser specs passed on both runs that produced the finding, so no green suite covered it.
 
   `performRefresh` now returns a `RefreshOutcome`: `{ ok: true }`, or `{ ok: false, reason, status }`
-  where `reason` is `'rejected'` (**401 only** — the server looked at the credential and refused
-  it), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at all).
+  where `reason` is `'rejected'` (a 401, **or a 403 whose error code names a terminal account
+  state** — the server looked at the credential and refused it, so `rejected.status` is `401` or
+  `403`), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at
+  all).
   **`onSessionExpired` now fires only on `'rejected'`.**
 
   403 is decided by the error **code**, because the route answers it for two unrelated reasons.

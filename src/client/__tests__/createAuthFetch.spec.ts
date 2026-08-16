@@ -923,6 +923,36 @@ describe('createAuthFetch — refresh failure paths', () => {
     warn.mockRestore()
   })
 
+  // The other way a consumer callback fails, and the one a try/catch alone does not see. The
+  // option is typed `=> void`, which TypeScript lets an `async` function satisfy, so
+  // `onRefreshFailed: async (f) => report(f)` compiles — and a rejection is not a throw, so
+  // without adopting the returned promise it escapes as an unhandled rejection in the consumer's
+  // app rather than as our warning. Pinned separately from the synchronous case because the two
+  // arrive through different paths and one passing says nothing about the other.
+  it('swallows a rejecting async onRefreshFailed and still returns the response', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(429))
+
+    const authFetch = createAuthFetch({
+      onRefreshFailed: () => Promise.reject(new Error('consumer bug'))
+    })
+    const res = await authFetch('/api/users')
+
+    // The rejection is handled in a microtask, so let the queue drain before asserting — an
+    // assertion that ran first would pass for the wrong reason and keep passing if the fix
+    // were removed.
+    await Promise.resolve()
+
+    expect(res.status).toBe(401)
+    expect(warn).toHaveBeenCalledWith(
+      '[nest-auth] onRefreshFailed callback threw:',
+      expect.any(Error)
+    )
+    warn.mockRestore()
+  })
+
   // 403 on this route is overloaded, so the CODE decides. `AuthService.refresh` revokes every
   // session for the user before rethrowing a blocked-account status, so by the time one of these
   // reaches the client there is nothing left to refresh — treating it as retryable would leave a

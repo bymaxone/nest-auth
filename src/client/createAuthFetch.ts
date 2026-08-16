@@ -83,8 +83,12 @@ export interface AuthFetchConfig {
    * connection deserves "you appear to be offline", and only a refused credential deserves the
    * sign-in screen.
    *
-   * Errors thrown here are swallowed and reported through `console.warn`, on the same reasoning as
+   * Errors are swallowed and reported through `console.warn`, on the same reasoning as
    * {@link onSessionExpired}: a broken consumer callback must not mask the underlying response.
+   * That covers an `async` callback too — the signature is `=> void`, which TypeScript lets an
+   * async function satisfy, and its rejection is handled rather than left to surface as an
+   * unhandled rejection in your app. It is not awaited: this is a notification, and the
+   * sign-out decision does not wait behind a consumer's network call.
    *
    * @param failure - Why the attempt failed, and the status behind it when there was one.
    */
@@ -395,7 +399,8 @@ const TERMINAL_REFRESH_CODES: ReadonlySet<string> = new Set([
  * `429`, the boolean made that identical to `401`, and the caller signed the user out of a session
  * whose credential was still valid.
  *
- * - `rejected` — 401. The server looked at the credential and refused it. The session is over.
+ * - `rejected` — a 401, or a 403 whose error code names a terminal account state. The server
+ *   looked at the credential and refused it. The session is over, and `status` is `401` or `403`.
  * - `unavailable` — it answered, but not with a session: a 429, a 5xx, a 403 from an origin guard,
  *   a 404 from a mistyped `routePrefix`. None of those is a statement about the credential.
  * - `unreachable` — no answer at all: offline, DNS, CORS, an aborted request.
@@ -522,6 +527,20 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
   const timeoutMs = config.timeout ?? 30_000
   const skipRefreshSuffixes = buildAuthRefreshSkipSuffixes(config.routePrefix)
 
+  /**
+   * Reports a broken `onRefreshFailed` callback without letting it mask the response.
+   *
+   * Named rather than inlined because a synchronous throw and an asynchronous rejection arrive
+   * through different paths and must reach the same place; two copies of the reporting would be
+   * two things to keep in step.
+   *
+   * @param err - Whatever the consumer's callback threw or rejected with.
+   */
+  const reportCallbackError = (err: unknown): void => {
+    // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
+    console.warn('[nest-auth] onRefreshFailed callback threw:', err)
+  }
+
   // Per-instance dedup slot. Closing over the slot inside the factory
   // (rather than at module scope) means two `createAuthFetch` instances
   // pointing at different APIs cannot block each other's refreshes —
@@ -602,12 +621,20 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     if (!outcome.ok) {
       // Every failure, before the expiry decision, so a consumer that wants to distinguish
       // "retrying" from "signed out" is told the reason rather than left to infer it.
+      // Both failure modes of a consumer callback, because the signature does not restrict it to
+      // one. `=> void` accepts an `async` function under TypeScript's void-return rule, so
+      // `onRefreshFailed: async (f) => report(f)` compiles — and its REJECTION is not a throw, so
+      // a bare try/catch never sees it and it surfaces as an unhandled rejection in the
+      // consumer's app. `Promise.resolve` adopts whatever came back (a promise, a thenable, or
+      // `undefined`) and hands the rejection to the same reporter the synchronous throw reaches.
+      //
+      // Not awaited, deliberately: this is a notification, and the expiry decision below must not
+      // wait behind a consumer's network call.
       try {
-        onRefreshFailed?.(outcome)
+        void Promise.resolve(onRefreshFailed?.(outcome)).catch(reportCallbackError)
         // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it; emptying the body leaves the same swallow, observable only via a console spy
       } catch (err: unknown) {
-        // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
-        console.warn('[nest-auth] onRefreshFailed callback threw:', err)
+        reportCallbackError(err)
       }
     }
 
