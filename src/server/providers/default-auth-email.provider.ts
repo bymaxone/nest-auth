@@ -78,6 +78,13 @@ export interface AuthEmailSink {
      * `true` when the body renders a live credential — a reset code, a verification code, a reset
      * or invitation token.
      *
+     * Two sources, combined so that neither can weaken the other. The message KIND supplies the
+     * baseline, which is what the built-in copy carries. A rendering may additionally declare
+     * itself credential-bearing through {@link AuthEmailMessage.containsCredential}, because
+     * `messages` replaces a renderer outright and a product's own copy for a normally harmless
+     * kind can put a live secret in the body — the kind alone cannot see that, and would state
+     * `false` about it.
+     *
      * **What a sink must do with it: do not publish this message's content anywhere.** Not in an
      * error it throws, not in a log line, not in an audit record that outlives delivery. A sink
      * that quotes what it was given is the ordinary shape — an SMTP relay answering `550` quotes
@@ -111,6 +118,21 @@ export interface AuthEmailMessage {
    * unset to have the provider render {@link text} into safe, escaped paragraphs.
    */
   readonly html?: string | undefined
+  /**
+   * Set to `true` when this rendering puts a live credential in the body.
+   *
+   * The provider already knows which KINDS carry one by default, and a renderer cannot make that
+   * baseline weaker: this value is OR-ed with it, so `false` on `passwordResetOtp` is ignored and
+   * the sink is still told `true`. It exists for the other direction, which the kind alone cannot
+   * see. Overrides replace a renderer outright, so a product that puts recovery codes into its
+   * own `mfaEnabled` copy has turned a notice into a credential-bearing message — the kind still
+   * says `mfaEnabled` and, without this, the sink would be told `false` about a body that carries
+   * a live secret. That is the flag being wrong rather than merely non-protective, which is worse
+   * than not having it.
+   *
+   * Leave it unset on a rendering that carries no credential; the kind decides.
+   */
+  readonly containsCredential?: boolean | undefined
 }
 
 /**
@@ -682,7 +704,15 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
         // Stated at the only moment a sink could act on it. Whether it DOES is the sink's to
         // answer — see the field's own documentation for why this is a statement of fact rather
         // than a control, and why it is a flag rather than a list of values to redact.
-        containsCredential: CREDENTIAL_BEARING_KINDS.has(label)
+        //
+        // OR-ed rather than taken from either side alone, and the direction matters. The kind is
+        // the baseline a renderer cannot weaken, so an override returning `false` on
+        // `passwordResetOtp` changes nothing. The rendering can only ADD, which is the case the
+        // kind cannot see: `options.messages` replaces a renderer outright, so a product whose
+        // own `mfaEnabled` copy includes recovery codes has made a notice credential-bearing
+        // while its kind still reads `mfaEnabled`.
+        containsCredential:
+          CREDENTIAL_BEARING_KINDS.has(label) || message.containsCredential === true
       })
     } catch (error: unknown) {
       // Every part of this line is text THIS FILE wrote: a constant, the message's own label, and

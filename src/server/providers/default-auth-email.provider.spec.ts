@@ -392,6 +392,68 @@ describe('DefaultAuthEmailProvider', () => {
     expect(declared).toHaveLength(AUTH_EMAIL_KINDS.length)
   })
 
+  // The case the kind cannot see. `messages` replaces a renderer outright, so a product whose own
+  // `mfaEnabled` copy hands the user recovery codes has made a notice credential-bearing while
+  // its kind still reads `mfaEnabled`. Without the rendering's own declaration the sink is told
+  // `false` about a body carrying a live secret — the flag being WRONG, which is worse than the
+  // flag being merely non-protective.
+  it('lets a rendering declare a credential the kind does not imply', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const withRecoveryCodes = new DefaultAuthEmailProvider(sink, {
+      messages: {
+        mfaEnabled: () => ({
+          subject: 'Two-factor is on',
+          text: 'Recovery codes: 11111-22222',
+          containsCredential: true
+        })
+      }
+    })
+
+    await withRecoveryCodes.sendMfaEnabledNotification('t', 'u@e.com')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'mfaEnabled', containsCredential: true })
+    )
+  })
+
+  // The other direction, which must not work. The kind is a baseline a renderer cannot weaken:
+  // an override for a credential-bearing flow that omits the credential from ITS copy still
+  // reaches a sink that may be reused for the default rendering, and a downgrade here would be a
+  // consumer silently turning off a statement this library makes about its own messages.
+  it('never lets a rendering downgrade a credential the kind implies', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const downgrading = new DefaultAuthEmailProvider(sink, {
+      messages: {
+        passwordResetOtp: () => ({
+          subject: 'Reset',
+          text: 'Open the app to continue',
+          containsCredential: false
+        })
+      }
+    })
+
+    await downgrading.sendPasswordResetOtp('t', 'u@e.com', '424242')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'passwordResetOtp', containsCredential: true })
+    )
+  })
+
+  // An override that says nothing about credentials is the ordinary case — branding and copy,
+  // no security claim — and must leave the kind's answer exactly as it was.
+  it('leaves the kind to decide when a rendering says nothing', async () => {
+    sink.send.mockResolvedValue(undefined)
+    const rebranded = new DefaultAuthEmailProvider(sink, {
+      messages: { mfaEnabled: () => ({ subject: 'Two-factor is on', text: 'All set.' }) }
+    })
+
+    await rebranded.sendMfaEnabledNotification('t', 'u@e.com')
+
+    expect(sink.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'mfaEnabled', containsCredential: false })
+    )
+  })
+
   // The reason the option takes a map. A deployment opts into the throw for ONE flow — the reset
   // token, so the stored token can be deleted early — and a bare `'rethrow'` would hand it the
   // unlaundered channel error on the OTP paths too, which are the ones carrying a credential in

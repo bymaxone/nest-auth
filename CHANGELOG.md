@@ -52,6 +52,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `send`, what happens to it belongs to the sink. It is delivered at the only moment a sink could
   act on it.
 
+  **A rendering can declare a credential its kind does not imply.** `AuthEmailMessage` gained an
+  optional `containsCredential`, OR-ed with the kind's baseline. `messages` replaces a renderer
+  outright, so a product whose own `mfaEnabled` copy hands the user recovery codes has turned a
+  notice into a credential-bearing message while its kind still reads `mfaEnabled` — and the sink
+  would have been told `false` about a body carrying a live secret. That is the flag being _wrong_,
+  which is worse than the flag being merely non-protective. The combination is one-way: a renderer
+  can only add. Returning `containsCredential: false` from an override of `passwordResetOtp`
+  changes nothing, because a consumer does not get to switch off a statement this library makes
+  about its own messages.
+
   Why a flag and not a list of values to redact: that was measured and rejected. Redaction is a
   substring match, so it holds for a value quoted as written and not for the same bytes re-encoded —
   a relay may answer with the body in base64, and then no list matches. A categorical "publish none
