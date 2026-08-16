@@ -118,13 +118,18 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
 
   // --- Project ---
   "packageManager": "pnpm",
+  "plugins": ["@stryker-mutator/jest-runner", "@stryker-mutator/typescript-checker"],
 
   // --- Test runner ---
   "testRunner": "jest",
   "coverageAnalysis": "perTest",
+  // `jest.stryker.config.ts`, NOT `jest.config.ts`. Stryker loads it through native ESM
+  // `import()` in a child process, so its own relative imports must carry an explicit extension
+  // (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess one, and an
+  // extensionless specifier throws ERR_MODULE_NOT_FOUND inside the sandbox.
   "jest": {
     "projectType": "custom",
-    "configFile": "jest.config.ts",
+    "configFile": "jest.stryker.config.ts",
     "enableFindRelatedTests": true
   },
 
@@ -168,12 +173,13 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
   //   low    — between low and high, report shows orange ("warning")
   //   break  — below this, `stryker run` exits non-zero (CI fails)
   //
-  // Starting values: break=80 to allow first run to land without
-  // failing. After Phase 4 we raise break to 90.
+  // All three are 100. The suite holds it: no survivors, nothing uncovered. A survivor is either
+  // a missing test or an equivalent mutant that must carry its reason inline, so there is no band
+  // of "acceptable" score to leave room for — anything under 100 is a finding, not a warning.
   "thresholds": {
-    "high": 95,
-    "low": 85,
-    "break": 80
+    "high": 100,
+    "low": 100,
+    "break": 100
   },
 
   // --- Performance ---
@@ -182,6 +188,10 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
   // Raise to 6-8 only if `free -h` (Linux) / Activity Monitor (macOS)
   // shows headroom.
   "concurrency": 4,
+
+  // Recycle each test-runner process after 20 mutants. Jest workers accumulate module state
+  // across runs, and a fresh process is cheaper than the flake a leaked one eventually produces.
+  "maxTestRunnerReuse": 20,
 
   // NestJS module compilation in `beforeEach` is slow on cold start.
   // 5 s (Stryker default) produces false-positive Timeouts. 30 s is safe.
