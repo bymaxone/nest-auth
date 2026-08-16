@@ -860,6 +860,32 @@ describe('TokenManagerService', () => {
       expect(mockHooks.onRefreshTokenReuseDetected).not.toHaveBeenCalled()
     })
 
+    // The same case, in the LOG rather than the hook — and the log is what an on-call reads.
+    // A family with no live member is the second-and-later replay of one already torn down: the
+    // consumed marker outlives the sessions it points at, so reuse is detected again while every
+    // record that could name the owner is gone. The line used to read `userId=` there, an empty
+    // field on the strongest compromise signal this library produces, precisely on REPEAT attack
+    // traffic. An empty field reads as a defect in the logger and makes a reader distrust the
+    // tool rather than the event.
+    it('says the owner is unknown, and why, when the family names none', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+
+      await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+
+      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
+      expect(warned).toContain('token family revoked after reuse detection')
+      expect(warned).toContain('already revoked')
+      // Never the bare field, which is the shape being fixed.
+      expect(warned).not.toContain('userId= ')
+      // The family is still named, because it is the only handle left on the lineage.
+      expect(warned).toContain(`familyId=${FAMILY}`)
+      warnSpy.mockRestore()
+    })
+
     // fails as REFRESH_TOKEN_INVALID — the reaction never resurrects the token.
     it('should revoke the compromised family when a consumed token is replayed', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)

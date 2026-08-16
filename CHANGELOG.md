@@ -20,6 +20,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves
+  the owner by reading the first LIVE member of the token family. On the second and later replay
+  of an already-revoked family there is none — the consumed marker outlives the sessions it points
+  at, so reuse is detected again while every record that could name the owner is gone — and the
+  line read `userId= familyId=…`.
+
+  That is an empty field on what this library's own documentation calls the strongest evidence of
+  compromise it produces, and `userId` is the only field an on-call can act on. It emptied
+  precisely on **repeat** attack traffic, which is the traffic worth reading.
+
+  The line now says what is unknown and why: `userId=<unknown: every session in this family was
+already revoked>`. An empty field reads as a defect in the logger and makes a reader distrust
+  the tool instead of the event; a family being torn down twice is itself the fact worth seeing.
+  The `familyId` is still named, because it is the only handle left on the lineage.
+
+  Reported by the `@bymax-one/bymax-one` seat from a measured audit against real Postgres and
+  Redis — two runs of the same path, one populated and one not. The cause was traced rather than
+  guessed, and it also explains their second observation: a `revoked` line with no `detected` line
+  before it is the same repeat replay.
+
 - **A rate-limited refresh signed the user out of a session that was still valid.**
   `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a
   `404` from a mistyped `routePrefix` arrived at the caller as one indistinguishable `false` — and

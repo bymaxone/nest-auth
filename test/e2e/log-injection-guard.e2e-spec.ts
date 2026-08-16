@@ -29,6 +29,7 @@ import ts from 'typescript'
 
 import { describeChannelStatus, describeError } from '../../src/server/utils/describe-error'
 import { logSafe } from '../../src/server/utils/log-safe'
+import { ownerFragment } from '../../src/server/utils/owner-fragment'
 import { maskEmail } from '../../src/server/utils/mask-email'
 
 /** Source root, from this suite's location under `test/e2e/`. */
@@ -68,7 +69,13 @@ function breaksRecord(value: string): boolean {
  * — it appears inside a `${...}` nowhere in `src/` — so removing it from this set costs nothing
  * and closes the shape where it would have been read as a boundary it never enforced.
  */
-const GUARDS = new Set(['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError'])
+const GUARDS = new Set([
+  'logSafe',
+  'maskEmail',
+  'describeChannelStatus',
+  'describeError',
+  'ownerFragment'
+])
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -526,7 +533,8 @@ describe('log-injection guard (E2E)', () => {
     ['logSafe', (value: string) => logSafe(value)],
     ['maskEmail', (value: string) => maskEmail(value)],
     ['describeChannelStatus', (value: string) => describeChannelStatus(new Error(value))],
-    ['describeError', (value: string) => describeError(new Error(value), [])]
+    ['describeError', (value: string) => describeError(new Error(value), [])],
+    ['ownerFragment', (value: string) => ownerFragment(value)]
   ])('%s never returns a value that can break a log record', (name, guard) => {
     expect(GUARDS.has(name)).toBe(true)
 
