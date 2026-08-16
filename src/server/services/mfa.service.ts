@@ -313,7 +313,9 @@ export class MfaService {
         await this.userRepo.updateMfa(userId, tenantId, update)
       }
     } catch (err: unknown) {
-      this.logger.error('re-encryption under the current MFA key failed', err)
+      this.logger.error(
+        `re-encryption under the current MFA key failed: ${describeChannelStatus(err)}`
+      )
     }
   }
 

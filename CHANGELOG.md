@@ -20,6 +20,70 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **No error object reaches the logger any more.** Twenty-seven log sites passed the thrown value
+  as Nest's second `Logger` argument, which prints its `stack`. On every one of those paths the
+  thrower is code this library does not own: a hook, an OAuth plugin, the consumer's repository,
+  a Redis client — and in `AuthExceptionFilter`'s case, literally anything the surrounding
+  application threw. None of them hands the logger an error object any more, and on the twenty
+  sites where the caller could not name what the thrower held, **nothing the thrower authored is
+  published at all** — `describeChannelStatus` reports the shape of the failure (that a throw
+  happened, and how many links its `cause` chain has) and reads neither `message` nor `name` nor
+  `stack`. Where the caller CAN name the values it passed in, `describeError` still publishes the
+  text with those removed.
+
+  **An empty redaction list is the shape that looked safe and was not.** `describeError(err, [])`
+  publishes the thrower's `name` and `message` with an empty list asserting there is nothing to
+  remove — an assertion none of these call sites can make, because every thrower on them is
+  consumer code: a repository handed `findByEmail(dto.email, tenantId)`, a hook handed the IP and
+  user agent, a `maxSessionsResolver` handed the full `AuthUser` including the password hash, a
+  repository call carrying re-encrypted MFA material. A consumer error that quotes its own input
+  put those in the log. The empty list did not make the line safe; it removed the only defence
+  being attempted while reading like one. The form is now banned outright and the guard suite
+  enforces it.
+
+  **A partial list is the same defect with a longer sleeve.** Seven more sites named one to three
+  fields while the thrower had been handed a whole object: every `afterRegister`, `afterLogin`,
+  `afterEmailVerified`, `afterPasswordReset`, `afterInvitationAccepted` and `onNewSession` hook
+  receives the complete `SafeAuthUser`, so a hook throwing `new Error(user.name)` published a name
+  that no list mentioned. Those are opaque now too. What survives is the rule the list was always
+  meant to express — **name the values the thrower actually received** — which three sites can
+  still satisfy honestly, because they hand a repository or a hook exactly one identifier and
+  name exactly that.
+
+  Those three also had the list naming the wrong string: `describeError(err, [logSafe(user.id)])`
+  redacted the SANITISED id, and `logSafe` returns `<malformed>` for precisely the ids worth
+  worrying about — so the value the repository was handed was not in the list at all. They name
+  the value as passed now, and the guard rejects any redaction list containing a call.
+
+  **The highest-value site was not in the original report.** `OAuthService.handleCallback` wraps
+  `plugin.exchangeCode(code, codeVerifier)` and `plugin.fetchProfile(accessToken)`. The plugin is
+  consumer code that RECEIVED all three, and an HTTP client attaching its request config to the
+  error is the ordinary case rather than an exotic one — axios does it by default. A live access
+  token could reach the operator's pipeline through a rejection this library then logged in full.
+  The handler publishes nothing the plugin wrote. Naming the three values was the first fix and it
+  was the weaker half by its own reasoning: redaction is a substring match, so it holds for a token
+  the plugin echoed as given and not for one it re-encoded — and a token inside a base64 or
+  URL-encoded request body is not present as written. The test drives exactly that: the plugin
+  echoes the token base64url-encoded, and the line contains neither form.
+
+  The second was found by the guard rather than by reading: `AuthExceptionFilter`, whose parameter
+  is called `exception`, not `err`. It is the branch a re-thrown mail-channel error lands in under
+  `onDeliveryError: 'rethrow'` — this library's own documentation says so — so it is the most
+  exposed log site of the set, and a name-based sweep walked straight past it.
+
+  **What you lose:** the stack trace for a hook, plugin or repository failure. That stack belongs
+  to the consumer's own code, which can log it where the audience is known; a library's log line
+  reaches a wider one. Same argument that took the recipient address out of the delivery-failure
+  line. On the twenty opaque sites you also lose the message and the error's class; what remains
+  is that a failure happened, where, and how deep its `cause` chain ran.
+
+  `redactSecrets` was hardened in the process. It read `.length` off each element, so a single
+  `undefined` in the list threw a `TypeError` — out of a `catch` block, turning a failure the
+  caller meant to absorb into an unhandled rejection with no log line at all, which is worse than
+  the leak it exists to prevent. It is exported, so a consumer reaches that edge from plain
+  JavaScript. Found when a caller named a field the compiler believed was a `string`; the suite
+  did not fail an assertion, it crashed the worker.
+
 - **A consumer-supplied identifier could forge a second record in the log.** Every value this
   library interpolates into a log template now passes a guard: `logSafe` for identifiers,
   `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight

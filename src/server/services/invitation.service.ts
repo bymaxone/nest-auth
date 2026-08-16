@@ -727,7 +727,7 @@ export class InvitationService {
           sanitizedHeaders: sanitizeHeaders(headers)
         })
       ).catch((err: unknown) => {
-        this.logger.error('afterInvitationAccepted hook threw', err)
+        this.logger.error(`afterInvitationAccepted hook threw: ${describeChannelStatus(err)}`)
       })
     }
 

@@ -17,6 +17,7 @@ import type {
   SafeAuthUser
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 
 // ---------------------------------------------------------------------------
@@ -284,12 +285,12 @@ export class SessionService {
           // codebase (auth.service afterLogin/afterRegister, mfa.service afterLogin).
           void Promise.resolve(onNewSession(toSafeUser(user), minimalSessionInfo, context)).catch(
             (err: unknown) => {
-              this.logger.error('onNewSession hook threw', err)
+              this.logger.error(`onNewSession hook threw: ${describeChannelStatus(err)}`)
             }
           )
         })
         .catch((err: unknown) => {
-          this.logger.error('onNewSession hook — findById failed', err)
+          this.logger.error(`onNewSession hook — findById failed: ${describeChannelStatus(err)}`)
         })
     }
 
@@ -321,7 +322,7 @@ export class SessionService {
     // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
     // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
     void this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:').catch((err: unknown) => {
-      this.logger.warn('listSessions: grace-pointer prune failed', err)
+      this.logger.warn(`listSessions: grace-pointer prune failed: ${describeChannelStatus(err)}`)
     })
 
     const members = await this.redis.smembers(`sess:${userId}`)
@@ -402,7 +403,9 @@ export class SessionService {
     // `invalidateUserSessions` — the session would then survive "sign out everywhere" and keep
     // rotating, and merely opening this listing would be what orphaned it.
     void this.redis.pruneDeadMembers(`sess:${userId}`, staleKeys).catch((err: unknown) => {
-      this.logger.error(`listSessions: failed to prune ${staleKeys.length} dead member(s)`, err)
+      this.logger.error(
+        `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeChannelStatus(err)}`
+      )
     })
 
     results.sort((a, b) => b.createdAt - a.createdAt)
@@ -756,8 +759,8 @@ export class SessionService {
         await this.redis.del(`sd:${entry.memberHash}`)
       } catch (err: unknown) {
         this.logger.error(
-          `enforceSessionLimit: failed to evict session ${entry.memberHash} for user ${logSafe(userId)}`,
-          err
+          `enforceSessionLimit: failed to evict session ${entry.memberHash} ` +
+            `for user ${logSafe(userId)}: ${describeChannelStatus(err)}`
         )
         continue
       }
@@ -767,7 +770,7 @@ export class SessionService {
         // Note: entry.memberHash is SHA-256 (not HMAC-SHA-256) of the refresh token.
         void Promise.resolve(this.hooks.onSessionEvicted(userId, entry.memberHash, context)).catch(
           (err: unknown) => {
-            this.logger.error('onSessionEvicted hook threw', err)
+            this.logger.error(`onSessionEvicted hook threw: ${describeChannelStatus(err)}`)
           }
         )
       }
@@ -814,7 +817,9 @@ export class SessionService {
       }
       return resolved
     } catch (err: unknown) {
-      this.logger.error('maxSessionsResolver threw — falling back to defaultMaxSessions', err)
+      this.logger.error(
+        `maxSessionsResolver threw — falling back to defaultMaxSessions: ${describeChannelStatus(err)}`
+      )
       return defaultMaxSessions
     }
   }

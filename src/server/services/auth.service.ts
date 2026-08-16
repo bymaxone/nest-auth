@@ -30,8 +30,7 @@ import type {
 } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
-import { describeChannelStatus } from '../utils/describe-error'
-import { describeError } from '../utils/describe-error'
+import { describeChannelStatus, describeError } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
@@ -141,7 +140,9 @@ export class AuthService {
       }
       await this.userRepo.updatePassword(userId, upgraded)
     } catch (err: unknown) {
-      this.logger.error('rehash on verify failed — the stored hash is unchanged', err)
+      this.logger.error(
+        `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
+      )
     }
   }
 
@@ -262,7 +263,7 @@ export class AuthService {
     // afterRegister — fire-and-forget; errors must not propagate.
     if (this.hooks?.afterRegister) {
       void Promise.resolve(this.hooks.afterRegister(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterRegister hook threw', err)
+        this.logger.error(`afterRegister hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -448,11 +449,11 @@ export class AuthService {
 
     // Non-blocking side effects.
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(this.hooks.afterLogin(safeUser, context)).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -536,7 +537,7 @@ export class AuthService {
           // one also names the failing KEY, and session keys embed the consumer's user id. Nothing
           // is passed as `secrets`: a session-cleanup failure holds none, and saying so with an
           // empty array is how a caller states that, rather than by omitting the argument.
-          this.logger.warn(`logout: session cleanup failed — ${describeError(err, [])}`)
+          this.logger.warn(`logout: session cleanup failed — ${describeChannelStatus(err)}`)
         }
       })
     }
@@ -546,7 +547,7 @@ export class AuthService {
     if (this.hooks?.afterLogout && userId) {
       void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
         (err: unknown) => {
-          this.logger.error('afterLogout hook threw', err)
+          this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
         }
       )
     }
@@ -695,7 +696,9 @@ export class AuthService {
         .catch((err: unknown) => {
           // Same reasoning as the logout path above: bounded, control-character-free, and no
           // secret in flight to name.
-          this.logger.warn(`refresh: session detail rotation failed — ${describeError(err, [])}`)
+          this.logger.warn(
+            `refresh: session detail rotation failed — ${describeChannelStatus(err)}`
+          )
         })
     }
 
@@ -831,7 +834,7 @@ export class AuthService {
     )
 
     void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
-      this.logger.error('updateLastLogin failed', err)
+      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
@@ -842,7 +845,7 @@ export class AuthService {
           sanitizedHeaders: {}
         })
       ).catch((err: unknown) => {
-        this.logger.error('afterLogin hook threw', err)
+        this.logger.error(`afterLogin hook threw: ${describeChannelStatus(err)}`)
       })
     }
 
@@ -912,7 +915,7 @@ export class AuthService {
       void Promise.resolve(
         this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
       ).catch((err: unknown) => {
-        this.logger.error('afterEmailVerified hook threw', err)
+        this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
       })
     }
   }
@@ -1109,10 +1112,10 @@ export class AuthService {
   private fireAndForget(run: () => Promise<void> | void, name: string): void {
     try {
       void Promise.resolve(run()).catch((err: unknown) => {
-        this.logger.error(`${name} hook threw`, err)
+        this.logger.error(`${name} hook threw: ${describeChannelStatus(err)}`)
       })
     } catch (err: unknown) {
-      this.logger.error(`${name} hook threw synchronously`, err)
+      this.logger.error(`${name} hook threw synchronously: ${describeChannelStatus(err)}`)
     }
   }
 
