@@ -55,6 +55,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   run, which is the argument for it — forty-eight had drifted silently under a convention that
   lived only in reviewers' heads.
 
+  Two corrections to the walker itself, both held by synthetic fixtures because `src/` has no
+  example of either. It now knows `fatal`, the sixth level Nest 11's `Logger` exposes — a level
+  list has to be complete rather than sufficient, and the first `this.logger.fatal(...)` anyone
+  wrote would otherwise have been invisible to a gate claiming to walk them all. And it no longer
+  descends into a guard's argument: what reaches the record is the guard's OUTPUT, so
+  ``logSafe(`id=${user.id}`)`` was being reported twice, once as guarded and once as bare, failing
+  a line that cannot carry a control character. A false positive on correct code is how a gate
+  gets weakened by whoever hits it next.
+
   Requires no action from a consumer: `logSafe` returns an ordinary identifier unchanged, so log
   lines are byte-identical unless a value actually carried a control character, in which case the
   field is replaced with `<malformed>` and the record stays one record.

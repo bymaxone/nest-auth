@@ -150,7 +150,11 @@ interface LoggerCall {
  */
 function loggerCalls(source: ts.SourceFile): LoggerCall[] {
   const found: LoggerCall[] = []
-  const LEVELS = new Set(['log', 'warn', 'error', 'debug', 'verbose'])
+  // Every level Nest 11's `Logger` exposes. `fatal` was missing and nothing here uses it yet,
+  // which is exactly why it is easy to leave out and exactly why it belongs: the first
+  // `this.logger.fatal(...)` anyone writes would be invisible to a gate that claims to walk them
+  // all. A level list is the kind of thing that has to be complete rather than sufficient.
+  const LEVELS = new Set(['log', 'warn', 'error', 'debug', 'verbose', 'fatal'])
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -182,6 +186,12 @@ function loggerCalls(source: ts.SourceFile): LoggerCall[] {
  * examined — a `)` or a `,` or a quote inside the message is data to the compiler and cannot be
  * mistaken for syntax. That is the whole reason this reads the AST.
  *
+ * **The walk stops at a guard.** A guard's argument is not part of the emitted line — its OUTPUT
+ * is, and the guard sanitises whatever it was handed. Descending anyway made
+ * ``logSafe(`id=${user.id}`)`` report twice: the outer interpolation as guarded and the inner
+ * `user.id` as bare, failing a line whose emitted value cannot carry a control character. The
+ * rule is about what reaches the record, so the subtree a guard consumes is not scanned.
+ *
  * @param source - Parsed file.
  * @param file - Path, for the failure message.
  * @returns Every interpolation, with whether it is a guard call.
@@ -191,6 +201,8 @@ function interpolationsInLoggerCalls(source: ts.SourceFile, file: string): Inter
 
   for (const call of loggerCalls(source)) {
     const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && isGuardCall(node)) return
+
       if (ts.isTemplateExpression(node)) {
         for (const span of node.templateSpans) {
           found.push({
@@ -307,6 +319,43 @@ describe('log-injection guard (E2E)', () => {
     expect(interpolationsInLoggerCalls(source, 'synthetic.ts').map((i) => i.expression)).toEqual([
       'attackerValue'
     ])
+  })
+
+  // `fatal` is the sixth level Nest 11's `Logger` exposes and the gate did not know it. Nothing in
+  // `src/` uses it, which is why the omission was invisible and why only a synthetic fixture can
+  // hold it: the first real `this.logger.fatal(...)` would otherwise be the test case.
+  it('sees an interpolation at every level the logger exposes', () => {
+    for (const level of ['log', 'warn', 'error', 'debug', 'verbose', 'fatal']) {
+      const source = ts.createSourceFile(
+        'synthetic.ts',
+        `class C { m() { this.logger.${level}(\`for \${attackerValue}\`) } }`,
+        ts.ScriptTarget.ESNext,
+        true
+      )
+
+      expect(interpolationsInLoggerCalls(source, 'synthetic.ts').map((i) => i.expression)).toEqual([
+        'attackerValue'
+      ])
+    }
+  })
+
+  // A guard's ARGUMENT is not what reaches the record — its output is, and the guard sanitises
+  // whatever it was handed. Before the walk stopped at a guard this reported twice: the outer
+  // interpolation as guarded and the inner `user.id` as bare, failing a line that cannot carry a
+  // control character. A false positive on a correct line is how a gate gets weakened by whoever
+  // hits it next.
+  it('does not scan inside a guard, whose argument never reaches the record', () => {
+    const source = ts.createSourceFile(
+      'synthetic.ts',
+      'class C { m() { this.logger.error(`${logSafe(`id=${user.id}`)}`) } }',
+      ts.ScriptTarget.ESNext,
+      true
+    )
+
+    const found = interpolationsInLoggerCalls(source, 'synthetic.ts')
+
+    expect(found).toHaveLength(1)
+    expect(found[0]?.guarded).toBe(true)
   })
 
   // A second argument is counted, not scanned. The two shapes below both defeated the character
