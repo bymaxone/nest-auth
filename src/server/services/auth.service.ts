@@ -1136,7 +1136,7 @@ export class AuthService {
         await provider.sendEmailVerificationOtp(tenantId, email, otp)
       } catch (err: unknown) {
         // The error is NOT passed through, and nothing it carried reaches this line:
-        // `describeChannelStatus` publishes only a validated SMTP status, because a relay that
+        // `describeChannelStatus` publishes nothing the channel wrote, because a relay that
         // rejects by quoting the message body puts THIS otp into the error, and a quote can arrive
         // re-encoded where no substring match reaches it.
         //

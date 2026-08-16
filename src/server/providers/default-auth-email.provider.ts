@@ -20,9 +20,9 @@
  * and a notice of a change the user may not have made tells them how to react.
  *
  * **On what reaches the log: nothing this file did not write.** A delivery failure logs the
- * message's own label and, when the channel supplied one, an SMTP status code —
- * `delivery failed sending passwordResetOtp: <error>: 550`. Never the error object, its
- * `stack`, its own properties, its `message`, its `name`, or the rendered subject.
+ * message's own label and, per link of the error's cause chain, an opaque stand-in —
+ * `delivery failed sending passwordResetOtp: <error>`. Never the error object, its `stack`, its
+ * own properties, its `message`, its `name`, a status parsed off it, or the rendered subject.
  *
  * That absolute is deliberate, and four weaker versions of it failed first. A relay that rejects
  * with `550` **quotes the offending content**, so the body arrives inside `error.message` — which
@@ -152,12 +152,12 @@ export interface DefaultAuthEmailProviderOptions {
    * that a completed auth-state change is never reversed by a notice that could not be delivered.
    *
    * **`'rethrow'` hands you an error that may contain the credential.** The provider's own log
-   * line publishes only a validated status, but what it re-throws is the channel's original error,
-   * unaltered — because
+   * line publishes nothing the channel wrote, but what it re-throws is the channel's original
+   * error, unaltered — because
    * a caller that opted into this policy did so to branch on the channel's codes, and a laundered
    * replacement would take those away. A relay that rejects by quoting the message body puts the
    * OTP or invitation token into that error, so whatever catches it must not log it raw. Describe
-   * it with `describeChannelStatus`, which publishes only a validated status code — NOT
+   * it with `describeChannelStatus`, which publishes nothing the channel wrote — NOT
    * `redactSecrets`, which this file's own history shows is not enough on its own: a relay
    * may quote what it rejected in transfer encoding, and a substring match cannot see through
    * that. `redactSecrets` is for strings you know contain the literal value. This is the one
@@ -418,8 +418,8 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     // log the recipient, which exists because a log line reaches a wider audience than the inbox.
     // Naming them is not enough on its own: a relay is as free to quote this body re-encoded as it
     // is to quote a reset code's, and redaction sees through neither. An address is not a
-    // credential, but "not a credential" was never the standard — it is personal data, and the
-    // status code is still the half an operator acts on.
+    // credential, but "not a credential" was never the standard — it is personal data, and which
+    // message failed for which tenant is still what an operator acts on.
     await this.deliver(
       tenantId,
       oldEmail,
@@ -540,8 +540,8 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
       // because a caller that opted into 'rethrow' did so to inspect the failure, and handing it a
       // laundered error would take away the codes it branches on. That makes the credential the
       // caller's to contain, and redaction is NOT the way — this file's own history is why. Run it
-      // through `describeChannelStatus`, which is exported for exactly this and publishes only a
-      // validated status. See the option's own documentation.
+      // through `describeChannelStatus`, which is exported for exactly this and publishes nothing
+      // the channel wrote. See the option's own documentation.
       if (this.rethrowOnError) {
         throw error
       }

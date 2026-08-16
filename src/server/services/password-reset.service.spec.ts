@@ -2287,7 +2287,7 @@ describe('PasswordResetService', () => {
       await flushMicrotasks()
 
       // The error's NAME carries the code here, and no part of it reaches the line: the
-      // description is a validated status and nothing else. The assertion is not merely that the
+      // description carries nothing the channel authored. The assertion is not merely that the
       // code is absent — it is that the ORDINARY line survives, because a build that let the name
       // through would have `safeLogLine` withhold the whole record to stop it, and the operator
       // would lose the diagnosis to a guard that should never have had to fire.

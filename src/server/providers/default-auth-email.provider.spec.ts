@@ -397,8 +397,8 @@ describe('DefaultAuthEmailProvider', () => {
     await send(provider)
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    // The credential is gone AND so is the channel's prose. What survives is the parsed status,
-    // which is the half an operator acts on — `550` is a refusal, `421` a transient outage.
+    // The credential is gone AND so is the channel's prose. What survives is the message's own
+    // label, which this file wrote, and the stand-in saying a throw happened.
     expect(logged).not.toContain(secret)
     expect(logged).not.toContain('rejected by policy')
     expect(logged).not.toContain('550')
@@ -523,8 +523,8 @@ describe('DefaultAuthEmailProvider', () => {
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
     // The whole line. The links stay visibly separated so an operator can tell "the send failed"
-    // from "the relay said" — and on a credential path each link contributes only its name and a
-    // parsed status, never the relay's prose.
+    // from "the relay said" — and on a credential path each link contributes only its stand-in,
+    // never the relay's prose and nothing parsed off it.
     expect(logged).not.toContain('550123')
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error> <- <error>')
   })

@@ -20,9 +20,10 @@ const WITHHELD =
  * The literal check is the obvious half. The digit-normalised one exists because the composition
  * this function guards against does not only join text — it joins NUMBERS, and punctuation between
  * them is not a barrier to anyone reading the record. `sendPasswordResetOtp failed for user u4:
- * <error>: 550` contains neither the literal `4550` nor anything resembling it, and stripping every
- * non-digit yields exactly that: a live four-digit reset code, assembled from a consumer's user id
- * and a relay's status. Both halves are ordinary and neither is a leak on its own.
+ * <error> (attempt 550)` contains neither the literal `4550` nor anything resembling it, and
+ * stripping every non-digit yields exactly that: a live four-digit reset code, assembled from a
+ * consumer's user id and a counter this library composed. Both halves are ordinary and neither is
+ * a leak on its own.
  *
  * Values that are not all digits need no exclusion, and adding one would be dead code dressed as a
  * guard: a token is hex and an address has letters, and neither can be found inside a haystack of

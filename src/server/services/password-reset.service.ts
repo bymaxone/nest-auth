@@ -621,7 +621,7 @@ export class PasswordResetService {
         await send.call(provider, user.tenantId, user.email)
       } catch (err: unknown) {
         // The error is NOT handed to the logger, and nothing the channel wrote reaches this line:
-        // `describeChannelStatus` publishes only a validated status. An SMTP rejection routinely
+        // `describeChannelStatus` publishes nothing it authored. An SMTP rejection routinely
         // NAMES the recipient it refused (`550 user@example.com: recipient rejected`) with no
         // quoted body involved, which makes it the likeliest exposure of the set — and the
         // provider strips the address from ITS line and rethrows the original under

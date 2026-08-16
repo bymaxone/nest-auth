@@ -392,11 +392,13 @@ export class PasswordService {
       // its error is a place the plaintext can be.
       //
       // `describeChannelStatus` was used here first and was wrong, which is worth recording
-      // because the mistake is reusable: it validates the SMTP reply grammar, and a breach
-      // checker is not an SMTP channel. Its guarantee is that a relay's prose cannot masquerade
-      // as a reply code; it says nothing about text that is not a reply at all. A password of
-      // `424 Correct Horse!` echoed back as the error message parses as the reply `424` and
-      // publishes the first three characters of the credential. Right tool, wrong port.
+      // because the mistake is reusable. That function then kept a status parsed off the SMTP
+      // reply grammar, and a breach checker is not an SMTP channel: the guarantee was that a
+      // relay's prose could not masquerade as a reply code, which said nothing about text that is
+      // not a reply at all. A password of `424 Correct Horse!` echoed back as the error message
+      // parsed as the reply `424` and published the first three characters of the credential.
+      // Right tool, wrong port — and the parse is gone from that function now, for a related
+      // reason, but choosing it here would still have been wrong on the day.
       //
       // There is no status to preserve here either, so nothing is lost: an HTTP checker's own
       // code would have to come from a structured field it exposes, never parsed out of prose,

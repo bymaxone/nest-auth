@@ -13,8 +13,8 @@ import { redactSecrets } from './redact-secrets'
  * called it a second lock against a re-encoded body, and that was wrong. A relay returning the
  * body base64'd encodes it from its start, so the credential sits in the first sentence and
  * survives any cap that leaves enough text to decode: the whole reset-code body is 96 base64
- * characters. Confidentiality on a credential path comes from dropping the free text entirely and
- * keeping only a parsed status code; this limit is what stops a bounce filling a log file.
+ * characters. Confidentiality on a credential path comes from dropping the channel's text
+ * entirely, keeping nothing parsed off it; this limit is what stops a bounce filling a log file.
  */
 const ERROR_TEXT_LIMIT = 200
 
@@ -109,8 +109,8 @@ function describeOneLink(
     // guard conditional on a policy rather than on whether anything needs guarding.
     const raw = redactSecrets(String(error.message), secrets)
 
-    // WITH a credential in flight, the channel's free text does not reach the line at all — only
-    // a status code parsed out of it. Redaction cannot save that text: a relay that returns the
+    // WITH a credential in flight, the channel's free text does not reach the line at all, and
+    // nothing is parsed off it. Redaction cannot save that text: a relay that returns the
     // body RE-ENCODED defeats substring matching, and the length cap does not help either, because
     // the encoding is of the body FROM ITS START and the code sits in the first sentence. Measured:
     // the whole reset-code body is 96 base64 characters, so the first 200 of the line decode
@@ -141,9 +141,9 @@ const OPAQUE_NAME = '<error>'
  * letter, a valid identifier by any such rule, and reversible by anyone reading the log. A shape
  * test cannot tell `SmtpRejection` from a credential in transfer encoding, which is the exact
  * threat this policy exists for, so on a credential path the answer is that no name comes through
- * at all. What is lost is the error's class; what is kept is the status, which is the half an
- * operator acts on — and a link with no status still reads as `<error>`, which distinguishes a
- * provider that threw from a relay that refused.
+ * at all. What is lost is the error's class; what is kept is that this link exists, and one
+ * `<error>` per link still tells an operator how deep the failure was reported from — a provider
+ * that threw on its own reads differently from one relaying a remote's refusal.
  *
  * Under `'redact'` nothing secret was in flight, the message's own text is already allowed
  * through, and constraining the name would cost diagnosis to buy nothing.
@@ -269,13 +269,13 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
 }
 
 /**
- * Describes a thrown value using only what can be independently validated.
+ * Describes a thrown value while publishing nothing the channel authored.
  *
  * For failures on a path that **rendered a credential, or anything else you would withhold, into
- * the message**. Nothing the channel wrote is published: not the message, and not the `name`
- * either, which is as much the channel's field to fill. What survives is the SMTP status, rebuilt
- * from a pattern's own capture rather than sliced out of the input, so nothing a relay writes
- * after it can ride along whatever it encoded it in.
+ * the message**. Nothing the channel wrote is published: not the message, not the `name` — which
+ * is as much the channel's field to fill — and nothing parsed off either. What survives is the
+ * SHAPE of the failure: that a throw happened, and how many links its `cause` chain has. Both are
+ * facts about the error object rather than text, so neither varies with what the body rendered.
  *
  * **It takes no secrets, and that is the guarantee rather than an omission.** Redaction is a
  * substring match: it assumes the credential reaches the error the way this library wrote it, and
@@ -289,11 +289,11 @@ export function describeError(error: unknown, secrets: readonly string[]): strin
  * @example
  * ```typescript
  * describeChannelStatus(err)
- * // => '<error> <- <error>: 550'
+ * // => '<error> <- <error>'
  * ```
  *
  * @param error - Whatever was thrown.
- * @returns A single-line description carrying only validated status codes.
+ * @returns A single-line description carrying nothing the channel authored.
  */
 export function describeChannelStatus(error: unknown): string {
   // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
