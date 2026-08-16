@@ -75,8 +75,15 @@ export interface AuthEmailSink {
     /** Which message this is, so a sink can act per flow. Always one of {@link AUTH_EMAIL_KINDS}. */
     kind: AuthEmailKind
     /**
-     * `true` when the body renders a live credential — a reset code, a verification code, a reset
-     * or invitation token.
+     * `true` when the rendered message carries a live credential — a reset code, a verification
+     * code, a reset or invitation token.
+     *
+     * **The whole message, not only the bodies.** `subject`, `html` and `text` are all rendered by
+     * the same renderer and all handed to the sink, so a credential in the subject is exactly as
+     * published as one in the body. Scoping this to "the body" would have a renderer that puts a
+     * code in its subject line correctly leave the flag unset by the contract's own words, which
+     * is the flag being wrong by construction rather than by mistake. (The built-in copy states
+     * every code in the body and none in a subject; this is about what an override may do.)
      *
      * Two sources, combined so that neither can weaken the other. The message KIND supplies the
      * baseline, which is what the built-in copy carries. A rendering may additionally declare
@@ -119,7 +126,9 @@ export interface AuthEmailMessage {
    */
   readonly html?: string | undefined
   /**
-   * Set to `true` when this rendering puts a live credential in the body.
+   * Set to `true` when this rendering puts a live credential anywhere in the message — in
+   * {@link subject} as much as in {@link text} or {@link html}. All three are handed to the sink,
+   * so a code in the subject line is exactly as published as one in the body.
    *
    * The provider already knows which KINDS carry one by default, and a renderer cannot make that
    * baseline weaker: this value is OR-ed with it, so `false` on `passwordResetOtp` is ignored and

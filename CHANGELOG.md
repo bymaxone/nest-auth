@@ -23,9 +23,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 - **`onDeliveryError` takes a per-message map, so an opt-in stops being all-or-nothing.** It was one
   switch for all ten messages. A deployment sets `'rethrow'` for a specific benefit — deleting an
   undelivered reset token early, not recording "verification sent" for a send that failed — and the
-  same setting then handed it the channel's **original, unlaundered** error on every other path,
-  including the three whose body renders a live credential. The two flows that motivate the opt-in
-  are not the ones carrying the most sensitive body.
+  same setting then handed it the channel's **original, unlaundered** error on every other path.
+  Five messages render a credential, and those two flows are two of the five — so the bare form
+  reached three further credential-bearing paths that neither flow asked for.
 
   ```typescript
   new DefaultAuthEmailProvider(sink, {
@@ -42,8 +42,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `AUTH_EMAIL_KINDS`, `AuthEmailKind` and `DeliveryErrorPolicyMap` are exported. A catalogue entry
   added without a matching kind fails to compile.
 
-- **`AuthEmailSink.send` now states which message it is carrying and whether the body holds a live
-  credential.** `kind` and `containsCredential` are always set. The obligation is in the port's own
+- **`AuthEmailSink.send` now states which message it is carrying and whether it holds a live
+  credential** — anywhere in the rendered message, subject included, since all three fields reach
+  the sink. `kind` and `containsCredential` are always set. The obligation is in the port's own
   documentation, where an implementer meets it: **a sink must not publish the content of a message
   flagged `containsCredential`** — not in an error it throws, not in a log line, not in an audit
   record that outlives delivery.

@@ -1183,19 +1183,28 @@ describe('DefaultAuthEmailProvider', () => {
     await provider.sendInvitation('t', 'u@e.com', INVITE)
 
     const bearing = sink.send.mock.calls.filter(([input]) => input.containsCredential).length
-    const source = readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8')
     const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven']
     const expected = NUMBER_WORDS[bearing]
 
-    const claims = source
-      .split('\n')
-      .filter((line) => /(carry|render) a credential/.test(line))
-      .map((line) => line.trim())
+    // Both files, because scoping this to the source is how the previous round left the same
+    // wrong number alive: the JSDoc was corrected and the CHANGELOG entry describing the same
+    // change still said "three". A claim guarded in one file and loose in another drifts at the
+    // loose one, which is the file a consumer reads first.
+    // The number is captured as the one GOVERNING the claim, not merely present on its line. A
+    // `toContain` was tried and is unsound here: "Five messages render a credential ... two of
+    // the five" names the count twice, so rewriting the first to "Three" left the second to
+    // satisfy the check and the mutation passed. A test that cannot fail is the thing this whole
+    // exercise exists to avoid, and it was the first version of this one.
+    const COUNTED_CLAIM =
+      /\b(zero|one|two|three|four|five|six|seven)\b[^.]*?(carry|render)s? a credential/gi
+    const claims = [
+      readFileSync(join(__dirname, 'default-auth-email.provider.ts'), 'utf8'),
+      readFileSync(join(__dirname, '../../../CHANGELOG.md'), 'utf8')
+    ].flatMap((text) => [...text.matchAll(COUNTED_CLAIM)].map((match) => match[1]?.toLowerCase()))
 
-    // Both sentences exist, so deleting one cannot make this pass vacuously.
-    expect(claims).toHaveLength(2)
-    for (const claim of claims) {
-      expect(claim.toLowerCase()).toContain(expected)
-    }
+    // Two sentences in the source and one in the CHANGELOG, so deleting any of them cannot make
+    // this pass vacuously — an empty list satisfies a for-loop and proves nothing.
+    expect(claims).toHaveLength(3)
+    expect(claims).toEqual([expected, expected, expected])
   })
 })
