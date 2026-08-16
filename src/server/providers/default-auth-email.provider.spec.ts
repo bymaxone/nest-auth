@@ -324,8 +324,8 @@ describe('DefaultAuthEmailProvider', () => {
     await expect(strict.sendPasswordResetToken('tenant-1', 'user@example.com', 'TOK')).rejects.toBe(
       boom
     )
-    // A credential path, so the channel's text does not reach the line — `channel down` carries
-    // no status code, leaving the error's name alone.
+    // A credential path, so nothing the channel wrote reaches the line — neither the message nor
+    // the name, whatever either happened to contain.
     expect(errorSpy).toHaveBeenCalledWith('delivery failed sending passwordResetToken: <error>')
   })
 

@@ -34,10 +34,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **The rule that came out of it, after four weaker ones failed: this library publishes nothing a
   mail channel authored.** Not the error's `message`, not its `name`, not the rendered subject —
   and not on "credential paths" only, but on every path. What a delivery failure logs is the
-  message's own label and, when the channel supplied one, an SMTP status code:
+  message's own label and, per link of the error's cause chain, an opaque stand-in:
 
   ```
-  delivery failed sending passwordResetOtp: <error>: 550
+  delivery failed sending passwordResetOtp: <error>
   ```
 
   Every part of that line is text this library wrote. The guarantee is simpler to hold than any
