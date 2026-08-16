@@ -27,20 +27,48 @@ import { join } from 'node:path'
 
 import ts from 'typescript'
 
+import { describeChannelStatus, describeError } from '../../src/server/utils/describe-error'
+import { logSafe } from '../../src/server/utils/log-safe'
+import { maskEmail } from '../../src/server/utils/mask-email'
+
 /** Source root, from this suite's location under `test/e2e/`. */
 const SRC_ROOT = join(__dirname, '../../src')
 
 /**
+ * Whether a string carries a character that ends a log record.
+ *
+ * Stated here by code point rather than imported from `logSafe`, on purpose: checking the guards
+ * against the very set they use would let a weakened set pass silently, because the property and
+ * the implementation would move together. This suite states what it wants independently of
+ * whatever provides it.
+ *
+ * @param value - A guard's return value.
+ * @returns `true` when the value could close the record and open a forged one.
+ */
+function breaksRecord(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0
+
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029
+  })
+}
+
+/**
  * Calls whose output is safe to interpolate: each either strips control characters or replaces the
  * value outright.
+ *
+ * That sentence is an invariant, not a description, and the membership test below exercises every
+ * name against a value carrying `\n` rather than trusting it. `maskEmail` was listed here while
+ * copying the domain verbatim, which made `a@example.com\nforged` a masked address that still
+ * closed the record — the allowlist asserted a property the member did not have.
+ *
+ * `safeLogLine` is deliberately absent. It is a check on a fully composed line, not a field guard:
+ * it takes the values that must not appear and answers whether the line reconstructed one, and
+ * `safeLogLine(raw, [])` returns `raw` untouched. Every call site wraps the whole template with it
+ * — it appears inside a `${...}` nowhere in `src/` — so removing it from this set costs nothing
+ * and closes the shape where it would have been read as a boundary it never enforced.
  */
-const GUARDS = new Set([
-  'logSafe',
-  'maskEmail',
-  'describeChannelStatus',
-  'describeError',
-  'safeLogLine'
-])
+const GUARDS = new Set(['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError'])
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -308,5 +336,36 @@ describe('log-injection guard (E2E)', () => {
     expect(LIBRARY_AUTHORED.has('String(err)')).toBe(false)
     expect(LIBRARY_AUTHORED.has('String(error)')).toBe(false)
     expect(LIBRARY_AUTHORED.has('String(resolved)')).toBe(false)
+  })
+
+  // The allowlist's own claim, exercised rather than asserted in prose. `maskEmail` sat in this
+  // set while copying the domain verbatim, so a masked address still carried the newline that
+  // closes the record: the list said "safe to interpolate" and one member was not. Feeding every
+  // guard a value that breaks a record is the check that would have caught it, and it holds
+  // whoever adds the next name to the same standard — including the shape that hid this one, a
+  // guard that sanitises the part it is named for and passes the rest through.
+  it.each([
+    ['logSafe', (value: string) => logSafe(value)],
+    ['maskEmail', (value: string) => maskEmail(value)],
+    ['describeChannelStatus', (value: string) => describeChannelStatus(new Error(value))],
+    ['describeError', (value: string) => describeError(new Error(value), [])]
+  ])('%s never returns a value that can break a log record', (name, guard) => {
+    expect(GUARDS.has(name)).toBe(true)
+
+    for (const injection of [
+      'a@example.com\nforged',
+      'a@example.com\r\nforged',
+      'a@example.com\u0085forged',
+      'a@example.com\u2028forged'
+    ]) {
+      expect(breaksRecord(guard(injection))).toBe(false)
+    }
+  })
+
+  // The counterpart to the exclusion documented on GUARDS: `safeLogLine` answers a question about
+  // a whole line and enforces no boundary of its own — `safeLogLine(raw, [])` is `raw`. Listing it
+  // as a field guard would let `${safeLogLine(x, [])}` pass the gate carrying anything.
+  it('does not accept the composed-line check as a field guard', () => {
+    expect(GUARDS.has('safeLogLine')).toBe(false)
   })
 })

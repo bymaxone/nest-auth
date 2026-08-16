@@ -59,6 +59,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   lines are byte-identical unless a value actually carried a control character, in which case the
   field is replaced with `<malformed>` and the record stays one record.
 
+  **`maskEmail` was one of those guards and did not enforce the boundary.** It preserves the
+  domain verbatim to keep the line useful to an operator, so `a@example.com\nforged` masked to
+  `a***@example.com\nforged`: the address was hidden and the injection was not, and being on the
+  allowlist meant the gate reported those sites as safe. Masking and record safety are two
+  separate duties and the helper owed both; it now passes its result through `logSafe`. The
+  addresses reaching those lines are not all DTO-validated — `profile.email` is whatever an OAuth
+  provider's userinfo response contained and `oldEmail` is whatever the host's repository stored,
+  so `@IsEmail()` saw neither. The allowlist's claim is now a test rather than a sentence: every
+  name on it is fed a value carrying LF, CR, NEL and both Unicode separators, and must return
+  something that cannot end a record. `safeLogLine` was removed from the allowlist in the same
+  pass — it is a check on a fully composed line, not a field guard (`safeLogLine(raw, [])` is
+  `raw`), and it appears inside no interpolation in `src/`.
+
 - **A one-time code could reach the operator's log in clear text when the mail relay rejected the
   message.** `DefaultAuthEmailProvider` logged the raw error object on a delivery failure. The
   comment justifying it read "the error is the channel's own, not the rendered body" — and a
