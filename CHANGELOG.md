@@ -45,7 +45,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   allowlist of values this library authors. It fails **closed**: a new interpolation breaks the
   build until somebody decides which it is. The guard call must BE the whole expression —
   `${logSafe(a) || attackerValue}` is rejected, as are a concatenation, a ternary arm, and a
-  helper whose name merely starts with a guard's. It caught the two `String(err)` sites on its first
+  helper whose name merely starts with a guard's.
+
+  It reads the **TypeScript AST**, not the text. Three hand-rolled scanners preceded it and each
+  was fooled by ordinary punctuation: a comma inside a message read as an argument separator, a
+  `)` inside a template's literal text ended the call early, and a guard's name matched anywhere
+  in the expression. Parentheses and quotes inside string literals defeat every version of that
+  approach, and a gate whose parser can be fooled by punctuation is not a gate. It caught the two `String(err)` sites on its first
   run, which is the argument for it — forty-eight had drifted silently under a convention that
   lived only in reviewers' heads.
 

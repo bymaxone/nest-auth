@@ -9,15 +9,23 @@
  * The convention already existed and was applied to `tenantId` at fourteen sites. It had never
  * been applied to any other repository-supplied field, and the omission was invisible because it
  * sat on the SAME LINES: `userId=${user.id} tenantId=${logSafe(tenantId)}` reads as deliberate
- * until you ask why one half is wrapped. Forty-eight interpolations had drifted, across six files.
+ * until you ask why one half is wrapped. Forty-eight interpolations had drifted, across nine files.
  *
- * So the convention is a gate rather than a habit. Every interpolation in a logger template must
- * be either guarded or named in {@link LIBRARY_AUTHORED} below — which fails CLOSED: a new one is
- * a test failure until somebody decides which it is, and that decision is the point. Adding a name
- * to the allowlist is a claim that this library controls the value, and it belongs in review.
+ * So the convention is a gate rather than a habit, and it fails CLOSED: a new interpolation is a
+ * test failure until somebody decides which it is, and that decision is the point.
+ *
+ * **This reads the TypeScript AST rather than the text.** Three hand-rolled scanners preceded it
+ * and each was wrong in a way a person would write by accident: one counted a comma inside a
+ * message as an argument separator, one lost template mode at the `)` of an interpolated call and
+ * stopped seeing a real second argument, and one matched a guard's NAME anywhere in the
+ * expression so that `${logSafe(a) || attackerValue}` passed. Parentheses and quotes inside string
+ * literals defeat every version of that approach, and a gate whose parser can be fooled by
+ * ordinary punctuation is not a gate. The compiler already knows where the calls are.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+
+import ts from 'typescript'
 
 /** Source root, from this suite's location under `test/e2e/`. */
 const SRC_ROOT = join(__dirname, '../../src')
@@ -26,42 +34,13 @@ const SRC_ROOT = join(__dirname, '../../src')
  * Calls whose output is safe to interpolate: each either strips control characters or replaces the
  * value outright.
  */
-const GUARDS = ['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError', 'safeLogLine']
-
-/**
- * Whether the WHOLE expression is one guard call.
- *
- * Substring matching was the first version and it is not fail-closed, which was the entire claim
- * made for this suite. `${logSafe(a) || attackerValue}` contains `logSafe` and publishes
- * `attackerValue`; so do `${x + logSafe(y)}` and `${cond ? logSafe(a) : raw}`, and a helper merely
- * NAMED `logSafeish(v)` would have passed on its name alone. Three of those five shapes are things
- * a person writes without thinking about it.
- *
- * So the guard call must BE the expression: it starts at position zero and its own closing
- * parenthesis is the last character. Anything else — a fallback, a concatenation, a ternary —
- * fails and has to be rewritten so the guard wraps the whole value, which is what the rule meant
- * all along.
- *
- * @param expression - The text between `${` and `}`.
- * @returns `true` only when the expression is exactly one call to a guard.
- */
-function isFullyGuarded(expression: string): boolean {
-  return GUARDS.some((guard) => {
-    if (!expression.startsWith(`${guard}(`)) return false
-
-    let depth = 0
-    for (let i = guard.length; i < expression.length; i++) {
-      const ch = expression[i]
-      if (ch === '(') depth++
-      else if (ch === ')') {
-        depth--
-        // The call closed. Only a guard whose close is the final character wraps everything.
-        if (depth === 0) return i === expression.length - 1
-      }
-    }
-    return false
-  })
-}
+const GUARDS = new Set([
+  'logSafe',
+  'maskEmail',
+  'describeChannelStatus',
+  'describeError',
+  'safeLogLine'
+])
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -100,6 +79,109 @@ const LIBRARY_AUTHORED = new Set([
 ])
 
 /**
+ * Whether a node is a call to one of the {@link GUARDS}.
+ *
+ * The check is on the AST, so `logSafeish(v)` is a different identifier rather than a string that
+ * happens to start the same way, and `logSafe(a) || attacker` is a `BinaryExpression` rather than
+ * something containing the substring `logSafe`. Both defeated the text-matching version.
+ *
+ * @param node - The interpolated expression.
+ * @returns `true` only when the whole expression is one call to a guard.
+ */
+function isGuardCall(node: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    GUARDS.has(node.expression.text)
+  )
+}
+
+/** One interpolation found inside a logger call. */
+interface Interpolation {
+  file: string
+  line: number
+  expression: string
+  guarded: boolean
+}
+
+/** One `this.logger.*` call, as the compiler sees it. */
+interface LoggerCall {
+  node: ts.CallExpression
+  line: number
+}
+
+/**
+ * Every `this.logger.<level>(...)` call in a file.
+ *
+ * Matched structurally: a call whose callee is a property access on `this.logger`. A local named
+ * `logger` or a differently-shaped call is not one of ours and is not reported — the rule is about
+ * what THIS library writes to ITS logger.
+ *
+ * @param source - Parsed file.
+ * @returns Each matching call with the 1-based line it starts on.
+ */
+function loggerCalls(source: ts.SourceFile): LoggerCall[] {
+  const found: LoggerCall[] = []
+  const LEVELS = new Set(['log', 'warn', 'error', 'debug', 'verbose'])
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const level = node.expression.name.text
+      const target = node.expression.expression
+      if (
+        LEVELS.has(level) &&
+        ts.isPropertyAccessExpression(target) &&
+        target.name.text === 'logger' &&
+        target.expression.kind === ts.SyntaxKind.ThisKeyword
+      ) {
+        found.push({
+          node,
+          line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(source)
+  return found
+}
+
+/**
+ * Every `${...}` inside the arguments of a logger call.
+ *
+ * Taken from `TemplateExpression.templateSpans`, so the literal text between them is never
+ * examined — a `)` or a `,` or a quote inside the message is data to the compiler and cannot be
+ * mistaken for syntax. That is the whole reason this reads the AST.
+ *
+ * @param source - Parsed file.
+ * @param file - Path, for the failure message.
+ * @returns Every interpolation, with whether it is a guard call.
+ */
+function interpolationsInLoggerCalls(source: ts.SourceFile, file: string): Interpolation[] {
+  const found: Interpolation[] = []
+
+  for (const call of loggerCalls(source)) {
+    const visit = (node: ts.Node): void => {
+      if (ts.isTemplateExpression(node)) {
+        for (const span of node.templateSpans) {
+          found.push({
+            file,
+            line: call.line,
+            expression: span.expression.getText(source).replace(/\s+/g, ' '),
+            guarded: isGuardCall(span.expression)
+          })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    for (const argument of call.node.arguments) visit(argument)
+  }
+
+  return found
+}
+
+/**
  * Every `.ts` file under a directory, excluding specs.
  *
  * @param dir - Directory to walk.
@@ -113,112 +195,108 @@ function sourceFiles(dir: string): string[] {
   })
 }
 
-/** One interpolation found inside a logger call. */
-interface Interpolation {
-  file: string
-  line: number
-  expression: string
-}
-
 /**
- * Finds every `${...}` inside a `this.logger.*(...)` call.
+ * Parse one file for inspection.
  *
- * The call is followed until its parentheses balance, because a template long enough to matter is
- * usually wrapped across lines — reading only the line that names the logger would miss most of
- * them, which is how a line-based grep under-counted this family by more than half.
- *
- * @param source - File contents.
- * @param file - Path, for the failure message.
- * @returns Every interpolation inside a logger call, in file order.
+ * @param path - File to read.
+ * @returns The parsed source, with positions available for line reporting.
  */
-function interpolationsInLoggerCalls(source: string, file: string): Interpolation[] {
-  const lines = source.split('\n')
-  const found: Interpolation[] = []
-
-  lines.forEach((line, index) => {
-    if (!/this\.logger\.(log|warn|error|debug|verbose)\(/.test(line)) return
-
-    // The call is collected as ONE string and scanned whole. Matching per line required `${` and
-    // its `}` to sit together, so an interpolation prettier had wrapped was invisible — a false
-    // negative in a gate, and the shape appears whenever a long expression meets the print width.
-    let text = ''
-    let depth = 0
-    for (let cursor = index; cursor < lines.length; cursor++) {
-      const current = lines[cursor] ?? ''
-      text += current + '\n'
-      depth += (current.match(/\(/g) ?? []).length - (current.match(/\)/g) ?? []).length
-      if (depth <= 0) break
-    }
-
-    for (const match of text.matchAll(/\$\{([\s\S]*?)\}/g)) {
-      // Whitespace collapsed so a wrapped expression compares against the allowlist as one line.
-      found.push({
-        file,
-        line: index + 1,
-        expression: (match[1] ?? '').trim().replace(/\s+/g, ' ')
-      })
-    }
-  })
-
-  return found
+function parse(path: string): ts.SourceFile {
+  return ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.ESNext, true)
 }
 
 describe('log-injection guard (E2E)', () => {
-  const everything = sourceFiles(SRC_ROOT).flatMap((file) =>
-    interpolationsInLoggerCalls(readFileSync(file, 'utf8'), file.slice(SRC_ROOT.length + 1))
+  const files = sourceFiles(SRC_ROOT)
+  const everything = files.flatMap((file) =>
+    interpolationsInLoggerCalls(parse(file), file.slice(SRC_ROOT.length + 1))
   )
 
   // The gate. Anything neither guarded nor claimed as this library's own is a finding, and the
   // failure message names it so the reviewer can make the call rather than guess at the rule.
   it('guards every interpolation that this library did not author', () => {
     const unguarded = everything.filter(
-      ({ expression }) => !isFullyGuarded(expression) && !LIBRARY_AUTHORED.has(expression)
+      ({ expression, guarded }) => !guarded && !LIBRARY_AUTHORED.has(expression)
     )
 
     expect(unguarded.map((u) => `${u.file}:${u.line} \${${u.expression}}`)).toEqual([])
   })
 
-  // The detector has to be able to fail, or the assertion above is decoration. It found 48 real
-  // sites when written; asserting a lower bound on what it sees keeps a later refactor of the
-  // walker from silently reducing it to nothing.
+  // The detector has to be able to fail, or the assertions above are decoration. It found 48 real
+  // sites when written; asserting a lower bound keeps a later refactor of the walker from silently
+  // reducing it to nothing.
   it('actually inspects the logger calls it claims to', () => {
     expect(everything.length).toBeGreaterThan(80)
-    expect(everything.some((i) => i.expression.includes('logSafe'))).toBe(true)
+    expect(everything.some((i) => i.guarded)).toBe(true)
   })
 
-  // The shapes that made the first version of this suite NOT fail-closed, which was the whole
-  // claim made for it. Substring matching accepted every one of the rejected cases below while
-  // the unguarded half of the expression went to the log. None of them is exotic — a fallback, a
-  // concatenation and a ternary are things a person writes without thinking about it, and a
-  // helper whose NAME merely starts with a guard's would have passed on the name alone.
+  // The shapes that made earlier versions of this suite NOT fail-closed, which was the whole claim
+  // made for it. Each rejected case below was ACCEPTED by the text-matching version while the
+  // unguarded half went to the log, and each is something a person writes without thinking: a
+  // fallback, a concatenation, a ternary, a helper whose name merely starts with a guard's.
+  //
+  // The last two are the ones a hand-rolled scanner cannot get right at all — punctuation inside a
+  // string literal is data, and only a parser knows that.
   it.each([
-    ['a bare guard call', 'logSafe(user.id)', true],
-    ['a guard wrapping a nested call', 'logSafe(redactSecrets(v, s))', true],
-    ['a guard with a fallback beside it', 'logSafe(a) || attackerValue', false],
-    ['a guard concatenated with raw text', 'x + logSafe(y)', false],
-    ['a guard on one arm of a ternary', 'cond ? logSafe(a) : raw', false],
-    ['a helper whose name starts with a guard', 'logSafeish(value)', false],
-    ['an unguarded value', 'user.id', false]
-  ])('accepts only a whole-expression guard: %s', (_why, expression, expected) => {
-    expect(isFullyGuarded(expression)).toBe(expected)
+    ['a bare guard call', '`${logSafe(user.id)}`', true],
+    ['a guard wrapping a nested call', '`${logSafe(redactSecrets(v, s))}`', true],
+    ['a guard with a fallback beside it', '`${logSafe(a) || attackerValue}`', false],
+    ['a guard concatenated with raw text', '`${x + logSafe(y)}`', false],
+    ['a guard on one arm of a ternary', '`${cond ? logSafe(a) : raw}`', false],
+    ['a helper whose name starts with a guard', '`${logSafeish(value)}`', false],
+    ['an unguarded value', '`${user.id}`', false],
+    ["a guard whose argument is the string '('", "`${logSafe('(') && (attacker + ')')}`", false],
+    ['an unmatched ) in the literal text before it', '`oops) ${attackerValue}`', false]
+  ])('classifies %s', (_why, template, expectedGuarded) => {
+    const source = ts.createSourceFile(
+      'synthetic.ts',
+      `class C { m() { this.logger.error(${template}) } }`,
+      ts.ScriptTarget.ESNext,
+      true
+    )
+    const found = interpolationsInLoggerCalls(source, 'synthetic.ts')
+
+    expect(found).toHaveLength(1)
+    expect(found[0]?.guarded).toBe(expectedGuarded)
   })
 
-  // The detector's own reach, pinned against a synthetic source rather than against `src/`. A
-  // fixture is the only way to test the negative here: `src/` has no wrapped interpolation today,
-  // so a suite that only walks it would have passed either way and did — this shape was reported
-  // by review, not caught by the gate.
-  it('sees an interpolation prettier wrapped across lines', () => {
-    const wrapped = [
-      '    this.logger.error(',
-      '      `session cap refused for ${',
-      '        attackerControlledValue',
-      '      }`',
-      '    )'
-    ].join('\n')
+  // An interpolation prettier wrapped across lines is one node to the compiler, so the shape that
+  // defeated the line-based scanner cannot defeat this one. Kept because the regression is cheap
+  // to reintroduce and `src/` has no example to catch it.
+  it('sees an interpolation wrapped across lines', () => {
+    const source = ts.createSourceFile(
+      'synthetic.ts',
+      [
+        'class C { m() {',
+        '  this.logger.error(`cap refused for ${',
+        '    attackerValue',
+        '  }`)',
+        '} }'
+      ].join('\n'),
+      ts.ScriptTarget.ESNext,
+      true
+    )
 
-    const found = interpolationsInLoggerCalls(wrapped, 'synthetic.ts')
+    expect(interpolationsInLoggerCalls(source, 'synthetic.ts').map((i) => i.expression)).toEqual([
+      'attackerValue'
+    ])
+  })
 
-    expect(found.map((f) => f.expression)).toEqual(['attackerControlledValue'])
+  // A second argument is counted, not scanned. The two shapes below both defeated the character
+  // counter: a comma inside the message read as a separator, and a template whose interpolation
+  // contained a call made it lose track and miss a real one.
+  it.each([
+    ['a comma inside the message', 'this.logger.warn(`refused, not satisfied ${f(x)}`)', 1],
+    ['a real second argument after a template', 'this.logger.error(`for ${f(id)}`, delErr)', 2],
+    ['two plain-string arguments', "this.logger.error('unhandled exception', exception)", 2]
+  ])('counts the arguments of %s', (_why, code, expected) => {
+    const source = ts.createSourceFile(
+      'synthetic.ts',
+      `class C { m() { ${code} } }`,
+      ts.ScriptTarget.ESNext,
+      true
+    )
+
+    expect(loggerCalls(source)[0]?.node.arguments.length).toBe(expected)
   })
 
   // `String(err)` is deliberately absent from the allowlist. An error's text belongs to whoever
@@ -229,5 +307,6 @@ describe('log-injection guard (E2E)', () => {
   it('never treats a raw stringified error as this library’s own text', () => {
     expect(LIBRARY_AUTHORED.has('String(err)')).toBe(false)
     expect(LIBRARY_AUTHORED.has('String(error)')).toBe(false)
+    expect(LIBRARY_AUTHORED.has('String(resolved)')).toBe(false)
   })
 })
