@@ -292,10 +292,15 @@ function sanitizeSubject(subject: string): string {
  * Under the default `onDeliveryError: 'swallow'`, no method throws on a delivery failure — the
  * library awaits several of these calls (sending an invitation, confirming an address change), so
  * a channel that is down would turn each into a failed request over a message that is a
- * notification rather than the operation itself. The failure is logged and the flow continues. The
- * MFA notices are not awaited at all, and do not throw under EITHER policy; see below. Setting
- * `'rethrow'` makes every other method reject with the channel's original error, which is the
+ * notification rather than the operation itself. The failure is logged and the flow continues.
+ * Setting `'rethrow'` makes EVERY method reject with the channel's original error — there is one
+ * `deliver()` behind all ten and one place the policy is read, so no method is exempt. That is the
  * whole point of the option and is documented with the duty it carries.
+ *
+ * The three MFA notices are the exception at the CALLER rather than here: `MfaService` sends them
+ * detached and catches the rejection itself, because by then the factor is already enabled or
+ * removed. Call `sendMfaEnabledNotification` directly under `'rethrow'` and it rejects like any
+ * other — what is absent is a caller that lets the rejection fail an operation, not the rejection.
  *
  * That choice has a cost worth stating, because two flows react to a *throw* from the port. A
  * reset-token send that rejects lets `PasswordResetService` delete the stored token early rather

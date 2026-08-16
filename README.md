@@ -332,10 +332,12 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > is in the message either way. If you can say the same about your channel, prefer
 > `describeChannelStatus` and keep this one for strings you built yourself.
 >
-> Both read only `name` and `message` (never `stack`, never the transport's own fields — nodemailer
-> hangs the server's full reply on `response`), cap the length, and remove control characters so a
-> relay cannot forge extra records in a line-oriented pipeline. Both walk the `cause` chain and
-> never throw, whatever the transport's error does.
+> Neither reads `stack`, and neither reads the transport's own fields — nodemailer hangs the
+> server's full reply on `response`. Beyond that they differ, and the difference is the point:
+> `describeError` reads `name` and `message`, strips the values you named, caps the length and
+> removes control characters so a relay cannot forge extra records in a line-oriented pipeline.
+> `describeChannelStatus` reads **neither** — the only thing it touches is `cause`, walked to count
+> the links. Both walk that chain and never throw, whatever the transport's error does.
 >
 > `redactSecrets(text, [otp])` is exported too, for a string you built yourself and know contains
 > the literal value. It is **not** a substitute for either description on a transport's error: a

@@ -253,6 +253,52 @@ describe('describeChannelStatus invariant', () => {
     expect(describeChannelStatus(thrown)).not.toContain('<malformed-error>')
   })
 
+  // The claim that keeps decaying in prose, made checkable. Documentation in three files has said
+  // some version of "reads only X" about this function, and each time the code moved the sentences
+  // did not. Accessor invocation is observable, so this asserts it instead of describing it: under
+  // this policy the error's `name` and `message` are never touched, and the only field read is
+  // `cause`, walked to count the links.
+  it('reads no field of the error but its cause', () => {
+    const touched: string[] = []
+    const probe = new Error('550 5.7.1 rejected: "Your code is 424242."')
+    for (const field of ['name', 'message', 'stack'] as const) {
+      Object.defineProperty(probe, field, {
+        get() {
+          touched.push(field)
+          return 'x'
+        }
+      })
+    }
+
+    expect(describeChannelStatus(probe)).toBe('<error>')
+    expect(touched).toEqual([])
+  })
+
+  // The same probe under the OTHER policy, so the assertion above cannot pass by the function
+  // having stopped working. `describeError` is the form that publishes the channel's words, so it
+  // must still read the two it publishes — and `stack` is asserted here too, because "neither
+  // reads `stack`" is half of the documented claim and testing only the other half is how a
+  // sentence half-decays without anything noticing. A stack carries file paths and frames from
+  // whichever dependency constructed the error; none of that belongs in a log line.
+  it('reads the two fields it publishes and never the stack', () => {
+    const touched: string[] = []
+    const probe = new Error('rejected')
+    for (const field of ['name', 'message', 'stack'] as const) {
+      Object.defineProperty(probe, field, {
+        get() {
+          touched.push(field)
+          return 'x'
+        }
+      })
+    }
+
+    describeError(probe, [])
+
+    expect(touched).toContain('name')
+    expect(touched).toContain('message')
+    expect(touched).not.toContain('stack')
+  })
+
   // The independence test, run rather than described. Two different secrets rendered into the same
   // position must produce the SAME line — output that varies with the secret is derivation, which
   // is exactly what took the status out. A grammar check alone would not catch it: `424` and `551`
