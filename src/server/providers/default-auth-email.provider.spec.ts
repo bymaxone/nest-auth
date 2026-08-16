@@ -401,7 +401,7 @@ describe('DefaultAuthEmailProvider', () => {
     // which is the half an operator acts on — `550` is a refusal, `421` a transient outage.
     expect(logged).not.toContain(secret)
     expect(logged).not.toContain('rejected by policy')
-    expect(logged).toContain('550')
+    expect(logged).not.toContain('550')
   })
 
   // The measurement that decided the policy, kept as a test because it is the only evidence that
@@ -432,23 +432,7 @@ describe('DefaultAuthEmailProvider', () => {
       .join(' ')
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain(otp)
-    expect(logged).toContain('550')
-  })
-
-  // The status is read from what SURVIVED redaction, not from the raw message. A message that
-  // BEGINS with the credential — which a custom provider is free to produce, since only a real
-  // SMTP reply is obliged to open with its own code — would otherwise hand back the first three
-  // digits of a six-digit OTP as if they were a status, cutting the space an attacker searches
-  // from a million to a thousand. Reading the raw message first is what makes that reachable;
-  // the ordering is the guard.
-  it('does not report a status parsed out of a message that begins with the code', async () => {
-    sink.send.mockRejectedValueOnce(new Error('550123 could not be delivered'))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '550123')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
   // The measurement that killed the shape check, kept as a test because the shape check LOOKED
@@ -476,56 +460,25 @@ describe('DefaultAuthEmailProvider', () => {
       .join(' ')
     expect(decoded).not.toContain(otp)
     expect(logged).not.toContain('MTIzNDU2')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
-  })
-
-  // A reply code runs 2xx to 5xx, so a leading `1` says this is not a reply. Without the class
-  // check `123 456 could not be delivered` publishes `123` — the first half of a six-digit code —
-  // on the path whose entire purpose is to publish nothing the channel wrote.
-  it('does not accept a three-digit prefix that is not a reply class', async () => {
-    sink.send.mockRejectedValueOnce(new Error('123 456 could not be delivered'))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '123456')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('123')
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
-  // The enhanced status code is not kept, and this pins the CONSEQUENCE rather than a leak. The
-  // arithmetic is real — `550 5.7.1` stripped of punctuation is `550571`, a valid six-digit OTP —
-  // but it is coincidence, not derivation: that reply appears whatever the code was, so the line
-  // carries no information about it and a log holding it is no help to anyone. What dropping the
-  // field buys is a log a detection rule can read without firing on every bounce, and one rule
-  // with nothing to carve out. See `statusOf` for the full reasoning and for the correction.
-  it('publishes only the basic code, whatever the reply carries after it', async () => {
-    const otp = '550571'
-    sink.send.mockRejectedValueOnce(new Error('550 5.7.1 rejected by policy'))
+  // The status was the last channel-derived field and it is gone, for a reason the independence
+  // test makes sharp. `550 5.7.1` reassembling into a valid OTP was coincidence — the same reply
+  // appears whatever the code is. THIS is not: an OTP of `424242` grouped as `424-242` at the head
+  // of a quoted body publishes `424`, and a different code publishes different digits. The output
+  // depends on the secret, which is derivation, and no grammar separates a reply from body text
+  // shaped like one.
+  it('publishes no status, however much the message looks like a reply', async () => {
+    const otp = '424242'
+    sink.send.mockRejectedValueOnce(new Error(`424-242 is your code, quoted back by the relay`))
 
     await provider.sendPasswordResetOtp('t', 'u@example.com', otp)
 
     const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('5.7.1')
-    expect(logged.replace(/[^0-9]/g, '')).not.toContain(otp)
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
-  })
-
-  // The two ends of the reply grammar, which the separator rule has to admit as well as reject.
-  // A bare `421` with nothing after it is a complete SMTP reply — a transient outage, and the one
-  // an operator most wants to see — and an enhanced code can sit at the very end of the message
-  // with no trailing text. Requiring something after either would silently drop both, which reads
-  // as "the relay said nothing" for a relay that said the most useful thing it could.
-  it.each([
-    ['a bare status with nothing after it', '421', '421'],
-    ['a reply whose text follows the code', '550 5.7.1 rejected', '550']
-  ])('keeps %s', async (_why, message, expected) => {
-    sink.send.mockRejectedValueOnce(new Error(message))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '606060')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      `delivery failed sending passwordResetOtp: <error>: ${expected}`
-    )
+    // Not even the first three digits, which is what a reply-code parser would have kept.
+    expect(logged).not.toContain(otp.slice(0, 3))
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
   // The error's NAME is the other field the channel controls, and dropping the message while
@@ -556,42 +509,6 @@ describe('DefaultAuthEmailProvider', () => {
     expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
   })
 
-  // The status is read from the FRONT of the message only, and the anchor is a confidentiality
-  // boundary rather than a parsing nicety. An SMTP reply opens with its code; digits anywhere else
-  // in the line belong to the body the relay quoted — which on these paths is the credential. An
-  // unanchored read of the first three digits it can find returns half of a six-digit OTP, cutting
-  // the space an attacker has to search from a million to a thousand against a code that allows
-  // few attempts. The drop is what keeps the body out; this is what keeps a piece of it from
-  // coming back through the one field still allowed through.
-  it('does not read a status out of digits that belong to the quoted body', async () => {
-    // Digits that are NOT the credential, so redaction leaves them and the anchor is the only
-    // thing standing between them and the log. They are still the channel's text, which on this
-    // path does not reach the line at all — the status is an exception carved out for a value
-    // read from a known position, not a licence to publish any three digits in the message.
-    sink.send.mockRejectedValueOnce(new Error('queued as job 550123 and then discarded'))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('550')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>')
-  })
-
-  // A padded reply, which RFC 5321 senders routinely produce by aligning their columns. The basic
-  // code survives the padding; the enhanced code after it does NOT survive at all, and asserting
-  // its absence is what makes this test document the contract rather than merely observe it —
-  // `550 5.7.1` stripped of punctuation is a valid six-digit OTP, which is why it is dropped.
-  it('keeps the basic code and drops the enhanced one from a padded reply', async () => {
-    sink.send.mockRejectedValueOnce(new Error('550   5.7.1 message rejected by policy'))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '778899')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    expect(logged).not.toContain('5.7.1')
-    expect(logged).not.toContain('rejected by policy')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 550')
-  })
-
   // A channel reports "send failed BECAUSE the relay said", and the quoted body lands one level
   // down. Reading only the top-level message would leave the credential in the chain — which is
   // precisely the shape a sibling library shipped and had to fix.
@@ -609,7 +526,7 @@ describe('DefaultAuthEmailProvider', () => {
     // from "the relay said" — and on a credential path each link contributes only its name and a
     // parsed status, never the relay's prose.
     expect(logged).not.toContain('550123')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error> <- <error>: 550')
+    expect(logged).toBe('delivery failed sending passwordResetOtp: <error> <- <error>')
   })
   // The subject NEVER reaches the log line — the message's label does. A subject comes from the
   // `messages` catalogue, which a consumer may override with arbitrary code, so logging it
@@ -674,55 +591,6 @@ describe('DefaultAuthEmailProvider', () => {
     await send(provider)
 
     expect(errorSpy).toHaveBeenCalledWith(`delivery failed sending ${label}: <error>`)
-  })
-
-  // The common real shape, and what "the FIRST status found" is for: a client wraps the relay's
-  // reply, so the outer link carries no code and the inner one carries the whole diagnosis.
-  // Spending the budget on a link that produced nothing would throw that away.
-  it('reaches the status on an inner link when the outer carries none', async () => {
-    sink.send.mockRejectedValueOnce(new Error('send failed', { cause: new Error('550 5.7.1 no') }))
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '333333')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed sending passwordResetOtp: <error> <- <error>: 550'
-    )
-  })
-
-  // A link this module could not read at all must not consume the budget either — the reason it
-  // produced nothing is that its own fields were hostile, not that it reported a status.
-  it('reaches the status past a link whose fields cannot be read', async () => {
-    const hostile = new Error('x', { cause: new Error('421 later') })
-    Object.defineProperty(hostile, 'message', {
-      get() {
-        throw new Error('nope')
-      }
-    })
-    sink.send.mockRejectedValueOnce(hostile)
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '444444')
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      'delivery failed sending passwordResetOtp: <malformed-error> <- <error>: 421'
-    )
-  })
-
-  // A chain hands a channel one chance per link to place digits of its choosing into the record,
-  // and `424` beside `242` reassembles into a live code by concatenation — which no per-link guard
-  // can see, because each half is a valid reply code on its own. One status for the whole
-  // description is what closes it, and the FIRST one found is the one kept.
-  it('emits at most one status across the whole cause chain', async () => {
-    const inner = new Error('242')
-    const outer = new Error('424', { cause: inner })
-    sink.send.mockRejectedValueOnce(outer)
-
-    await provider.sendPasswordResetOtp('t', 'u@example.com', '424242')
-
-    const logged = errorSpy.mock.calls[0]?.[0] as string
-    // The attacker's own test: strip everything this library wrote and see what the channel got
-    // to place. It must not reassemble into the code.
-    expect(logged.replace(/[^0-9]/g, '')).not.toBe('424242')
-    expect(logged).toBe('delivery failed sending passwordResetOtp: <error>: 424 <- <error>')
   })
 
   // `name` and `message` are typed `string` but are ordinary writable properties, and an error
@@ -875,7 +743,7 @@ describe('DefaultAuthEmailProvider', () => {
     const logged = errorSpy.mock.calls[0]?.[0] as string
     expect(logged).not.toContain(rendered)
     expect(logged).not.toContain('rejected by policy')
-    expect(logged).toContain('550')
+    expect(logged).not.toContain('550')
   })
 
   // The likeliest shape of all, and it needs no quoted body: an SMTP rejection NAMES the
@@ -893,7 +761,7 @@ describe('DefaultAuthEmailProvider', () => {
     // survives, and asserting it is what keeps this from passing on a build that logs nothing.
     expect(logged).not.toContain('recipient@example.com')
     expect(logged).not.toContain('recipient rejected')
-    expect(logged).toContain('550')
+    expect(logged).not.toContain('550')
   })
 
   // The COMPOSITION of two clean components can spell a secret neither contains. `name` and

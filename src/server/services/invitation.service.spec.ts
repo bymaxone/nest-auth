@@ -245,7 +245,7 @@ describe('InvitationService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(thrown.message).not.toContain('Join with')
-      expect(thrown.message).toContain('550')
+      expect(thrown.message).not.toContain('550')
     })
 
     // Verifies the happy path: a valid admin inviting a member stores the token and sends the email.

@@ -181,7 +181,7 @@ describe('EmailChangeService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(thrown.message).not.toContain('Confirm with')
-      expect(thrown.message).toContain('550')
+      expect(thrown.message).not.toContain('550')
     })
 
     // The happy path, and every property of the stored record that the confirmation relies on.
@@ -440,7 +440,7 @@ describe('EmailChangeService', () => {
         expect(logged).toContain('notification to the previous address failed')
         expect(logged).not.toContain(NEW_EMAIL)
         expect(logged).not.toContain('rejected')
-        expect(logged).toContain('550')
+        expect(logged).not.toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }

@@ -65,94 +65,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   reasonable-looking thing to write. The line carries a fixed label instead, which also identifies
   the message more stably for anyone parsing it.
 
-  **What is kept, and why it is safe to keep.** The SMTP status — the three-digit code and nothing
-  else — rebuilt from the pattern's own capture rather than sliced out of the input, so nothing a
-  relay writes after it can ride along whatever it encoded it in. The class is checked (2xx–5xx)
-  and a reply delimiter is required after the digits, so `123456 could not be delivered` yields
-  nothing rather than half an OTP. At most **one** status appears per line whatever the depth of
-  the cause chain, so a channel cannot place `424` beside `242` and have them read back as a code.
+  **Nothing is kept.** The line carries the message's label and, when the chain has one, the
+  `<error>` stand-in per link — no status, no name, no message. A parsed SMTP status survived
+  several rounds on the reasoning that a value rebuilt from a validated grammar cannot carry body
+  content, and the test that finally settled it is whether the output DEPENDS on the secret. It
+  does: an OTP of `424242` grouped as `424-242` at the head of a quoted body publishes `424`, and a
+  different code publishes different digits. That is derivation, not the coincidence that `550
+5.7.1` reassembling into `550571` turned out to be — and no grammar separates a reply from body
+  text shaped like one, because a reply code and a grouped credential prefix are the same three
+  digits and a separator.
 
-  RFC 3463's enhanced code (`5.1.1` an unknown mailbox, `5.2.2` a full one) is **not** kept, and
-  the reason is a cost rather than a leak — the first version of this note said otherwise and
-  over-read its own measurement. The arithmetic is real: `550 5.7.1` stripped of punctuation is
-  `550571`, a valid six-digit OTP. It is coincidence, not derivation. That reply appears whatever
-  the code was, or if no code existed, so the line carries no information about the credential and
-  an attacker who reads it has the odds they started with. The encoding case is the opposite and is
-  why it was a leak: there the output was a function of the body, and decoding it recovered the
-  code.
-
-  What dropping the field buys is two costs avoided. A **detection rule** that alerts on a
-  four-to-eight digit run in an error line — the tooling a team builds after exactly this incident
-  — fires on every `550 5.7.1`. And **one rule with nothing to carve out**: the four superseded
-  rules above each held until someone found the case they did not predict, and an exception is
-  where the next one hides. A structured field rather than prose would answer the first.
-
-  What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
-  transient outage, `535` a credential problem at their relay.
-
-  **The same arithmetic applies one level up, where the service lines compose their own fields.**
-  `safeLogLine` — the check over a finished line, which exists because two fields that each hold
-  nothing can spell a value across the text between them — compares the digit-normalised line as
-  well as the literal one. `sendPasswordResetOtp failed for user u4: <error>: 550` contains neither
-  `4550` nor anything resembling it, and stripping every non-digit yields exactly that: a live
-  four-digit reset code assembled from a consumer's user id and a relay's status, neither of which
-  is a leak on its own.
-
-  **The same mistake was in eight more handlers, found by hunting the family rather than the report.**
-  `DefaultAuthEmailProvider` was the site that was reported; it was not the only one. Three
-  services caught a rejected send and logged the raw error the same way — `AuthService` for the
-  verification OTP, `PasswordResetService` for both the reset token and the reset OTP — and those
-  matter more than the provider, because they sit behind the `IEmailProvider` **port**: they leak
-  for any consumer implementation, not only the bundled one. `EmailChangeService.requestChange`
-  and `InvitationService.invite` **await** their send, so the provider's rejection travelled to the
-  controller and was logged by `AuthExceptionFilter`'s unknown-exception path — inside this
-  library, with no consumer able to intervene. `EmailChangeService.notifyOldAddress`,
-  `PasswordResetService.notifyPasswordChanged` and `MfaService`'s shared notice handler formed the
-  last group, described below — ten call sites in all, since that one handler serves the enable,
-  disable and administrative-reset flows.
-
-  **The recipient survived on the paths that AWAITED the send, and those had a second defect.**
-  `MfaService` awaited its three state-change notices — enable, disable, administrative reset —
-  with no `catch`, and `PasswordResetService.notifyPasswordChanged` handed the raw error to the
-  logger. An SMTP rejection routinely NAMES the recipient it refused (`550 user@example.com:
-recipient rejected`), no quoted body required, which makes it the likeliest exposure of the set.
-
-  Awaiting them was the second defect, and worse than the leak. By the time the notice is sent the
-  MFA secret is written, every session is invalidated and the token epoch is bumped — the change
-  has happened. A bounced notice made `verifyAndEnable` answer the caller with an error for an
-  enable that succeeded, which is how a user ends up locked out of the account they just secured.
-  **BREAKING for anyone who relied on that rejection:** the three MFA notices are now
-  fire-and-forget, exactly as `notifyPasswordChanged` already was and for the reason its own
-  comment gave. A delivery failure is logged, not returned.
-
-  **A synchronous throw used to bypass the handler entirely.** `Promise.resolve(send(...))`
-  evaluates the call before the promise wraps it, so a provider that throws rather than rejecting
-  skipped the redacting `.catch` and landed in the caller's own error path, which logged raw. The
-  deferred sends run inside an async IIFE now: the call is still made synchronously, and the `try`
-  still catches the throw. A provider is consumer code and may do either; the log line must not
-  depend on which.
-
-  **Two exported helpers.** `describeChannelStatus(error)` is what every internal path uses — it
-  takes no secrets, and taking none IS the guarantee rather than an omission, because nothing the
-  channel authored comes through. `describeError(error, [values])` keeps the channel's words with
-  named values stripped, for consumers whose own provider throws errors carrying values they can
-  name literally. It has no caller inside the library, which is why it is tested directly rather
-  than through whatever happened to use it. `redactSecrets` is exported too, for strings you
-  already hold and know contain the literal value.
-
-  Both descriptions read only `name` and `message` — never `stack`, never the transport's own
-  fields, which is where a channel hides the server's full reply (nodemailer hangs it on
-  `response`). Both walk the `cause` chain three levels down, because that is where a wrapped
-  client puts the relay's answer, cap the finished line at 200 characters, reject anything that
-  could forge a second log record, and never throw whatever the transport's error does. The
-  log-injection hole was live on the same line and is closed here.
-
-  **`logSafe` rejects `U+2028` and `U+2029` as well as the control ranges.** LINE SEPARATOR and
-  PARAGRAPH SEPARATOR are not control characters, so a class named for C0/C1 missed them entirely —
-  and ECMAScript, JSON and any Unicode-aware log consumer treat them as line terminators. A
-  pipeline that splits records on them accepted a forged one from a value the old rule called safe,
-  which is the same forgery CR and LF are rejected for. This applies everywhere `logSafe` is used,
-  not only on the paths this change touched.
+  What an operator loses is the transient-versus-permanent split, which their mail provider's own
+  dashboard carries. What they keep is which message failed, which is the half this library is the
+  only source for.
 
   **The same defect was one port over, in the breach checker.** `IPasswordBreachChecker.isBreached`
   receives the PLAINTEXT PASSWORD by contract, so an error it raises is a place the plaintext can

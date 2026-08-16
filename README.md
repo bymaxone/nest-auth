@@ -318,16 +318,12 @@ Email delivery is fully delegated to the consumer — the library never imports 
 > nothing because the credential's characters are not in the line, and the cap does not help
 > because the encoding runs from the body's first byte, so the code is in the first sentence.
 > Measured: a reset-code body is 96 base64 characters end to end, and the first 200 characters of
-> the line decode straight back to the OTP. Under `'drop'` NOTHING the channel wrote reaches the
-> line — not the message, and not the `name` either, which is as much the channel's field and
-> which validating by shape does not save: `MTIzNDU2` is the base64 of the OTP `123456`, a valid
-> identifier by any such rule. What survives is the SMTP status — the three-digit code only,
-> rebuilt from a pattern's own capture rather than sliced out of the input. The enhanced code is
-> dropped, and for a cost rather than a leak: `550 5.7.1` stripped of punctuation is `550571`,
-> which is a valid OTP — but that is coincidence, not derivation, since the same reply appears
-> whatever the code was. What it costs is a detection rule that fires on every bounce, and an
-> exception to a rule that otherwise has none. What is left is still the half of a bounce you act
-> on: `550` is a refusal, `421` a transient outage, `535` a credential problem at your relay.
+> the line decode straight back to the OTP. Under `describeChannelStatus` NOTHING the channel wrote
+> reaches the line — not the message, not the `name`, not a status parsed off the front. Each of
+> those was tried and each fell: shape validation admits `MTIzNDU2`, the base64 of OTP `123456`;
+> and a status grammar admits `424-242`, an OTP grouped, publishing `424`. What you keep is which
+> message failed. What you lose is the transient-versus-permanent split, which your mail provider's
+> dashboard has and this library does not.
 >
 > **`describeError(error, [values])` for errors whose text you have a reason to trust**, where the
 > values you name appear the way you wrote them and redaction reaches them. The bundled provider

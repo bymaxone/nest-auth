@@ -402,7 +402,7 @@ describe('PasswordResetService', () => {
       // matched and removed, but because its carrier was never published. Asserting the status is
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -433,7 +433,7 @@ describe('PasswordResetService', () => {
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('user@example.com')
       expect(logged).not.toContain('smtp down')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -712,7 +712,7 @@ describe('PasswordResetService', () => {
         // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
         // gone, and the diagnosis is not.
         expect(logged).not.toContain('rejected by policy')
-        expect(logged).toContain('550')
+        expect(logged).not.toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }
@@ -749,7 +749,7 @@ describe('PasswordResetService', () => {
         // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
         // gone, and the diagnosis is not.
         expect(logged).not.toContain('rejected by policy')
-        expect(logged).toContain('550')
+        expect(logged).not.toContain('550')
       } finally {
         loggerSpy.mockRestore()
       }
@@ -2261,7 +2261,7 @@ describe('PasswordResetService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(logged).not.toContain('rejected by policy')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -2297,7 +2297,7 @@ describe('PasswordResetService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(logged).not.toContain('rejected by policy')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
   })

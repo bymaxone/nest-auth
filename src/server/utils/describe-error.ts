@@ -36,13 +36,17 @@ const ERROR_CAUSE_DEPTH = 3
  * substring match, so it holds for a value that appears the way the caller wrote it and not for
  * one a remote transformed.
  *
- * `'drop'` keeps only a parsed status code. Required whenever the body renders a value that must
- * not be logged — a credential, but personal data too: an IP is not a credential and is still not
- * something to publish. The standard is what the body renders, not how bad it would be. Because
- * redaction cannot see through an encoding and a bound on length does not help: a relay returning
- * the body base64'd encodes it from the start, so the code sits in the first sentence and survives
- * any cap that leaves enough to decode. Measured — the whole reset-code body is 96 base64
- * characters, and the first 200 of that line decode straight back to the OTP.
+ * `'drop'` publishes NOTHING the channel authored — not the message, not the name. Required
+ * wherever the body rendered a value that must not be logged: a credential, but personal data too,
+ * since an IP is not a credential and is still not something to publish. The standard is what the
+ * body renders, not how bad it would be.
+ *
+ * A parsed SMTP status was kept here for a while, on the reasoning that a value rebuilt from a
+ * validated grammar cannot carry body content. It can, and the test that shows it is whether the
+ * output DEPENDS on the secret: an OTP of `424242` grouped as `424-242` at the head of a quoted
+ * body publishes `424`, and a different code publishes different digits. That is derivation, not
+ * coincidence, and no grammar separates a reply from body text shaped like one. What an operator
+ * loses is the transient-versus-permanent split, which their mail provider's own dashboard has.
  */
 type ChannelTextPolicy = 'redact' | 'drop'
 
@@ -74,12 +78,6 @@ function isError(value: unknown): value is Error {
   }
 }
 
-/** One rendered link, and whether it consumed the description's single status. */
-interface DescribedLink {
-  line: string
-  usedStatus: boolean
-}
-
 /**
  * Renders one link of the chain, and never throws while doing it.
  *
@@ -92,20 +90,16 @@ interface DescribedLink {
  *
  * @param error - The link being described.
  * @param secrets - Credentials that must not survive into the line.
- * @param channelText - `'drop'` publishes nothing the channel authored: the message is reduced to
- *   a validated status code (see {@link statusOf}) and the name is replaced outright (see
- *   {@link nameOf}).
- * @param statusSpent - Whether an earlier link already used the description's single status.
- * @returns The rendered line, and whether it consumed that status. NOT length-bounded: the cap is
- *   applied once to the finished description, because capping each part would let a chain of parts
- *   return a multiple of the budget.
+ * @param channelText - `'drop'` publishes nothing the channel authored at all: the message is
+ *   discarded and the name is replaced outright (see {@link nameOf}).
+ * @returns One rendered line. NOT length-bounded: the cap is applied once to the finished
+ *   description, because capping each part would let a chain of parts return a multiple of it.
  */
 function describeOneLink(
   error: Error,
   secrets: readonly string[],
-  channelText: ChannelTextPolicy,
-  statusSpent: boolean
-): DescribedLink {
+  channelText: ChannelTextPolicy
+): string {
   try {
     const name = nameOf(error, secrets, channelText)
 
@@ -122,18 +116,11 @@ function describeOneLink(
     // the whole reset-code body is 96 base64 characters, so the first 200 of the line decode
     // straight back to the OTP. A bound on volume was never a bound on disclosure, and describing
     // it as a second lock — as this file did — was the mistake.
-    const detail = channelText === 'drop' ? (statusSpent ? '' : statusOf(raw)) : logSafe(raw)
+    const detail = channelText === 'drop' ? '' : logSafe(raw)
 
-    return {
-      line: detail === '' ? name : `${name}: ${detail}`,
-      // Not qualified by the policy, though only the drop path reads it. `channelText === 'drop' &&`
-      // here would be unobservable — a description is all one policy, so the flag's value on a
-      // redact walk is never consulted — and an unobservable condition is a line no test can hold
-      // to account. The caller asks the question; this only answers whether a detail was produced.
-      usedStatus: detail !== ''
-    }
+    return detail === '' ? name : `${name}: ${detail}`
   } catch {
-    return { line: MALFORMED, usedStatus: false }
+    return MALFORMED
   }
 }
 
@@ -169,68 +156,6 @@ const OPAQUE_NAME = '<error>'
 function nameOf(error: Error, secrets: readonly string[], channelText: ChannelTextPolicy): string {
   if (channelText === 'drop') return OPAQUE_NAME
   return logSafe(redactSecrets(String(error.name), secrets))
-}
-
-/**
- * The SMTP status code at the head of a message, or the empty string.
- *
- * Structured and independently validated, which is what makes it safe to keep when free text is
- * not: three digits, matched at the very start and returned from the PATTERN's own capture rather
- * than sliced out of the input. Nothing a relay writes after that can ride along, whatever it
- * encoded it in — including the enhanced `X.Y.Z` code, which is read past rather than kept, for
- * the reason given below.
- *
- * **The reply CLASS is checked.** SMTP codes run 2xx to 5xx, so a leading `1` or `6` says this is
- * not a reply at all — and `123 456 could not be delivered` would otherwise publish `123`, the
- * first half of a six-digit code, on the path whose entire purpose is to publish nothing the
- * channel wrote.
- *
- * **The separator after the three digits is a confidentiality boundary, not pedantry.** RFC 5321
- * replies are `code SP text` or `code - text`, so a fourth digit means this is not a reply at all
- * — and `123456 could not be delivered`, which a custom provider is free to produce, would
- * otherwise hand back half of a six-digit OTP dressed as a status, cutting the space an attacker
- * searches from a million to a thousand. Requiring the separator rejects it structurally, with no
- * need to know which credential was in flight.
- *
- * **THREE digits, and the enhanced code is deliberately not kept — for two costs, not for a leak.**
- * RFC 3463's `X.Y.Z` is where a bounce's real reason lives (`5.1.1` an unknown mailbox, `5.2.2` a
- * full one), so dropping it is a real loss and the reason had better be stated honestly.
- *
- * It is NOT that `550 5.7.1` stripped of punctuation is `550571`, a valid six-digit OTP. That was
- * the first reasoning and it over-reads: the published token is a function of the relay's answer
- * alone, so the same reply appears whatever the code was, or if no code existed. An observer
- * learns nothing — `550571` is as likely to be a status when the OTP is `123456` — and a
- * coincidental equality carrying no information about the secret is not disclosure. That is the
- * difference from the encoding case, which IS a leak: there the output was a function of the body
- * and inverting it recovered the code. Credit to the `@bymax-one` seat for the correction.
- *
- * What survives are two costs. The first is a **detection tax**: a log rule alerting on a four-to
- * -eight digit run in an error line — precisely the tooling a team builds after an incident like
- * this one — fires on every `550 5.7.1`. The second is **one rule with no exception to remember**;
- * this file's history is four rules that each held until someone found the case they did not
- * predict, and the cheapest guarantee is the one with nothing to carve out. A structured field
- * would answer the first cost, and this line is prose.
- *
- * The malicious-relay case is real and does not change the balance, though the reason is narrower
- * than it first looks. The enhanced code's grammar carries seven digits of the sender's choosing
- * (`550 4.812.345`), so a relay wanting a covert channel into the log has one. It is non-additive
- * **where the relay has its own egress**, which is nearly always: a relay that can reach the
- * network already holds every code it was asked to send. Where it cannot — an on-premise relay
- * hardened with no outbound path, whose only route off the box is the log pipeline — the channel
- * converts "holds the plaintext" into "can transmit it", which is a new capability. Still not an
- * argument here: a compromised relay in that position has wider channels than seven digits per
- * failure, starting with which sends it chooses to fail.
- *
- * What survives is still the half of a bounce an operator acts on: `550` is a refusal, `421` a
- * transient outage, `535` a credential problem on their side.
- *
- * @param message - The channel's raw message.
- * @returns The three-digit status code, or `''` when the message does not begin with one.
- */
-function statusOf(message: string): string {
-  const match = /^([2-5]\d{2})(?:[ -]|$)/.exec(message)
-
-  return match?.[1] ?? ''
 }
 
 /**
@@ -271,7 +196,6 @@ function describe(
 ): string {
   const parts: string[] = []
   let current: unknown = error
-  let statusSpent = false
 
   for (
     let depth = 0;
@@ -286,16 +210,7 @@ function describe(
       break
     }
 
-    // At most ONE status for the whole description. Three digits per link is little on its own,
-    // but a chain hands a channel three chances to place digits of its choosing into the record,
-    // and `424` beside `242` reassembles into a live code by concatenation — which no per-link
-    // guard can see, because each half is a valid reply code on its own. The FIRST one found is
-    // the one kept, not the outermost: a client typically wraps the relay's reply, so the status
-    // worth having is the inner one, and taking the first non-empty is what reaches it.
-    const described = describeOneLink(current, secrets, channelText, statusSpent)
-    statusSpent = statusSpent || described.usedStatus
-
-    parts.push(described.line)
+    parts.push(describeOneLink(current, secrets, channelText))
     current = readCause(current)
   }
 

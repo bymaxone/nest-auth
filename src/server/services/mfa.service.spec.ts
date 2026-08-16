@@ -1156,7 +1156,7 @@ describe('MfaService', () => {
       // matched and removed, but because its carrier was never published. Asserting the status is
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -2663,7 +2663,7 @@ describe('MfaService', () => {
       // matched and removed, but because its carrier was never published. Asserting the status is
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       warnSpy.mockRestore()
       errorSpy.mockRestore()
     })
@@ -2971,7 +2971,7 @@ describe('MfaService', () => {
       // matched and removed, but because its carrier was never published. Asserting the status is
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 
@@ -3006,7 +3006,7 @@ describe('MfaService', () => {
       // matched and removed, but because its carrier was never published. Asserting the status is
       // what keeps this from passing on a build that logs nothing at all.
       expect(logged).not.toContain('recipient rejected')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       errorSpy.mockRestore()
     })
 

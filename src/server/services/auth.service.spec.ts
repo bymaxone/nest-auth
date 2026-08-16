@@ -2588,7 +2588,7 @@ describe('AuthService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(logged).not.toContain('rejected by policy')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       loggerSpy.mockRestore()
     })
 
@@ -2623,7 +2623,7 @@ describe('AuthService', () => {
       // it opened with, which is what an operator acts on. Both halves matter: the quoted body is
       // gone, and the diagnosis is not.
       expect(logged).not.toContain('rejected by policy')
-      expect(logged).toContain('550')
+      expect(logged).not.toContain('550')
       loggerSpy.mockRestore()
     })
   })
