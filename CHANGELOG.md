@@ -18,6 +18,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rate-limited refresh signed the user out of a session that was still valid.**
+  `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a
+  `404` from a mistyped `routePrefix` arrived at the caller as one indistinguishable `false` — and
+  the caller treats `false` as expiry. Measured by a consumer against a real browser round; twelve
+  browser specs passed on both runs that produced the finding, so no green suite covered it.
+
+  `performRefresh` now returns a `RefreshOutcome`: `{ ok: true }`, or `{ ok: false, reason, status }`
+  where `reason` is `'rejected'` (401/403 — the server looked at the credential and refused it),
+  `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at all).
+  **`onSessionExpired` now fires only on `'rejected'`.**
+
+  A `429` branch was offered and declined by the consumer who found it: _"the refresh needs to
+  report why it failed, not whether"_. A boolean with one carve-out reproduces the same defect for
+  whichever status matters next.
+
+  **Behaviour change for consumers.** Before, any refresh failure invoked `onSessionExpired`. Now a
+  dropped connection, a rate limit or a server fault does not — the caller still receives the
+  original `401`, so a failed request stays failed, but it no longer receives a claim that the
+  session is over. If you relied on the callback to mean "the refresh did not succeed", read the
+  `reason` instead: `RefreshOutcome` and `RefreshFailureReason` are exported from
+  `@bymax-one/nest-auth/client`.
+
 ### Security
 
 - **A one-time code could reach the operator's log in clear text when the mail relay rejected the

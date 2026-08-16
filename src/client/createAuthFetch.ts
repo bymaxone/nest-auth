@@ -348,14 +348,49 @@ function attachTimeout(
  * runtimes (Node 18+, Cloudflare Workers) where it would otherwise
  * remain open until garbage collection.
  */
-async function performRefresh(endpoint: string, credentials: RequestCredentials): Promise<boolean> {
+/**
+ * Why a refresh attempt did not produce a new session.
+ *
+ * Three answers, not a boolean, because the caller acts differently on each and a boolean forces
+ * it to guess. Measured by a consumer against a real browser round: a rate-limited refresh answers
+ * `429`, the boolean made that identical to `401`, and the caller signed the user out of a session
+ * whose credential was still valid.
+ *
+ * - `rejected` — the server looked at the credential and refused it (401/403). The session is over.
+ * - `unavailable` — the server answered, but not with a session: a 429, a 5xx, a 404 from a
+ *   mistyped `routePrefix`. It says nothing about the credential.
+ * - `unreachable` — no answer at all: offline, DNS, CORS, an aborted request.
+ */
+export type RefreshFailureReason = 'rejected' | 'unavailable' | 'unreachable'
+
+/**
+ * The result of one refresh attempt.
+ *
+ * A discriminated union rather than a boolean with a `429` carve-out. The carve-out was offered
+ * and declined by the consumer who found the defect, on the grounds that it reproduces the same
+ * shape for whichever status turns out to matter next — the refresh has to report WHY it failed,
+ * not whether.
+ */
+export type RefreshOutcome =
+  | { readonly ok: true }
+  | {
+      readonly ok: false
+      readonly reason: RefreshFailureReason
+      /** HTTP status the server answered with, or `null` when there was no answer. */
+      readonly status: number | null
+    }
+
+async function performRefresh(
+  endpoint: string,
+  credentials: RequestCredentials
+): Promise<RefreshOutcome> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       credentials,
       headers: { 'Content-Type': 'application/json' }
     })
-    const ok = response.ok
+    const { ok, status } = response
     // Deliberately NOT awaited. Draining releases the connection in runtimes that hold it
     // open until the stream ends, and nothing downstream needs the drain to have COMPLETED —
     // the status has already been read. Under request interception (MSW, undici in jsdom)
@@ -364,9 +399,21 @@ async function performRefresh(endpoint: string, credentials: RequestCredentials)
     // which put the deadlock on the happy path at every rotation and made the refresh path
     // untestable.
     void response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
-    return ok
+
+    if (ok) return { ok: true }
+
+    // 401 and 403 are the server saying it looked at the credential and refused it. Everything
+    // else it answered — 429, 5xx, a 404 from a mistyped `routePrefix` — says nothing about the
+    // credential, only that this attempt did not produce a session.
+    return {
+      ok: false,
+      reason: status === 401 || status === 403 ? 'rejected' : 'unavailable',
+      status
+    }
   } catch {
-    return false
+    // No answer at all: offline, DNS, CORS, an aborted request. The session is very likely intact
+    // and the next attempt may well succeed.
+    return { ok: false, reason: 'unreachable', status: null }
   }
 }
 
@@ -400,13 +447,17 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
   // pointing at different APIs cannot block each other's refreshes —
   // and tests get a fresh slot for free by re-creating the wrapper.
   //
-  // Stored as `Promise<boolean>`: `true` means refresh succeeded,
-  // `false` means it failed. A boolean (rather than a `Response`) is
-  // safe to share across multiple awaiters; `Response` bodies can only
-  // be consumed once.
-  let inFlightRefresh: Promise<boolean> | null = null
+  // Stored as a {@link RefreshOutcome}, not a `Response`: a plain value is safe to share across
+  // multiple awaiters, and a `Response` body can be consumed only once.
+  //
+  // It was a boolean until a consumer measured what that costs. A rate-limited refresh answers
+  // `429` and the boolean makes it indistinguishable from `401`, so the caller signed the user
+  // out while their credential was still valid. Reporting WHY is the fix, and reporting it as a
+  // reason rather than as a `429` branch is deliberate: a boolean with one carve-out reproduces
+  // the same defect for the next status that turns out to matter.
+  let inFlightRefresh: Promise<RefreshOutcome> | null = null
 
-  function getOrStartRefresh(): Promise<boolean> {
+  function getOrStartRefresh(): Promise<RefreshOutcome> {
     if (inFlightRefresh !== null) {
       return inFlightRefresh
     }
@@ -459,8 +510,16 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       return response
     }
 
-    const refreshed = await getOrStartRefresh()
-    if (!refreshed) {
+    const outcome = await getOrStartRefresh()
+
+    // ONLY a refusal ends the session. `unavailable` (429, 5xx, a 404 from a mistyped
+    // `routePrefix`) and `unreachable` (offline, CORS, abort) say nothing about the credential —
+    // treating them as expiry signs the user out of a session that is still good, and on a rate
+    // limit it does so exactly when retrying would have worked.
+    //
+    // The caller still receives the original 401, so a failed request stays a failed request.
+    // What it no longer receives is a claim that the session is over.
+    if (!outcome.ok && outcome.reason === 'rejected') {
       // Isolate consumer-side errors: a throwing callback must not
       // mask the underlying 401 Response from the caller. Surface
       // the error via console.warn so library consumers can debug
@@ -474,6 +533,8 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       }
       return response
     }
+
+    if (!outcome.ok) return response
 
     // Retry the original request once. We deliberately do not loop —
     // a fresh 401 after a successful refresh indicates a server-side

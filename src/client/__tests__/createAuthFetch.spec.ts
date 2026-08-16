@@ -817,11 +817,13 @@ describe('createAuthFetch — request input shapes', () => {
 // ---------------------------------------------------------------------------
 
 describe('createAuthFetch — refresh failure paths', () => {
-  // Covers the `catch` branch in `performRefresh` — when the
-  // network rejects the refresh fetch entirely (offline, DNS error,
-  // CORS reject), the wrapper must still surface as a failed
-  // refresh and invoke `onSessionExpired`, not crash the caller.
-  it('treats a thrown refresh fetch as a failed refresh', async () => {
+  // The `catch` branch in `performRefresh`: the network rejected the refresh entirely — offline,
+  // DNS, CORS, an aborted request. The caller still gets its 401, and the wrapper must not crash.
+  //
+  // It must ALSO not report the session as expired, and that is the assertion that changed. A
+  // dropped connection says nothing about the credential; ending the session on it logs a user
+  // out for a lost wifi signal and makes the next attempt, which would have worked, impossible.
+  it('does not end the session when the refresh never reached the server', async () => {
     const spy = installFetchSpy()
     spy.mockResolvedValueOnce(makeResponse(401)) // original
     spy.mockRejectedValueOnce(new TypeError('network failure')) // refresh throws
@@ -831,8 +833,52 @@ describe('createAuthFetch — refresh failure paths', () => {
     const res = await authFetch('/api/users')
 
     expect(res.status).toBe(401)
-    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    expect(onSessionExpired).not.toHaveBeenCalled()
     expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  // The measured defect, as a test. A rate limiter answers `429`; the boolean this replaced made
+  // that identical to `401`, so the wrapper signed the user out of a session whose credential was
+  // still valid — and did it precisely when retrying would have worked.
+  //
+  // 5xx and a 404 from a mistyped `routePrefix` are the same shape: the server answered, and what
+  // it answered says nothing about the credential.
+  it.each([
+    ['rate limited', 429],
+    ['a server fault', 503],
+    ['a misrouted refresh endpoint', 404]
+  ])('does not end the session on %s', async (_why, status) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(status))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(401)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    // Not retried either: the request failed and stays failed. What the caller no longer receives
+    // is a claim that the session is over.
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  // The other half, and the one that keeps the change from being a blanket "never sign out". A
+  // refusal is the server saying it looked at the credential and rejected it, and that IS expiry.
+  it.each([
+    ['the credential was refused', 401],
+    ['the credential was forbidden', 403]
+  ])('ends the session when %s', async (_why, status) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(status))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(401)
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
   })
 })
 

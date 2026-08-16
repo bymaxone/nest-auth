@@ -12,7 +12,12 @@
 // ---------------------------------------------------------------------------
 
 export { createAuthFetch } from './createAuthFetch'
-export type { AuthFetch, AuthFetchConfig } from './createAuthFetch'
+export type {
+  AuthFetch,
+  AuthFetchConfig,
+  RefreshFailureReason,
+  RefreshOutcome
+} from './createAuthFetch'
 
 // ---------------------------------------------------------------------------
 // Typed client
