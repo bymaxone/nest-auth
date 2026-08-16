@@ -136,6 +136,8 @@ export class EmailChangeService implements OnModuleInit {
    * new address. Nothing about the account changes until that token comes back.
    *
    * @param userId - The authenticated caller, from their own claims — never the body.
+   * @param tenantId - The tenant that caller belongs to, from the same claims; scopes the
+   *   account read, because a repository id is unique only within a tenant.
    * @param dto - The new address and the current password.
    * @throws {@link AuthException} `INVALID_CREDENTIALS` when the account has no local password
    *   or the submitted one is wrong — the same code a failed login returns, so a thief holding
@@ -143,10 +145,10 @@ export class EmailChangeService implements OnModuleInit {
    * @throws {@link AuthException} `EMAIL_ALREADY_EXISTS` when the address is the account's own
    *   or belongs to another account in the tenant.
    */
-  async requestChange(userId: string, dto: ChangeEmailDto): Promise<void> {
+  async requestChange(userId: string, tenantId: string, dto: ChangeEmailDto): Promise<void> {
     const newEmail = normalizeEmail(dto.newEmail)
 
-    const user = await this.userRepo.findById(userId)
+    const user = await this.userRepo.findById(userId, tenantId)
     // A verified token whose subject no longer exists, and an account with no local password,
     // answer identically: the caller cannot prove a credential this account does not have.
     if (!user?.passwordHash) {
@@ -235,7 +237,7 @@ export class EmailChangeService implements OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
 
-    const user = await this.userRepo.findById(context.userId)
+    const user = await this.userRepo.findById(context.userId, context.tenantId)
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
@@ -252,7 +254,7 @@ export class EmailChangeService implements OnModuleInit {
     await this.assertAddressIsFree(user, context.newEmail)
 
     const oldEmail = user.email
-    await this.userRepo.updateEmail(context.userId, context.newEmail)
+    await this.userRepo.updateEmail(context.userId, context.tenantId, context.newEmail)
     this.logger.log(
       `confirmChange: address changed userId=${logSafe(context.userId)} ` +
         `from=${maskEmail(oldEmail)} to=${maskEmail(context.newEmail)}`

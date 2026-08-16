@@ -938,11 +938,13 @@ describe('OAuthService', () => {
 
       expect(mockUserRepo.linkOAuth).toHaveBeenCalledWith(
         AUTH_USER.id,
+        AUTH_USER.tenantId,
         'google',
         OAUTH_PROFILE.providerId
       )
-      // Re-fetch must use findById (primary key) not findByOAuthId for efficiency.
-      expect(mockUserRepo.findById).toHaveBeenCalledWith(AUTH_USER.id)
+      // Re-fetch must use findById (primary key) not findByOAuthId for efficiency, and scoped
+      // to the tenant the account was resolved in — an id alone is unique only within one.
+      expect(mockUserRepo.findById).toHaveBeenCalledWith(AUTH_USER.id, AUTH_USER.tenantId)
       expect(result).toBe(AUTH_RESULT)
     })
 

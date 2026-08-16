@@ -368,7 +368,7 @@ export class SessionService {
       }
 
       void this.userRepo
-        .findById(userId)
+        .findById(userId, tenantId)
         .then((user) => {
           if (!user) return
           // Explicit `void` so the inner promise's lifecycle is unambiguous —
@@ -827,7 +827,7 @@ export class SessionService {
     // Only count active refresh token entries — exclude grace pointers (rp:).
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
-    const limit = await this.resolveSessionLimit(userId)
+    const limit = await this.resolveSessionLimit(userId, tenantId)
 
     if (rtMembers.length <= limit) return
 
@@ -919,9 +919,10 @@ export class SessionService {
    * *thrown* resolver was ever caught.
    *
    * @param userId - Internal user ID to resolve the limit for.
+   * @param tenantId - Tenant that user belongs to; scopes the lookup behind the resolver.
    * @returns Maximum allowed concurrent sessions for the given user.
    */
-  private async resolveSessionLimit(userId: string): Promise<number> {
+  private async resolveSessionLimit(userId: string, tenantId: string): Promise<number> {
     const { maxSessionsResolver, defaultMaxSessions } = this.options.sessions
 
     if (!maxSessionsResolver) {
@@ -929,7 +930,7 @@ export class SessionService {
     }
 
     try {
-      const user = await this.userRepo.findById(userId)
+      const user = await this.userRepo.findById(userId, tenantId)
       if (!user) return defaultMaxSessions
       const resolved = await maxSessionsResolver(user)
       if (!Number.isInteger(resolved) || resolved < 1) {

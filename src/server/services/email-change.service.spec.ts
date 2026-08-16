@@ -172,7 +172,9 @@ describe('EmailChangeService', () => {
 
       // One call, and the error from THAT call — a second `requestChange` would mint a different
       // token, so comparing the first token against the second error could pass by accident.
-      const thrown = (await service.requestChange('user-1', dto).catch((e: unknown) => e)) as Error
+      const thrown = (await service
+        .requestChange('user-1', 'tenant-1', dto)
+        .catch((e: unknown) => e)) as Error
       const sent = mockEmailProvider.sendEmailChangeVerification.mock.calls[0]?.[2] as string
 
       expect(sent).toMatch(/^[0-9a-f]{64}$/)
@@ -188,7 +190,7 @@ describe('EmailChangeService', () => {
 
     // The happy path, and every property of the stored record that the confirmation relies on.
     it('mails a token to the new address and stores the pending change', async () => {
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockEmailProvider.sendEmailChangeVerification).toHaveBeenCalledTimes(1)
       const [tenant, addressed, token] = mockEmailProvider.sendEmailChangeVerification.mock
@@ -215,7 +217,7 @@ describe('EmailChangeService', () => {
     // Nothing about the account changes at request time. A flow that wrote the address here
     // and verified afterwards would hand an attacker the account for the length of the TTL.
     it('changes nothing about the account', async () => {
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockUserRepo.updateEmail).not.toHaveBeenCalled()
     })
@@ -225,7 +227,7 @@ describe('EmailChangeService', () => {
     it('refuses a wrong current password and mints nothing', async () => {
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toThrow(AuthException)
       expect(mockRedis.set).not.toHaveBeenCalled()
       expect(mockEmailProvider.sendEmailChangeVerification).not.toHaveBeenCalled()
     })
@@ -239,7 +241,7 @@ describe('EmailChangeService', () => {
     it('refuses once the re-proof failure budget for this account is spent', async () => {
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.requestChange('user-1', dto)).rejects.toMatchObject({
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
       })
       // Refused before the KDF, so a locked account is not an amplifier either.
@@ -253,7 +255,7 @@ describe('EmailChangeService', () => {
     // caller's failures lock out every user in the deployment; a key that drops the flow prefix
     // merges this budget with `login`'s, so guessing here locks the owner out of signing in.
     it('keys the failure budget to the account and to this flow alone', async () => {
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
         hmacSha256('reauth:email-change:user-1', 'test-hmac-key')
@@ -263,12 +265,12 @@ describe('EmailChangeService', () => {
     // The control for the test above: two accounts must not share one counter, or a single
     // caller's failures lock out every user in the deployment.
     it('gives two accounts two different budgets', async () => {
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
       const first = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
       mockBruteForce.isLockedOut.mockClear()
       mockUserRepo.findById.mockResolvedValue({ ...USER, id: 'user-2' })
 
-      await service.requestChange('user-2', dto)
+      await service.requestChange('user-2', 'tenant-1', dto)
 
       expect(mockBruteForce.isLockedOut.mock.calls[0]?.[0]).not.toBe(first)
     })
@@ -280,7 +282,7 @@ describe('EmailChangeService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toThrow(AuthException)
 
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('userId=user-1'))
       warnSpy.mockRestore()
@@ -290,7 +292,7 @@ describe('EmailChangeService', () => {
       mockPasswordService.compare.mockResolvedValue(false)
       mockBruteForce.recordFailure.mockClear()
 
-      await expect(service.requestChange('user-1', dto)).rejects.toBeDefined()
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toBeDefined()
 
       expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
     })
@@ -298,7 +300,7 @@ describe('EmailChangeService', () => {
     it('clears the budget once the current password is proved', async () => {
       mockBruteForce.resetFailures.mockClear()
 
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
@@ -311,7 +313,7 @@ describe('EmailChangeService', () => {
     ])('refuses when %s', async (_label, found) => {
       mockUserRepo.findById.mockResolvedValue(found)
 
-      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toThrow(AuthException)
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
@@ -324,9 +326,9 @@ describe('EmailChangeService', () => {
     ])('refuses when %s', async (_label, existing, target) => {
       mockUserRepo.findByEmail.mockResolvedValue(existing)
 
-      await expect(service.requestChange('user-1', { ...dto, newEmail: target })).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.requestChange('user-1', 'tenant-1', { ...dto, newEmail: target })
+      ).rejects.toThrow(AuthException)
       expect(mockRedis.set).not.toHaveBeenCalled()
     })
 
@@ -334,7 +336,7 @@ describe('EmailChangeService', () => {
     // address another tenant legitimately holds; checking the wrong tenant would let a
     // collision through.
     it('checks uniqueness within the caller tenant', async () => {
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
     })
@@ -342,7 +344,7 @@ describe('EmailChangeService', () => {
     // Normalized on the way in, so the address is stored, mailed and checked in the one form
     // login resolves an account by. A stored `New@Example.COM` would never match a lookup.
     it('normalizes the target address before doing anything with it', async () => {
-      await service.requestChange('user-1', { ...dto, newEmail: '  NEW@Example.COM  ' })
+      await service.requestChange('user-1', 'tenant-1', { ...dto, newEmail: '  NEW@Example.COM  ' })
 
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
       const [, addressed] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [
@@ -361,7 +363,7 @@ describe('EmailChangeService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.requestChange('user-1', dto)).rejects.toThrow(AuthException)
+      await expect(service.requestChange('user-1', 'tenant-1', dto)).rejects.toThrow(AuthException)
 
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('current password rejected')
@@ -374,7 +376,7 @@ describe('EmailChangeService', () => {
     it('masks the address in the log', async () => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
 
-      await service.requestChange('user-1', dto)
+      await service.requestChange('user-1', 'tenant-1', dto)
 
       const logged = logSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(logged).toContain('requestChange: verification sent')
@@ -396,7 +398,7 @@ describe('EmailChangeService', () => {
       await service.confirmChange({ token: TOKEN })
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(`ec:${sha256(TOKEN)}`)
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
       // The notice goes to the address the account is LEAVING — the last message the owner can
       // receive somewhere they still control, and what turns a silent takeover into a visible
       // one (NIST SP 800-63B §4.6).
@@ -563,7 +565,7 @@ describe('EmailChangeService', () => {
       )
 
       await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
     })
 
     // Re-checked here and not only at request time: the two are separated by the whole TTL,
@@ -603,7 +605,7 @@ describe('EmailChangeService', () => {
       )
 
       await expect(silent.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
     })
 
     // A stored `null` is the one non-object JSON value that reaches the type guard: it parses
