@@ -817,11 +817,13 @@ describe('createAuthFetch — request input shapes', () => {
 // ---------------------------------------------------------------------------
 
 describe('createAuthFetch — refresh failure paths', () => {
-  // Covers the `catch` branch in `performRefresh` — when the
-  // network rejects the refresh fetch entirely (offline, DNS error,
-  // CORS reject), the wrapper must still surface as a failed
-  // refresh and invoke `onSessionExpired`, not crash the caller.
-  it('treats a thrown refresh fetch as a failed refresh', async () => {
+  // The `catch` branch in `performRefresh`: the network rejected the refresh entirely — offline,
+  // DNS, CORS, an aborted request. The caller still gets its 401, and the wrapper must not crash.
+  //
+  // It must ALSO not report the session as expired, and that is the assertion that changed. A
+  // dropped connection says nothing about the credential; ending the session on it logs a user
+  // out for a lost wifi signal and makes the next attempt, which would have worked, impossible.
+  it('does not end the session when the refresh never reached the server', async () => {
     const spy = installFetchSpy()
     spy.mockResolvedValueOnce(makeResponse(401)) // original
     spy.mockRejectedValueOnce(new TypeError('network failure')) // refresh throws
@@ -831,9 +833,215 @@ describe('createAuthFetch — refresh failure paths', () => {
     const res = await authFetch('/api/users')
 
     expect(res.status).toBe(401)
-    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    expect(onSessionExpired).not.toHaveBeenCalled()
     expect(spy).toHaveBeenCalledTimes(2)
   })
+
+  // The measured defect, as a test. A rate limiter answers `429`; the boolean this replaced made
+  // that identical to `401`, so the wrapper signed the user out of a session whose credential was
+  // still valid — and did it precisely when retrying would have worked.
+  //
+  // 5xx and a 404 from a mistyped `routePrefix` are the same shape: the server answered, and what
+  // it answered says nothing about the credential.
+  it.each([
+    ['rate limited', 429],
+    ['a server fault', 503],
+    ['a misrouted refresh endpoint', 404]
+  ])('does not end the session on %s', async (_why, status) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(status))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(401)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    // Not retried either: the request failed and stays failed. What the caller no longer receives
+    // is a claim that the session is over.
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  // The reason reaches the consumer, which is what makes it an answer rather than an internal
+  // detail. Each of the three arrives with the status behind it, and `unreachable` with `null`
+  // because there was no answer to take one from.
+  it.each([
+    ['a rate limit', 429, 'unavailable', 429],
+    ['a refused credential', 401, 'rejected', 401],
+    ['an origin guard', 403, 'unavailable', 403]
+  ])('reports %s to onRefreshFailed', async (_why, status, reason, reported) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(status))
+
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onRefreshFailed).toHaveBeenCalledWith({ ok: false, reason, status: reported })
+  })
+
+  // No answer at all carries no status, and `null` says that rather than a made-up zero.
+  it('reports a thrown refresh as unreachable with no status', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockRejectedValueOnce(new TypeError('offline'))
+
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onRefreshFailed).toHaveBeenCalledWith({
+      ok: false,
+      reason: 'unreachable',
+      status: null
+    })
+  })
+
+  // A broken consumer callback must not mask the response the caller is waiting for — the same
+  // contract `onSessionExpired` already had, and worth pinning on the new one before someone
+  // assumes it throws through.
+  it('swallows a throwing onRefreshFailed and still returns the response', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(429))
+
+    const authFetch = createAuthFetch({
+      onRefreshFailed: () => {
+        throw new Error('consumer bug')
+      }
+    })
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(401)
+    expect(warn).toHaveBeenCalledWith(
+      '[nest-auth] onRefreshFailed callback threw:',
+      expect.any(Error)
+    )
+    warn.mockRestore()
+  })
+
+  // The other way a consumer callback fails, and the one a try/catch alone does not see. The
+  // option is typed `=> void`, which TypeScript lets an `async` function satisfy, so
+  // `onRefreshFailed: async (f) => report(f)` compiles — and a rejection is not a throw, so
+  // without adopting the returned promise it escapes as an unhandled rejection in the consumer's
+  // app rather than as our warning. Pinned separately from the synchronous case because the two
+  // arrive through different paths and one passing says nothing about the other.
+  it('swallows a rejecting async onRefreshFailed and still returns the response', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(429))
+
+    const authFetch = createAuthFetch({
+      onRefreshFailed: () => Promise.reject(new Error('consumer bug'))
+    })
+    const res = await authFetch('/api/users')
+
+    // The rejection is handled in a microtask, so let the queue drain before asserting — an
+    // assertion that ran first would pass for the wrong reason and keep passing if the fix
+    // were removed.
+    await Promise.resolve()
+
+    expect(res.status).toBe(401)
+    expect(warn).toHaveBeenCalledWith(
+      '[nest-auth] onRefreshFailed callback threw:',
+      expect.any(Error)
+    )
+    warn.mockRestore()
+  })
+
+  // 403 on this route is overloaded, so the CODE decides. `AuthService.refresh` revokes every
+  // session for the user before rethrowing a blocked-account status, so by the time one of these
+  // reaches the client there is nothing left to refresh — treating it as retryable would leave a
+  // signed-out user staring at failures with no redirect.
+  it.each([
+    ['suspended', 'auth.account_suspended'],
+    ['banned', 'auth.account_banned'],
+    ['inactive', 'auth.account_inactive'],
+    ['awaiting approval', 'auth.pending_approval']
+  ])('ends the session on a 403 for an account that is %s', async (_why, code) => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(403, { error: { code } }))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).toHaveBeenCalledTimes(1)
+  })
+
+  // Only a 403 means the account gate ran, so a body carrying an account code on any OTHER status
+  // must not end the session. Contrived on purpose: it pins that the read is gated on the status
+  // rather than fishing for a code in whatever came back, which is what keeps a rate limiter's
+  // response from being read as a verdict about the account.
+  it('ignores an account code on a status the account gate never produced', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(429, { error: { code: 'auth.account_banned' } }))
+
+    const onSessionExpired = jest.fn()
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired, onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(onRefreshFailed).toHaveBeenCalledWith({ ok: false, reason: 'unavailable', status: 429 })
+  })
+
+  // The other side of the same status, and the reason the code has to decide rather than the
+  // number: a wrong `trustedOrigins` would otherwise sign out every user of the deployment.
+  it('does not end the session on a 403 naming an untrusted origin', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(403, { error: { code: 'auth.untrusted_origin' } }))
+
+    const onSessionExpired = jest.fn()
+    const onRefreshFailed = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired, onRefreshFailed })
+    await authFetch('/api/users')
+
+    expect(onSessionExpired).not.toHaveBeenCalled()
+    expect(onRefreshFailed).toHaveBeenCalledWith({ ok: false, reason: 'unavailable', status: 403 })
+  })
+
+  // 403 is NOT expiry, and the reason is specific rather than cautious: `TrustedOriginGuard` sits
+  // on the whole `AuthController`, `/refresh` included, and answers `auth.untrusted_origin` with
+  // 403. Classifying that as a refused credential would sign out every user of a deployment whose
+  // `trustedOrigins` is wrong — the same defect this whole change removes, one status over.
+  it('does not end the session on a 403 from an origin guard', async () => {
+    const spy = installFetchSpy()
+    spy.mockResolvedValueOnce(makeResponse(401))
+    spy.mockResolvedValueOnce(makeResponse(403))
+
+    const onSessionExpired = jest.fn()
+    const authFetch = createAuthFetch({ onSessionExpired })
+    const res = await authFetch('/api/users')
+
+    expect(res.status).toBe(401)
+    expect(onSessionExpired).not.toHaveBeenCalled()
+  })
+
+  // The other half, and the one that keeps the change from being a blanket "never sign out". A
+  // 401 from the refresh route is the server saying it looked at the credential and refused it.
+  it.each([['the credential was refused', 401]])(
+    'ends the session when %s',
+    async (_why, status) => {
+      const spy = installFetchSpy()
+      spy.mockResolvedValueOnce(makeResponse(401))
+      spy.mockResolvedValueOnce(makeResponse(status))
+
+      const onSessionExpired = jest.fn()
+      const authFetch = createAuthFetch({ onSessionExpired })
+      const res = await authFetch('/api/users')
+
+      expect(res.status).toBe(401)
+      expect(onSessionExpired).toHaveBeenCalledTimes(1)
+    }
+  )
 })
 
 // ---------------------------------------------------------------------------

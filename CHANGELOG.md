@@ -18,7 +18,171 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rate-limited refresh signed the user out of a session that was still valid.**
+  `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a
+  `404` from a mistyped `routePrefix` arrived at the caller as one indistinguishable `false` — and
+  the caller treats `false` as expiry. Measured by a consumer against a real browser round; twelve
+  browser specs passed on both runs that produced the finding, so no green suite covered it.
+
+  `performRefresh` now returns a `RefreshOutcome`: `{ ok: true }`, or `{ ok: false, reason, status }`
+  where `reason` is `'rejected'` (a 401, **or a 403 whose error code names a terminal account
+  state** — the server looked at the credential and refused it, so `rejected.status` is `401` or
+  `403`), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at
+  all).
+  **`onSessionExpired` now fires only on `'rejected'`.**
+
+  403 is decided by the error **code**, because the route answers it for two unrelated reasons.
+  `TrustedOriginGuard` covers `/refresh` and answers `auth.untrusted_origin` with 403 — reading
+  that as expiry would sign out every user of a deployment whose `trustedOrigins` is wrong. But
+  `refresh` also revokes every session before rethrowing a blocked-account status
+  (`auth.account_suspended`, `auth.account_banned`, `auth.account_inactive`,
+  `auth.pending_approval`), and there the session really is over. The wrapper reads the code
+  itself, since it drains the refresh body and the caller only ever sees the original response.
+
+  A new `onRefreshFailed?: (failure: RefreshFailure) => void` reports **every** failure with its
+  reason and status, before the expiry decision. That is what makes the answer to _why_ usable: a
+  rate limit deserves "retrying", a dropped connection deserves "you appear to be offline", and
+  only a refused credential deserves the sign-in screen.
+
+  A `429` branch was offered and declined by the consumer who found it: _"the refresh needs to
+  report why it failed, not whether"_. A boolean with one carve-out reproduces the same defect for
+  whichever status matters next.
+
+  **Behaviour change for consumers.** Before, any refresh failure invoked `onSessionExpired`. Now a
+  dropped connection, a rate limit or a server fault does not — the caller still receives the
+  original `401`, so a failed request stays failed, but it no longer receives a claim that the
+  session is over. If you relied on the callback to mean "the refresh did not succeed", read the
+  `reason` instead: `RefreshOutcome` and `RefreshFailureReason` are exported from
+  `@bymax-one/nest-auth/client`.
+
 ### Security
+
+- **No error object reaches the logger any more.** Twenty-seven log sites passed the thrown value
+  as Nest's second `Logger` argument, which prints its `stack`. On every one of those paths the
+  thrower is code this library does not own: a hook, an OAuth plugin, the consumer's repository,
+  a Redis client — and in `AuthExceptionFilter`'s case, literally anything the surrounding
+  application threw. None of them hands the logger an error object any more, and on the twenty
+  sites where the caller could not name what the thrower held, **nothing the thrower authored is
+  published at all** — `describeChannelStatus` reports the shape of the failure (that a throw
+  happened, and how many links its `cause` chain has) and reads neither `message` nor `name` nor
+  `stack`. Where the caller CAN name the values it passed in, `describeError` still publishes the
+  text with those removed.
+
+  **An empty redaction list is the shape that looked safe and was not.** `describeError(err, [])`
+  publishes the thrower's `name` and `message` with an empty list asserting there is nothing to
+  remove — an assertion none of these call sites can make, because every thrower on them is
+  consumer code: a repository handed `findByEmail(dto.email, tenantId)`, a hook handed the IP and
+  user agent, a `maxSessionsResolver` handed the full `AuthUser` including the password hash, a
+  repository call carrying re-encrypted MFA material. A consumer error that quotes its own input
+  put those in the log. The empty list did not make the line safe; it removed the only defence
+  being attempted while reading like one. The form is now banned outright and the guard suite
+  enforces it.
+
+  **A partial list is the same defect with a longer sleeve.** Seven more sites named one to three
+  fields while the thrower had been handed a whole object: every `afterRegister`, `afterLogin`,
+  `afterEmailVerified`, `afterPasswordReset`, `afterInvitationAccepted` and `onNewSession` hook
+  receives the complete `SafeAuthUser`, so a hook throwing `new Error(user.name)` published a name
+  that no list mentioned. Those are opaque now too. What survives is the rule the list was always
+  meant to express — **name the values the thrower actually received** — which three sites can
+  still satisfy honestly, because they hand a repository or a hook exactly one identifier and
+  name exactly that.
+
+  Those three also had the list naming the wrong string: `describeError(err, [logSafe(user.id)])`
+  redacted the SANITISED id, and `logSafe` returns `<malformed>` for precisely the ids worth
+  worrying about — so the value the repository was handed was not in the list at all. They name
+  the value as passed now, and the guard rejects any redaction list containing a call.
+
+  **The highest-value site was not in the original report.** `OAuthService.handleCallback` wraps
+  `plugin.exchangeCode(code, codeVerifier)` and `plugin.fetchProfile(accessToken)`. The plugin is
+  consumer code that RECEIVED all three, and an HTTP client attaching its request config to the
+  error is the ordinary case rather than an exotic one — axios does it by default. A live access
+  token could reach the operator's pipeline through a rejection this library then logged in full.
+  The handler publishes nothing the plugin wrote. Naming the three values was the first fix and it
+  was the weaker half by its own reasoning: redaction is a substring match, so it holds for a token
+  the plugin echoed as given and not for one it re-encoded — and a token inside a base64 or
+  URL-encoded request body is not present as written. The test drives exactly that: the plugin
+  echoes the token base64url-encoded, and the line contains neither form.
+
+  The second was found by the guard rather than by reading: `AuthExceptionFilter`, whose parameter
+  is called `exception`, not `err`. It is the branch a re-thrown mail-channel error lands in under
+  `onDeliveryError: 'rethrow'` — this library's own documentation says so — so it is the most
+  exposed log site of the set, and a name-based sweep walked straight past it.
+
+  **What you lose:** the stack trace for a hook, plugin or repository failure. That stack belongs
+  to the consumer's own code, which can log it where the audience is known; a library's log line
+  reaches a wider one. Same argument that took the recipient address out of the delivery-failure
+  line. On the twenty opaque sites you also lose the message and the error's class; what remains
+  is that a failure happened, where, and how deep its `cause` chain ran.
+
+  `redactSecrets` was hardened in the process. It read `.length` off each element, so a single
+  `undefined` in the list threw a `TypeError` — out of a `catch` block, turning a failure the
+  caller meant to absorb into an unhandled rejection with no log line at all, which is worse than
+  the leak it exists to prevent. It is exported, so a consumer reaches that edge from plain
+  JavaScript. Found when a caller named a field the compiler believed was a `string`; the suite
+  did not fail an assertion, it crashed the worker.
+
+- **A consumer-supplied identifier could forge a second record in the log.** Every value this
+  library interpolates into a log template now passes a guard: `logSafe` for identifiers,
+  `maskEmail` for addresses, `describeError` for a rejection's own text. Forty-eight
+  interpolations did not, across nine files.
+
+  `IUserRepository` places no character constraint on `id`, `role` or `tenantId` — `role` is a
+  bare `string` in the interface — so a value carrying CR/LF closes the log record and opens one
+  the reader attributes to this library. That is the attack `logSafe` was written for.
+
+  **The convention already existed and had been applied to `tenantId` at fourteen sites.** It was
+  never extended to anything else, and the omission was invisible because it sat on the SAME
+  LINES: `userId=${user.id} tenantId=${logSafe(tenantId)}` reads as deliberate until you ask why
+  one half is wrapped and the other is not.
+
+  Two sites went further and stringified a rejection straight into the line
+  (`logout: session cleanup failed — ${String(err)}`). `String()` strips nothing and bounds
+  nothing; those now go through `describeError`, which does both. The rejection is Redis's rather
+  than a mail channel's, so no credential is implied — but the failing key it names embeds the
+  consumer's user id.
+
+  A guard suite (`test/e2e/log-injection-guard.e2e-spec.ts`) now walks every `this.logger.*` call
+  in `src/` and fails on any interpolation that is neither guarded nor named in an explicit
+  allowlist of values this library authors. It fails **closed**: a new interpolation breaks the
+  build until somebody decides which it is. The guard call must BE the whole expression —
+  `${logSafe(a) || attackerValue}` is rejected, as are a concatenation, a ternary arm, and a
+  helper whose name merely starts with a guard's.
+
+  It reads the **TypeScript AST**, not the text. Three hand-rolled scanners preceded it and each
+  was fooled by ordinary punctuation: a comma inside a message read as an argument separator, a
+  `)` inside a template's literal text ended the call early, and a guard's name matched anywhere
+  in the expression. Parentheses and quotes inside string literals defeat every version of that
+  approach, and a gate whose parser can be fooled by punctuation is not a gate. It caught the two `String(err)` sites on its first
+  run, which is the argument for it — forty-eight had drifted silently under a convention that
+  lived only in reviewers' heads.
+
+  Two corrections to the walker itself, both held by synthetic fixtures because `src/` has no
+  example of either. It now knows `fatal`, the sixth level Nest 11's `Logger` exposes — a level
+  list has to be complete rather than sufficient, and the first `this.logger.fatal(...)` anyone
+  wrote would otherwise have been invisible to a gate claiming to walk them all. And it no longer
+  descends into a guard's argument: what reaches the record is the guard's OUTPUT, so
+  ``logSafe(`id=${user.id}`)`` was being reported twice, once as guarded and once as bare, failing
+  a line that cannot carry a control character. A false positive on correct code is how a gate
+  gets weakened by whoever hits it next.
+
+  Requires no action from a consumer: `logSafe` returns an ordinary identifier unchanged, so log
+  lines are byte-identical unless a value actually carried a control character, in which case the
+  field is replaced with `<malformed>` and the record stays one record.
+
+  **`maskEmail` was one of those guards and did not enforce the boundary.** It preserves the
+  domain verbatim to keep the line useful to an operator, so `a@example.com\nforged` masked to
+  `a***@example.com\nforged`: the address was hidden and the injection was not, and being on the
+  allowlist meant the gate reported those sites as safe. Masking and record safety are two
+  separate duties and the helper owed both; it now passes its result through `logSafe`. The
+  addresses reaching those lines are not all DTO-validated — `profile.email` is whatever an OAuth
+  provider's userinfo response contained and `oldEmail` is whatever the host's repository stored,
+  so `@IsEmail()` saw neither. The allowlist's claim is now a test rather than a sentence: every
+  name on it is fed a value carrying LF, CR, NEL and both Unicode separators, and must return
+  something that cannot end a record. `safeLogLine` was removed from the allowlist in the same
+  pass — it is a check on a fully composed line, not a field guard (`safeLogLine(raw, [])` is
+  `raw`), and it appears inside no interpolation in `src/`.
 
 - **`onDeliveryError` takes a per-message map, so an opt-in stops being all-or-nothing.** It was one
   switch for all ten messages. A deployment sets `'rethrow'` for a specific benefit — deleting an

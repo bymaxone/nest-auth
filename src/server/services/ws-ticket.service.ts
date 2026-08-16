@@ -27,6 +27,7 @@ import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
+import { logSafe } from '../utils/log-safe'
 
 @Injectable()
 export class WsTicketService {
@@ -59,7 +60,7 @@ export class WsTicketService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
-      this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${payload.sub}`)
+      this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${logSafe(payload.sub)}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
@@ -86,7 +87,9 @@ export class WsTicketService {
     }
 
     const ticket = await this.redis.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)
-    this.logger.log(`ws-ticket: issued userId=${payload.sub} tenantId=${payload.tenantId}`)
+    this.logger.log(
+      `ws-ticket: issued userId=${logSafe(payload.sub)} tenantId=${logSafe(payload.tenantId)}`
+    )
     return { ticket, expiresIn: WS_TICKET_TTL_SECONDS }
   }
 

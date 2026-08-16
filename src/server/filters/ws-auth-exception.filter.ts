@@ -7,6 +7,7 @@ import { Catch, Logger } from '@nestjs/common'
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common'
 
 import { AuthException } from '../errors/auth-exception'
+import { describeChannelStatus } from '../utils/describe-error'
 
 /**
  * A Socket.IO client: dispatch is an event, and the adapter puts it on the wire.
@@ -150,6 +151,12 @@ export class WsAuthExceptionFilter implements ExceptionFilter {
     // Neither shape. Returning quietly is the only option left: throwing here would replace a
     // refusal the caller can see with one nothing catches, inside the layer whose job is to
     // handle failures.
-    this.logger.error('refused a request on a client this filter cannot answer', exception)
+    // Same reasoning as `AuthExceptionFilter`'s unknown-exception branch, one transport over:
+    // whatever reached this filter was thrown by code this library does not own, so nothing it
+    // authored is published — not its `message`, not its `name`, not its `stack`. Naming values
+    // to redact would require knowing what the thrower held, which this filter cannot.
+    this.logger.error(
+      `refused a request on a client this filter cannot answer: ${describeChannelStatus(exception)}`
+    )
   }
 }

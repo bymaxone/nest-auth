@@ -450,7 +450,7 @@ describe('PlatformAuthService', () => {
       expect(result).toBe(PLATFORM_AUTH_RESULT)
       // Drain microtask queue so the fire-and-forget rejection handler runs.
       await Promise.resolve()
-      expect(loggerSpy).toHaveBeenCalledWith('updateLastLogin failed', expect.any(Error))
+      expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('updateLastLogin failed: '))
       loggerSpy.mockRestore()
     })
   })

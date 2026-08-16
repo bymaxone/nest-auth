@@ -9,6 +9,7 @@ import type { Response } from 'express'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import { describeChannelStatus } from '../utils/describe-error'
 
 /** The body shape every auth error serializes to. */
 interface AuthErrorEnvelope {
@@ -103,7 +104,23 @@ export class AuthExceptionFilter implements ExceptionFilter {
       return
     }
 
-    this.logger.error('unhandled exception', exception)
+    // The single most exposed log site in this library, and the reason is stated two lines below:
+    // this branch is where anything the application threw ends up. `EmailChangeService` and
+    // `InvitationService` re-throw a laundered error precisely so it arrives here safe, and under
+    // `onDeliveryError: 'rethrow'` a mail channel's ORIGINAL error — the one a relay may have
+    // filled with a quoted body — reaches this line from any code path this library does not own.
+    //
+    // So nothing the thrower authored is published. `describeChannelStatus` reports the SHAPE of
+    // the failure — that a throw happened, and how many links its `cause` chain has — and reads
+    // neither `message` nor `name` nor the `stack`.
+    //
+    // The previous shape was `describeError(exception, [])`: the thrower's text, with an empty
+    // list asserting there was nothing to redact. That assertion is one this filter cannot make.
+    // Naming values requires knowing what the thrower held, and this branch is reached by
+    // anything the surrounding application threw — including, under `onDeliveryError: 'rethrow'`,
+    // a relay error quoting a live OTP. An empty list did not make the line safe; it only removed
+    // the one defence that was being attempted.
+    this.logger.error(`unhandled exception: ${describeChannelStatus(exception)}`)
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {
         code: AUTH_ERROR_CODES.INTERNAL,

@@ -9,6 +9,39 @@
 import { redactSecrets } from './redact-secrets'
 
 describe('redactSecrets', () => {
+  // The type says `readonly string[]` and that is not a guarantee at a boundary this library does
+  // not own: a consumer calling from JavaScript, or an object cast anywhere along the way, can put
+  // `undefined` in the array. Reading `.length` off it threw a `TypeError` — out of a `catch`
+  // block, which turns a failure the caller meant to absorb into an unhandled rejection with no
+  // log line at all. That is worse than the leak this module exists to prevent.
+  //
+  // Found when a caller named a field the compiler believed was a `string` and a fixture had left
+  // undefined; the suite did not fail an assertion, it crashed the worker.
+  //
+  // One narrowing cast, in one helper, rather than one per case: a downcast from `unknown` is the
+  // only way to hand a typed function the input its type forbids, and the point of these cases is
+  // exactly that the type is not enforced at every boundary.
+  const withInvalid = (secrets: readonly unknown[]): string =>
+    redactSecrets('hello world', secrets as readonly string[])
+
+  it.each([
+    ['undefined', [undefined]],
+    ['null', [null]],
+    ['a number', [550]],
+    ['a mix with one real secret', [undefined, 'world', null]]
+  ])('survives %s in the list rather than throwing out of a catch block', (_why, secrets) => {
+    expect(() => withInvalid(secrets)).not.toThrow()
+  })
+
+  // And the real secret in that mix is still removed — a guard that silently stopped redacting
+  // would be the same defect wearing a different face.
+  it('still removes the values that ARE strings', () => {
+    const line = withInvalid([undefined, 'world'])
+
+    expect(line).not.toContain('world')
+    expect(line).toContain('<redacted>')
+  })
+
   // The early return is not only an optimisation, so it gets an assertion rather than being left
   // to the other cases to imply. Callers that hold no secret are ordinary — the opaque error
   // description passes none — and the scan walks remote-controlled text one character at a time

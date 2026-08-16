@@ -4097,8 +4097,7 @@ describe('MfaService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(errorSpy).toHaveBeenCalledWith(
-        're-encryption under the current MFA key failed',
-        expect.any(Error)
+        expect.stringContaining('re-encryption under the current MFA key failed: ')
       )
       errorSpy.mockRestore()
     })
