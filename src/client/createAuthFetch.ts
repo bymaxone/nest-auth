@@ -75,6 +75,26 @@ export interface AuthFetchConfig {
   onSessionExpired?: () => void
 
   /**
+   * Callback invoked when a refresh attempt did not produce a session, whatever the reason.
+   *
+   * Fires for every failure, including the one that also triggers {@link onSessionExpired} — and
+   * before it, so a consumer sees the reason first. This is what makes the answer to *why* usable
+   * rather than merely internal: a rate limit deserves "retrying in a moment", a dropped
+   * connection deserves "you appear to be offline", and only a refused credential deserves the
+   * sign-in screen.
+   *
+   * Errors are swallowed and reported through `console.warn`, on the same reasoning as
+   * {@link onSessionExpired}: a broken consumer callback must not mask the underlying response.
+   * That covers an `async` callback too — the signature is `=> void`, which TypeScript lets an
+   * async function satisfy, and its rejection is handled rather than left to surface as an
+   * unhandled rejection in your app. It is not awaited: this is a notification, and the
+   * sign-out decision does not wait behind a consumer's network call.
+   *
+   * @param failure - Why the attempt failed, and the status behind it when there was one.
+   */
+  onRefreshFailed?: (failure: RefreshFailure) => void
+
+  /**
    * Per-request timeout in milliseconds.
    *
    * Default: `30_000` (30s). Pass `0` to disable the timeout.
@@ -196,6 +216,21 @@ const ERROR_BODY_READ_TIMEOUT_MS = 2_000
  * @returns `true` when a refresh could plausibly help.
  */
 async function isExpiredSessionResponse(response: Response): Promise<boolean> {
+  const code = await readErrorCode(response)
+
+  return code === undefined || code === AUTH_ERROR_CODES.TOKEN_INVALID
+}
+
+/**
+ * The error code inside an auth envelope, or `undefined` when there is none to be had.
+ *
+ * Extracted so the 401 gate and the refresh classifier read a body the same way. They ask
+ * different questions of the answer and neither should own the reading.
+ *
+ * @param response - Any response, unconsumed. Read from a CLONE, so the caller keeps its body.
+ * @returns The `code`, or `undefined` if the body is absent, unreadable, slow, or not an envelope.
+ */
+async function readErrorCode(response: Response): Promise<string | undefined> {
   const clone = response.clone()
   let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -221,12 +256,12 @@ async function isExpiredSessionResponse(response: Response): Promise<boolean> {
 
   clearTimeout(timer)
 
-  if (typeof body !== 'object' || body === null) return true
+  if (typeof body !== 'object' || body === null) return undefined
 
   const envelope = body as { code?: unknown; error?: { code?: unknown } }
   const code = envelope.error?.code ?? envelope.code
 
-  return typeof code !== 'string' || code === AUTH_ERROR_CODES.TOKEN_INVALID
+  return typeof code === 'string' ? code : undefined
 }
 
 /**
@@ -338,24 +373,96 @@ function attachTimeout(
 }
 
 /**
- * Fire the refresh endpoint and resolve to `true` on success.
+ * The 403 codes that mean the session is over rather than this attempt being refused.
  *
- * Sends an empty POST and discards the response body — the auth
- * cookies are the carrier in cookie-mode deployments, and a
- * non-cookie bearer flow needs to call `refresh()` on the
- * higher-level `AuthClient` directly anyway. The body stream is
- * cancelled explicitly to release the underlying connection in
- * runtimes (Node 18+, Cloudflare Workers) where it would otherwise
- * remain open until garbage collection.
+ * `AuthService.refresh` revokes EVERY session for the user before rethrowing a blocked-status
+ * error, so by the time one of these reaches a client there is nothing left to refresh. Treating
+ * them as retryable would leave a signed-out user staring at failures with no redirect.
+ *
+ * The other 403 a refresh can answer is `auth.untrusted_origin`, from the origin guard that covers
+ * the whole controller. That one says nothing about the credential — a deployment with a wrong
+ * `trustedOrigins` would sign out every user if 403 were read as expiry — which is why the code
+ * decides and the status alone does not.
  */
-async function performRefresh(endpoint: string, credentials: RequestCredentials): Promise<boolean> {
+const TERMINAL_REFRESH_CODES: ReadonlySet<string> = new Set([
+  AUTH_ERROR_CODES.ACCOUNT_INACTIVE,
+  AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+  AUTH_ERROR_CODES.ACCOUNT_BANNED,
+  AUTH_ERROR_CODES.PENDING_APPROVAL
+])
+
+/**
+ * Why a refresh attempt did not produce a new session.
+ *
+ * Three answers, not a boolean, because the caller acts differently on each and a boolean forces
+ * it to guess. Measured by a consumer against a real browser round: a rate-limited refresh answers
+ * `429`, the boolean made that identical to `401`, and the caller signed the user out of a session
+ * whose credential was still valid.
+ *
+ * - `rejected` — a 401, or a 403 whose error code names a terminal account state. The server
+ *   looked at the credential and refused it. The session is over, and `status` is `401` or `403`.
+ * - `unavailable` — it answered, but not with a session: a 429, a 5xx, a 403 from an origin guard,
+ *   a 404 from a mistyped `routePrefix`. None of those is a statement about the credential.
+ * - `unreachable` — no answer at all: offline, DNS, CORS, an aborted request.
+ *
+ * 403 is decided by the error CODE rather than the status, because the route answers it for two
+ * unrelated reasons. `TrustedOriginGuard` covers `/refresh` and answers `auth.untrusted_origin`
+ * with 403 — reading that as expiry would sign out every user of a deployment with a wrong
+ * `trustedOrigins`. But `refresh` also revokes every session before rethrowing a blocked-account
+ * status, and there a 403 genuinely IS the end of the session. This wrapper reads the code
+ * itself: it drains the refresh body, and the caller receives the original resource response, so
+ * there is nothing left for it to consult.
+ */
+export type RefreshFailureReason = 'rejected' | 'unavailable' | 'unreachable'
+
+/**
+ * The result of one refresh attempt.
+ *
+ * A discriminated union rather than a boolean with a `429` carve-out. The carve-out was offered
+ * and declined by the consumer who found the defect, on the grounds that it reproduces the same
+ * shape for whichever status turns out to matter next — the refresh has to report WHY it failed,
+ * not whether.
+ */
+export interface RefreshFailure {
+  readonly ok: false
+  readonly reason: RefreshFailureReason
+  /** HTTP status the server answered with, or `null` when there was no answer. */
+  readonly status: number | null
+}
+
+export type RefreshOutcome = { readonly ok: true } | RefreshFailure
+
+/**
+ * Fire the refresh endpoint and report what came back.
+ *
+ * Sends an empty POST and discards the response body — the auth cookies are the carrier in
+ * cookie-mode deployments, and a non-cookie bearer flow needs to call `refresh()` on the
+ * higher-level `AuthClient` directly anyway. The body stream is cancelled explicitly to release
+ * the underlying connection in runtimes (Node 18+, Cloudflare Workers) where it would otherwise
+ * remain open until garbage collection.
+ *
+ * @param endpoint - Absolute or relative URL of the refresh route.
+ * @param credentials - The `RequestCredentials` mode the wrapper was configured with.
+ * @returns `{ ok: true }`, or the reason it did not produce a session.
+ */
+async function performRefresh(
+  endpoint: string,
+  credentials: RequestCredentials
+): Promise<RefreshOutcome> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       credentials,
       headers: { 'Content-Type': 'application/json' }
     })
-    const ok = response.ok
+    const { ok, status } = response
+
+    // The 403 code is read BEFORE the drain below, and the order is load-bearing: `cancel()`
+    // disturbs the body, and `clone()` on a disturbed response throws. Getting this backwards
+    // turned every 403 into `unreachable` with a null status — the read threw, the outer `catch`
+    // caught it, and the classification silently became "no answer at all".
+    const code = status === 403 ? await readErrorCode(response) : undefined
+
     // Deliberately NOT awaited. Draining releases the connection in runtimes that hold it
     // open until the stream ends, and nothing downstream needs the drain to have COMPLETED —
     // the status has already been read. Under request interception (MSW, undici in jsdom)
@@ -364,9 +471,33 @@ async function performRefresh(endpoint: string, credentials: RequestCredentials)
     // which put the deadlock on the happy path at every rotation and made the refresh path
     // untestable.
     void response.body?.cancel().catch(/* istanbul ignore next */ () => undefined)
-    return ok
+
+    if (ok) return { ok: true }
+
+    if (status === 401) return { ok: false, reason: 'rejected', status }
+
+    // 403 is decided by the CODE, because the status is overloaded on this route. The origin
+    // guard covers the whole controller and answers `auth.untrusted_origin` with 403 — reading
+    // that as expiry signs out every user of a deployment with a wrong `trustedOrigins`. But
+    // `refresh` also revokes every session before rethrowing a blocked-account status, and by
+    // then there is genuinely nothing left to refresh.
+    //
+    // This wrapper has to read it: the body is drained here, and the caller receives the ORIGINAL
+    // resource response rather than the refresh's, so there is no code left for it to consult.
+    // An earlier version of this comment claimed otherwise and was simply wrong.
+    // No second `status === 403` here: `code` is read only on that status, so a defined code
+    // already means the account gate ran. The duplicate check was there and the mutation gate
+    // showed it dead — which also showed what the guard above is really holding, and it now has
+    // a test of its own.
+    if (code !== undefined && TERMINAL_REFRESH_CODES.has(code)) {
+      return { ok: false, reason: 'rejected', status }
+    }
+
+    return { ok: false, reason: 'unavailable', status }
   } catch {
-    return false
+    // No answer at all: offline, DNS, CORS, an aborted request. The session is very likely intact
+    // and the next attempt may well succeed.
+    return { ok: false, reason: 'unreachable', status: null }
   }
 }
 
@@ -392,21 +523,40 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
     ? { ...DEFAULT_HEADERS, ...config.defaultHeaders }
     : DEFAULT_HEADERS
   const onSessionExpired = config.onSessionExpired
+  const onRefreshFailed = config.onRefreshFailed
   const timeoutMs = config.timeout ?? 30_000
   const skipRefreshSuffixes = buildAuthRefreshSkipSuffixes(config.routePrefix)
+
+  /**
+   * Reports a broken `onRefreshFailed` callback without letting it mask the response.
+   *
+   * Named rather than inlined because a synchronous throw and an asynchronous rejection arrive
+   * through different paths and must reach the same place; two copies of the reporting would be
+   * two things to keep in step.
+   *
+   * @param err - Whatever the consumer's callback threw or rejected with.
+   */
+  const reportCallbackError = (err: unknown): void => {
+    // Stryker disable next-line StringLiteral: diagnostic-only console.warn label for a swallowed callback error; no consumer behavior depends on the text
+    console.warn('[nest-auth] onRefreshFailed callback threw:', err)
+  }
 
   // Per-instance dedup slot. Closing over the slot inside the factory
   // (rather than at module scope) means two `createAuthFetch` instances
   // pointing at different APIs cannot block each other's refreshes —
   // and tests get a fresh slot for free by re-creating the wrapper.
   //
-  // Stored as `Promise<boolean>`: `true` means refresh succeeded,
-  // `false` means it failed. A boolean (rather than a `Response`) is
-  // safe to share across multiple awaiters; `Response` bodies can only
-  // be consumed once.
-  let inFlightRefresh: Promise<boolean> | null = null
+  // Stored as a {@link RefreshOutcome}, not a `Response`: a plain value is safe to share across
+  // multiple awaiters, and a `Response` body can be consumed only once.
+  //
+  // It was a boolean until a consumer measured what that costs. A rate-limited refresh answers
+  // `429` and the boolean makes it indistinguishable from `401`, so the caller signed the user
+  // out while their credential was still valid. Reporting WHY is the fix, and reporting it as a
+  // reason rather than as a `429` branch is deliberate: a boolean with one carve-out reproduces
+  // the same defect for the next status that turns out to matter.
+  let inFlightRefresh: Promise<RefreshOutcome> | null = null
 
-  function getOrStartRefresh(): Promise<boolean> {
+  function getOrStartRefresh(): Promise<RefreshOutcome> {
     if (inFlightRefresh !== null) {
       return inFlightRefresh
     }
@@ -459,8 +609,36 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       return response
     }
 
-    const refreshed = await getOrStartRefresh()
-    if (!refreshed) {
+    const outcome = await getOrStartRefresh()
+
+    // ONLY a refusal ends the session. `unavailable` (429, 5xx, a 404 from a mistyped
+    // `routePrefix`) and `unreachable` (offline, CORS, abort) say nothing about the credential —
+    // treating them as expiry signs the user out of a session that is still good, and on a rate
+    // limit it does so exactly when retrying would have worked.
+    //
+    // The caller still receives the original 401, so a failed request stays a failed request.
+    // What it no longer receives is a claim that the session is over.
+    if (!outcome.ok) {
+      // Every failure, before the expiry decision, so a consumer that wants to distinguish
+      // "retrying" from "signed out" is told the reason rather than left to infer it.
+      // Both failure modes of a consumer callback, because the signature does not restrict it to
+      // one. `=> void` accepts an `async` function under TypeScript's void-return rule, so
+      // `onRefreshFailed: async (f) => report(f)` compiles — and its REJECTION is not a throw, so
+      // a bare try/catch never sees it and it surfaces as an unhandled rejection in the
+      // consumer's app. `Promise.resolve` adopts whatever came back (a promise, a thenable, or
+      // `undefined`) and hands the rejection to the same reporter the synchronous throw reaches.
+      //
+      // Not awaited, deliberately: this is a notification, and the expiry decision below must not
+      // wait behind a consumer's network call.
+      try {
+        void Promise.resolve(onRefreshFailed?.(outcome)).catch(reportCallbackError)
+        // Stryker disable next-line BlockStatement: the catch only logs a user-callback error and swallows it; emptying the body leaves the same swallow, observable only via a console spy
+      } catch (err: unknown) {
+        reportCallbackError(err)
+      }
+    }
+
+    if (!outcome.ok && outcome.reason === 'rejected') {
       // Isolate consumer-side errors: a throwing callback must not
       // mask the underlying 401 Response from the caller. Surface
       // the error via console.warn so library consumers can debug
@@ -474,6 +652,8 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
       }
       return response
     }
+
+    if (!outcome.ok) return response
 
     // Retry the original request once. We deliberately do not loop —
     // a fresh 401 after a successful refresh indicates a server-side

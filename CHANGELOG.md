@@ -18,6 +18,45 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rate-limited refresh signed the user out of a session that was still valid.**
+  `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a
+  `404` from a mistyped `routePrefix` arrived at the caller as one indistinguishable `false` — and
+  the caller treats `false` as expiry. Measured by a consumer against a real browser round; twelve
+  browser specs passed on both runs that produced the finding, so no green suite covered it.
+
+  `performRefresh` now returns a `RefreshOutcome`: `{ ok: true }`, or `{ ok: false, reason, status }`
+  where `reason` is `'rejected'` (a 401, **or a 403 whose error code names a terminal account
+  state** — the server looked at the credential and refused it, so `rejected.status` is `401` or
+  `403`), `'unavailable'` (it answered, but not with a session) or `'unreachable'` (no answer at
+  all).
+  **`onSessionExpired` now fires only on `'rejected'`.**
+
+  403 is decided by the error **code**, because the route answers it for two unrelated reasons.
+  `TrustedOriginGuard` covers `/refresh` and answers `auth.untrusted_origin` with 403 — reading
+  that as expiry would sign out every user of a deployment whose `trustedOrigins` is wrong. But
+  `refresh` also revokes every session before rethrowing a blocked-account status
+  (`auth.account_suspended`, `auth.account_banned`, `auth.account_inactive`,
+  `auth.pending_approval`), and there the session really is over. The wrapper reads the code
+  itself, since it drains the refresh body and the caller only ever sees the original response.
+
+  A new `onRefreshFailed?: (failure: RefreshFailure) => void` reports **every** failure with its
+  reason and status, before the expiry decision. That is what makes the answer to _why_ usable: a
+  rate limit deserves "retrying", a dropped connection deserves "you appear to be offline", and
+  only a refused credential deserves the sign-in screen.
+
+  A `429` branch was offered and declined by the consumer who found it: _"the refresh needs to
+  report why it failed, not whether"_. A boolean with one carve-out reproduces the same defect for
+  whichever status matters next.
+
+  **Behaviour change for consumers.** Before, any refresh failure invoked `onSessionExpired`. Now a
+  dropped connection, a rate limit or a server fault does not — the caller still receives the
+  original `401`, so a failed request stays failed, but it no longer receives a claim that the
+  session is over. If you relied on the callback to mean "the refresh did not succeed", read the
+  `reason` instead: `RefreshOutcome` and `RefreshFailureReason` are exported from
+  `@bymax-one/nest-auth/client`.
+
 ### Security
 
 - **No error object reaches the logger any more.** Twenty-seven log sites passed the thrown value
