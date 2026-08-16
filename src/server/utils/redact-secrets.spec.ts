@@ -10,7 +10,7 @@ import { redactSecrets } from './redact-secrets'
 
 describe('redactSecrets', () => {
   // The early return is not only an optimisation, so it gets an assertion rather than being left
-  // to the other cases to imply. Callers that hold no secret are ordinary — a status-only error
+  // to the other cases to imply. Callers that hold no secret are ordinary — the opaque error
   // description passes none — and the scan walks remote-controlled text one character at a time
   // inside a failure handler, where a relay is free to reject with megabytes.
   it('returns the input untouched when there is nothing to look for', () => {

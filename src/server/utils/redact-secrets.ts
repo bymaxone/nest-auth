@@ -65,7 +65,7 @@ export function redactSecrets(value: string, secrets: readonly string[]): string
   // Nothing to look for means nothing to do, and returning the input is not merely an
   // optimisation. The scan below walks the string one character at a time, building the output by
   // concatenation — linear work over text a REMOTE controls, run inside a failure handler, where a
-  // relay is free to reject with megabytes. Callers that hold no secret are ordinary (a status-only
+  // relay is free to reject with megabytes. Callers that hold no secret are ordinary (the opaque
   // description passes none at all), so this is the common path rather than a corner of it.
   // Equivalence, stated before the directive so the directive itself stays adjacent to the line it
   // means: the FALSE mutant — never taking this return — produces the identical string, because
