@@ -970,12 +970,13 @@ describe('OAuthService', () => {
       const svc = moduleWithSessions.get(OAuthService)
       await svc.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        SAFE_USER.id,
-        AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'UA'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: SAFE_USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'UA'
+      })
     })
 
     // Verifies that a session is created when sessions.enabled is true (link action).
@@ -1008,12 +1009,13 @@ describe('OAuthService', () => {
       const svc = moduleWithSessions.get(OAuthService)
       await svc.handleCallback('google', 'code', 'state', 'state', '1.2.3.4', 'UA', {})
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        SAFE_USER.id,
-        AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'UA'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: SAFE_USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'UA'
+      })
     })
 
     // Verifies that sessions are NOT created when sessions.enabled is false (default).

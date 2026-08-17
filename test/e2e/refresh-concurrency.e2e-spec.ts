@@ -26,6 +26,8 @@
  * identically to production. No production source is modified.
  */
 
+import { createHash, createHmac } from 'node:crypto'
+
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
@@ -54,6 +56,24 @@ const GRACE_EXPIRY_BUFFER_MS = 500
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
+
+/**
+ * The index key the library derives for a dashboard account, computed the way the library does.
+ *
+ * The HMAC key is derived from the JWT secret by the same label `resolveOptions` uses, so this
+ * exercises the real derivation end to end rather than restating a hash. A key spelled out as a
+ * literal would pass on a build that derived it differently.
+ */
+function sessionIndexFor(userId: string, tenantId: string): string {
+  const hmacKey = createHash('sha256')
+    .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
+    .digest('hex')
+  // Length-prefixed, byte-counted: the preimage is not injective without it, because both
+  // components may contain the delimiter. Built by hand here rather than imported, so the
+  // suite pins the KEY and does not merely agree with whatever the helper currently returns.
+  const subject = `dashboard:${Buffer.byteLength(tenantId, 'utf8')}:${tenantId}:${userId}`
+  return `sess:${createHmac('sha256', hmacKey).update(subject).digest('hex')}`
+}
 
 describe('refresh concurrency with grace window (E2E)', () => {
   // ---------------------------------------------------------------------------
@@ -184,7 +204,7 @@ describe('refresh concurrency with grace window (E2E)', () => {
     // the window in which "log out everywhere" could sweep past a session a concurrent
     // rotation was in the middle of minting.
     it('indexes the rotated session and its grace pointer from inside the script', async () => {
-      const members = await redisClient.smembers(`auth:sess:${userId}`)
+      const members = await redisClient.smembers(`auth:${sessionIndexFor(userId, 'tenant-1')}`)
 
       // Both freshly minted sessions are in the index — a revoke-all sweeping now removes them.
       expect(members).toContain(`rt:${sha256(firstResponse.body.refreshToken as string)}`)

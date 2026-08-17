@@ -104,7 +104,11 @@ export class SessionController {
     // When no refresh token is present (e.g. access-token-only requests),
     // isCurrent will be false for all sessions — this is the correct behaviour.
     const currentHash = rawRefresh ? sha256(rawRefresh) : undefined
-    return this.sessionService.listSessions(user.sub, currentHash)
+    return this.sessionService.listSessions({
+      userId: user.sub,
+      tenantId: user.tenantId,
+      currentSessionHash: currentHash
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -152,7 +156,11 @@ export class SessionController {
     }
 
     const currentHash = sha256(rawRefresh)
-    await this.sessionService.revokeAllExceptCurrent(user.sub, currentHash)
+    await this.sessionService.revokeAllExceptCurrent({
+      userId: user.sub,
+      tenantId: user.tenantId,
+      currentSessionHash: currentHash
+    })
   }
 
   // ---------------------------------------------------------------------------
@@ -181,6 +189,10 @@ export class SessionController {
     @CurrentUser() user: DashboardJwtPayload,
     @Param('id') id: string
   ): Promise<void> {
-    await this.sessionService.revokeOtherSession(user.sub, id)
+    await this.sessionService.revokeOtherSession({
+      userId: user.sub,
+      tenantId: user.tenantId,
+      sessionHash: id
+    })
   }
 }

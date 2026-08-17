@@ -136,7 +136,11 @@ describe('SessionController', () => {
 
       await controller.listSessions(JWT_PAYLOAD, mockReq as Request)
 
-      expect(mockSessionService.listSessions).toHaveBeenCalledWith(JWT_PAYLOAD.sub, expectedHash)
+      expect(mockSessionService.listSessions).toHaveBeenCalledWith({
+        userId: JWT_PAYLOAD.sub,
+        tenantId: 'tenant-1',
+        currentSessionHash: expectedHash
+      })
       expect(mockSessionService.listSessions).not.toHaveBeenCalledWith(JWT_PAYLOAD.sub, rawToken)
     })
 
@@ -147,7 +151,11 @@ describe('SessionController', () => {
 
       await controller.listSessions(JWT_PAYLOAD, mockReq as Request)
 
-      expect(mockSessionService.listSessions).toHaveBeenCalledWith(JWT_PAYLOAD.sub, undefined)
+      expect(mockSessionService.listSessions).toHaveBeenCalledWith({
+        userId: JWT_PAYLOAD.sub,
+        tenantId: 'tenant-1',
+        currentSessionHash: undefined
+      })
     })
 
     // Verifies that listSessions returns the session list from the service without wrapping or filtering.
@@ -228,10 +236,11 @@ describe('SessionController', () => {
 
       await controller.revokeAllSessions(JWT_PAYLOAD, mockReq as Request)
 
-      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
-        JWT_PAYLOAD.sub,
-        expectedHash
-      )
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
+        userId: JWT_PAYLOAD.sub,
+        tenantId: 'tenant-1',
+        currentSessionHash: expectedHash
+      })
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalledWith(
         JWT_PAYLOAD.sub,
         rawToken
@@ -273,10 +282,11 @@ describe('SessionController', () => {
 
       await controller.revokeSession(JWT_PAYLOAD, SESSION_ID)
 
-      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith(
-        JWT_PAYLOAD.sub,
-        SESSION_ID
-      )
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith({
+        userId: JWT_PAYLOAD.sub,
+        tenantId: 'tenant-1',
+        sessionHash: SESSION_ID
+      })
     })
 
     // Verifies that the controller binds the caller's own sub as the ownership key so users cannot revoke other users' sessions.
@@ -286,7 +296,11 @@ describe('SessionController', () => {
 
       await controller.revokeSession(differentUserPayload, SESSION_ID)
 
-      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith('attacker-999', SESSION_ID)
+      expect(mockSessionService.revokeOtherSession).toHaveBeenCalledWith({
+        userId: 'attacker-999',
+        tenantId: 'tenant-1',
+        sessionHash: SESSION_ID
+      })
       expect(mockSessionService.revokeOtherSession).not.toHaveBeenCalledWith('user-123', SESSION_ID)
     })
 

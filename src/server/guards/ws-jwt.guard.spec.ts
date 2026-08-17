@@ -370,7 +370,11 @@ describe('WsJwtGuard', () => {
       const { context } = makeWsContext('Bearer some.jwt.token')
 
       await expect(guard.canActivate(context as never)).rejects.toThrow(AuthException)
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'dashboard')
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(
+        VALID_PAYLOAD.sub,
+        'tenant-1',
+        'dashboard'
+      )
     })
 
     // A token stamped at the current generation is still valid — the bump must not lock out

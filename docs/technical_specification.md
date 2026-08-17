@@ -1661,7 +1661,8 @@ class TokenManagerService {
    * 1. Generates access JWT with claims per `PlatformJwtPayload` (type: 'platform')
    * 2. Generates opaque refresh token (UUID v4)
    * 3. Stores refresh token in Redis with prefix `prt:` and session data
-   * 4. Updates SET `psess:{userId}` and details `psd:{sessionHash}`
+   * 4. Updates the platform session index — `psess:{hmac_sha256(hmacKey, "platform:{userId}")}`
+   *    — and details `psd:{sessionHash}`
    *
    * @returns PlatformAuthResult with tokens and admin data
    */
@@ -1734,41 +1735,42 @@ class SessionService {
    * 7. Runs the onNewSession hook
    *
    * @param userId User ID
-   * @param refreshToken Opaque session token
-   * @param ipAddress Request IP
-   * @param userAgent Request User-Agent
+   * Takes an OBJECT, not positional arguments: most of these fields are `string`, so any two of
+   * them can be swapped without the compiler noticing. `listSessions(userId, currentHash)` type
+   * checked against the earlier positional form and treated the hash as the tenant, returning an
+   * empty listing indistinguishable from "this user has no sessions".
+   *
+   * @param params See CreateSessionParams — userId, tenantId, rawRefreshToken, ip, userAgent
    */
-  createSession(
-    userId: string,
-    refreshToken: string,
-    ipAddress: string,
-    userAgent: string
-  ): Promise<void>
+  createSession(params: CreateSessionParams): Promise<string>
 
   /**
    * Lists all of the user's active sessions.
    *
+   * @param params See ListSessionsParams — userId, tenantId, currentSessionHash?
    * @returns Array of sessions with device, IP, timestamps, and a current-session indicator
    */
-  listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]>
+  listSessions(params: ListSessionsParams): Promise<SessionInfo[]>
 
   /**
    * Revokes a specific session.
    *
    * Flow:
-   * 1. Verifies that sessionHash belongs to the user via SISMEMBER auth:sess:{userId}
+   * 1. Verifies that sessionHash belongs to the user via SISMEMBER on the derived session
+   *    index — `auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`, not the
+   *    bare-id key this document described before the index was tenant-scoped
    * 2. If it does not belong, throws SESSION_NOT_FOUND (prevents BOLA/IDOR)
    * 3. Removes the refresh token, the session from the SET, and the session details
    *
    * @throws AUTH_ERROR_CODES.SESSION_NOT_FOUND if session not found
    */
-  revokeSession(userId: string, sessionHash: string): Promise<void>
+  revokeSession(params: RevokeSessionParams): Promise<void>
 
   /**
    * Revokes all sessions except the current one.
    * Useful for "log out of all other devices".
    */
-  revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void>
+  revokeAllExceptCurrent(params: RevokeAllExceptCurrentParams): Promise<void>
 
   /**
    * Applies the session limit using the FIFO strategy.
@@ -2243,9 +2245,10 @@ class PlatformAuthService {
    * - Detecting an account compromise
    *
    * Flow:
-   * 1. Fetches all session hashes via `SMEMBERS auth:psess:{userId}`
+   * 1. Fetches all session hashes via `SMEMBERS` on the derived platform index,
+   *    `auth:psess:{hmac_sha256(hmacKey, "platform:{userId}")}`
    * 2. For each hash: deletes `auth:prt:{hash}` and `auth:psd:{hash}`
-   * 3. Removes the platform session SET (`auth:psess:{userId}`)
+   * 3. Removes that same derived platform session SET
    *
    * Note: Does not invalidate active access tokens (JWTs are stateless with a 15min TTL).
    * For immediate access token invalidation, add the `jti` to the blacklist (`rv`).
@@ -3262,7 +3265,9 @@ rather than a missing feature.
 
 The session keyspaces are keyed by different things on purpose. A rotation touches
 `rt:{oldHash}`, `rt:{newHash}`, `rp:{oldHash}`, `cf:{oldHash}`, `fam:{familyId}`
-and `sess:{userId}` in one atomic step — six keys derived from four unrelated
+and the derived session index
+`sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`
+in one atomic step — six keys derived from four unrelated
 identifiers, with no hash tag among them. Cluster assigns slots by key, so those
 six land on up to six nodes and the script is refused with `CROSSSLOT Keys in
 request don't hash to the same slot`. Family revocation and the revoke-all sweep
@@ -3467,7 +3472,7 @@ User             Controller        AuthService         TokenDeliveryService  Red
   |                   |                  |--- delete refresh session --------->|
   |                   |                  |    DEL auth:rt:{hash}              |
   |                   |                  |--- remove from session SET -------->|
-  |                   |                  |    SREM auth:sess:{userId}         |
+  |                   |                  |    SREM auth:sess:{hmac(subject)}  |
   |                   |                  |--- hook.afterLogout() -->           |
   |                   |--- clearAuthSession() -->|                            |
   |<-- 200 (session cleared per tokenDelivery)   |                            |

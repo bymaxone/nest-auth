@@ -537,7 +537,7 @@ describe('MfaService', () => {
     // dropped tenant segment would diverge.
     it('should claim the mfa_setup key derived from the HMAC of the tenant-scoped subject', async () => {
       await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
-      const expectedKey = `mfa_setup:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`
+      const expectedKey = `mfa_setup:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
 
@@ -1007,16 +1007,20 @@ describe('MfaService', () => {
         'tenant-1',
         expect.objectContaining({ mfaEnabled: true })
       )
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
       // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(tenant-scoped subject).
       expect(mockRedis.get).toHaveBeenCalledWith(
-        `mfa_setup:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`
+        `mfa_setup:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
       )
       // The anti-replay marker is dual-written for the migration: both the tenant-scoped key and
       // the legacy plane-only key are claimed with a 90s TTL, so a code cannot be replayed via
       // either code path during a rolling upgrade.
       expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `tu:${hmacSha256(`dashboard:tenant-1:user-1:${validCode}`, HMAC_KEY)}`,
+        `tu:${hmacSha256(`dashboard:8:tenant-1:user-1:${validCode}`, HMAC_KEY)}`,
         90
       )
       expect(mockRedis.setnx).toHaveBeenCalledWith(
@@ -1719,7 +1723,7 @@ describe('MfaService', () => {
         // The scoped lock it took is released; the legacy lock it never took is left alone.
         expect(mockRedis.eval).toHaveBeenCalledWith(
           expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`],
+          [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
           [expect.any(String)]
         )
         expect(mockRedis.eval).not.toHaveBeenCalledWith(
@@ -1875,7 +1879,7 @@ describe('MfaService', () => {
         // legacy plane-only one the migration also holds.
         expect(mockRedis.eval).toHaveBeenCalledWith(
           expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`],
+          [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
           [expect.any(String)]
         )
         expect(mockRedis.eval).toHaveBeenCalledWith(
@@ -2145,7 +2149,7 @@ describe('MfaService', () => {
       await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
       expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `rcu:${hmacSha256(`dashboard:tenant-1:user-1:${plainRecovery}`, HMAC_KEY)}`,
+        `rcu:${hmacSha256(`dashboard:8:tenant-1:user-1:${plainRecovery}`, HMAC_KEY)}`,
         300
       )
     })
@@ -2581,12 +2585,13 @@ describe('MfaService', () => {
 
       await sessionEnabledService.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        SAFE_USER.id,
-        MOCK_AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'Browser'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: SAFE_USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: MOCK_AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'Browser'
+      })
     })
   })
 
@@ -2764,8 +2769,12 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
         'tenant-1',
         AUTH_USER_MFA_ENABLED.email
@@ -2807,8 +2816,12 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       // The counterpart of the dashboard assertion above: a platform admin has no tenant, and
       // the projection says so with `''` rather than leaving the field absent. The dashboard
       // projection would leave it `undefined` here, so this is what pins which one ran.
@@ -2837,7 +2850,11 @@ describe('MfaService', () => {
 
       await expect(service.resetMfa('user-1', 'dashboard', 'tenant-1')).resolves.toBeUndefined()
 
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
     })
 
     // A consumer that registers no `afterMfaDisabled` at all: the guard must short-circuit
@@ -2965,7 +2982,11 @@ describe('MfaService', () => {
         mfaSecret: null,
         mfaRecoveryCodes: null
       })
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('user-1', 'dashboard')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
       // The disable brute-force identifier must be HMAC('disable:{userId}') — kills line 653.
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
         hmacSha256('disable:dashboard:user-1', HMAC_KEY)
@@ -3178,8 +3199,12 @@ describe('MfaService', () => {
       // Revocation is scoped to the PLATFORM plane, sessions and epoch alike: the two id
       // spaces come from different repositories and may collide, so the dashboard variants
       // here would log out — and un-revoke — the wrong account.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       // A platform admin carries no tenant, so the email port is handed the 'platform' plane
       // sentinel as the notification's attribution — never an empty string.
       expect(mockEmailProvider.sendMfaDisabledNotification).toHaveBeenCalledWith(
@@ -3380,8 +3405,12 @@ describe('MfaService', () => {
       await service.verifyAndEnable('admin-1', validCode, '1.2.3.4', 'Browser', 'platform')
 
       // Revocation scoped to the platform plane — see the disable counterpart for why.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
 
       expect(mockPlatformUserRepo.updateMfa).toHaveBeenCalledWith(
         'admin-1',
@@ -4277,7 +4306,7 @@ describe('MfaService', () => {
     })
 
     // An unset environment variable becomes an empty string by the time it reaches the call site,
-    // and a blank tenant would build `dashboard::{userId}` — a third keyspace distinct from every
+    // and a blank tenant would build `dashboard:0::{userId}` — a third keyspace distinct from every
     // real tenant's. A dashboard call needs a non-empty tenant, so `''` is refused exactly as a
     // missing one is, before any repository read.
     it('refuses a dashboard call whose tenant is the empty string', async () => {

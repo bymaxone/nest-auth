@@ -302,10 +302,11 @@ describe('PasswordResetService', () => {
     it('ends every other session, keeping the caller signed in', async () => {
       await service.changePassword('u1', dto, 'raw-refresh')
 
-      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
-        'u1',
-        sha256('raw-refresh')
-      )
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
+        userId: 'u1',
+        tenantId: 'tenant-1',
+        currentSessionHash: sha256('raw-refresh')
+      })
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
@@ -316,8 +317,8 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', dto, undefined)
 
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
     })
 
     // An EMPTY token is "cannot be identified" too, not a token. Treated as one it would spare the
@@ -328,8 +329,8 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', dto, '')
 
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
     })
 
     // The re-proof budget is keyed to this account AND this flow. Dropping the account id gives
@@ -1254,8 +1255,8 @@ describe('PasswordResetService', () => {
       // Full revocation: refresh sessions are deleted AND the user's token epoch is advanced,
       // so already-issued stateless access tokens are rejected immediately rather than staying
       // valid until their exp.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant1', 'dashboard')
     })
 
     // Scenario: token flow; expected: getdel is called with a `pw_reset:<sha256>` key, never an
@@ -1558,8 +1559,8 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u2')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u2', 'tenant1', 'dashboard')
       // Pin the verifiedToken Redis key template — emptying it (`getdel('')`) reads the wrong key.
       const [key] = mockRedis.getdel.mock.calls[0] as [string]
       expect(key).toMatch(/^pw_vtok:[0-9a-f]{64}$/)
@@ -1647,8 +1648,8 @@ describe('PasswordResetService', () => {
         '654321'
       )
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u3')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u3', 'tenant1', 'dashboard')
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when no proof field is present (otp method).

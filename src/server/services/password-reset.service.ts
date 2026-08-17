@@ -437,7 +437,7 @@ export class PasswordResetService {
     }
 
     await this.assertResetTokenStillBound(context)
-    await this.applyPasswordReset(context.userId, newPassword)
+    await this.applyPasswordReset(context.userId, context.tenantId, newPassword)
   }
 
   /**
@@ -458,7 +458,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    await this.applyPasswordReset(user.id, newPassword)
+    await this.applyPasswordReset(user.id, user.tenantId, newPassword)
   }
 
   /**
@@ -489,7 +489,7 @@ export class PasswordResetService {
     }
 
     await this.assertResetTokenStillBound(context)
-    await this.applyPasswordReset(context.userId, newPassword)
+    await this.applyPasswordReset(context.userId, context.tenantId, newPassword)
   }
 
   /**
@@ -585,10 +585,14 @@ export class PasswordResetService {
     // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
     // session sweep alone leaves valid until they expire.
     if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
-      await this.sessionService.revokeAllExceptCurrent(userId, sha256(currentRefreshToken))
+      await this.sessionService.revokeAllExceptCurrent({
+        userId,
+        tenantId: user.tenantId,
+        currentSessionHash: sha256(currentRefreshToken)
+      })
     } else {
-      await this.redis.invalidateUserSessions(userId)
-      await this.redis.bumpUserTokenEpoch(userId)
+      await this.redis.invalidateUserSessions(userId, user.tenantId, 'dashboard')
+      await this.redis.bumpUserTokenEpoch(userId, user.tenantId, 'dashboard')
     }
 
     await this.notifyPasswordChanged(user)
@@ -684,7 +688,11 @@ export class PasswordResetService {
     throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }
 
-  private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
+  private async applyPasswordReset(
+    userId: string,
+    tenantId: string,
+    newPassword: string
+  ): Promise<void> {
     // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
     await this.userRepo.updatePassword(userId, passwordHash)
@@ -695,8 +703,8 @@ export class PasswordResetService {
     // tracked per-jti), so a stolen access token would survive a reset-after-compromise for
     // the full access-token TTL. The Lua-backed session deletion is itself atomic, avoiding
     // the race where a concurrent login adds a session between the SMEMBERS read and the DEL.
-    await this.redis.invalidateUserSessions(userId)
-    await this.redis.bumpUserTokenEpoch(userId)
+    await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
 
     // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
     // serves the notification, which a reset needs at least as much as a change does: the

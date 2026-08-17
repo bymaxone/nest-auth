@@ -8,10 +8,12 @@ import { createHash } from 'node:crypto'
 import { inspect } from 'node:util'
 
 import { Test } from '@nestjs/testing'
+
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AuthRedisService } from './auth-redis.service'
 
 // ---------------------------------------------------------------------------
@@ -37,7 +39,10 @@ const mockRedis = {
 
 // Note: setnx in AuthRedisService calls redis.set(..., 'NX'), not a separate redis.setnx method.
 
-const mockOptions = { redisNamespace: NAMESPACE }
+/** Mirrors the `hmacKey` the mock options carry, so a key can be spelled out. */
+const HMAC_KEY = 'test-hmac-key'
+
+const mockOptions = { redisNamespace: NAMESPACE, hmacKey: 'test-hmac-key' }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -313,10 +318,43 @@ describe('AuthRedisService', () => {
     // expired token, so its `sub` is either missing or only as trustworthy as its signature,
     // and taking the owner from it would let a caller aim a revocation at someone else.
     it('should return the owner recorded on the session', async () => {
-      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', role: 'member' }))
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({ userId: 'user-1', tenantId: 'tenant-1', role: 'member' })
+      )
 
-      await expect(service.readSessionOwner('rt:abc')).resolves.toBe('user-1')
+      await expect(service.readSessionOwner('rt:abc')).resolves.toEqual({
+        userId: 'user-1',
+        tenantId: 'tenant-1'
+      })
+    })
+
+    // A record whose `tenantId` is present but not a string. It reads as absent rather than
+    // being coerced: the value goes into a key derivation, and `String(42)` would name a real
+    // key belonging to a tenant nobody asked about. The owner still resolves, because the two
+    // fields fail independently — a usable owner with an unusable tenant is exactly the
+    // pre-upgrade record the logout path is written to skip.
+    it('reads a non-string tenant as absent, keeping the owner', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', tenantId: 42 }))
+
+      await expect(service.readSessionOwner('rt:abc')).resolves.toEqual({
+        userId: 'user-1',
+        tenantId: undefined
+      })
       expect(mockRedis.get).toHaveBeenCalledWith(prefixed('rt:abc'))
+    })
+
+    // A BLANK tenant reads as absent for the same reason a non-string one does, and it is the
+    // likelier shape: an unset environment variable arrives as `''`. Returned as a usable string
+    // it passed `AuthService.logout`'s `tenantId !== undefined` check, which then derived
+    // `dashboard:0::{userId}` — a key belonging to no tenant — missed the real index, and left the
+    // member and its detail record behind while reporting a completed logout.
+    it('reads a blank tenant as absent, keeping the owner', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', tenantId: '' }))
+
+      await expect(service.readSessionOwner('rt:abc')).resolves.toEqual({
+        userId: 'user-1',
+        tenantId: undefined
+      })
     })
 
     // Scenario: every shape that names nobody. Expected: the empty string, never a throw.
@@ -333,15 +371,19 @@ describe('AuthRedisService', () => {
     ])('should answer the empty string for %s', async (_label, stored) => {
       mockRedis.get.mockResolvedValue(stored)
 
-      await expect(service.readSessionOwner('rt:abc')).resolves.toBe('')
+      await expect(service.readSessionOwner('rt:abc')).resolves.toEqual({
+        userId: '',
+        tenantId: undefined
+      })
     })
   })
 
   describe('writeRecoveredSession', () => {
     const RECOVERED = {
       kind: 'dashboard' as const,
+      tenantId: 'tenant-1',
       newHash: 'new-hash',
-      newSessionJson: '{"userId":"u1"}',
+      newSessionJson: '{"userId":"u1","tenantId":"tenant-1"}',
       familyId: 'fam-1',
       userId: 'u1',
       refreshTtl: 604_800
@@ -358,9 +400,9 @@ describe('AuthRedisService', () => {
         expect.stringContaining("redis.call('EXISTS', KEYS[2])"),
         3,
         prefixed('rt:new-hash'),
-        prefixed('sess:u1'),
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`),
         prefixed('fam:fam-1'),
-        '{"userId":"u1"}',
+        '{"userId":"u1","tenantId":"tenant-1"}',
         '604800',
         'fam-1',
         'rt',
@@ -400,7 +442,12 @@ describe('AuthRedisService', () => {
     it('removes only the grace members whose pointer has expired', async () => {
       mockRedis.eval.mockResolvedValue(2)
 
-      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(2)
+      await expect(
+        service.pruneExpiredGraceMembers(
+          `sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`,
+          'rp:'
+        )
+      ).resolves.toBe(2)
 
       const [script, numKeys, key, namespace, prefix] = mockRedis.eval.mock.calls[0] as unknown as [
         string,
@@ -410,7 +457,7 @@ describe('AuthRedisService', () => {
         string
       ]
       expect(numKeys).toBe(1)
-      expect(key).toBe(prefixed('sess:u1'))
+      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`))
       expect(namespace).toBe('auth')
       expect(prefix).toBe('rp:')
       // Only members carrying the grace prefix are considered — a live `rt:` member must
@@ -427,10 +474,10 @@ describe('AuthRedisService', () => {
     it('sweeps the platform index under the platform prefix', async () => {
       mockRedis.eval.mockResolvedValue(0)
 
-      await service.pruneExpiredGraceMembers('psess:a1', 'prp:')
+      await service.pruneExpiredGraceMembers(`psess:${hmacSha256('platform:a1', HMAC_KEY)}`, 'prp:')
 
       const call = mockRedis.eval.mock.calls[0] as unknown[]
-      expect(call).toContain(prefixed('psess:a1'))
+      expect(call).toContain(prefixed(`psess:${hmacSha256('platform:a1', HMAC_KEY)}`))
       expect(call).toContain('prp:')
     })
 
@@ -445,7 +492,12 @@ describe('AuthRedisService', () => {
     ])('reads %s as a count', async (_label, reply, expected) => {
       mockRedis.eval.mockResolvedValue(reply)
 
-      await expect(service.pruneExpiredGraceMembers('sess:u1', 'rp:')).resolves.toBe(expected)
+      await expect(
+        service.pruneExpiredGraceMembers(
+          `sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`,
+          'rp:'
+        )
+      ).resolves.toBe(expected)
     })
   })
 
@@ -459,12 +511,17 @@ describe('AuthRedisService', () => {
     it('drops a candidate only when its own key is gone', async () => {
       mockRedis.eval.mockResolvedValue(1)
 
-      await expect(service.pruneDeadMembers('sess:u1', ['rt:aaa', 'rt:bbb'])).resolves.toBe(1)
+      await expect(
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [
+          'rt:aaa',
+          'rt:bbb'
+        ])
+      ).resolves.toBe(1)
 
       const [script, numKeys, key, namespace, first, second] = mockRedis.eval.mock
         .calls[0] as unknown as [string, number, string, string, string, string]
       expect(numKeys).toBe(1)
-      expect(key).toBe(prefixed('sess:u1'))
+      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`))
       expect(namespace).toBe('auth')
       expect([first, second]).toEqual(['rt:aaa', 'rt:bbb'])
       // The guard IS the fix. Without it the SREM is unconditional and a live session leaves
@@ -479,7 +536,9 @@ describe('AuthRedisService', () => {
     // No candidates means no round trip: the script would loop zero times, and a reader that
     // found nothing stale is the common case on every session listing.
     it('makes no call when there are no candidates', async () => {
-      await expect(service.pruneDeadMembers('sess:u1', [])).resolves.toBe(0)
+      await expect(
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [])
+      ).resolves.toBe(0)
 
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
@@ -489,10 +548,10 @@ describe('AuthRedisService', () => {
     it('prunes the platform index', async () => {
       mockRedis.eval.mockResolvedValue(0)
 
-      await service.pruneDeadMembers('psess:a1', ['prt:aaa'])
+      await service.pruneDeadMembers(`psess:${hmacSha256('platform:a1', HMAC_KEY)}`, ['prt:aaa'])
 
       const call = mockRedis.eval.mock.calls[0] as unknown[]
-      expect(call).toContain(prefixed('psess:a1'))
+      expect(call).toContain(prefixed(`psess:${hmacSha256('platform:a1', HMAC_KEY)}`))
       expect(call).toContain('prt:aaa')
     })
 
@@ -506,16 +565,21 @@ describe('AuthRedisService', () => {
     ])('reads %s as a count', async (_label, reply, expected) => {
       mockRedis.eval.mockResolvedValue(reply)
 
-      await expect(service.pruneDeadMembers('sess:u1', ['rt:aaa'])).resolves.toBe(expected)
+      await expect(
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [
+          'rt:aaa'
+        ])
+      ).resolves.toBe(expected)
     })
   })
 
   describe('rotateRefreshSession', () => {
     const BUNDLE = {
       kind: 'dashboard' as const,
+      tenantId: 'tenant-1',
       oldHash: 'old-hash',
       newHash: 'new-hash',
-      newSessionJson: '{"userId":"u1"}',
+      newSessionJson: '{"userId":"u1","tenantId":"tenant-1"}',
       familyId: 'fam-1',
       userId: 'u1',
       refreshTtl: 604_800,
@@ -524,7 +588,7 @@ describe('AuthRedisService', () => {
 
     // Verifies the script receives the six keys and nine arguments it documents, in order.
     it('passes the six rotation keys and nine arguments to the script', async () => {
-      mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
+      mockRedis.eval.mockResolvedValue('{"userId":"u1","tenantId":"tenant-1"}')
 
       await service.rotateRefreshSession(BUNDLE)
 
@@ -538,8 +602,8 @@ describe('AuthRedisService', () => {
         prefixed('fam:fam-1'),
         // The owner's session index, which the script maintains itself so a concurrent
         // "log out everywhere" cannot sweep past the session this rotation is minting.
-        prefixed('sess:u1'),
-        '{"userId":"u1"}',
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`),
+        '{"userId":"u1","tenantId":"tenant-1"}',
         '604800',
         '30',
         'fam-1',
@@ -576,10 +640,10 @@ describe('AuthRedisService', () => {
     // recoverable replay from a theft signal, so a mis-parse would either reject a legitimate
     // retry or silently skip the family revocation.
     it('decodes every tagged reply into its outcome', async () => {
-      mockRedis.eval.mockResolvedValue('{"userId":"u1"}')
+      mockRedis.eval.mockResolvedValue('{"userId":"u1","tenantId":"tenant-1"}')
       await expect(service.rotateRefreshSession(BUNDLE)).resolves.toEqual({
         kind: 'rotated',
-        sessionJson: '{"userId":"u1"}'
+        sessionJson: '{"userId":"u1","tenantId":"tenant-1"}'
       })
 
       mockRedis.exists.mockResolvedValue(1)
@@ -694,7 +758,7 @@ describe('AuthRedisService', () => {
     // record, and hands the script the prefixes it needs to rebuild each member's keys.
     it('runs the revocation over the dashboard family keyspace', async () => {
       mockRedis.smembers.mockResolvedValue(['h1', 'h2'])
-      mockRedis.get.mockResolvedValue('{"userId":"u1"}')
+      mockRedis.get.mockResolvedValue('{"userId":"u1","tenantId":"tenant-1"}')
       mockRedis.eval.mockResolvedValue(2)
 
       await expect(service.revokeFamily('fam-1')).resolves.toEqual({ removed: 2, ownerId: 'u1' })
@@ -710,7 +774,7 @@ describe('AuthRedisService', () => {
         NAMESPACE,
         'rt',
         'sd',
-        prefixed('sess:u1')
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`)
       )
     })
 
@@ -733,7 +797,7 @@ describe('AuthRedisService', () => {
         NAMESPACE,
         'prt',
         'psd',
-        prefixed('psess:admin-1')
+        prefixed(`psess:${hmacSha256('platform:admin-1', HMAC_KEY)}`)
       )
     })
 
@@ -749,14 +813,16 @@ describe('AuthRedisService', () => {
         // An empty owner would build `sess:` with no id — a key every ownerless family would
         // share, so it must be skipped like an absent one rather than pruned against.
         if (key.endsWith('blank')) return Promise.resolve('{"userId":""}')
-        return Promise.resolve('{"userId":"u9"}')
+        return Promise.resolve('{"userId":"u9","tenantId":"tenant-1"}')
       })
       mockRedis.eval.mockResolvedValue(1)
 
       await service.revokeFamily('fam-1')
 
       const call = mockRedis.eval.mock.calls[0] as string[]
-      expect(call[call.length - 1]).toBe(prefixed('sess:u9'))
+      expect(call[call.length - 1]).toBe(
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u9', HMAC_KEY)}`)
+      )
     })
 
     // Verifies that a family whose members have all expired still drops its own index, with an
@@ -767,6 +833,71 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(0)
 
       await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
+    // Verifies that a DASHBOARD family whose readable record names no tenant prunes no index.
+    // Deriving one would build `dashboard:9:undefined:{ownerId}` — a key belonging to no tenant,
+    // which nothing writes — so the prune would succeed against nothing while the real index kept
+    // every member, and the revocation would report a cleanup that never reached it. This is the
+    // shape a pre-upgrade record has, which is exactly the state a live deployment is in while
+    // migrating. Logout already answers the same way.
+    it('prunes no index when a dashboard family record names no tenant', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      // `Once`, not a standing value: the mock is shared across this describe, and a standing
+      // arm here changed the owner a later test read.
+      mockRedis.get.mockResolvedValueOnce('{"userId":"u9"}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
+    // The PLATFORM twin of the same record does prune, because a platform subject carries no
+    // tenant segment: absence there is the correct shape, not a missing field. Without this the
+    // plane check reads as dead weight and a mutation dropping it would survive.
+    it('still prunes the platform index when the record names no tenant', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      mockRedis.get.mockResolvedValueOnce('{"userId":"admin-9"}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1', 'platform')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe(
+        prefixed(`psess:${hmacSha256('platform:admin-9', HMAC_KEY)}`)
+      )
+    })
+
+    // Blank and absent are one shape. A record carrying `tenantId: ''` names no tenant either —
+    // `dashboard:0::{ownerId}` is a keyspace belonging to nobody, exactly as `dashboard:9:undefined:`
+    // is — and an unset environment variable arrives as `''` by the time it reaches a key builder.
+    // Testing only for `undefined` let the blank form through.
+    it('prunes no index when a dashboard family record carries a blank tenant', async () => {
+      mockRedis.smembers.mockResolvedValueOnce(['h1'])
+      mockRedis.get.mockResolvedValueOnce('{"userId":"u9","tenantId":""}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
+    // The owner clause carries its own weight on the PLATFORM plane, where the tenant clause is
+    // satisfied by the plane alone. Without this case, dropping `ownerId !== ''` still reads as
+    // correct on every dashboard test — and a platform family whose members have all expired
+    // would derive `psess:{hmac('platform:')}`, an index for the empty admin.
+    it('prunes no platform index when no member record is readable', async () => {
+      mockRedis.smembers.mockResolvedValueOnce(['h1'])
+      mockRedis.get.mockResolvedValueOnce(null)
+      mockRedis.eval.mockResolvedValueOnce(0)
+
+      await service.revokeFamily('fam-1', 'platform')
 
       const call = mockRedis.eval.mock.calls[0] as string[]
       expect(call[call.length - 1]).toBe('')
@@ -855,11 +986,11 @@ describe('AuthRedisService', () => {
     // Verifies that invalidateUserSessions calls eval with the sess:{userId} key and namespace as ARGV.
     it('should sweep sess:{userId} with the dashboard member prefixes', async () => {
       mockRedis.eval.mockResolvedValue(null)
-      await service.invalidateUserSessions('user-1')
+      await service.invalidateUserSessions('user-1', 'tenant-1', 'dashboard')
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('SMEMBERS'),
         1,
-        prefixed('sess:user-1'),
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`),
         NAMESPACE,
         'rt:',
         'rp:',
@@ -875,13 +1006,13 @@ describe('AuthRedisService', () => {
     it('should sweep only the platform index, with platform-only prefixes', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
-      await service.invalidateUserSessions('admin-1', 'platform')
+      await service.invalidateUserSessions('admin-1', undefined, 'platform')
 
       expect(mockRedis.eval).toHaveBeenCalledTimes(1)
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('SMEMBERS'),
         1,
-        prefixed('psess:admin-1'),
+        prefixed(`psess:${hmacSha256('platform:admin-1', HMAC_KEY)}`),
         NAMESPACE,
         'prt:',
         'prp:',
@@ -895,7 +1026,7 @@ describe('AuthRedisService', () => {
     it('should never pass platform prefixes on a dashboard revoke', async () => {
       mockRedis.eval.mockResolvedValue(null)
 
-      await service.invalidateUserSessions('shared-id')
+      await service.invalidateUserSessions('shared-id', 'tenant-1', 'dashboard')
 
       const prefixArgs = mockRedis.eval.mock.calls.flatMap((call) => call.slice(3) as string[])
       expect(prefixArgs).not.toContain('prt:')
@@ -943,8 +1074,10 @@ describe('AuthRedisService', () => {
     it('should return the stored epoch for the dashboard plane', async () => {
       mockRedis.get.mockResolvedValue('3')
 
-      expect(await service.getUserTokenEpoch('user-1')).toBe(3)
-      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('ep:user-1'))
+      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(3)
+      expect(mockRedis.get).toHaveBeenCalledWith(
+        prefixed(`ep:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`)
+      )
     })
 
     // Verifies the platform plane carries its own counter. The two planes are keyed by ids
@@ -953,8 +1086,10 @@ describe('AuthRedisService', () => {
     it('should read the platform epoch from its own keyspace', async () => {
       mockRedis.get.mockResolvedValue('1')
 
-      expect(await service.getUserTokenEpoch('admin-1', 'platform')).toBe(1)
-      expect(mockRedis.get).toHaveBeenCalledWith(prefixed('pep:admin-1'))
+      expect(await service.getUserTokenEpoch('admin-1', undefined, 'platform')).toBe(1)
+      expect(mockRedis.get).toHaveBeenCalledWith(
+        prefixed(`pep:${hmacSha256('platform:admin-1', HMAC_KEY)}`)
+      )
     })
 
     // Verifies an unbumped user reads as 0, which keeps the mechanism inert: every token is
@@ -962,20 +1097,20 @@ describe('AuthRedisService', () => {
     it('should return 0 when no epoch is stored', async () => {
       mockRedis.get.mockResolvedValue(null)
 
-      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
+      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
 
     // Verifies a corrupt or negative stored value reads as 0 rather than NaN. Comparing
     // against NaN is always false, which would silently disable bulk revocation for that user.
     it('should return 0 when the stored epoch is unusable', async () => {
       mockRedis.get.mockResolvedValue('not-a-number')
-      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
+      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
 
       mockRedis.get.mockResolvedValue('1.5')
-      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
+      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
 
       mockRedis.get.mockResolvedValue('-2')
-      expect(await service.getUserTokenEpoch('user-1')).toBe(0)
+      expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
 
     // Verifies the bump increments atomically and pins the key lifetime to 30 days — far
@@ -984,11 +1119,11 @@ describe('AuthRedisService', () => {
     it('should increment the epoch and pin a 30-day lifetime', async () => {
       mockRedis.eval.mockResolvedValue(1)
 
-      expect(await service.bumpUserTokenEpoch('user-1')).toBe(1)
+      expect(await service.bumpUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(1)
 
       const call = mockRedis.eval.mock.calls[0] as unknown[]
       expect(call[0]).toEqual(expect.stringContaining("redis.call('INCR'"))
-      expect(call[2]).toBe(prefixed('ep:user-1'))
+      expect(call[2]).toBe(prefixed(`ep:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`))
       expect(call[call.length - 1]).toBe(String(30 * 24 * 60 * 60))
     })
 
@@ -1003,7 +1138,7 @@ describe('AuthRedisService', () => {
     it('should re-apply the lifetime on every bump, not only the first', async () => {
       mockRedis.eval.mockResolvedValue(7)
 
-      await service.bumpUserTokenEpoch('user-1')
+      await service.bumpUserTokenEpoch('user-1', 'tenant-1', 'dashboard')
 
       const script = (mockRedis.eval.mock.calls[0] as unknown[])[0] as string
       expect(script).toContain("redis.call('EXPIRE'")
@@ -1018,15 +1153,17 @@ describe('AuthRedisService', () => {
     it('should answer 0 when the script returns a non-numeric reply', async () => {
       mockRedis.eval.mockResolvedValue('not-a-number')
 
-      expect(await service.bumpUserTokenEpoch('user-1')).toBe(0)
+      expect(await service.bumpUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(0)
     })
 
     // Verifies the platform bump targets the platform counter.
     it('should increment the platform epoch in its own keyspace', async () => {
       mockRedis.eval.mockResolvedValue(2)
 
-      expect(await service.bumpUserTokenEpoch('admin-1', 'platform')).toBe(2)
-      expect((mockRedis.eval.mock.calls[0] as unknown[])[2]).toBe(prefixed('pep:admin-1'))
+      expect(await service.bumpUserTokenEpoch('admin-1', undefined, 'platform')).toBe(2)
+      expect((mockRedis.eval.mock.calls[0] as unknown[])[2]).toBe(
+        prefixed(`pep:${hmacSha256('platform:admin-1', HMAC_KEY)}`)
+      )
     })
   })
 
@@ -1163,7 +1300,10 @@ describe('AuthRedisService', () => {
     // the client puts the Redis credentials one render away from any of them.
     const password = 'r3d1s-canary'
     const client = { options: { password } } as unknown as Redis
-    const service = new AuthRedisService(client, { redisNamespace: 'auth' } as ResolvedOptions)
+    const service = new AuthRedisService(client, {
+      redisNamespace: 'auth',
+      hmacKey: 'test-hmac-key'
+    } as ResolvedOptions)
 
     expect(JSON.stringify(service)).not.toContain(password)
     expect(JSON.stringify({ ...service })).not.toContain(password)

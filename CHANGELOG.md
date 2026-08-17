@@ -62,6 +62,199 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   literals. **That advice is now wrong**; the 1.4.3 section is left as written, because it was
   true when it shipped, and this entry is the correction. The README paragraph is rewritten.
 
+### Security
+
+- **Two tenants could share one session index, one token epoch and one recovery-code claim.**
+  The subject every user-derived key is HMACed over was `dashboard:{tenantId}:{userId}`, and a
+  bare `:` between two free-form components is not injective. Both halves may legitimately
+  contain it — the DTO charset deliberately admits a tenant id like `acme.eu-west-1:prod`, and a
+  composite `tenant:user` subject is a documented `sub` shape — so:
+
+  ```
+  tenantId 'acme:prod' + userId 'u1'      ->  dashboard:acme:prod:u1
+  tenantId 'acme'      + userId 'prod:u1' ->  dashboard:acme:prod:u1   <- same preimage, same HMAC
+  ```
+
+  Two unrelated tenants then shared every key derived from it: the session index, the token
+  epoch, the five MFA store keys, the three MFA failure counters, the recent-authentication
+  marker and — worst — `rcu:`, the claim that stops a recovery code being spent twice. Revoking
+  one tenant's sessions swept the other's, and one tenant could spend the other's recovery code.
+  That is precisely the cross-tenant revocation the entry below removes, reintroduced through the
+  delimiter.
+
+  **This predates the release.** The same preimage shipped in 1.4.3 as `mfaSubject`, backing the
+  MFA keyspace; renaming it to `userSubject` and extending it to `sess:`/`ep:` widened the blast
+  radius rather than creating it.
+
+  The dashboard arm now carries a length prefix —
+  `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}` — which makes the split unambiguous
+  while rejecting no identifier, and the charset is deliberately permissive. The platform arm has
+  one component after the plane and is unchanged.
+
+  **The prefix counts UTF-8 bytes, not characters**, and the contract says so: JavaScript's
+  `String.length` counts UTF-16 code units while Rust's `str::len()` counts bytes, so `açaí` is 4
+  by one measure and 6 by the other. A character count would agree for ASCII and derive different
+  keys on the first accented tenant id — a split between the paired libraries that shows up only
+  in production, in one locale.
+
+  **Apply to a derived backend.** The MFA keyspace relocates too, on top of the session and epoch
+  migration described below, under the same first rule — copy state forward, never drop it — but
+  **not** under the same fan-out. Those keys already carried the tenant, so the remap is 1:1 for
+  every pair, with one exception that is the entire point of this entry: a pair that was
+  **colliding** shared one old key, and that key has to be written to each of the pairs that shared
+  it. There is no way to tell from the old key which of them last wrote it, so copy it to all of
+  them and let the safe direction win — for `rcu:`, a claim present on a code that was never spent
+  costs one unusable recovery code, while a claim missing on a code that WAS spent makes it usable
+  again. The MFA keys are where dropping is least acceptable for exactly that reason.
+
+- **Suspending one tenant's user revoked another tenant's.** The session index and the token
+  epoch were keyed on the bare user id — `sess:{userId}` and `ep:{userId}` — while the status
+  cache beside them had been tenant-scoped for releases. `IUserRepository.findById` takes a
+  `tenantId` precisely because ids may not be unique across tenants, so on a deployment that
+  numbers users per tenant, deleting or suspending `t1/u1` swept the sessions and bumped the
+  token epoch of `t2/u1`. A **credential-free cross-tenant revocation**, reachable by anyone who
+  can get an account suspended in their own tenant.
+
+  Both keys now derive the way every other account-naming key in this library already did:
+  `{prefix}:{hmac_sha256(hmacKey, userSubject)}`. The **derivation** was not invented here — it is
+  what the five MFA store keys, the three MFA failure counters and the recent-authentication
+  marker have used since they were fixed for the same reason, and the wire contract already
+  carried its argument. The two joining it close the gap between what `recentAuthKey`'s own
+  documentation claimed — _"keyed by HMAC rather than the raw id, like every other user-derived
+  key in this library"_ — and what was true.
+
+  The **subject** those keys are derived from does change in this release, and the entry above is
+  why: it is now `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}` on the dashboard plane
+  and `platform:{userId}` on the platform one. The form it inherited from the MFA keyspace —
+  `dashboard:{tenantId}:{userId}`, without the length prefix — is the one that was not injective.
+
+  The HMAC is the second half and it matters on its own: rust-auth reads this keyspace, so a
+  bare id there was an account identifier in the clear to anyone with store access. A user id
+  carries too little entropy for a plain digest to hide, which is why the identifier preimages
+  are HMACed rather than merely hashed.
+
+  The platform plane keeps no tenant segment. Its admins are cross-tenant and have none, exactly
+  as `userSubject`'s platform arm has always said.
+
+  **Apply to a derived backend.** The five `SessionService` methods —
+  `createSession`, `listSessions`, `revokeSession`, `revokeOtherSession`,
+  `revokeAllExceptCurrent` — now take a **single object** instead of positional arguments:
+
+  ```ts
+  // before
+  await sessions.listSessions(user.sub, currentHash)
+  // after
+  await sessions.listSessions({ userId: user.sub, tenantId: user.tenantId, currentSessionHash })
+  ```
+
+  The object is the point, not a style preference. Threading the tenant through positionally put
+  a second `string` beside `userId`, and the old two-argument call **still compiled** against the
+  new signature — binding the session hash to `tenantId` and returning an empty listing that is
+  indistinguishable from "this user has no sessions". On `revokeSession` the same transposition
+  is a revocation that silently reaches nothing. A named field cannot be transposed; the worst it
+  can be is misspelled, which the compiler catches. `CreateSessionParams`, `ListSessionsParams`,
+  `RevokeSessionParams` and `RevokeAllExceptCurrentParams` are exported from the package entry so
+  a caller can name the shape.
+
+  `AuthService.revokeAllSessions` takes the same treatment and for the same reason — two
+  unconstrained strings side by side, where `revokeAllSessions(user.tenantId, user.id)` compiled,
+  derived an unrelated subject and returned normally:
+
+  ```ts
+  await auth.revokeAllSessions({ userId: user.sub, tenantId: user.tenantId })
+  ```
+
+  Also taking the tenant they always needed: the three
+  `AuthRedisService` entry points (`invalidateUserSessions`, `getUserTokenEpoch`,
+  `bumpUserTokenEpoch`), whose `kind` argument also **loses its default** — a positional tenant
+  next to a positional plane is a transposition nobody notices, and the two call sites that
+  passed `'platform'` in what became the tenant slot compiled silently until the default was
+  gone. If you call any of these, pass `user.tenantId`; on the platform plane pass `undefined`
+  and name the plane.
+
+  `readSessionOwner` now answers `{ userId, tenantId }`. Logout takes both off the record the
+  refresh token just proved possession of, rather than from a caller who could aim the
+  revocation at a colliding id. A record written before this carries no tenant: the index revoke
+  is skipped rather than guessed, and the session still dies because `rt:{hash}` is deleted
+  either way.
+
+  **This is a paired wire change and it has no compatibility path.** `sess` and `ep` are pinned
+  in `conformance/wire-contract.json` and byte-shared with `@bymax-one/rust-auth`; a backend on
+  the old shape writes `sess:{userId}` while one on the new shape reads `sess:{hmac}`, so
+  sessions survive a revoke-all that never saw them. **Both libraries must ship this in the same
+  release.**
+
+  **Three paths now fail closed on a dashboard subject with no tenant**, because an absent
+  tenant interpolates as the literal text `undefined`, so `userSubject` builds
+  `dashboard:9:undefined:{userId}` — a keyspace belonging to no tenant, in which nothing has ever
+  been written. The MFA flows already refused a blank tenant for exactly this reason; these three did
+  not.
+
+  - `AuthRevocationService.isAccessTokenRevoked` **failed open**: it read the epoch under
+    `dashboard:9:undefined:{sub}`, got `0`, and reported a bulk-revoked token as valid. It is
+    exported for callers that never pass a guard — a realtime bridge checking a socket — and its
+    payload type marks `tenantId` optional, so the omission is a shape a caller can produce. A
+    dashboard payload without a tenant is now treated as **revoked**, without touching the store.
+  - `reissueTokens` accepted a **pre-upgrade record**: `parseSession` validates `userId`, `role`
+    and `mfaEnabled` but never `tenantId`, so a session written before this change rotated into
+    `dashboard:9:undefined:{userId}` and minted an access token with no tenant claim — one every
+    dashboard guard then refuses. The caller held a session that could be neither used nor
+    revoked. Both the primary and the grace-recovery path now refuse it as
+    `REFRESH_TOKEN_INVALID`; the platform plane is exempt, its subject carries no tenant segment.
+  - `revokeFamily` derived an index for such a record and pruned a key nobody writes while the
+    real index kept every member. It now omits the index, exactly as logout already did.
+
+  **Deploy this as a cutover, not a rolling upgrade.** Drain the pods on the old release before
+  the new ones serve. The MFA keyspace is where this bites hardest: `mutate`'s transition lock,
+  which serializes the read-modify-write on the recovery-code list, is keyed by the same subject
+  as everything else — so two pods that disagree about the subject take **different locks and do
+  not exclude each other at all**, and the `rcu:` claim that stops a code being spent twice splits
+  the same way. The library carries a fallback for the _pre-tenant_ preimage but deliberately none
+  for the tenant-scoped one this release replaces: a fallback is compatibility weight for a
+  deployment shape the cutover removes the need for.
+
+  **A live keyspace must be migrated, not dropped.** Deleting the old keys is unsafe in both
+  directions, and each direction is a hole rather than an inconvenience.
+
+  **On the dashboard plane the migration is a fan-out: one old key becomes N new ones.** The old
+  keys are tenant-blind — `ep:{userId}` and `sess:{userId}` name a bare user id — which is the
+  defect this release removes, so a single old key served **every** tenant that has a user with
+  that id, and each of those pairs derives its own key now. Copying an old key to one derived key
+  and dropping it migrates one tenant and silently resets all the others: for them it is not a
+  partial migration, it is exactly the deletion described below. Enumerate the tenants that user
+  id appears in and write every one of them. On the platform plane the mapping is 1:1 — that
+  subject carries no tenant — so the fan-out is a dashboard-only obligation.
+
+  Deleting an old `ep:{userId}` does not expire the tokens it revoked. `getUserTokenEpoch` answers
+  `0` for an absent key — `Number(null)` is `0`, and that is deliberately the "never bumped"
+  default — and under `0` the `stamped < epoch` test is false for **every** token. A password
+  reset, an MFA reset or a sign-out-everywhere that had already invalidated an access token is
+  undone by the migration, and that token works again for the rest of its lifetime. Epochs must be
+  **copied to every derived key the old one served**, each with at least the old value and at
+  least the remainder of its TTL, and only then dropped. An epoch may never move backwards.
+
+  Deleting an old `sess:{userId}` does not end the sessions it listed. Its `rt:`/`rp:` members
+  outlive the index and become unreachable: a later revoke-all reads the new, empty index, finds
+  nothing to delete, and reports success while those refresh tokens keep rotating. Either re-add
+  the members under the derived index keys, or delete the member keys and their `sd:` details
+  **before** dropping the index. The second costs a forced re-login and is the safer of the two;
+  the first preserves sessions and must be done atomically per user.
+
+  Re-adding is where the fan-out bites hardest, because the old index **mixes tenants**: its
+  members are the sessions of every tenant's user with that id, so emptying it into one derived
+  index would hand that tenant another's live sessions — worse than the collision being fixed,
+  because it turns a shared keyspace into a listable, revocable cross-tenant handle. Partition
+  instead: every member names an `rt:`/`rp:` record carrying its **own** `tenantId`, so read the
+  record, derive that pair's index, and place the member there. A member whose record is already
+  gone is a dead session and is dropped rather than guessed at.
+
+  **Both obligations apply to the PLATFORM twins, `pep:{userId}` and `psess:{userId}`, which this
+  release relocates identically.** They are the easier pair to forget and the worse pair to get
+  wrong: a platform epoch left behind revalidates previously revoked **admin** JWTs, and a
+  platform index left behind hides an admin's live refresh sessions from revoke-all. The platform
+  subject carries no tenant segment — `platform:{userId}` — but the HMAC relocates the key just as
+  it does on the dashboard plane, so "we have no tenants" is not a reason to skip either step.
+
 ### Fixed
 
 - **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves

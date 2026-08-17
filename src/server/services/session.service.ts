@@ -6,6 +6,7 @@ import {
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { sessionIndexKey } from '../constants/user-keys'
 import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -181,6 +182,71 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
 // ---------------------------------------------------------------------------
 
 /**
+ * Everything {@link SessionService.createSession} needs to record a session.
+ *
+ * An object rather than positional arguments, and the reason is the subject of this release: four
+ * of the five fields are `string`, so any two of them can be swapped without the compiler
+ * noticing. `createSession(userId, rawRefreshToken, ip, userAgent)` — the shape before the tenant
+ * was threaded through — still type checks against a positional signature that inserted
+ * `tenantId` second, and silently records the session under a tenant named by a refresh token.
+ * A named field cannot be transposed; at worst it is misspelled, which is a compile error.
+ */
+export interface CreateSessionParams {
+  /** Internal user ID for whom the session is being created. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** The raw opaque refresh token; hashed before storage. */
+  rawRefreshToken: string
+  /** Client IP address for the new session. */
+  ip: string
+  /** Raw `User-Agent` header value, for device detection. */
+  userAgent: string
+}
+
+/** Everything {@link SessionService.listSessions} needs. See {@link CreateSessionParams}. */
+export interface ListSessionsParams {
+  /** Internal user ID whose sessions are being listed. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /**
+   * SHA-256 hash of the caller's active session, when known; the matching entry comes back with
+   * `isCurrent: true`. Optional, which is what made the positional form dangerous — arity did not
+   * catch a two-argument call.
+   *
+   * Written `?: string | undefined` rather than `?: string` because the project runs
+   * `exactOptionalPropertyTypes`: under it the two are different types, and a caller forwarding a
+   * value it already holds as `string | undefined` — which every controller reading an optional
+   * header does — cannot assign to the narrower one.
+   */
+  currentSessionHash?: string | undefined
+}
+
+/**
+ * Names one session to revoke, for {@link SessionService.revokeSession} and
+ * {@link SessionService.revokeOtherSession}. See {@link CreateSessionParams}.
+ */
+export interface RevokeSessionParams {
+  /** Internal user ID that must own the session. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** SHA-256 hash of the session being revoked. */
+  sessionHash: string
+}
+
+/** Everything {@link SessionService.revokeAllExceptCurrent} needs. See {@link CreateSessionParams}. */
+export interface RevokeAllExceptCurrentParams {
+  /** Internal user ID whose other sessions are ending. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** SHA-256 hash of the session to KEEP — the caller's own. */
+  currentSessionHash: string
+}
+
+/**
  * Manages user session lifecycle for @bymax-one/nest-auth.
  *
  * Handles session creation, concurrent session enforcement (FIFO eviction),
@@ -214,6 +280,34 @@ export class SessionService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Refuses a dashboard tenant that names nothing, at the public boundary.
+   *
+   * Every method on this service takes the tenant as a REQUIRED named field, and all of them are
+   * exported — the object form replaced the positional one precisely so a `string` tenant could
+   * not be transposed with a `string` user id or session hash. Naming it removes the transposition
+   * but not the empty string: a caller can still pass `''`, and that is what this refuses.
+   *
+   * `userSubject` cannot enforce it instead: the rotation scripts must be
+   * called with the empty PLACEHOLDER identity to discover a grace pointer, so the innermost
+   * builder has to stay total, and an empty key in a script's KEYS array is not "no key" — the
+   * `eval` wrapper prefixes it into a real key named `auth:`.
+   *
+   * So the refusal lives here, where a caller can actually be wrong. `''` derived
+   * `dashboard:0::{userId}`, swept and bumped keys nobody writes, and returned normally — a
+   * revocation reported as done while every session and access token it named stayed valid.
+   *
+   * @param tenantId - The tenant supplied by the caller.
+   * @throws {@link AuthException} `VALIDATION` when it is blank.
+   */
+  private assertTenant(tenantId: string): void {
+    if (tenantId === '') {
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        { field: 'tenantId', message: 'tenantId is required to name a session index' }
+      ])
+    }
+  }
+
+  /**
    * Records a new session in Redis and enforces the concurrent session limit.
    *
    * Stores device and activity metadata under `sd:{hash}` with the same TTL
@@ -230,18 +324,17 @@ export class SessionService {
    * before the SET member is committed, the limit check will see one fewer
    * session than actually exists, allowing a permanent extra session.
    *
-   * @param userId - Internal user ID for whom the session is being created.
-   * @param rawRefreshToken - The raw opaque refresh token (hashed before storage).
-   * @param ip - Client IP address for the new session.
-   * @param userAgent - Raw `User-Agent` header value for device detection.
+   * @param params - See {@link CreateSessionParams}.
    * @returns The SHA-256 hash of `rawRefreshToken` used as the session key.
    */
-  async createSession(
-    userId: string,
-    rawRefreshToken: string,
-    ip: string,
-    userAgent: string
-  ): Promise<string> {
+  async createSession({
+    userId,
+    tenantId,
+    rawRefreshToken,
+    ip,
+    userAgent
+  }: CreateSessionParams): Promise<string> {
+    this.assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
     const now = Date.now()
@@ -258,7 +351,7 @@ export class SessionService {
 
     await this.redis.set(`sd:${hash}`, JSON.stringify(detail), ttl)
 
-    await this.enforceSessionLimit(userId, hash, ip, userAgent)
+    await this.enforceSessionLimit(userId, tenantId, hash, ip, userAgent)
 
     // Fire onNewSession hook — fire-and-forget; errors must not propagate.
     if (this.hooks?.onNewSession) {
@@ -310,22 +403,27 @@ export class SessionService {
    *
    * Results are sorted by `createdAt` descending (newest session first).
    *
-   * @param userId - Internal user ID whose sessions are being listed.
-   * @param currentSessionHash - Optional SHA-256 hash of the caller's active session;
-   *   matched session will have `isCurrent: true`.
+   * @param params - See {@link ListSessionsParams}.
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
-  async listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]> {
+  async listSessions({
+    userId,
+    tenantId,
+    currentSessionHash
+  }: ListSessionsParams): Promise<SessionInfo[]> {
+    this.assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
     // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
     // that refreshes and never signs out again accumulates them without bound — and this
     // method ships the whole set. Fire-and-forget: a failed prune is a tidy-up that did not
     // happen, not a listing that should fail. See `pruneExpiredGraceMembers`.
-    void this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:').catch((err: unknown) => {
-      this.logger.warn(`listSessions: grace-pointer prune failed: ${describeChannelStatus(err)}`)
-    })
+    void this.redis
+      .pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
+      .catch((err: unknown) => {
+        this.logger.warn(`listSessions: grace-pointer prune failed: ${describeChannelStatus(err)}`)
+      })
 
-    const members = await this.redis.smembers(`sess:${userId}`)
+    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
     const results: SessionInfo[] = []
@@ -402,11 +500,13 @@ export class SessionService {
     // that name nothing, because a member dropped while its `rt:` lives is invisible to
     // `invalidateUserSessions` — the session would then survive "sign out everywhere" and keep
     // rotating, and merely opening this listing would be what orphaned it.
-    void this.redis.pruneDeadMembers(`sess:${userId}`, staleKeys).catch((err: unknown) => {
-      this.logger.error(
-        `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeChannelStatus(err)}`
-      )
-    })
+    void this.redis
+      .pruneDeadMembers(this.indexKey(userId, tenantId), staleKeys)
+      .catch((err: unknown) => {
+        this.logger.error(
+          `listSessions: failed to prune ${staleKeys.length} dead member(s): ${describeChannelStatus(err)}`
+        )
+      })
 
     results.sort((a, b) => b.createdAt - a.createdAt)
 
@@ -425,14 +525,15 @@ export class SessionService {
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
-  async revokeSession(userId: string, sessionHash: string): Promise<void> {
+  async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
+    this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash)
 
     // Atomic Lua script: ownership check (SISMEMBER) + all deletions in one
     // round-trip to eliminate TOCTOU between the membership check and DEL/SREM.
     const result = await this.redis.eval(
       REVOKE_SESSION_LUA,
-      [`sess:${userId}`, `rt:${sessionHash}`, `sd:${sessionHash}`],
+      [this.indexKey(userId, tenantId), `rt:${sessionHash}`, `sd:${sessionHash}`],
       [`rt:${sessionHash}`]
     )
 
@@ -467,12 +568,13 @@ export class SessionService {
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
-  async revokeOtherSession(userId: string, sessionHash: string): Promise<void> {
-    await this.revokeSession(userId, sessionHash)
+  async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
+    this.assertTenant(tenantId)
+    await this.revokeSession({ userId, tenantId, sessionHash })
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
-    await this.redis.bumpUserTokenEpoch(userId)
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
   }
 
   /**
@@ -502,10 +604,15 @@ export class SessionService {
    * @throws {unknown} Propagates any error thrown by `revokeSession` — including
    *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
    */
-  async revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void> {
+  async revokeAllExceptCurrent({
+    userId,
+    tenantId,
+    currentSessionHash
+  }: RevokeAllExceptCurrentParams): Promise<void> {
+    this.assertTenant(tenantId)
     this.assertValidSessionHash(currentSessionHash)
 
-    const members = await this.redis.smembers(`sess:${userId}`)
+    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
 
     for (const member of rtMembers) {
@@ -514,7 +621,7 @@ export class SessionService {
       if (timingSafeCompare(hash, currentSessionHash)) continue
 
       try {
-        await this.revokeSession(userId, hash)
+        await this.revokeSession({ userId, tenantId, sessionHash: hash })
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
         // this session between our SMEMBERS read and the Lua revocation. Any
@@ -543,13 +650,13 @@ export class SessionService {
     const gracePointers = members.filter((m) => m.startsWith('rp:'))
     for (const member of gracePointers) {
       await this.redis.del(member)
-      await this.redis.srem(`sess:${userId}`, member)
+      await this.redis.srem(this.indexKey(userId, tenantId), member)
     }
 
     // Last, and only once every refresh session is gone: a bump before the loop would be
     // undone by nothing, but a bump after it means a failure above leaves the epoch untouched
     // rather than logging the user out of a device the loop never got to revoke.
-    await this.redis.bumpUserTokenEpoch(userId)
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
   }
 
   /**
@@ -667,6 +774,22 @@ export class SessionService {
   }
 
   /**
+   * The Redis key of this user's session index.
+   *
+   * Derived rather than interpolated, and tenant-scoped: `IUserRepository.findById` takes a
+   * tenant because ids may only be unique within one, so a bare-id index let a revoke aimed at
+   * one tenant's user empty another's. The derivation lives in `user-keys.ts` because rust-auth
+   * reads the same key from the same contract.
+   *
+   * @param userId - The account whose sessions the index tracks.
+   * @param tenantId - The tenant that account belongs to.
+   * @returns The un-namespaced index key.
+   */
+  private indexKey(userId: string, tenantId: string): string {
+    return sessionIndexKey('dashboard', userId, this.options.hmacKey, tenantId)
+  }
+
+  /**
    * Enforces the concurrent session limit for a user by evicting the oldest
    * sessions (FIFO) when the limit has been exceeded.
    *
@@ -683,21 +806,23 @@ export class SessionService {
    * risk is low for most `defaultMaxSessions` values (≥ 2).
    *
    * @param userId - Internal user ID whose session count is being checked.
+   * @param tenantId - The tenant that user belongs to; part of the index key.
    * @param newHash - SHA-256 hash of the newly issued refresh token (excluded from eviction).
    * @param ip - Client IP address (forwarded to the `onSessionEvicted` hook context).
    * @param userAgent - User-Agent string (forwarded to the `onSessionEvicted` hook context).
    */
   private async enforceSessionLimit(
     userId: string,
+    tenantId: string,
     newHash: string,
     ip: string,
     userAgent: string
   ): Promise<void> {
     // Awaited here, unlike in `listSessions`: this runs on every login, which makes it the
     // path that actually bounds the index, and the eviction below walks the set it prunes.
-    await this.redis.pruneExpiredGraceMembers(`sess:${userId}`, 'rp:')
+    await this.redis.pruneExpiredGraceMembers(this.indexKey(userId, tenantId), 'rp:')
 
-    const members = await this.redis.smembers(`sess:${userId}`)
+    const members = await this.redis.smembers(this.indexKey(userId, tenantId))
 
     // Only count active refresh token entries — exclude grace pointers (rp:).
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
@@ -755,7 +880,7 @@ export class SessionService {
         // The new session is already committed at this point — a mid-eviction failure
         // MUST NOT propagate back to createSession callers.
         await this.redis.del(`rt:${entry.memberHash}`)
-        await this.redis.srem(`sess:${userId}`, entry.member)
+        await this.redis.srem(this.indexKey(userId, tenantId), entry.member)
         await this.redis.del(`sd:${entry.memberHash}`)
       } catch (err: unknown) {
         this.logger.error(

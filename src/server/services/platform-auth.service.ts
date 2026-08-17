@@ -5,6 +5,7 @@ import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { TokenManagerService } from './token-manager.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { sessionIndexKey } from '../constants/user-keys'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import type { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -180,7 +181,7 @@ export class PlatformAuthService {
     // believed they had left. The dashboard plane was fixed for exactly this; the platform
     // plane kept the old shape.
     const tokenHash = sha256(rawRefreshToken)
-    const userId = await this.redis.readSessionOwner(`prt:${tokenHash}`)
+    const { userId } = await this.redis.readSessionOwner(`prt:${tokenHash}`)
     this.logger.log(`logout: adminId=${logSafe(userId || '(no live session)')}`)
 
     // Verify signature and algorithm but not expiry: an expired token is the normal case here,
@@ -197,13 +198,20 @@ export class PlatformAuthService {
     }
 
     // Delete the primary session key and its grace pointer (if it exists from the
-    // last rotation). Both are tracked in the per-user psess: SET so both must be
-    // removed from the SET to keep it accurate for future invalidateUserSessions calls.
+    // last rotation). Both are tracked in the per-user index SET so both must be
+    // removed from it to keep it accurate for future invalidateUserSessions calls.
+    //
+    // The index is named through `sessionIndexKey`, not by concatenating `'psess:' + userId`.
+    // Writing the raw form here while every other path writes the derived one would leave this
+    // SREM operating on a key nothing else touches: the session records would be deleted, the
+    // real index would keep their members, and it would grow with every logout until a full
+    // sweep or expiry. Silent, and only visible as an index that never shrinks.
     await this.redis.del('prt:' + tokenHash)
     await this.redis.del('prp:' + tokenHash)
     if (userId) {
-      await this.redis.srem('psess:' + userId, 'prt:' + tokenHash)
-      await this.redis.srem('psess:' + userId, 'prp:' + tokenHash)
+      const index = sessionIndexKey('platform', userId, this.options.hmacKey, undefined)
+      await this.redis.srem(index, 'prt:' + tokenHash)
+      await this.redis.srem(index, 'prp:' + tokenHash)
     }
     await this.redis.del('psd:' + tokenHash)
     return userId
@@ -339,7 +347,7 @@ export class PlatformAuthService {
    * Revokes all active platform sessions for the given admin.
    *
    * Delegates to {@link AuthRedisService.invalidateUserSessions} which uses an atomic
-   * Lua script to read the `psess:{userId}` SET, delete all session and grace-pointer
+   * Lua script to read the platform index SET, delete all session and grace-pointer
    * keys, and remove the SET itself in a single Redis round-trip. This prevents the
    * TOCTOU race that would arise from a non-atomic SMEMBERS + loop + DEL approach.
    *
@@ -354,7 +362,9 @@ export class PlatformAuthService {
    */
 
   async revokeAllPlatformSessions(userId: string): Promise<void> {
-    await this.redis.invalidateUserSessions(userId, 'platform')
-    await this.redis.bumpUserTokenEpoch(userId, 'platform')
+    // The platform plane carries no tenant: its admins are cross-tenant by definition, which
+    // is the same asymmetry `userSubject` encodes for every other user-derived key.
+    await this.redis.invalidateUserSessions(userId, undefined, 'platform')
+    await this.redis.bumpUserTokenEpoch(userId, undefined, 'platform')
   }
 }

@@ -14,6 +14,17 @@ export interface RevocableTokenPayload {
   readonly sub: string
   /** The epoch the token was stamped with, if any; an absent or malformed value reads as 0. */
   readonly epoch?: unknown
+  /**
+   * The tenant the token was issued for; part of the per-user epoch key on the dashboard plane.
+   *
+   * Optional because the platform plane has none — its admins are cross-tenant — and the epoch
+   * key derivation drops the segment there. On the DASHBOARD plane it is required, and this
+   * service enforces that rather than trusting it: the mounted guards do refuse a dashboard token
+   * without a tenant, but this service is exported for callers that never pass through one — a
+   * realtime bridge checking a socket, for instance — and an optional field in a public contract
+   * is a field somebody will omit.
+   */
+  readonly tenantId?: string | undefined
 }
 
 /**
@@ -58,7 +69,21 @@ export class AuthRevocationService {
     if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
       return true
     }
-    const epoch = await this.redis.getUserTokenEpoch(payload.sub, kind)
+
+    // A dashboard payload without a tenant is treated as REVOKED, not as a lookup to attempt.
+    //
+    // The epoch key is derived from the tenant-scoped subject, and an absent tenant
+    // interpolates as the literal text `undefined`, giving `dashboard:9:undefined:{userId}` — a
+    // third keyspace belonging to no tenant, in
+    // which nothing has ever been bumped. `getUserTokenEpoch` would answer 0, `stamped < 0` is
+    // false for every token, and this method would report a bulk-revoked token as VALID. A
+    // revocation check that fails open on a malformed input is worse than no check, because the
+    // caller is relying on it precisely when something is wrong.
+    if (kind === 'dashboard' && (payload.tenantId === undefined || payload.tenantId === '')) {
+      return true
+    }
+
+    const epoch = await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, kind)
     return readStampedEpoch(payload) < epoch
   }
 }
