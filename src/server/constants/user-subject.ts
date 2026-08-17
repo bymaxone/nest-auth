@@ -22,13 +22,21 @@
  * The derivation is driven by the **plane**, not by whether a tenant was supplied: the platform
  * arm carries no tenant segment because its admins are cross-tenant and have none, so a caller that
  * passes one on the platform plane cannot move the preimage off `platform:{userId}` — the shape is
- * half of a byte-for-byte agreement with rust-auth. A dashboard call is guaranteed a tenant by
- * `assertPlaneTenant`, which refuses the plane/tenant mismatch before any key is derived.
+ * half of a byte-for-byte agreement with rust-auth.
+ *
+ * **Supplying the dashboard tenant is the CALLER's obligation, and this function does not check
+ * it.** It once could: every dashboard caller was an MFA flow behind `assertPlaneTenant`. That is
+ * no longer true — the session index, the token epoch and the revocation check derive from here
+ * too, and none of them passes through that guard. An absent tenant interpolates as the literal
+ * text `undefined` and a blank one as nothing at all, producing `dashboard:undefined:{userId}` or
+ * `dashboard::{userId}`: keyspaces belonging to no tenant, which nothing writes and no revocation
+ * sweeps. Each caller refuses that shape on its own terms before reaching here.
  *
  * @param plane - The identity plane the subject belongs to.
  * @param userId - The account the key belongs to.
  * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
- * @returns The subject string the MFA key HMACs are keyed over.
+ *   MUST be a non-empty string on the dashboard plane — see above.
+ * @returns The subject string every user-derived key HMACs over.
  */
 export function userSubject(
   plane: 'dashboard' | 'platform',

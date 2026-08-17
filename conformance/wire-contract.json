@@ -250,7 +250,14 @@
       "nothing to delete and reports success while those refresh tokens keep rotating. Either",
       "re-add the members under the derived index key, or delete the member keys and their detail",
       "records BEFORE dropping the index. The second costs a forced re-login and is the safer of",
-      "the two; the first preserves sessions and must be done atomically per user."
+      "the two; the first preserves sessions and must be done atomically per user.",
+      "",
+      "**Both obligations apply to the PLATFORM twins, `pep:{userId}` and `psess:{userId}`**, which",
+      "this change relocates identically. They are the easier pair to forget and the worse pair to",
+      "get wrong: a platform epoch left behind revalidates previously revoked ADMIN tokens, and a",
+      "platform index left behind hides an admin's live refresh sessions from revoke-all. The",
+      "platform subject carries no tenant segment, but the HMAC relocates the key all the same, so",
+      "an operator with no tenants still owes both steps on both planes."
     ]
   },
   "identifierPreimages": {

@@ -126,6 +126,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **before** dropping the index. The second costs a forced re-login and is the safer of the two;
   the first preserves sessions and must be done atomically per user.
 
+  **Both obligations apply to the PLATFORM twins, `pep:{userId}` and `psess:{userId}`, which this
+  release relocates identically.** They are the easier pair to forget and the worse pair to get
+  wrong: a platform epoch left behind revalidates previously revoked **admin** JWTs, and a
+  platform index left behind hides an admin's live refresh sessions from revoke-all. The platform
+  subject carries no tenant segment — `platform:{userId}` — but the HMAC relocates the key just as
+  it does on the dashboard plane, so "we have no tenants" is not a reason to skip either step.
+
 ### Fixed
 
 - **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves

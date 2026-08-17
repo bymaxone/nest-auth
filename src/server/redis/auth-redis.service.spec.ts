@@ -343,6 +343,20 @@ describe('AuthRedisService', () => {
       expect(mockRedis.get).toHaveBeenCalledWith(prefixed('rt:abc'))
     })
 
+    // A BLANK tenant reads as absent for the same reason a non-string one does, and it is the
+    // likelier shape: an unset environment variable arrives as `''`. Returned as a usable string
+    // it passed `AuthService.logout`'s `tenantId !== undefined` check, which then derived
+    // `dashboard::{userId}` — a key belonging to no tenant — missed the real index, and left the
+    // member and its detail record behind while reporting a completed logout.
+    it('reads a blank tenant as absent, keeping the owner', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', tenantId: '' }))
+
+      await expect(service.readSessionOwner('rt:abc')).resolves.toEqual({
+        userId: 'user-1',
+        tenantId: undefined
+      })
+    })
+
     // Scenario: every shape that names nobody. Expected: the empty string, never a throw.
     // Why: the caller treats it as "no live session" and completes the logout quietly — a
     // throw here would turn a missing session into a 500 on a route that must always answer
@@ -857,6 +871,21 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe(
         prefixed(`psess:${hmacSha256('platform:admin-9', HMAC_KEY)}`)
       )
+    })
+
+    // Blank and absent are one shape. A record carrying `tenantId: ''` names no tenant either —
+    // `dashboard::{ownerId}` is a keyspace belonging to nobody, exactly as `dashboard:undefined:`
+    // is — and an unset environment variable arrives as `''` by the time it reaches a key builder.
+    // Testing only for `undefined` let the blank form through.
+    it('prunes no index when a dashboard family record carries a blank tenant', async () => {
+      mockRedis.smembers.mockResolvedValueOnce(['h1'])
+      mockRedis.get.mockResolvedValueOnce('{"userId":"u9","tenantId":""}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
     })
 
     // The owner clause carries its own weight on the PLATFORM plane, where the tenant clause is

@@ -1735,11 +1735,13 @@ class SessionService {
    *
    * @param userId User ID
    * @param refreshToken Opaque session token
+   * @param tenantId Tenant the account belongs to; scopes the session index
    * @param ipAddress Request IP
    * @param userAgent Request User-Agent
    */
   createSession(
     userId: string,
+    tenantId: string,
     refreshToken: string,
     ipAddress: string,
     userAgent: string
@@ -1750,25 +1752,35 @@ class SessionService {
    *
    * @returns Array of sessions with device, IP, timestamps, and a current-session indicator
    */
-  listSessions(userId: string, currentSessionHash?: string): Promise<SessionInfo[]>
+  listSessions(
+    userId: string,
+    tenantId: string,
+    currentSessionHash?: string
+  ): Promise<SessionInfo[]>
 
   /**
    * Revokes a specific session.
    *
    * Flow:
-   * 1. Verifies that sessionHash belongs to the user via SISMEMBER auth:sess:{userId}
+   * 1. Verifies that sessionHash belongs to the user via SISMEMBER on the derived session
+   *    index — `auth:sess:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{userId}")}`, not the
+   *    bare-id key this document described before the index was tenant-scoped
    * 2. If it does not belong, throws SESSION_NOT_FOUND (prevents BOLA/IDOR)
    * 3. Removes the refresh token, the session from the SET, and the session details
    *
    * @throws AUTH_ERROR_CODES.SESSION_NOT_FOUND if session not found
    */
-  revokeSession(userId: string, sessionHash: string): Promise<void>
+  revokeSession(userId: string, tenantId: string, sessionHash: string): Promise<void>
 
   /**
    * Revokes all sessions except the current one.
    * Useful for "log out of all other devices".
    */
-  revokeAllExceptCurrent(userId: string, currentSessionHash: string): Promise<void>
+  revokeAllExceptCurrent(
+    userId: string,
+    tenantId: string,
+    currentSessionHash: string
+  ): Promise<void>
 
   /**
    * Applies the session limit using the FIFO strategy.

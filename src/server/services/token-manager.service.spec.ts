@@ -597,9 +597,15 @@ describe('TokenManagerService', () => {
     it('lets the empty placeholder through to the grace window', async () => {
       armGraceRotation()
 
-      await expect(
-        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
-      ).resolves.toBeDefined()
+      // The concrete result, not merely "something resolved". `toBeDefined` passes for any value
+      // this method could return, so it would keep passing on a recovery that produced the wrong
+      // tokens or the wrong identity — no use in a suite gated on mutation.
+      const result = await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
+      expect(result.session.userId).toBe('user-1')
+      expect(result.session.tenantId).toBe('tenant-1')
       expect(mockRedis.writeRecoveredSession).toHaveBeenCalled()
     })
 
@@ -613,9 +619,17 @@ describe('TokenManagerService', () => {
       })
       mockRedis.set.mockResolvedValue(undefined)
 
-      await expect(
-        service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
-      ).resolves.toBeDefined()
+      const result = await service.reissuePlatformTokens(
+        'old-platform-refresh',
+        '1.2.3.4',
+        'Browser'
+      )
+
+      // Pinned like its dashboard twin: the exemption has to produce a usable rotation, not just
+      // avoid throwing. A mutation that broke what the platform path returns would otherwise pass.
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
+      expect(result.session.userId).toBe('user-1')
     })
 
     it('should propagate mfaEnabled:true from the stored session into the rotated access token', async () => {

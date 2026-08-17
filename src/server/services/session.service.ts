@@ -674,6 +674,12 @@ export class SessionService {
    * @param sessionHash - The session hash to validate.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the format is invalid.
    */
+  private assertValidSessionHash(sessionHash: string): void {
+    if (!SESSION_HASH_RE.test(sessionHash)) {
+      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+    }
+  }
+
   /**
    * The Redis key of this user's session index.
    *
@@ -688,12 +694,6 @@ export class SessionService {
    */
   private indexKey(userId: string, tenantId: string): string {
     return sessionIndexKey('dashboard', userId, this.options.hmacKey, tenantId)
-  }
-
-  private assertValidSessionHash(sessionHash: string): void {
-    if (!SESSION_HASH_RE.test(sessionHash)) {
-      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
-    }
   }
 
   /**

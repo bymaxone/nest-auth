@@ -729,7 +729,8 @@ export class AuthRedisService {
    * Idempotent: an empty, unknown, or already-cleared family is a no-op.
    *
    * @param familyId - The family id carried by the consumed-token marker.
-   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`.
+   * @param kind - Which identity plane the family belongs to. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    * @returns The number of members removed and the account the family belonged to. The owner
    *   is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
@@ -751,7 +752,7 @@ export class AuthRedisService {
     // prune would succeed against a key nobody writes while the real index kept every member,
     // and the operation would report a revocation that did not reach the index. The Lua script
     // takes an empty index key and skips that step.
-    const nameable = ownerId !== '' && (kind === 'platform' || tenantId !== undefined)
+    const nameable = ownerId !== '' && (kind === 'platform' || (tenantId ?? '') !== '')
     const indexKey = nameable
       ? this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
       : ''
@@ -1004,7 +1005,8 @@ export class AuthRedisService {
    *
    * @param userId - Internal user or admin ID whose sessions will be invalidated.
    * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
-   * @param kind - Which identity plane to revoke. Defaults to `'dashboard'`.
+   * @param kind - Which identity plane to revoke. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    */
   async invalidateUserSessions(
     userId: string,
@@ -1064,7 +1066,9 @@ export class AuthRedisService {
    * bumped carries one.
    *
    * @param userId - Internal user or admin ID to look up.
-   * @param kind - Which identity plane to read. Defaults to `'dashboard'`.
+   * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+   * @param kind - Which identity plane to read. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    * @returns The stored epoch, or `0` when none is stored or the value is unreadable.
    */
   async getUserTokenEpoch(
@@ -1119,7 +1123,16 @@ export class AuthRedisService {
       const userId = record['userId']
       if (typeof userId !== 'string') return none
       const tenantId = record['tenantId']
-      return { userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined }
+      // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
+      // presence to decide whether they can name an index, and `''` builds `dashboard::{userId}`
+      // — a keyspace belonging to no tenant, exactly as `dashboard:undefined:` does. Returning it
+      // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
+      // the real index, leaving the member and its detail record behind. One shape of "no tenant"
+      // at the boundary means every caller downstream gets the same answer.
+      return {
+        userId,
+        tenantId: typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined
+      }
     } catch {
       // A malformed record names nobody. The session parser reports it on the paths that
       // need to fail loudly; here the caller only wants an owner or the absence of one.
@@ -1137,7 +1150,9 @@ export class AuthRedisService {
    * runs from the latest bump: by then every token stamped below it has expired anyway.
    *
    * @param userId - Internal user or admin ID whose outstanding access tokens are revoked.
-   * @param kind - Which identity plane to bump. Defaults to `'dashboard'`.
+   * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+   * @param kind - Which identity plane to bump. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    * @returns The epoch after the increment.
    */
   async bumpUserTokenEpoch(
