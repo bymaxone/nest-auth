@@ -200,6 +200,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   - `revokeFamily` derived an index for such a record and pruned a key nobody writes while the
     real index kept every member. It now omits the index, exactly as logout already did.
 
+  **Deploy this as a cutover, not a rolling upgrade.** Drain the pods on the old release before
+  the new ones serve. The MFA keyspace is where this bites hardest: `mutate`'s transition lock,
+  which serializes the read-modify-write on the recovery-code list, is keyed by the same subject
+  as everything else — so two pods that disagree about the subject take **different locks and do
+  not exclude each other at all**, and the `rcu:` claim that stops a code being spent twice splits
+  the same way. The library carries a fallback for the _pre-tenant_ preimage but deliberately none
+  for the tenant-scoped one this release replaces: a fallback is compatibility weight for a
+  deployment shape the cutover removes the need for.
+
   **A live keyspace must be migrated, not dropped.** Deleting the old keys is unsafe in both
   directions, and each direction is a hole rather than an inconvenience.
 
