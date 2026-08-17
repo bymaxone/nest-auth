@@ -327,12 +327,22 @@ describe('README contract (E2E)', () => {
     // Invention is asked of the whole document, and deliberately: a scheme name the prose made up
     // sends a reader to write a literal that matches nothing, wherever the sentence sits.
     //
-    // The candidate pattern must NOT require the spellings it is hunting for. An earlier version
-    // read `bymax[A-Za-z]*(?:Auth|Platform)[A-Za-z]*`, so `bymaxAythAccessCookie` — a transposed
-    // letter, the single likeliest way this goes wrong — did not match, was never a candidate,
-    // and passed. Any backticked `bymax`-prefixed identifier is a candidate now; the four real
-    // scheme names are the only ones the README carries, so nothing else is swept up.
-    const invented = [...README.matchAll(/`(bymax[A-Za-z]+)`/g)]
+    // Two things the candidate pattern must not do, each of which it did in turn.
+    //
+    // It must not require the spellings it is hunting for: `bymax[A-Za-z]*(?:Auth|Platform)…`
+    // never matched `bymaxAythAccessCookie`, so a transposed letter — the likeliest way a
+    // hand-written name goes wrong — was not even a candidate.
+    //
+    // And it must not require Markdown delimiters. Backtick-wrapped only left the fenced-code
+    // comment and the object expression uncovered: `bymaxAuthAccessCookie` appears 5 times bare
+    // against 3 in backticks, so two of its five mentions were invisible.
+    //
+    // The shape that remains is the schemes' own: `bymax` followed by an UPPERCASE letter. That
+    // is what excludes `bymaxone`, the GitHub organisation, which appears 15 times and is not a
+    // scheme. The trade is that a lowercased first segment (`bymaxauthAccessCookie`) is not a
+    // candidate — a different mistake from a misspelling, and one no reader would write while
+    // copying a camelCase name.
+    const invented = [...README.matchAll(/(bymax[A-Z][A-Za-z]*)/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined)
       .filter((name) => !declared.includes(name as (typeof declared)[number]))
