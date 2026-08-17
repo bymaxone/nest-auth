@@ -45,6 +45,22 @@ import { tenantScoped } from '../utils/tenant-scoped'
 const ANTI_ENUM_MIN_MS = 300
 
 /**
+ * Names the account whose sessions {@link AuthService.revokeAllSessions} ends.
+ *
+ * An object for the same reason the five `SessionService` entry points take one: two
+ * unconstrained `string`s side by side can be swapped without the compiler noticing, and
+ * `revokeAllSessions(user.tenantId, user.id)` compiled, derived an unrelated subject, and
+ * returned normally — a "sign out everywhere" reported as done that revoked nothing, or that
+ * revoked a colliding account instead.
+ */
+export interface RevokeAllSessionsParams {
+  /** Internal user ID whose sessions and access tokens are ending. */
+  userId: string
+  /** Tenant that user belongs to; scopes both the session index and the token epoch. */
+  tenantId: string
+}
+
+/**
  * Core authentication service for dashboard (tenant) users.
  *
  * Orchestrates the full authentication lifecycle: registration, login, logout,
@@ -621,7 +637,10 @@ export class AuthService {
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
-      await this.revokeAllSessions(result.session.userId, result.session.tenantId)
+      await this.revokeAllSessions({
+        userId: result.session.userId,
+        tenantId: result.session.tenantId
+      })
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     try {
@@ -631,7 +650,10 @@ export class AuthService {
       // `assertUserNotBlocked` rather than testing `blockedStatuses` inline so there is one
       // definition of "blocked" — the inline version would have to re-implement the
       // case-insensitive comparison, and a second implementation is a second thing to drift.
-      await this.revokeAllSessions(result.session.userId, result.session.tenantId)
+      await this.revokeAllSessions({
+        userId: result.session.userId,
+        tenantId: result.session.tenantId
+      })
       throw err
     }
 
@@ -751,7 +773,7 @@ export class AuthService {
    * @param tenantId - The tenant that account belongs to; both keyspaces are scoped to it, so
    *   passing the wrong one revokes the colliding id in another tenant instead.
    */
-  async revokeAllSessions(userId: string, tenantId: string): Promise<void> {
+  async revokeAllSessions({ userId, tenantId }: RevokeAllSessionsParams): Promise<void> {
     // A blank tenant derives `dashboard::{userId}` — an index and an epoch nobody writes. Both
     // operations below would succeed against them and this method would return normally: a
     // "sign out everywhere" reported as done while every session and access token stayed valid.

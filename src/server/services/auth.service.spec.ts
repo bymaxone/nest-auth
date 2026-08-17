@@ -3285,7 +3285,9 @@ describe('AuthService', () => {
     it('refuses a blank tenant instead of sweeping a key nobody writes', async () => {
       // The DETAILS, not merely the exception type: an empty payload would tell the caller
       // nothing about what to fix and would still satisfy `toThrow(AuthException)`.
-      await expect(service.revokeAllSessions('user-1', '')).rejects.toMatchObject({
+      await expect(
+        service.revokeAllSessions({ userId: 'user-1', tenantId: '' })
+      ).rejects.toMatchObject({
         response: {
           error: {
             code: AUTH_ERROR_CODES.VALIDATION,
@@ -3303,7 +3305,7 @@ describe('AuthService', () => {
     // The ordinary path still reaches both channels: the session index AND the token epoch, so a
     // revocation ends stateless access tokens rather than only refresh sessions.
     it('sweeps the index and bumps the epoch for a real tenant', async () => {
-      await service.revokeAllSessions('user-1', 'tenant-1')
+      await service.revokeAllSessions({ userId: 'user-1', tenantId: 'tenant-1' })
 
       expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
         'user-1',

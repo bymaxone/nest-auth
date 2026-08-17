@@ -124,7 +124,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `RevokeSessionParams` and `RevokeAllExceptCurrentParams` are exported from the package entry so
   a caller can name the shape.
 
-  Also taking the tenant they always needed: `AuthService.revokeAllSessions` and the three
+  `AuthService.revokeAllSessions` takes the same treatment and for the same reason — two
+  unconstrained strings side by side, where `revokeAllSessions(user.tenantId, user.id)` compiled,
+  derived an unrelated subject and returned normally:
+
+  ```ts
+  await auth.revokeAllSessions({ userId: user.sub, tenantId: user.tenantId })
+  ```
+
+  Also taking the tenant they always needed: the three
   `AuthRedisService` entry points (`invalidateUserSessions`, `getUserTokenEpoch`,
   `bumpUserTokenEpoch`), whose `kind` argument also **loses its default** — a positional tenant
   next to a positional plane is a transposition nobody notices, and the two call sites that

@@ -211,6 +211,7 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+export type { RevokeAllSessionsParams } from './services/auth.service'
 // NOTE: `EmailChangeService` is only registered when `controllers.emailChange !== false`
 // (the default). Importing it for a host module with the controller disabled causes an
 // injection error — register it in `extraProviders` in that case.
