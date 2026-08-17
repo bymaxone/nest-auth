@@ -282,8 +282,12 @@ export class SessionService {
   /**
    * Refuses a dashboard tenant that names nothing, at the public boundary.
    *
-   * Every method on this service takes the tenant positionally beside a `string` user id, and all
-   * of them are exported. `userSubject` cannot enforce this itself: the rotation scripts must be
+   * Every method on this service takes the tenant as a REQUIRED named field, and all of them are
+   * exported — the object form replaced the positional one precisely so a `string` tenant could
+   * not be transposed with a `string` user id or session hash. Naming it removes the transposition
+   * but not the empty string: a caller can still pass `''`, and that is what this refuses.
+   *
+   * `userSubject` cannot enforce it instead: the rotation scripts must be
    * called with the empty PLACEHOLDER identity to discover a grace pointer, so the innermost
    * builder has to stay total, and an empty key in a script's KEYS array is not "no key" — the
    * `eval` wrapper prefixes it into a real key named `auth:`.
