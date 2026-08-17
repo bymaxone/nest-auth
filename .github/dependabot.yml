@@ -42,6 +42,15 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: eslint
         update-types: [version-update:semver-major]
+      # `@types/node` majors track Node majors, so this one is not a tooling bump: it
+      # sets the runtime the source is type-checked against. `engines.node` is
+      # `>=24.0.0` and the release workflow builds on 24.x, so the types must stay on
+      # 24 — a library has to compile against the MINIMUM runtime it promises, not the
+      # newest one published. On `^26`, `tsc` would accept an API added in Node 25 or
+      # 26 while the package still advertises support for 24. It moves when
+      # `engines.node` moves, which is a support-matrix decision. (PR #147.)
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
 
   # The workflow actions themselves (checkout, setup-node, pnpm, etc.).
   - package-ecosystem: github-actions
