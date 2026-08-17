@@ -929,9 +929,15 @@ describe('TokenManagerService', () => {
       )
       await Promise.resolve()
 
+      // The CONTEXT, not `expect.anything()`. It describes who PRESENTED the replayed token,
+      // which is the whole reason a consumer subscribes: `userId` says whose account the family
+      // belongs to, `ip` and `userAgent` are the only description of the party holding a token
+      // that should not exist. Both arrived empty — the emit built an empty context while these
+      // very values sat in scope as `reissueTokens` parameters — and `expect.anything()` could
+      // not tell the difference. Reported by a consumer running the hook against a real backend.
       expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
         { userId: 'user-1', familyId: FAMILY },
-        expect.anything()
+        { ip: '1.2.3.4', userAgent: 'Browser', sanitizedHeaders: {} }
       )
       // Emitted AFTER the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
@@ -2178,9 +2184,12 @@ describe('TokenManagerService', () => {
       ).rejects.toThrow(AuthException)
       await Promise.resolve()
 
+      // Pinned on the platform plane too, and it matters more here: this is the highest-privilege
+      // identity in the system, so "an admin token was replayed, from nowhere in particular" is
+      // the least useful form the report could take.
       expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
         { userId: 'admin-1', familyId: PLATFORM_FAMILY },
-        expect.anything()
+        { ip: '9.9.9.9', userAgent: 'Attacker', sanitizedHeaders: {} }
       )
     })
 

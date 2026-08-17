@@ -477,7 +477,7 @@ export class TokenManagerService {
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
-      this.emitReuseDetected(ownerId, outcome.familyId)
+      this.emitReuseDetected(ownerId, outcome.familyId, ip, userAgent)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     this.logger.warn(
@@ -492,12 +492,31 @@ export class TokenManagerService {
    * The owner is read from the stored session where it can be — a replay of a token whose live
    * key is already gone leaves nothing to read, and the hook is skipped rather than fired with
    * an empty identity that a consumer would have to guess about.
+   *
+   * **The context describes WHO PRESENTED the replayed token**, which is the whole reason a
+   * consumer subscribes to this hook. `userId` says whose account the family belongs to; `ip` and
+   * `userAgent` are the only description of the party holding the token that should not exist, so
+   * a report carrying the first and not the second says a compromise happened and gives nothing
+   * to act on. Both were previously dropped: the emit built an EMPTY context while
+   * `reissueTokens` had both values in scope as its own parameters.
+   *
+   * `sanitizedHeaders` stays empty and that is honest — the rotation path receives the address
+   * and the agent, never the header map, so there is nothing to sanitize. Inventing one would be
+   * worse than an empty object a consumer can see is empty.
+   *
+   * @param userId - The account the revoked family belonged to.
+   * @param familyId - The revoked family.
+   * @param ip - Address the replayed token was presented from.
+   * @param userAgent - Raw `User-Agent` of the presenting client.
    */
-  private emitReuseDetected(userId: string, familyId: string): void {
+  private emitReuseDetected(userId: string, familyId: string, ip: string, userAgent: string): void {
     if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
     try {
       void Promise.resolve(
-        this.hooks.onRefreshTokenReuseDetected({ userId, familyId }, createEmptyHookContext())
+        this.hooks.onRefreshTokenReuseDetected(
+          { userId, familyId },
+          { ...createEmptyHookContext(), ip, userAgent }
+        )
       ).catch((err: unknown) => {
         this.logger.error(`onRefreshTokenReuseDetected hook threw: ${describeChannelStatus(err)}`)
       })
@@ -926,7 +945,7 @@ export class TokenManagerService {
       )
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
-      this.emitReuseDetected(ownerId, outcome.familyId)
+      this.emitReuseDetected(ownerId, outcome.familyId, ip, userAgent)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 
