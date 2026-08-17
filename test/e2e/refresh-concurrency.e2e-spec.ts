@@ -68,7 +68,11 @@ function sessionIndexFor(userId: string, tenantId: string): string {
   const hmacKey = createHash('sha256')
     .update(`bymax-auth:hmac-key:v1:${JWT_SECRET}`, 'utf8')
     .digest('hex')
-  return `sess:${createHmac('sha256', hmacKey).update(`dashboard:${tenantId}:${userId}`).digest('hex')}`
+  // Length-prefixed, byte-counted: the preimage is not injective without it, because both
+  // components may contain the delimiter. Built by hand here rather than imported, so the
+  // suite pins the KEY and does not merely agree with whatever the helper currently returns.
+  const subject = `dashboard:${Buffer.byteLength(tenantId, 'utf8')}:${tenantId}:${userId}`
+  return `sess:${createHmac('sha256', hmacKey).update(subject).digest('hex')}`
 }
 
 describe('refresh concurrency with grace window (E2E)', () => {

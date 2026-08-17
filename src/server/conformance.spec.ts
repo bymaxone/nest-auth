@@ -130,7 +130,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '41145109d5ece2e69745fb4203fd8cf6187d5af4a246f6a813691253b21c7ec5'
+const CONTRACT_SHA256 = '7ce54c978e0ef2fcb67609118ba16fa4e68f6760dd372f07148733223742fc25'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -247,11 +247,17 @@ describe('cross-implementation conformance', () => {
   // -------------------------------------------------------------------------
 
   describe('MFA subject preimages', () => {
-    // Renders a contract preimage template (`dashboard:{tenantId}:{userId}`) against concrete
-    // values, so the expectation is derived from the contract rather than repeated here — a change
-    // on either side turns the test red.
+    // Renders a contract preimage template against concrete values, so the expectation is derived
+    // from the contract rather than repeated here — a change on either side turns the test red.
+    //
+    // `{utf8ByteLength(tenantId)}` is computed, not substituted with a constant: the prefix is the
+    // whole point of the template, and hard-coding its value would let the two drift apart while
+    // the test stayed green.
     const render = (template: string): string =>
-      template.replace('{tenantId}', 'T').replace('{userId}', 'U')
+      template
+        .replace('{utf8ByteLength(tenantId)}', String(Buffer.byteLength('T', 'utf8')))
+        .replace('{tenantId}', 'T')
+        .replace('{userId}', 'U')
 
     // The subject every MFA store key and failure counter is HMAC'd over. `userSubject` is the one
     // place both libraries build it, so it must render exactly the two templates the contract pins.

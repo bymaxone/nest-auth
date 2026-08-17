@@ -261,7 +261,7 @@ describe('SessionService', () => {
       })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`
       )
     })
 
@@ -317,7 +317,7 @@ describe('SessionService', () => {
 
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${oldestHash}`)
       expect(mockRedis.srem).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         `rt:${oldestHash}`
       )
       expect(mockRedis.del).toHaveBeenCalledWith(`sd:${oldestHash}`)
@@ -1076,7 +1076,7 @@ describe('SessionService', () => {
       })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`
       )
     })
 
@@ -1464,7 +1464,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         [`rt:${staleHash}`]
       )
       // The bypass this replaced: an unconditional SREM here un-indexed a session whose
@@ -1483,7 +1483,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         []
       )
     })
@@ -1542,7 +1542,7 @@ describe('SessionService', () => {
       await flushMicrotasks()
 
       expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         [`rt:${throwHash}`]
       )
       expect(mockRedis.srem).not.toHaveBeenCalled()
@@ -1646,7 +1646,7 @@ describe('SessionService', () => {
       await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`
       )
     })
 
@@ -1808,7 +1808,7 @@ describe('SessionService', () => {
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.any(String),
         [
-          `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+          `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
           `rt:${hash}`,
           `sd:${hash}`
         ],
@@ -1987,11 +1987,11 @@ describe('SessionService', () => {
       expect(deleted).not.toContain(`rt:${currentHash}`)
       // …and the member is dropped from the index too, or a revoke-all still has it to walk.
       expect(mockRedis.srem).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         `rp:${otherHash}`
       )
       expect(mockRedis.srem).not.toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         `rt:${currentHash}`
       )
     })
@@ -2010,7 +2010,7 @@ describe('SessionService', () => {
       })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`
       )
     })
 
@@ -2157,7 +2157,7 @@ describe('SessionService', () => {
       // …but the key is gone, and so is its entry in the per-user index.
       expect(mockRedis.del).toHaveBeenCalledWith(`rp:${rpHash}`)
       expect(mockRedis.srem).toHaveBeenCalledWith(
-        `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`,
+        `sess:${hmacSha256(`dashboard:8:tenant-1:${userId}`, HMAC_KEY)}`,
         `rp:${rpHash}`
       )
     })
@@ -2470,7 +2470,7 @@ describe('SessionService', () => {
       })
 
       expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
         'rp:'
       )
     })
@@ -2481,7 +2481,7 @@ describe('SessionService', () => {
       await service.listSessions({ userId: 'user-1', tenantId: 'tenant-1' })
 
       expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith(
-        `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
         'rp:'
       )
     })

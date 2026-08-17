@@ -43,5 +43,36 @@ export function userSubject(
   userId: string,
   tenantId: string | undefined
 ): string {
-  return plane === 'platform' ? `platform:${userId}` : `dashboard:${tenantId}:${userId}`
+  // The platform arm has ONE component after the plane, so there is nothing to disambiguate.
+  if (plane === 'platform') return `platform:${userId}`
+
+  // The dashboard arm has two, and a bare `:` between them is not injective over the identifiers
+  // this library accepts. `tenant-id-charset.spec.ts` deliberately admits `acme.eu-west-1:prod`,
+  // and `assertSubject` documents composite `tenant:user` subjects as a supported shape — so
+  //
+  //     tenantId 'acme:prod' + userId 'u1'   →  dashboard:acme:prod:u1
+  //     tenantId 'acme'      + userId 'prod:u1' →  dashboard:acme:prod:u1
+  //
+  // collide, and with them every key derived from this preimage: the session index, the token
+  // epoch, the MFA store keys, the MFA failure counters, the recent-authentication marker and the
+  // recovery-code single-use claim. Two unrelated tenants would share all of them — which is the
+  // cross-tenant revocation this whole change exists to remove, reintroduced through the
+  // delimiter, and it also lets one tenant spend another's recovery code.
+  //
+  // The length prefix makes the split unambiguous: a reader knows exactly how many bytes the
+  // tenant occupies, so no other (tenant, user) pair can produce the same string. No identifier
+  // is rejected, which matters because the charset is deliberately permissive.
+  //
+  // BYTES, not `String.length`. JavaScript counts UTF-16 code units and Rust counts UTF-8 bytes,
+  // so `'açaí'` is 4 by one measure and 6 by the other. This preimage is byte-shared with
+  // `@bymax-one/rust-auth`; using `.length` would agree for ASCII and silently derive different
+  // keys the first time a tenant id carried an accent.
+  // `String(tenantId)`, not `tenantId ?? ''`: the length must measure exactly what the template
+  // interpolates. Both render `undefined` as the nine-character text `undefined`, so the prefix
+  // stays truthful even in that degenerate case — and it is one expression rather than a branch
+  // no legitimate caller can reach, which would be an untestable line and a mutation survivor.
+  // Reaching here without a tenant is a caller that skipped its boundary guard; the subject it
+  // gets is still unambiguous, which is all this function owes it.
+  const tenant = String(tenantId)
+  return `dashboard:${Buffer.byteLength(tenant, 'utf8')}:${tenant}:${userId}`
 }

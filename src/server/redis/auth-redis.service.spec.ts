@@ -400,7 +400,7 @@ describe('AuthRedisService', () => {
         expect.stringContaining("redis.call('EXISTS', KEYS[2])"),
         3,
         prefixed('rt:new-hash'),
-        prefixed(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`),
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`),
         prefixed('fam:fam-1'),
         '{"userId":"u1","tenantId":"tenant-1"}',
         '604800',
@@ -444,7 +444,7 @@ describe('AuthRedisService', () => {
 
       await expect(
         service.pruneExpiredGraceMembers(
-          `sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`,
+          `sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`,
           'rp:'
         )
       ).resolves.toBe(2)
@@ -457,7 +457,7 @@ describe('AuthRedisService', () => {
         string
       ]
       expect(numKeys).toBe(1)
-      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`))
+      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`))
       expect(namespace).toBe('auth')
       expect(prefix).toBe('rp:')
       // Only members carrying the grace prefix are considered — a live `rt:` member must
@@ -494,7 +494,7 @@ describe('AuthRedisService', () => {
 
       await expect(
         service.pruneExpiredGraceMembers(
-          `sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`,
+          `sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`,
           'rp:'
         )
       ).resolves.toBe(expected)
@@ -512,7 +512,7 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(1)
 
       await expect(
-        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`, [
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [
           'rt:aaa',
           'rt:bbb'
         ])
@@ -521,7 +521,7 @@ describe('AuthRedisService', () => {
       const [script, numKeys, key, namespace, first, second] = mockRedis.eval.mock
         .calls[0] as unknown as [string, number, string, string, string, string]
       expect(numKeys).toBe(1)
-      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`))
+      expect(key).toBe(prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`))
       expect(namespace).toBe('auth')
       expect([first, second]).toEqual(['rt:aaa', 'rt:bbb'])
       // The guard IS the fix. Without it the SREM is unconditional and a live session leaves
@@ -537,7 +537,7 @@ describe('AuthRedisService', () => {
     // found nothing stale is the common case on every session listing.
     it('makes no call when there are no candidates', async () => {
       await expect(
-        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`, [])
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [])
       ).resolves.toBe(0)
 
       expect(mockRedis.eval).not.toHaveBeenCalled()
@@ -566,7 +566,7 @@ describe('AuthRedisService', () => {
       mockRedis.eval.mockResolvedValue(reply)
 
       await expect(
-        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`, [
+        service.pruneDeadMembers(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`, [
           'rt:aaa'
         ])
       ).resolves.toBe(expected)
@@ -602,7 +602,7 @@ describe('AuthRedisService', () => {
         prefixed('fam:fam-1'),
         // The owner's session index, which the script maintains itself so a concurrent
         // "log out everywhere" cannot sweep past the session this rotation is minting.
-        prefixed(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`),
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`),
         '{"userId":"u1","tenantId":"tenant-1"}',
         '604800',
         '30',
@@ -774,7 +774,7 @@ describe('AuthRedisService', () => {
         NAMESPACE,
         'rt',
         'sd',
-        prefixed(`sess:${hmacSha256('dashboard:tenant-1:u1', HMAC_KEY)}`)
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u1', HMAC_KEY)}`)
       )
     })
 
@@ -821,7 +821,7 @@ describe('AuthRedisService', () => {
 
       const call = mockRedis.eval.mock.calls[0] as string[]
       expect(call[call.length - 1]).toBe(
-        prefixed(`sess:${hmacSha256('dashboard:tenant-1:u9', HMAC_KEY)}`)
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:u9', HMAC_KEY)}`)
       )
     })
 
@@ -990,7 +990,7 @@ describe('AuthRedisService', () => {
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('SMEMBERS'),
         1,
-        prefixed(`sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`),
+        prefixed(`sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`),
         NAMESPACE,
         'rt:',
         'rp:',
@@ -1076,7 +1076,7 @@ describe('AuthRedisService', () => {
 
       expect(await service.getUserTokenEpoch('user-1', 'tenant-1', 'dashboard')).toBe(3)
       expect(mockRedis.get).toHaveBeenCalledWith(
-        prefixed(`ep:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`)
+        prefixed(`ep:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`)
       )
     })
 
@@ -1123,7 +1123,7 @@ describe('AuthRedisService', () => {
 
       const call = mockRedis.eval.mock.calls[0] as unknown[]
       expect(call[0]).toEqual(expect.stringContaining("redis.call('INCR'"))
-      expect(call[2]).toBe(prefixed(`ep:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`))
+      expect(call[2]).toBe(prefixed(`ep:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`))
       expect(call[call.length - 1]).toBe(String(30 * 24 * 60 * 60))
     })
 

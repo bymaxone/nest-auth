@@ -537,7 +537,7 @@ describe('MfaService', () => {
     // dropped tenant segment would diverge.
     it('should claim the mfa_setup key derived from the HMAC of the tenant-scoped subject', async () => {
       await service.setup('user-1', 'dashboard', PASSWORD, 'tenant-1')
-      const expectedKey = `mfa_setup:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`
+      const expectedKey = `mfa_setup:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
       expect(mockRedis.setIfAbsent).toHaveBeenCalledWith(expectedKey, expect.any(String), 600)
     })
 
@@ -1014,13 +1014,13 @@ describe('MfaService', () => {
       )
       // The setup key (read + getdel) must be 'mfa_setup:' + HMAC(tenant-scoped subject).
       expect(mockRedis.get).toHaveBeenCalledWith(
-        `mfa_setup:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`
+        `mfa_setup:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`
       )
       // The anti-replay marker is dual-written for the migration: both the tenant-scoped key and
       // the legacy plane-only key are claimed with a 90s TTL, so a code cannot be replayed via
       // either code path during a rolling upgrade.
       expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `tu:${hmacSha256(`dashboard:tenant-1:user-1:${validCode}`, HMAC_KEY)}`,
+        `tu:${hmacSha256(`dashboard:8:tenant-1:user-1:${validCode}`, HMAC_KEY)}`,
         90
       )
       expect(mockRedis.setnx).toHaveBeenCalledWith(
@@ -1723,7 +1723,7 @@ describe('MfaService', () => {
         // The scoped lock it took is released; the legacy lock it never took is left alone.
         expect(mockRedis.eval).toHaveBeenCalledWith(
           expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`],
+          [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
           [expect.any(String)]
         )
         expect(mockRedis.eval).not.toHaveBeenCalledWith(
@@ -1879,7 +1879,7 @@ describe('MfaService', () => {
         // legacy plane-only one the migration also holds.
         expect(mockRedis.eval).toHaveBeenCalledWith(
           expect.any(String),
-          [`mfalock:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`],
+          [`mfalock:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`],
           [expect.any(String)]
         )
         expect(mockRedis.eval).toHaveBeenCalledWith(
@@ -2149,7 +2149,7 @@ describe('MfaService', () => {
       await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
 
       expect(mockRedis.setnx).toHaveBeenCalledWith(
-        `rcu:${hmacSha256(`dashboard:tenant-1:user-1:${plainRecovery}`, HMAC_KEY)}`,
+        `rcu:${hmacSha256(`dashboard:8:tenant-1:user-1:${plainRecovery}`, HMAC_KEY)}`,
         300
       )
     })

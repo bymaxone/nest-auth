@@ -41,6 +41,44 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **Two tenants could share one session index, one token epoch and one recovery-code claim.**
+  The subject every user-derived key is HMACed over was `dashboard:{tenantId}:{userId}`, and a
+  bare `:` between two free-form components is not injective. Both halves may legitimately
+  contain it — the DTO charset deliberately admits a tenant id like `acme.eu-west-1:prod`, and a
+  composite `tenant:user` subject is a documented `sub` shape — so:
+
+  ```
+  tenantId 'acme:prod' + userId 'u1'      ->  dashboard:acme:prod:u1
+  tenantId 'acme'      + userId 'prod:u1' ->  dashboard:acme:prod:u1   <- same preimage, same HMAC
+  ```
+
+  Two unrelated tenants then shared every key derived from it: the session index, the token
+  epoch, the five MFA store keys, the three MFA failure counters, the recent-authentication
+  marker and — worst — `rcu:`, the claim that stops a recovery code being spent twice. Revoking
+  one tenant's sessions swept the other's, and one tenant could spend the other's recovery code.
+  That is precisely the cross-tenant revocation the entry below removes, reintroduced through the
+  delimiter.
+
+  **This predates the release.** The same preimage shipped in 1.4.3 as `mfaSubject`, backing the
+  MFA keyspace; renaming it to `userSubject` and extending it to `sess:`/`ep:` widened the blast
+  radius rather than creating it.
+
+  The dashboard arm now carries a length prefix —
+  `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}` — which makes the split unambiguous
+  while rejecting no identifier, and the charset is deliberately permissive. The platform arm has
+  one component after the plane and is unchanged.
+
+  **The prefix counts UTF-8 bytes, not characters**, and the contract says so: JavaScript's
+  `String.length` counts UTF-16 code units while Rust's `str::len()` counts bytes, so `açaí` is 4
+  by one measure and 6 by the other. A character count would agree for ASCII and derive different
+  keys on the first accented tenant id — a split between the paired libraries that shows up only
+  in production, in one locale.
+
+  **Apply to a derived backend.** The MFA keyspace relocates too, on top of the session and epoch
+  migration described below, and under the same rule: copy state forward, never drop it. The MFA
+  keys are where dropping is least acceptable — a discarded `rcu:` claim makes a spent recovery
+  code usable again.
+
 - **Suspending one tenant's user revoked another tenant's.** The session index and the token
   epoch were keyed on the bare user id — `sess:{userId}` and `ep:{userId}` — while the status
   cache beside them had been tenant-scoped for releases. `IUserRepository.findById` takes a

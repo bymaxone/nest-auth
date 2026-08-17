@@ -357,7 +357,7 @@ describe('TokenManagerService', () => {
     // sweeps between the session write and the SADD and misses a session that already exists.
     //
     // The plane matters and the earlier version of this comment had it wrong: it named the
-    // DASHBOARD key, `sess:{hmac('dashboard:tenant-1:admin-1')}`, for a platform scenario whose
+    // DASHBOARD key, `sess:{hmac('dashboard:8:tenant-1:admin-1')}`, for a platform scenario whose
     // key is `psess:{hmac('platform:admin-1')}`. The two never meet, which is what the sibling
     // test below asserts; a comment naming the wrong one teaches the opposite of the design.
     it('leaves index membership and its TTL to the atomic session write', async () => {
@@ -405,7 +405,7 @@ describe('TokenManagerService', () => {
 
       const indexedKeys = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
       expect(indexedKeys).not.toContain(
-        `sess:${hmacSha256('dashboard:tenant-1:admin-1', HMAC_KEY)}`
+        `sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`
       )
     })
 
@@ -762,11 +762,11 @@ describe('TokenManagerService', () => {
       // revocation the user was told had happened. The script gets the owner it needs; the
       // key-level assertions over `sess:` live in the redis service spec, against the script.
       expect(mockRedis.sadd).not.toHaveBeenCalledWith(
-        `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
         expect.anything()
       )
       expect(mockRedis.srem).not.toHaveBeenCalledWith(
-        `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
         expect.anything()
       )
       expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
@@ -1063,7 +1063,7 @@ describe('TokenManagerService', () => {
 
     // Scenario: primary rotation rewrites the per-user SET — remove old rt:, add new rt: and the
     // grace pointer, then expire the SET with the refresh TTL (days*86400).
-    // Expected: exact srem/sadd/expire calls on `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`. Why: kills the StringLiteral
+    // Expected: exact srem/sadd/expire calls on `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`. Why: kills the StringLiteral
     // mutants on each key/member and the arithmetic mutant on `* 86_400` via the pinned TTL.
     it('hands the rotation script every key it needs to index the new session', async () => {
       const oldHash = sha256('old-refresh-token')
@@ -2205,7 +2205,7 @@ describe('TokenManagerService', () => {
       const touched = [...mockRedis.sadd.mock.calls, ...mockRedis.srem.mock.calls].map(
         (call) => call[0] as string
       )
-      expect(touched).not.toContain(`sess:${hmacSha256('dashboard:tenant-1:admin-1', HMAC_KEY)}`)
+      expect(touched).not.toContain(`sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`)
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
@@ -2265,7 +2265,7 @@ describe('TokenManagerService', () => {
         `prp:${oldHash}`
       )
       expect(mockRedis.srem).not.toHaveBeenCalledWith(
-        `sess:${hmacSha256('dashboard:tenant-1:admin-1', HMAC_KEY)}`,
+        `sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`,
         `prp:${oldHash}`
       )
       // Session, index and family membership are one atomic step.
