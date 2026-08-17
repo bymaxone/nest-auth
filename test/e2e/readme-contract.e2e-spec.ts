@@ -32,6 +32,9 @@ import { AUTH_SECURITY_SCHEMES } from '../../src/server/openapi/auth-openapi-fra
  */
 const STAR_EXPORT_MARKER = '*'
 
+/** The scheme table's header cell, which is how it is found rather than by line number. */
+const TABLE_HEADER = 'what the document says'
+
 /** The README, read once. */
 const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
 
@@ -206,19 +209,20 @@ function flatten(markdown: string): string {
  *   fails on rather than reading as "no schemes missing".
  */
 function schemeTable(readme: string): string {
-  const rows = readme
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.startsWith('|'))
+  // Original line boundaries, NOT a pre-filtered list of table rows. Filtering first discards the
+  // blank line that ends a Markdown table, which leaves the loop no way to tell where this table
+  // stops — it would return this table concatenated with every later one, and the README has two
+  // (the DTO refusals table and the client-method table). A scheme name appearing in either would
+  // then let a deleted row here pass, which is the same too-wide subject this arm was fixed for.
+  const lines = readme.split('\n').map((line) => line.trimEnd())
 
-  const header = rows.findIndex((line) => line.includes('what the document says'))
+  const header = lines.findIndex((line) => line.startsWith('|') && line.includes(TABLE_HEADER))
   if (header === -1) return ''
 
-  // Header, separator, then rows until the table ends — `rows` is already only table lines, and
-  // the next table in the document starts with its own header, so stop at one.
+  // Header, separator, then rows until the first line that is not a table row.
   const body: string[] = []
-  for (const line of rows.slice(header + 2)) {
-    if (line.includes('what the document says')) break
+  for (const line of lines.slice(header + 2)) {
+    if (!line.startsWith('|')) break
     body.push(line)
   }
 
@@ -322,7 +326,13 @@ describe('README contract (E2E)', () => {
 
     // Invention is asked of the whole document, and deliberately: a scheme name the prose made up
     // sends a reader to write a literal that matches nothing, wherever the sentence sits.
-    const invented = [...README.matchAll(/`(bymax[A-Za-z]*(?:Auth|Platform)[A-Za-z]*)`/g)]
+    //
+    // The candidate pattern must NOT require the spellings it is hunting for. An earlier version
+    // read `bymax[A-Za-z]*(?:Auth|Platform)[A-Za-z]*`, so `bymaxAythAccessCookie` — a transposed
+    // letter, the single likeliest way this goes wrong — did not match, was never a candidate,
+    // and passed. Any backticked `bymax`-prefixed identifier is a candidate now; the four real
+    // scheme names are the only ones the README carries, so nothing else is swept up.
+    const invented = [...README.matchAll(/`(bymax[A-Za-z]+)`/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined)
       .filter((name) => !declared.includes(name as (typeof declared)[number]))

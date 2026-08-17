@@ -20,9 +20,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, and `AUTH_ERROR_STATUS` from
-  `./shared` alongside it. Both were offered to consumers by documentation while shipping from
-  nowhere they could import.
+- **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, and `AUTH_ERROR_STATUS` now
+  also from `./shared`. Two different defects, worth keeping apart: `AUTH_SECURITY_SCHEMES` was
+  declared and never re-exported, so there was nowhere to import it from at all;
+  `AUTH_ERROR_STATUS` shipped from the server entry and only from there, so reaching it meant
+  pulling the NestJS peer dependencies — which the three cases the README points at (a typed
+  client, an API document, a browser test) are precisely the ones that must not.
 
   The scheme names are stable identifiers — renaming one is a break a generated client feels —
   while their DEFINITIONS are derived from configuration, which is why the names are worth
