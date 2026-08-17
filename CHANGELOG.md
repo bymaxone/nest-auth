@@ -18,6 +18,29 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **The reuse-detection hook reported a compromise and no way to act on it.**
+  `onRefreshTokenReuseDetected` fires on the strongest evidence this library produces — a refresh
+  token presented after it was already exchanged, so one of its two holders is not the owner — and
+  it received a context whose `ip` and `userAgent` were **empty strings**. `HookContext` declares
+  both as required `string`, so the type promised a value the path did not deliver.
+
+  The values were never unavailable: `reissueTokens(oldRefresh, ip, userAgent)` and its platform
+  twin have both in scope as their own parameters, and the emit built
+  `createEmptyHookContext()` anyway. `userId` says whose account the family belongs to; `ip` and
+  `userAgent` are the only description of **who presented** the token. A report carrying the first
+  and not the second names a victim and says nothing about the party holding a credential that
+  should not exist.
+
+  Both planes now carry them. `sanitizedHeaders` stays `{}` deliberately — the rotation path
+  receives the address and the agent, never the header map, so there is nothing to sanitize and an
+  invented value would be worse than an empty object a consumer can see is empty.
+
+  Found by a consumer wiring the hook into a real backend and reading the emitted record, not by a
+  test: the two specs covering this hook asserted the context as `expect.anything()`, which cannot
+  distinguish a populated context from an empty one. Both now pin it exactly.
+
 ### Added
 
 - **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, and `AUTH_ERROR_STATUS` now
