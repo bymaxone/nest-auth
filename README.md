@@ -179,9 +179,10 @@ import { PrismaService } from './prisma.service'
 export class PrismaUserRepository implements IUserRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findById(id: string, tenantId?: string): Promise<AuthUser | null> {
-    const where = tenantId ? { id, tenantId } : { id }
-    return this.prisma.user.findFirst({ where })
+  async findById(id: string, tenantId: string): Promise<AuthUser | null> {
+    // Both halves of the key, always. An id is unique only within a tenant, so `findUnique`
+    // by id alone can answer with another tenant's row.
+    return this.prisma.user.findFirst({ where: { id, tenantId } })
   }
 
   async findByEmail(email: string, tenantId: string): Promise<AuthUser | null> {
@@ -205,13 +206,15 @@ export class PrismaUserRepository implements IUserRepository {
     })
   }
 
-  async updatePassword(id: string, passwordHash: string): Promise<void> {
-    await this.prisma.user.update({ where: { id }, data: { passwordHash } })
+  // Every mutator below uses `updateMany` rather than `update`, for one reason: `update` takes a
+  // UNIQUE where-clause, so it cannot accept `{ id, tenantId }` unless your schema declares that
+  // pair unique — and `update({ where: { id } })` is the tenant-blind write this port exists to
+  // prevent. `updateMany` accepts the compound filter and touches nothing outside the tenant.
+  async updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.updateMany({ where: { id, tenantId }, data: { passwordHash } })
   }
 
-  async updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void> {
-    // Scoped by tenant, like findById: `updateMany` with both id and tenantId so an id shared
-    // across tenants cannot cross the write onto the wrong account.
+  async updateMfa(id: string, tenantId: string, data: UpdateMfaData): Promise<void> {
     await this.prisma.user.updateMany({
       where: { id, tenantId },
       data: {
@@ -222,20 +225,29 @@ export class PrismaUserRepository implements IUserRepository {
     })
   }
 
-  async updateLastLogin(id: string): Promise<void> {
-    await this.prisma.user.update({ where: { id }, data: { lastLoginAt: new Date() } })
+  async updateLastLogin(id: string, tenantId: string): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id, tenantId },
+      data: { lastLoginAt: new Date() }
+    })
   }
 
-  async updateStatus(id: string, status: string): Promise<void> {
-    await this.prisma.user.update({ where: { id }, data: { status } })
+  async updateStatus(id: string, tenantId: string, status: string): Promise<void> {
+    await this.prisma.user.updateMany({ where: { id, tenantId }, data: { status } })
   }
 
-  async updateEmailVerified(id: string, verified: boolean): Promise<void> {
-    await this.prisma.user.update({ where: { id }, data: { emailVerified: verified } })
+  async updateEmailVerified(id: string, tenantId: string, verified: boolean): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id, tenantId },
+      data: { emailVerified: verified }
+    })
   }
 
-  async updateEmail(id: string, email: string): Promise<void> {
-    await this.prisma.user.update({ where: { id }, data: { email: email.toLowerCase() } })
+  async updateEmail(id: string, tenantId: string, email: string): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id, tenantId },
+      data: { email: email.toLowerCase() }
+    })
   }
 
   async findByOAuthId(
@@ -248,9 +260,14 @@ export class PrismaUserRepository implements IUserRepository {
     })
   }
 
-  async linkOAuth(userId: string, provider: string, providerId: string): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
+  async linkOAuth(
+    userId: string,
+    tenantId: string,
+    provider: string,
+    providerId: string
+  ): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id: userId, tenantId },
       data: { oauthProvider: provider, oauthProviderId: providerId }
     })
   }
@@ -936,10 +953,9 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 >
 > Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and for
 > anything richer read the account **tenant-scoped**, the way that guard does —
-> `findById(request.user.sub, request.user.tenantId)`. The tenant argument is not optional in
-> practice: ids may collide across tenants, and `findById` accepts an absent tenant only for
-> flows that are deliberately cross-tenant, so dropping it here can resolve another tenant's
-> account. That is what the library's own guards do, which
+> `findById(request.user.sub, request.user.tenantId)`. The tenant argument is required by the
+> port and cannot be dropped: ids may collide across tenants, so a lookup by bare id can resolve
+> another tenant's account. That is what the library's own guards do, which
 > is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same
 > reason — it is always `false` after a rotation, so step-up does not survive a refresh and a
 > user re-acquires it through the MFA challenge.

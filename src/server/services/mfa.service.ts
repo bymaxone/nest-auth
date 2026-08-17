@@ -229,6 +229,17 @@ function isMfaSetupData(value: unknown): value is MfaSetupData {
 // ---------------------------------------------------------------------------
 
 /**
+ * The `VALIDATION` detail both plane-tenant guards answer with.
+ *
+ * One string, because the two halves are one rule read from opposite sides — a dashboard call
+ * without a tenant and a platform call with one are the same mistake, made on the wrong plane.
+ * A caller that starts seeing this needs to know both halves whichever half it tripped, and two
+ * copies drift the moment one is reworded.
+ */
+const PLANE_TENANT_MESSAGE =
+  'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
+
+/**
  * Manages TOTP-based multi-factor authentication lifecycle.
  *
  * Handles the complete MFA flow for both dashboard users and platform admins:
@@ -310,6 +321,11 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, update)
       } else {
+        // Narrows the tenant for the dashboard write. Every dashboard entry point already ran
+        // `assertPlaneTenant`, so this re-states a settled fact rather than discovering one —
+        // but it is the only form the type system reads, and `updateMfa` requires a tenant for
+        // the same reason `findById` does.
+        this.assertDashboardTenant(tenantId)
         await this.userRepo.updateMfa(userId, tenantId, update)
       }
     } catch (err: unknown) {
@@ -433,6 +449,8 @@ export class MfaService {
       if (context === 'platform' && this.platformUserRepo) {
         await this.platformUserRepo.updateMfa(userId, write)
       } else {
+        // Narrows the tenant for the dashboard write, as in `reencryptSecret`.
+        this.assertDashboardTenant(tenantId)
         await this.userRepo.updateMfa(userId, tenantId, write)
       }
       return true
@@ -1698,31 +1716,33 @@ export class MfaService {
   }
 
   /**
-   * Fetches a user from the correct repository based on the MFA context, and refuses one whose
-   * account is blocked.
+   * Asserts a dashboard-plane call carries a tenant, narrowing it to `string` for the caller.
    *
-   * The status gate lives here rather than in each caller because every entry point that
-   * reaches this method changes or spends an authentication factor, and every one of them
-   * must refuse a suspended or banned account. It used to live in `challenge` alone, so
-   * `setup`, `verifyAndEnable`, `disable` and `regenerateRecoveryCodes` had no gate at all:
-   * an operator who suspended a compromised account bought nothing against an attacker still
-   * holding an unexpired access token, who could turn the second factor off — or enrol their
-   * own authenticator over it — for the token's remaining lifetime. Nothing else covers that
-   * window: no status change bumps the token epoch, so the per-request check is the only
-   * defence, and neither MFA controller composes `UserStatusGuard` (the platform plane has no
-   * status guard at all). Every other authority-bearing route in the library does gate on
-   * status; changing an authentication factor is at least as privileged as minting an
-   * invitation.
+   * This is the dashboard half of {@link assertPlaneTenant}, split out for one reason: an
+   * assertion signature is the only way to state "past this point the tenant is present" to the
+   * type system. `IUserRepository.findById` requires the tenant, and the account read behind the
+   * MFA flows sits under a `context === 'dashboard'` branch where a `void` guard run earlier in
+   * the caller has narrowed nothing. Without this the branch had to pass `string | undefined`
+   * into a `string` parameter, which is precisely the tenant-blind read the guard exists to stop.
    *
-   * Gating the fetch rather than the callers is deliberate: a method added later inherits the
-   * check instead of having to remember it.
-   *
-   * @param context - Which identity plane the caller is acting on.
-   * @param userId - The subject taken from the verified token.
-   * @returns The account record, guaranteed to be in good standing.
-   * @throws `TOKEN_INVALID` if the user is not found.
-   * @throws {@link AuthException} the status error when the account is blocked.
+   * @param tenantId - The tenant supplied by the caller, if any.
+   * @throws {@link AuthException} `VALIDATION` (400) when it is missing or blank.
    */
+  private assertDashboardTenant(tenantId: string | undefined): asserts tenantId is string {
+    if (tenantId === undefined || tenantId === '') {
+      // A dashboard call needs a non-EMPTY tenant, not merely a present one: a blank tenant builds
+      // `dashboard:0::{userId}`, a third keyspace distinct from every real tenant's — and an empty
+      // string is exactly what an unset environment variable becomes by the time it reaches this
+      // call site.
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        {
+          field: 'tenantId',
+          message: PLANE_TENANT_MESSAGE
+        }
+      ])
+    }
+  }
+
   /**
    * A dashboard MFA flow MUST carry the tenant it was authenticated in; a platform flow MUST NOT.
    *
@@ -1739,19 +1759,17 @@ export class MfaService {
    *   platform call supplies one.
    */
   private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
-    if (
-      (context === 'dashboard' && (tenantId === undefined || tenantId === '')) ||
-      (context === 'platform' && tenantId !== undefined)
-    ) {
-      // A dashboard call needs a non-EMPTY tenant, not merely a present one: a blank tenant builds
-      // `dashboard:0::{userId}`, a third keyspace distinct from every real tenant's — and an empty
-      // string is exactly what an unset environment variable becomes by the time it reaches this
-      // call site. The platform plane refuses any tenant at all, blank included.
+    if (context === 'dashboard') {
+      this.assertDashboardTenant(tenantId)
+      return
+    }
+    if (tenantId !== undefined) {
+      // The platform plane refuses any tenant at all, blank included: a platform admin is not
+      // scoped to one, so a supplied tenant means the caller is on the wrong plane.
       throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
         {
           field: 'tenantId',
-          message:
-            'tenantId must be a non-empty value on the dashboard plane and absent on the platform plane'
+          message: PLANE_TENANT_MESSAGE
         }
       ])
     }
@@ -1890,18 +1908,48 @@ export class MfaService {
     })()
   }
 
+  /**
+   * Fetches a user from the correct repository based on the MFA context, and refuses one whose
+   * account is blocked.
+   *
+   * The status gate lives here rather than in each caller because every entry point that
+   * reaches this method changes or spends an authentication factor, and every one of them
+   * must refuse a suspended or banned account. It used to live in `challenge` alone, so
+   * `setup`, `verifyAndEnable`, `disable` and `regenerateRecoveryCodes` had no gate at all:
+   * an operator who suspended a compromised account bought nothing against an attacker still
+   * holding an unexpired access token, who could turn the second factor off — or enrol their
+   * own authenticator over it — for the token's remaining lifetime. Nothing else covers that
+   * window: no status change bumps the token epoch, so the per-request check is the only
+   * defence, and neither MFA controller composes `UserStatusGuard` (the platform plane has no
+   * status guard at all). Every other authority-bearing route in the library does gate on
+   * status; changing an authentication factor is at least as privileged as minting an
+   * invitation.
+   *
+   * Gating the fetch rather than the callers is deliberate: a method added later inherits the
+   * check instead of having to remember it.
+   *
+   * @param context - Which identity plane the caller is acting on.
+   * @param userId - The subject taken from the verified token.
+   * @param tenantId - The tenant the caller was authenticated in, on the dashboard plane;
+   *   absent on the platform plane, whose admins belong to none.
+   * @returns The account record, guaranteed to be in good standing.
+   * @throws `TOKEN_INVALID` if the user is not found.
+   * @throws {@link AuthException} the status error when the account is blocked.
+   */
   private async fetchUserForContext(
     context: 'dashboard' | 'platform',
     userId: string,
     tenantId?: string
   ): Promise<AuthUser | AuthPlatformUser> {
     if (context === 'dashboard') {
+      this.assertDashboardTenant(tenantId)
       // Scoped to the tenant the caller was authenticated in — the JWT's `tenantId` on the
       // dashboard-authenticated flows, the challenge token's on the MFA challenge. A repository id
       // is unique only within a tenant, so an unscoped read could return, and this then decides
-      // status / secret / session against, a homonym in another tenant. On the dashboard plane the
-      // tenant is guaranteed present: the temp token and the public entry points both refuse a
-      // dashboard flow that lacks it, so this is never a tenant-blind read in practice.
+      // status / secret / session against, a homonym in another tenant. The assertion above is
+      // what makes that a compile-time fact rather than a claim about the callers: the entry
+      // points do all refuse a dashboard flow without a tenant, but a `void` guard narrows
+      // nothing, so the read used to accept `string | undefined` on the strength of prose.
       const user = await this.userRepo.findById(userId, tenantId)
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)

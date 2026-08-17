@@ -73,7 +73,7 @@ export class WsTicketService {
     // with a blank authorization field for as long as it stayed open. Re-reading also closes
     // the window the `us:` cache leaves open on the route in front of this one, and gives the
     // socket the role and tenant the account holds now rather than the ones its login did.
-    const user = await this.userRepo.findById(payload.sub)
+    const user = await this.userRepo.findById(payload.sub, payload.tenantId)
     if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     assertNotBlocked(user.status, this.options.blockedStatuses)
 

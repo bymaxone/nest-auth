@@ -206,12 +206,13 @@ export class AuthController {
    * and so refuses an unverified or blocked account. The account's own `status` and
    * `emailVerified` fields are in the returned record for the client to branch on.
    *
-   * @param user - JWT payload from the verified access token.
+   * @param user - JWT payload from the verified access token. Both the subject and the tenant
+   *   are read from it: an account is named by the pair, never by the id alone.
    */
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async me(@CurrentUser() user: DashboardJwtPayload): Promise<SafeAuthUser> {
-    return this.authService.getMe(user.sub)
+    return this.authService.getMe(user.sub, user.tenantId)
   }
 
   /**

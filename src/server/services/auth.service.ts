@@ -154,7 +154,7 @@ export class AuthService {
         )
         return
       }
-      await this.userRepo.updatePassword(userId, upgraded)
+      await this.userRepo.updatePassword(userId, tenantId, upgraded)
     } catch (err: unknown) {
       this.logger.error(
         `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
@@ -476,7 +476,7 @@ export class AuthService {
     this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
 
     // Non-blocking side effects.
-    void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
+    void this.userRepo.updateLastLogin(user.id, tenantId).catch((err: unknown) => {
       this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
@@ -795,11 +795,13 @@ export class AuthService {
    * Retrieves the full safe user record for the currently authenticated user.
    *
    * @param userId - Subject claim from the verified JWT.
+   * @param tenantId - Tenant claim from the same token; scopes the lookup, because a repository
+   *   id is unique only within a tenant.
    * @returns Safe user object (credential fields excluded).
    * @throws {@link AuthException} with `TOKEN_INVALID` if the user no longer exists.
    */
-  async getMe(userId: string): Promise<SafeAuthUser> {
-    const user = await this.userRepo.findById(userId)
+  async getMe(userId: string, tenantId: string): Promise<SafeAuthUser> {
+    const user = await this.userRepo.findById(userId, tenantId)
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -854,8 +856,13 @@ export class AuthService {
    * @throws `MFA_REQUIRED` when the target user has MFA enabled — the
    *   consumer must route through the MFA challenge flow for that user.
    */
-  async issueTokensForUserId(userId: string, ip: string, userAgent: string): Promise<AuthResult> {
-    const user = await this.userRepo.findById(userId)
+  async issueTokensForUserId(
+    userId: string,
+    tenantId: string,
+    ip: string,
+    userAgent: string
+  ): Promise<AuthResult> {
+    const user = await this.userRepo.findById(userId, tenantId)
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -893,7 +900,7 @@ export class AuthService {
       `issueTokensForUserId: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(safeUser.tenantId)}`
     )
 
-    void this.userRepo.updateLastLogin(user.id).catch((err: unknown) => {
+    void this.userRepo.updateLastLogin(user.id, safeUser.tenantId).catch((err: unknown) => {
       this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
@@ -958,7 +965,7 @@ export class AuthService {
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
-    await this.userRepo.updateEmailVerified(user.id, true)
+    await this.userRepo.updateEmailVerified(user.id, tenantId, true)
 
     // Drop the verified-flag the UserStatusGuard caches under `uev:{tenantId}:{userId}`, so the
     // account reaches its protected routes on the very next request rather than after the cache TTL.

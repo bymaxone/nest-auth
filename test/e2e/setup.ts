@@ -85,6 +85,8 @@ export const MFA_ENCRYPTION_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 export interface MockUserRepository extends IUserRepository {
   /** Direct access to the in-memory user map for assertions. */
   readonly users: Map<string, AuthUser>
+  /** Tenant-scoped mutation shared by the mutators; see its implementation for why. */
+  scoped(id: string, tenantId: string, mutate: (user: AuthUser) => AuthUser): void
 }
 
 /**
@@ -103,11 +105,30 @@ export function createMockUserRepository(): MockUserRepository {
   const repo: MockUserRepository = {
     users,
 
-    async findById(id: string, tenantId?: string): Promise<AuthUser | null> {
+    async findById(id: string, tenantId: string): Promise<AuthUser | null> {
       const user = users.get(id) ?? null
-      if (!user) return null
-      if (tenantId !== undefined && user.tenantId !== tenantId) return null
+      // Both halves of the key. This is the port's own MUST, implemented rather than assumed:
+      // the e2e flows run against this repository, so a route that dropped the tenant would
+      // resolve nothing here instead of quietly answering with another tenant's row.
+      if (!user || user.tenantId !== tenantId) return null
       return user
+    },
+
+    /**
+     * Applies a mutation to a row, but only within its own tenant.
+     *
+     * Every mutator below goes through here so the scoping rule is written once. A store that
+     * matched on the id alone would let each of them write across tenants, and no e2e flow would
+     * notice — the id it passes is the right one, just possibly for the wrong tenant's row.
+     *
+     * @param id - The account to mutate.
+     * @param tenantId - The tenant it must belong to.
+     * @param mutate - Produces the replacement row.
+     */
+    scoped(id: string, tenantId: string, mutate: (user: AuthUser) => AuthUser): void {
+      const user = users.get(id)
+      if (!user || user.tenantId !== tenantId) return
+      users.set(id, mutate(user))
     },
 
     async findByEmail(email: string, tenantId: string): Promise<AuthUser | null> {
@@ -135,16 +156,13 @@ export function createMockUserRepository(): MockUserRepository {
       return user
     },
 
-    async updatePassword(id: string, passwordHash: string): Promise<void> {
-      const user = users.get(id)
-      if (user) users.set(id, { ...user, passwordHash })
+    async updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void> {
+      repo.scoped(id, tenantId, (user) => ({ ...user, passwordHash }))
     },
 
-    async updateMfa(id: string, tenantId: string | undefined, data: UpdateMfaData): Promise<void> {
+    async updateMfa(id: string, tenantId: string, data: UpdateMfaData): Promise<void> {
       const user = users.get(id)
-      // Scoped by tenant like `findById`: a write for the wrong tenant matches no row, exactly as a
-      // read would, so an id shared across tenants cannot cross the update onto the wrong account.
-      if (!user || (tenantId !== undefined && user.tenantId !== tenantId)) return
+      if (!user || user.tenantId !== tenantId) return
       // Strip the existing optional fields first, then re-add only when present —
       // exactOptionalPropertyTypes forbids assigning `undefined` to optional fields.
       const { mfaSecret: _s, mfaRecoveryCodes: _r, ...rest } = user
@@ -157,23 +175,21 @@ export function createMockUserRepository(): MockUserRepository {
       users.set(id, next)
     },
 
-    async updateLastLogin(id: string): Promise<void> {
-      const user = users.get(id)
-      if (user) users.set(id, { ...user, lastLoginAt: new Date() })
+    async updateLastLogin(id: string, tenantId: string): Promise<void> {
+      repo.scoped(id, tenantId, (user) => ({ ...user, lastLoginAt: new Date() }))
     },
 
-    async updateStatus(id: string, status: string): Promise<void> {
-      const user = users.get(id)
-      if (user) users.set(id, { ...user, status })
+    async updateStatus(id: string, tenantId: string, status: string): Promise<void> {
+      repo.scoped(id, tenantId, (user) => ({ ...user, status }))
     },
 
-    async updateEmailVerified(id: string, verified: boolean): Promise<void> {
-      const user = users.get(id)
-      if (user) users.set(id, { ...user, emailVerified: verified })
+    async updateEmailVerified(id: string, tenantId: string, verified: boolean): Promise<void> {
+      repo.scoped(id, tenantId, (user) => ({ ...user, emailVerified: verified }))
     },
 
-    async updateEmail(id: string, email: string): Promise<void> {
+    async updateEmail(id: string, tenantId: string, email: string): Promise<void> {
       const user = users.get(id)
+      if (user?.tenantId !== tenantId) return
       // The address is proven before this runs, so the account stays verified across the
       // change — a store that cleared the flag here would sign the user out of a state they
       // had just proved.
@@ -208,9 +224,14 @@ export function createMockUserRepository(): MockUserRepository {
       return null
     },
 
-    async linkOAuth(userId: string, provider: string, providerId: string): Promise<void> {
+    async linkOAuth(
+      userId: string,
+      tenantId: string,
+      provider: string,
+      providerId: string
+    ): Promise<void> {
       const user = users.get(userId)
-      if (user) {
+      if (user && user.tenantId === tenantId) {
         users.set(userId, {
           ...user,
           oauthProvider: provider,

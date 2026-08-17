@@ -154,7 +154,12 @@ export class PasswordResetController {
     @Req() req: Request
   ): Promise<void> {
     const currentRefreshToken = this.tokenDelivery.extractRefreshToken(req)
-    await this.passwordResetService.changePassword(user.sub, dto, currentRefreshToken)
+    await this.passwordResetService.changePassword(
+      user.sub,
+      user.tenantId,
+      dto,
+      currentRefreshToken
+    )
   }
 
   // ---------------------------------------------------------------------------
