@@ -729,8 +729,10 @@ export class AuthRedisService {
    * Idempotent: an empty, unknown, or already-cleared family is a no-op.
    *
    * @param familyId - The family id carried by the consumed-token marker.
-   * @param kind - Which identity plane the family belongs to. **Required** — the default was removed because
-   *   a positional plane beside a positional tenant is a transposition nobody notices.
+   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`. Unlike
+   *   the three methods that lost their default in this change, this one takes no positional
+   *   tenant beside it — the owner and its tenant come off the family's own record — so there is
+   *   no adjacent same-typed argument for it to be transposed with.
    * @returns The number of members removed and the account the family belonged to. The owner
    *   is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is

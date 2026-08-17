@@ -1734,8 +1734,8 @@ class SessionService {
    * 7. Runs the onNewSession hook
    *
    * @param userId User ID
-   * @param refreshToken Opaque session token
    * @param tenantId Tenant the account belongs to; scopes the session index
+   * @param refreshToken Opaque session token
    * @param ipAddress Request IP
    * @param userAgent Request User-Agent
    */

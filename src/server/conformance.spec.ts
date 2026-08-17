@@ -18,12 +18,11 @@ import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { sessionIndexKey } from './constants/user-keys'
-
 import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
 import type { Redis } from 'ioredis'
 
+import { sessionIndexKey } from './constants/user-keys'
 import { AuthController } from './controllers/auth.controller'
 import { AcceptInvitationDto } from './dto/accept-invitation.dto'
 import { LoginDto } from './dto/login.dto'

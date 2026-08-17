@@ -11,14 +11,12 @@
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
-import { hmacSha256 } from '../crypto/secure-token'
-
 import {
   BYMAX_AUTH_HOOKS,
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
-import { sha256 } from '../crypto/secure-token'
+import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'

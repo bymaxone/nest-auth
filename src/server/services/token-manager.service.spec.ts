@@ -4,9 +4,8 @@ import { Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
-import { hmacSha256 } from '../crypto/secure-token'
-
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -1667,6 +1666,30 @@ describe('TokenManagerService', () => {
       })
       // Refused on the claim alone — never reaches the Redis single-use lookup.
       expect(mockRedis.get).not.toHaveBeenCalled()
+    })
+
+    // The BLANK form of the same refusal. `''` passes `!== undefined`, so it reached the epoch
+    // read and named `dashboard::{userId}` — an epoch nobody has ever bumped, which answers 0 and
+    // accepts a challenge a password or MFA reset had revoked. The token type this guards is the
+    // one that hands back a full session on completion, so accepting a revoked one undoes the
+    // reset entirely.
+    it('refuses a dashboard token whose tenant is blank', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        tenantId: '',
+        iat: 0,
+        exp: 9999999999
+      })
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      // Refused on the claim alone — it never reaches the Redis lookup or the epoch read.
+      expect(mockRedis.get).not.toHaveBeenCalled()
+      expect(mockRedis.getUserTokenEpoch).not.toHaveBeenCalled()
     })
 
     // The mirror rule: a platform token MUST NOT carry a tenant it does not have. The Redis entry

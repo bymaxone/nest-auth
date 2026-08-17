@@ -9,11 +9,11 @@ import { inspect } from 'node:util'
 
 import { Test } from '@nestjs/testing'
 
-import { hmacSha256 } from '../crypto/secure-token'
 import type { Redis } from 'ioredis'
 
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AuthRedisService } from './auth-redis.service'
 
 // ---------------------------------------------------------------------------

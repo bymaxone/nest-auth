@@ -1265,8 +1265,12 @@ export class TokenManagerService {
     // path an attacker would reach by dropping the field, so it is refused rather than degraded to.
     // (RFC 8725 §3.9/§3.12; ASVS 6.6.2 — the out-of-band token must be bound to its originating
     // request.) A token minted before the claim existed is refused, and the user redoes login.
+    // Blank counts as missing. `''` passes `!== undefined` and then names `dashboard::{userId}`,
+    // an epoch nobody has ever bumped — so the revocation gate below would read 0 and accept a
+    // challenge that a password or MFA reset had revoked. That is the tenant-blind lookup this
+    // comment refuses, reached through the one shape the check did not cover.
     if (
-      (payload.context === 'dashboard' && payload.tenantId === undefined) ||
+      (payload.context === 'dashboard' && (payload.tenantId ?? '') === '') ||
       (payload.context === 'platform' && payload.tenantId !== undefined)
     ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
