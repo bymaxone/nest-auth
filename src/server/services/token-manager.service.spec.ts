@@ -1984,6 +1984,35 @@ describe('TokenManagerService', () => {
       warnSpy.mockRestore()
     })
 
+    // The unknown-owner line on the PLATFORM plane. `reissuePlatformTokens` builds its warning
+    // through the same `ownerFragment`, and nothing but this pins that it does: the plane's other
+    // replay tests hand back a populated `ownerId`, so the empty case ran only on the dashboard
+    // side. A regression could restore a bare `userId=` here — on the plane whose accounts hold
+    // the most authority — without a single test going red.
+    it('says the owner is unknown, and what was observed, on the platform plane', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: PLATFORM_FAMILY
+      })
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+
+      await expect(
+        service.reissuePlatformTokens('replayed-platform', '9.9.9.9', 'Attacker')
+      ).rejects.toThrow(AuthException)
+
+      const revocationLine = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .find((line) => line.includes('token family revoked'))
+
+      expect(revocationLine).toBe(
+        'reissuePlatformTokens: token family revoked after reuse detection ' +
+          `userId=<unknown: no live session remains in this family to name it> familyId=${PLATFORM_FAMILY}`
+      )
+      warnSpy.mockRestore()
+    })
+
     // A replayed PLATFORM token is the same evidence of compromise as a dashboard one, against
     // an account that usually holds more authority. The hook has to fire on both planes, or an
     // operator watching for takeover is blind on the half that matters most.
