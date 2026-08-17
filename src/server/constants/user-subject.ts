@@ -28,9 +28,14 @@
  * it.** It once could: every dashboard caller was an MFA flow behind `assertPlaneTenant`. That is
  * no longer true — the session index, the token epoch and the revocation check derive from here
  * too, and none of them passes through that guard. An absent tenant interpolates as the literal
- * text `undefined` and a blank one as nothing at all, producing `dashboard:undefined:{userId}` or
- * `dashboard::{userId}`: keyspaces belonging to no tenant, which nothing writes and no revocation
+ * text `undefined` and a blank one as nothing at all, producing `dashboard:9:undefined:{userId}` or
+ * `dashboard:0::{userId}`: keyspaces belonging to no tenant, which nothing writes and no revocation
  * sweeps. Each caller refuses that shape on its own terms before reaching here.
+ *
+ * The length prefix keeps those two degenerate subjects distinct from each other and from every
+ * real tenant's — no tenant has a 9-byte id spelled `undefined` unless it literally is one — so
+ * they stay diagnosable rather than merging into one anonymous keyspace. That is a consolation,
+ * not a licence: a caller reaching here without a tenant still names keys nobody sweeps.
  *
  * @param plane - The identity plane the subject belongs to.
  * @param userId - The account the key belongs to.

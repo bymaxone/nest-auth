@@ -211,6 +211,14 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+/**
+ * The shape {@link AuthService.revokeAllSessions} takes, for the same reason the `SessionService`
+ * params types below are exported: a consumer calling it — a ban handler, an admin console — should
+ * be able to name the object rather than assemble a literal and hope. Both fields are `string`, and
+ * `revokeAllSessions(user.tenantId, user.id)` type checked against the old positional form, derived
+ * an unrelated subject and returned normally: a "sign out everywhere" reported as done that revoked
+ * nothing, or that revoked a colliding account in another tenant instead.
+ */
 export type { RevokeAllSessionsParams } from './services/auth.service'
 // NOTE: `EmailChangeService` is only registered when `controllers.emailChange !== false`
 // (the default). Importing it for a host module with the controller disabled causes an

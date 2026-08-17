@@ -146,7 +146,6 @@
       "The platform arm has one component after the plane and nothing to disambiguate, so it is",
       "left unprefixed — changing it would move a keyspace for no gain.",
       "",
-
       "The subject EVERY MFA store key and MFA failure counter below is derived from. One",
       "definition rather than eight copies: eight keys share this shape, and a copy that drifts is",
       "a key that silently stops matching the one the other implementation derives.",

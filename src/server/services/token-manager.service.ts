@@ -513,7 +513,7 @@ export class TokenManagerService {
    *
    * `parseSession` validates `userId`, `role` and `mfaEnabled` but not `tenantId`, so a record
    * written before the index carried one reaches here with the field absent. Rotating it would do
-   * two wrong things at once: write the new session under `dashboard:undefined:{userId}`, an
+   * two wrong things at once: write the new session under `dashboard:9:undefined:{userId}`, an
    * index belonging to no tenant and swept by no revoke-all, and mint an access token with no
    * tenant claim — which every dashboard guard then refuses, so the caller gets a session that
    * cannot be used and cannot be revoked.
@@ -1265,7 +1265,7 @@ export class TokenManagerService {
     // path an attacker would reach by dropping the field, so it is refused rather than degraded to.
     // (RFC 8725 §3.9/§3.12; ASVS 6.6.2 — the out-of-band token must be bound to its originating
     // request.) A token minted before the claim existed is refused, and the user redoes login.
-    // Blank counts as missing. `''` passes `!== undefined` and then names `dashboard::{userId}`,
+    // Blank counts as missing. `''` passes `!== undefined` and then names `dashboard:0::{userId}`,
     // an epoch nobody has ever bumped — so the revocation gate below would read 0 and accept a
     // challenge that a password or MFA reset had revoked. That is the tenant-blind lookup this
     // comment refuses, reached through the one shape the check did not cover.

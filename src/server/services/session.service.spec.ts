@@ -2509,7 +2509,7 @@ describe('SessionService', () => {
   })
   // The public boundary refuses a tenant that names nothing. Every method here takes the tenant
   // positionally beside a `string` user id and all of them are exported, so `''` is a shape a
-  // caller can produce — and it derived `dashboard::{userId}`, an index nobody writes. Each of
+  // caller can produce — and it derived `dashboard:0::{userId}`, an index nobody writes. Each of
   // these swept, listed or revoked against that key and RETURNED NORMALLY: work reported as done
   // while every session it named stayed live.
   //

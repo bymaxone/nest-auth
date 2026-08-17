@@ -519,8 +519,8 @@ describe('TokenManagerService', () => {
      * The same record with a BLANK tenant rather than an absent one.
      *
      * A distinct shape, not a variation: an unset environment variable arrives as `''` by the time
-     * it reaches a key builder, and `dashboard::{userId}` is a third keyspace exactly as
-     * `dashboard:undefined:{userId}` is. `parseSession` accepts both. The MFA guard has always
+     * it reaches a key builder, and `dashboard:0::{userId}` is a third keyspace exactly as
+     * `dashboard:9:undefined:{userId}` is. `parseSession` accepts both. The MFA guard has always
      * refused the blank one for this reason; only the absent one was covered here, so a mutation
      * dropping the `=== ''` half of the check survived a full run.
      */
@@ -569,7 +569,7 @@ describe('TokenManagerService', () => {
     // Scenario: a dashboard record with no tenant is presented for rotation, on each of the two
     // paths that can mint from one.
     // Expected: REFRESH_TOKEN_INVALID, and nothing written.
-    // Why: rotating it would write the new session under `dashboard:undefined:{userId}` — an
+    // Why: rotating it would write the new session under `dashboard:9:undefined:{userId}` — an
     // index belonging to no tenant, which no revoke-all sweeps — and mint an access token with no
     // tenant claim, which every dashboard guard then refuses. The caller would hold a session
     // that cannot be used and cannot be revoked. A forced re-login is the documented cost of the
@@ -1669,7 +1669,7 @@ describe('TokenManagerService', () => {
     })
 
     // The BLANK form of the same refusal. `''` passes `!== undefined`, so it reached the epoch
-    // read and named `dashboard::{userId}` — an epoch nobody has ever bumped, which answers 0 and
+    // read and named `dashboard:0::{userId}` — an epoch nobody has ever bumped, which answers 0 and
     // accepts a challenge a password or MFA reset had revoked. The token type this guards is the
     // one that hands back a full session on completion, so accepting a revoked one undoes the
     // reset entirely.

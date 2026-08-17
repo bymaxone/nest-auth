@@ -1552,10 +1552,14 @@ export class MfaService {
   /**
    * Verifies a TOTP code and enforces anti-replay within the validation window.
    *
-   * Stores a Redis key `tu:{hmac}` where `hmac = hmacSha256("{userId}:{code}", jwtSecret)`
-   * with a 90-second TTL. A second submission of the same code within the TTL is
-   * rejected as a replay. The HMAC key ties the replay marker to both user and code
-   * value, preventing both code disclosure in Redis and cross-user replay attacks.
+   * Stores a Redis key `tu:{hmac}` where `hmac = hmacSha256("{userSubject}:{code}", hmacKey)` —
+   * so the marker is scoped to the plane and, on the dashboard plane, to the tenant. A second
+   * submission of the same code within the TTL is rejected as a replay. Binding the marker to
+   * both the subject and the code value prevents code disclosure in Redis and cross-user,
+   * cross-tenant and cross-plane replay alike.
+   *
+   * A second marker under the pre-scoping preimage `{context}:{userId}:{code}` is written and
+   * required alongside it; see the call site for why both must be fresh during a rolling upgrade.
    *
    * @returns `true` if the code is valid and has not been replayed, `false` otherwise.
    */
@@ -1716,7 +1720,7 @@ export class MfaService {
       (context === 'platform' && tenantId !== undefined)
     ) {
       // A dashboard call needs a non-EMPTY tenant, not merely a present one: a blank tenant builds
-      // `dashboard::{userId}`, a third keyspace distinct from every real tenant's — and an empty
+      // `dashboard:0::{userId}`, a third keyspace distinct from every real tenant's — and an empty
       // string is exactly what an unset environment variable becomes by the time it reaches this
       // call site. The platform plane refuses any tenant at all, blank included.
       throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [

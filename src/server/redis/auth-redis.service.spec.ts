@@ -346,7 +346,7 @@ describe('AuthRedisService', () => {
     // A BLANK tenant reads as absent for the same reason a non-string one does, and it is the
     // likelier shape: an unset environment variable arrives as `''`. Returned as a usable string
     // it passed `AuthService.logout`'s `tenantId !== undefined` check, which then derived
-    // `dashboard::{userId}` — a key belonging to no tenant — missed the real index, and left the
+    // `dashboard:0::{userId}` — a key belonging to no tenant — missed the real index, and left the
     // member and its detail record behind while reporting a completed logout.
     it('reads a blank tenant as absent, keeping the owner', async () => {
       mockRedis.get.mockResolvedValue(JSON.stringify({ userId: 'user-1', tenantId: '' }))
@@ -839,7 +839,7 @@ describe('AuthRedisService', () => {
     })
 
     // Verifies that a DASHBOARD family whose readable record names no tenant prunes no index.
-    // Deriving one would build `dashboard:undefined:{ownerId}` — a key belonging to no tenant,
+    // Deriving one would build `dashboard:9:undefined:{ownerId}` — a key belonging to no tenant,
     // which nothing writes — so the prune would succeed against nothing while the real index kept
     // every member, and the revocation would report a cleanup that never reached it. This is the
     // shape a pre-upgrade record has, which is exactly the state a live deployment is in while
@@ -874,7 +874,7 @@ describe('AuthRedisService', () => {
     })
 
     // Blank and absent are one shape. A record carrying `tenantId: ''` names no tenant either —
-    // `dashboard::{ownerId}` is a keyspace belonging to nobody, exactly as `dashboard:undefined:`
+    // `dashboard:0::{ownerId}` is a keyspace belonging to nobody, exactly as `dashboard:9:undefined:`
     // is — and an unset environment variable arrives as `''` by the time it reaches a key builder.
     // Testing only for `undefined` let the blank form through.
     it('prunes no index when a dashboard family record carries a blank tenant', async () => {

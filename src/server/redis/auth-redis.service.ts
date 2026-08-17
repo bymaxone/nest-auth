@@ -750,7 +750,7 @@ export class AuthRedisService {
 
     // No owner, or a dashboard owner whose record names no tenant, means NO index to prune —
     // the same answer logout gives a pre-upgrade record, and for the same reason. Deriving one
-    // anyway would build `dashboard:undefined:{ownerId}`, a keyspace belonging to no tenant: the
+    // anyway would build `dashboard:9:undefined:{ownerId}`, a keyspace belonging to no tenant: the
     // prune would succeed against a key nobody writes while the real index kept every member,
     // and the operation would report a revocation that did not reach the index. The Lua script
     // takes an empty index key and skips that step.
@@ -1126,8 +1126,8 @@ export class AuthRedisService {
       if (typeof userId !== 'string') return none
       const tenantId = record['tenantId']
       // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
-      // presence to decide whether they can name an index, and `''` builds `dashboard::{userId}`
-      // — a keyspace belonging to no tenant, exactly as `dashboard:undefined:` does. Returning it
+      // presence to decide whether they can name an index, and `''` builds `dashboard:0::{userId}`
+      // — a keyspace belonging to no tenant, exactly as `dashboard:9:undefined:` does. Returning it
       // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
       // the real index, leaving the member and its detail record behind. One shape of "no tenant"
       // at the boundary means every caller downstream gets the same answer.

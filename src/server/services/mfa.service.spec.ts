@@ -4306,7 +4306,7 @@ describe('MfaService', () => {
     })
 
     // An unset environment variable becomes an empty string by the time it reaches the call site,
-    // and a blank tenant would build `dashboard::{userId}` — a third keyspace distinct from every
+    // and a blank tenant would build `dashboard:0::{userId}` — a third keyspace distinct from every
     // real tenant's. A dashboard call needs a non-empty tenant, so `''` is refused exactly as a
     // missing one is, before any repository read.
     it('refuses a dashboard call whose tenant is the empty string', async () => {

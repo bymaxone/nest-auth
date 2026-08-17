@@ -769,12 +769,12 @@ export class AuthService {
    * The epoch is bumped after the sweep, not before: a failure in the sweep then leaves the
    * operation visibly incomplete rather than reading as done while the sessions live on.
    *
-   * @param userId - The account whose sessions are being ended.
-   * @param tenantId - The tenant that account belongs to; both keyspaces are scoped to it, so
-   *   passing the wrong one revokes the colliding id in another tenant instead.
+   * @param params - See {@link RevokeAllSessionsParams}. Both keyspaces are scoped to the tenant,
+   *   so naming the wrong one revokes the colliding id in another tenant instead.
+   * @throws {@link AuthException} `VALIDATION` when the tenant is blank.
    */
   async revokeAllSessions({ userId, tenantId }: RevokeAllSessionsParams): Promise<void> {
-    // A blank tenant derives `dashboard::{userId}` — an index and an epoch nobody writes. Both
+    // A blank tenant derives `dashboard:0::{userId}` — an index and an epoch nobody writes. Both
     // operations below would succeed against them and this method would return normally: a
     // "sign out everywhere" reported as done while every session and access token stayed valid.
     // Refused at the boundary, because that is where a caller can be wrong.

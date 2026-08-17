@@ -293,7 +293,7 @@ export class SessionService {
    * `eval` wrapper prefixes it into a real key named `auth:`.
    *
    * So the refusal lives here, where a caller can actually be wrong. `''` derived
-   * `dashboard::{userId}`, swept and bumped keys nobody writes, and returned normally — a
+   * `dashboard:0::{userId}`, swept and bumped keys nobody writes, and returned normally — a
    * revocation reported as done while every session and access token it named stayed valid.
    *
    * @param tenantId - The tenant supplied by the caller.
