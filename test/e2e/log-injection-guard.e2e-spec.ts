@@ -538,12 +538,24 @@ describe('log-injection guard (E2E)', () => {
   ])('%s never returns a value that can break a log record', (name, guard) => {
     expect(GUARDS.has(name)).toBe(true)
 
+    // Every class `breaksRecord` recognises, not a sample of them. The matrix supplied LS
+    // (U+2028) and not PS (U+2029) while `breaksRecord` treats the pair identically, so a guard
+    // that passed PS through would have left this green — a hole in the security property this
+    // test exists to claim FOR EVERY GUARD, which is the worst place to carry one.
     for (const injection of [
       'a@example.com\nforged',
+      'a@example.com\rforged',
       'a@example.com\r\nforged',
       'a@example.com\u0085forged',
-      'a@example.com\u2028forged'
+      'a@example.com\u2028forged',
+      'a@example.com\u2029forged'
     ]) {
+      // The input has to be hostile for the assertion below to mean anything. Stated here rather
+      // than derived from `breaksRecord`'s set — deriving it would make the matrix agree with the
+      // implementation by construction, which is the circularity this file already refuses for
+      // the guards themselves. A benign entry now fails loudly instead of quietly weakening the
+      // row it sits in.
+      expect(breaksRecord(injection)).toBe(true)
       expect(breaksRecord(guard(injection))).toBe(false)
     }
   })
