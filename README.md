@@ -1278,6 +1278,18 @@ The four names — `bymaxAuthAccessCookie`, `bymaxAuthAccessBearer`, `bymaxAuthR
 `bymaxPlatformAccessBearer` — are stable identifiers. Renaming one is a break a generated client
 feels, so they will not change; their **definitions** are config-derived.
 
+Import them rather than spelling them. A platform-only deployment guarding its own routes with
+`JwtAuthGuard` has to declare the dashboard access scheme itself — the fragment will not, because
+`schemesFor` gates dashboard schemes on what you mounted — and a hand-written literal in a section
+about literals drifting from configuration is the wrong instruction:
+
+```typescript
+import { AUTH_SECURITY_SCHEMES } from '@bymax-one/nest-auth'
+
+// [{ bymaxAuthAccessCookie: [] }], spelled by the package that owns the name
+const security = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
+```
+
 > **This package does not depend on `@bymax-one/nest-core`** — not as a dependency, a peer, or a
 > devDependency. The contract revision is inlined, the discovery marker is the documented string
 > literal, and a gate fails the build if any file here imports another Bymax library. That keeps
@@ -1407,10 +1419,13 @@ it, including cookie names you have since changed.
 > - `both` → **both of them**, or your document is incomplete in exactly the quiet way described
 >   above.
 >
-> One honest caveat on doing any of it: **`AUTH_SECURITY_SCHEMES` is not part of the public API
-> today**, so you will be writing the names as string literals (`bymaxAuthAccessCookie`,
-> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. Exporting them so this
-> stops being a literal is tracked; until it ships, this paragraph is the whole contract.
+> One note on doing any of it: **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, so
+> import the names rather than writing `bymaxAuthAccessCookie` and `bymaxAuthAccessBearer` as
+> string literals. The compiler then checks the PROPERTY you reach for, so a typo is a build
+> error rather than a document declaring a scheme nothing defines — and if a scheme's identifier
+> is ever renamed, your document carries the new one instead of a literal that has quietly gone
+> stale. Renaming the value is not itself a build error, since `AUTH_SECURITY_SCHEMES.accessCookie`
+> stays valid and only its string changes; that is precisely why importing beats copying.
 >
 > **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
 > does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —
@@ -1710,8 +1725,19 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 |  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                  |
 |  `500` | `auth.internal`                                                                                                                                                                                                                                                   |
 
-`AUTH_ERROR_STATUS` is exported if you need the mapping at runtime — for a typed client, an
-API document, or a test that asserts against it.
+`AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you
+need the mapping at runtime — for a typed client, an API document, or a test that asserts against
+it:
+
+```ts
+import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared'
+```
+
+Shown as an import rather than described, on purpose: this package's README contract test reads
+import statements, so a symbol that stops being exported from the subpath named here fails the
+suite. It scans prose too — for scheme names it invented and for claims that something is not
+public — but it cannot check a sentence that merely _says_ where a symbol ships from. That claim
+went one release stated and unenforced.
 
 > **Assert your fixtures against the catalogue, not against string literals.** `AUTH_ERROR_CODES`
 > is exported from `@bymax-one/nest-auth/shared` so a suite can check that every code it branches

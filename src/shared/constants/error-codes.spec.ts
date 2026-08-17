@@ -1,5 +1,11 @@
-import { AUTH_ERROR_CODES as SERVER_AUTH_ERROR_CODES } from '../../server/errors/auth-error-codes'
-import { AUTH_ERROR_CODES as SHARED_AUTH_ERROR_CODES } from './error-codes'
+import {
+  AUTH_ERROR_CODES as SERVER_AUTH_ERROR_CODES,
+  AUTH_ERROR_STATUS as SERVER_AUTH_ERROR_STATUS
+} from '../../server/errors/auth-error-codes'
+import {
+  AUTH_ERROR_CODES as SHARED_AUTH_ERROR_CODES,
+  AUTH_ERROR_STATUS as SHARED_AUTH_ERROR_STATUS
+} from './error-codes'
 
 /**
  * Drift-guard suite for the shared `AUTH_ERROR_CODES` mirror.
@@ -34,5 +40,22 @@ describe('shared AUTH_ERROR_CODES mirror', () => {
     for (const key of Object.keys(serverAsRecord)) {
       expect(sharedAsRecord[key]).toBe(serverAsRecord[key])
     }
+  })
+
+  // The status map is mirrored for the same reason and needs the same guard. A code whose status
+  // changes on one side only is worse than a missing code: the client keeps a mapping that looks
+  // right and answers wrong, and nothing at the boundary contradicts it.
+  it('maps every code to the same HTTP status as the server', () => {
+    expect(SHARED_AUTH_ERROR_STATUS).toEqual(SERVER_AUTH_ERROR_STATUS)
+  })
+
+  // Asserted separately from the deep equality above, because a map missing a key and a map with
+  // an extra one both fail `toEqual` with the same shape of message. This says which.
+  it('covers exactly the codes the mirror declares', () => {
+    expect(Object.keys(SHARED_AUTH_ERROR_STATUS).sort()).toEqual(
+      Object.keys(SHARED_AUTH_ERROR_CODES)
+        .map((k) => (SHARED_AUTH_ERROR_CODES as Record<string, string>)[k])
+        .sort()
+    )
   })
 })

@@ -18,7 +18,7 @@ export {
   AUTH_REFRESH_COOKIE_PATH
 } from './constants/cookie-defaults'
 
-export { AUTH_ERROR_CODES } from './constants/error-codes'
+export { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from './constants/error-codes'
 export type { AuthErrorCode } from './constants/error-codes'
 
 export {
