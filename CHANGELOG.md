@@ -82,6 +82,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   That is precisely the cross-tenant revocation the entry below removes, reintroduced through the
   delimiter.
 
+  **Whether a given deployment could reach that collision depends on its user ids, and the two
+  halves are not equally exposed.** The `tenantId` half is attacker-chosen by default: it arrives
+  in the request body, validated only for length and control characters, and a deployment only
+  takes that away by configuring `tenantIdResolver`. The `userId` half comes from
+  `IUserRepository` and is assigned by the host, never by the caller.
+
+  The arithmetic makes the second half the gate. For `{t1}:{u1}` and `{t2}:{u2}` to render the
+  same string with `(t1,u1) ≠ (t2,u2)`, one of the two **user ids** must itself contain a `:` —
+  there is no way to move the boundary otherwise. So a host whose ids are UUIDs, or any scheme
+  without a colon, could not reach it; a host with composite ids (`dept:1234`, a stored
+  `tenant:user` subject, an address with a quoted local part) could, by accident as easily as by
+  attack.
+
+  That does not make the fix conditional. A library may not assume the shape of ids its consumers
+  assign — it is the same assumption `findById` taking a tenant already refuses to make — and a
+  preimage that is injective only for well-behaved input is not injective. But an operator
+  reading this entry should be able to tell which side of that line they are on, and the previous
+  wording did not let them.
+
   **This predates the release.** The same preimage shipped in 1.4.3 as `mfaSubject`, backing the
   MFA keyspace; renaming it to `userSubject` and extending it to `sess:`/`ep:` widened the blast
   radius rather than creating it.
