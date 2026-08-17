@@ -516,6 +516,26 @@ describe('TokenManagerService', () => {
       familyId: FAMILY
     })
 
+    /**
+     * The same record with a BLANK tenant rather than an absent one.
+     *
+     * A distinct shape, not a variation: an unset environment variable arrives as `''` by the time
+     * it reaches a key builder, and `dashboard::{userId}` is a third keyspace exactly as
+     * `dashboard:undefined:{userId}` is. `parseSession` accepts both. The MFA guard has always
+     * refused the blank one for this reason; only the absent one was covered here, so a mutation
+     * dropping the `=== ''` half of the check survived a full run.
+     */
+    const BLANK_TENANT_SESSION = JSON.stringify({
+      userId: 'user-1',
+      tenantId: '',
+      role: 'member',
+      device: 'Browser',
+      ip: '1.2.3.4',
+      mfaEnabled: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      familyId: FAMILY
+    })
+
     /** Arms a rotation whose presented token was already consumed but is inside its grace window. */
     function armGraceRotation(sessionJson = OLD_SESSION): void {
       mockRedis.get.mockResolvedValue(null)
@@ -556,15 +576,31 @@ describe('TokenManagerService', () => {
     // that cannot be used and cannot be revoked. A forced re-login is the documented cost of the
     // migration; a keyspace nobody sweeps is not a cost, it is a hole.
     it.each([
-      ['the live record', () => armLiveRotation(PRE_UPGRADE_SESSION)],
-      ['the recovered grace record', () => armGraceRotation(PRE_UPGRADE_SESSION)]
-    ])('refuses to rotate a dashboard session named by %s without a tenant', async (_l, arm) => {
+      ['the live record, tenant absent', () => armLiveRotation(PRE_UPGRADE_SESSION)],
+      ['the grace record, tenant absent', () => armGraceRotation(PRE_UPGRADE_SESSION)],
+      ['the live record, tenant blank', () => armLiveRotation(BLANK_TENANT_SESSION)],
+      ['the grace record, tenant blank', () => armGraceRotation(BLANK_TENANT_SESSION)]
+    ])('refuses to rotate a dashboard session named by %s', async (_l, arm) => {
       arm()
 
       await expect(
         service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
       ).rejects.toThrow(AuthException)
       expect(mockRedis.writeRecoveredSession).not.toHaveBeenCalled()
+    })
+
+    // The placeholder path, asserted directly rather than relied on. `readSeedSession` answers
+    // `buildSession('', '', ...)` when the live key is gone — empty user AND empty tenant — and
+    // that placeholder is how the grace window is reached at all. Without the `userId === ''`
+    // early return, the tenant check would fire on it and turn every grace recovery into an
+    // invalid refresh: the guard would refuse the one path it is not judging.
+    it('lets the empty placeholder through to the grace window', async () => {
+      armGraceRotation()
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).resolves.toBeDefined()
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalled()
     })
 
     // The same record on the PLATFORM plane rotates normally: a platform subject carries no

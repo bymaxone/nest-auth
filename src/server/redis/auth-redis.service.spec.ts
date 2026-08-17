@@ -824,6 +824,56 @@ describe('AuthRedisService', () => {
       expect(call[call.length - 1]).toBe('')
     })
 
+    // Verifies that a DASHBOARD family whose readable record names no tenant prunes no index.
+    // Deriving one would build `dashboard:undefined:{ownerId}` — a key belonging to no tenant,
+    // which nothing writes — so the prune would succeed against nothing while the real index kept
+    // every member, and the revocation would report a cleanup that never reached it. This is the
+    // shape a pre-upgrade record has, which is exactly the state a live deployment is in while
+    // migrating. Logout already answers the same way.
+    it('prunes no index when a dashboard family record names no tenant', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      // `Once`, not a standing value: the mock is shared across this describe, and a standing
+      // arm here changed the owner a later test read.
+      mockRedis.get.mockResolvedValueOnce('{"userId":"u9"}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
+    // The PLATFORM twin of the same record does prune, because a platform subject carries no
+    // tenant segment: absence there is the correct shape, not a missing field. Without this the
+    // plane check reads as dead weight and a mutation dropping it would survive.
+    it('still prunes the platform index when the record names no tenant', async () => {
+      mockRedis.smembers.mockResolvedValue(['h1'])
+      mockRedis.get.mockResolvedValueOnce('{"userId":"admin-9"}')
+      mockRedis.eval.mockResolvedValueOnce(1)
+
+      await service.revokeFamily('fam-1', 'platform')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe(
+        prefixed(`psess:${hmacSha256('platform:admin-9', HMAC_KEY)}`)
+      )
+    })
+
+    // The owner clause carries its own weight on the PLATFORM plane, where the tenant clause is
+    // satisfied by the plane alone. Without this case, dropping `ownerId !== ''` still reads as
+    // correct on every dashboard test — and a platform family whose members have all expired
+    // would derive `psess:{hmac('platform:')}`, an index for the empty admin.
+    it('prunes no platform index when no member record is readable', async () => {
+      mockRedis.smembers.mockResolvedValueOnce(['h1'])
+      mockRedis.get.mockResolvedValueOnce(null)
+      mockRedis.eval.mockResolvedValueOnce(0)
+
+      await service.revokeFamily('fam-1', 'platform')
+
+      const call = mockRedis.eval.mock.calls[0] as string[]
+      expect(call[call.length - 1]).toBe('')
+    })
+
     // Verifies an empty family id short-circuits: `fam:` with no id is a key every familyless
     // session would share, so revoking it would be an unbounded blast radius.
     it('is a no-op for an empty family id', async () => {
