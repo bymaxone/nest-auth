@@ -115,7 +115,14 @@ function documentedImports(): Map<string, Set<string>> {
     if (names === undefined || subpath === undefined) continue
     const set = found.get(subpath) ?? new Set<string>()
     for (const raw of names.split(',')) {
-      const name = raw.trim().replace(/^type\s+/, '')
+      // `{ X as Y }` imports X and binds it as Y, so the name the barrel must export is X.
+      // Keeping the whole clause recorded `X as Y`, which no barrel exports — a FALSE FAILURE,
+      // the opposite of every other defect found in this file, and one that would have broken CI
+      // on a correct README the first time a reader was shown an alias.
+      const name = raw
+        .trim()
+        .replace(/^type\s+/, '')
+        .replace(/\s+as\s+\w+$/, '')
       if (name !== '') set.add(name)
     }
     found.set(subpath, set)
