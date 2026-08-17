@@ -215,6 +215,30 @@ export class SessionService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Refuses a dashboard tenant that names nothing, at the public boundary.
+   *
+   * Every method on this service takes the tenant positionally beside a `string` user id, and all
+   * of them are exported. `userSubject` cannot enforce this itself: the rotation scripts must be
+   * called with the empty PLACEHOLDER identity to discover a grace pointer, so the innermost
+   * builder has to stay total, and an empty key in a script's KEYS array is not "no key" — the
+   * `eval` wrapper prefixes it into a real key named `auth:`.
+   *
+   * So the refusal lives here, where a caller can actually be wrong. `''` derived
+   * `dashboard::{userId}`, swept and bumped keys nobody writes, and returned normally — a
+   * revocation reported as done while every session and access token it named stayed valid.
+   *
+   * @param tenantId - The tenant supplied by the caller.
+   * @throws {@link AuthException} `VALIDATION` when it is blank.
+   */
+  private assertTenant(tenantId: string): void {
+    if (tenantId === '') {
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        { field: 'tenantId', message: 'tenantId is required to name a session index' }
+      ])
+    }
+  }
+
+  /**
    * Records a new session in Redis and enforces the concurrent session limit.
    *
    * Stores device and activity metadata under `sd:{hash}` with the same TTL
@@ -244,6 +268,7 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<string> {
+    this.assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
     const now = Date.now()
@@ -322,6 +347,7 @@ export class SessionService {
     tenantId: string,
     currentSessionHash?: string
   ): Promise<SessionInfo[]> {
+    this.assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
     // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
     // that refreshes and never signs out again accumulates them without bound — and this
@@ -436,6 +462,7 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeSession(userId: string, tenantId: string, sessionHash: string): Promise<void> {
+    this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash)
 
     // Atomic Lua script: ownership check (SISMEMBER) + all deletions in one
@@ -478,6 +505,7 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession(userId: string, tenantId: string, sessionHash: string): Promise<void> {
+    this.assertTenant(tenantId)
     await this.revokeSession(userId, tenantId, sessionHash)
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
@@ -517,6 +545,7 @@ export class SessionService {
     tenantId: string,
     currentSessionHash: string
   ): Promise<void> {
+    this.assertTenant(tenantId)
     this.assertValidSessionHash(currentSessionHash)
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))

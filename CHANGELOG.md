@@ -54,7 +54,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `dashboard:{tenantId}:{userId}` or `platform:{userId}`. That shape was not invented here — it
   is the preimage the five MFA store keys, the three MFA failure counters and the
   recent-authentication marker have used since they were fixed for the same reason, and the wire
-  contract already carried its argument. The two joining it closes the gap between what
+  contract already carried its argument. The two joining it close the gap between what
   `recentAuthKey`'s own documentation claimed — _"keyed by HMAC rather than the raw id, like
   every other user-derived key in this library"_ — and what was true.
 

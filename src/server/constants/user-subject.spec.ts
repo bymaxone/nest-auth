@@ -41,4 +41,10 @@ describe('userSubject', () => {
       userSubject('platform', 'shared-id', undefined)
     )
   })
+  // The platform plane is unaffected: its subject carries no tenant segment, so an absent tenant
+  // there is the correct shape. Guarding both planes with one rule would refuse every platform
+  // key in the library.
+  it('still builds a platform subject with no tenant', () => {
+    expect(userSubject('platform', 'admin-1', undefined)).toBe('platform:admin-1')
+  })
 })

@@ -3275,4 +3275,42 @@ describe('AuthService', () => {
       logSpy.mockRestore()
     })
   })
+  describe('revokeAllSessions', () => {
+    // A blank tenant derives `dashboard::{userId}` — an index and an epoch nobody writes. Both
+    // Redis calls would succeed against them and this method would return normally: a
+    // "sign out everywhere" reported as done while every session and access token stayed valid.
+    // Refused at the boundary, because that is where a caller can be wrong; `userSubject` itself
+    // has to stay total, since the rotation scripts are called with an empty placeholder identity
+    // to discover a grace pointer.
+    it('refuses a blank tenant instead of sweeping a key nobody writes', async () => {
+      // The DETAILS, not merely the exception type: an empty payload would tell the caller
+      // nothing about what to fix and would still satisfy `toThrow(AuthException)`.
+      await expect(service.revokeAllSessions('user-1', '')).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              { field: 'tenantId', message: "tenantId is required to revoke a user's sessions" }
+            ]
+          }
+        }
+      })
+
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+
+    // The ordinary path still reaches both channels: the session index AND the token epoch, so a
+    // revocation ends stateless access tokens rather than only refresh sessions.
+    it('sweeps the index and bumps the epoch for a real tenant', async () => {
+      await service.revokeAllSessions('user-1', 'tenant-1')
+
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
+    })
+  })
 })

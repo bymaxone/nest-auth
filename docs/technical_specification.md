@@ -1661,7 +1661,8 @@ class TokenManagerService {
    * 1. Generates access JWT with claims per `PlatformJwtPayload` (type: 'platform')
    * 2. Generates opaque refresh token (UUID v4)
    * 3. Stores refresh token in Redis with prefix `prt:` and session data
-   * 4. Updates SET `psess:{userId}` and details `psd:{sessionHash}`
+   * 4. Updates the platform session index — `psess:{hmac_sha256(hmacKey, "platform:{userId}")}`
+   *    — and details `psd:{sessionHash}`
    *
    * @returns PlatformAuthResult with tokens and admin data
    */
@@ -2255,9 +2256,10 @@ class PlatformAuthService {
    * - Detecting an account compromise
    *
    * Flow:
-   * 1. Fetches all session hashes via `SMEMBERS auth:psess:{userId}`
+   * 1. Fetches all session hashes via `SMEMBERS` on the derived platform index,
+   *    `auth:psess:{hmac_sha256(hmacKey, "platform:{userId}")}`
    * 2. For each hash: deletes `auth:prt:{hash}` and `auth:psd:{hash}`
-   * 3. Removes the platform session SET (`auth:psess:{userId}`)
+   * 3. Removes that same derived platform session SET
    *
    * Note: Does not invalidate active access tokens (JWTs are stateless with a 15min TTL).
    * For immediate access token invalidation, add the `jti` to the blacklist (`rv`).
@@ -3274,7 +3276,8 @@ rather than a missing feature.
 
 The session keyspaces are keyed by different things on purpose. A rotation touches
 `rt:{oldHash}`, `rt:{newHash}`, `rp:{oldHash}`, `cf:{oldHash}`, `fam:{familyId}`
-and `sess:{userId}` in one atomic step — six keys derived from four unrelated
+and the derived session index `sess:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{userId}")}`
+in one atomic step — six keys derived from four unrelated
 identifiers, with no hash tag among them. Cluster assigns slots by key, so those
 six land on up to six nodes and the script is refused with `CROSSSLOT Keys in
 request don't hash to the same slot`. Family revocation and the revoke-all sweep
@@ -3479,7 +3482,7 @@ User             Controller        AuthService         TokenDeliveryService  Red
   |                   |                  |--- delete refresh session --------->|
   |                   |                  |    DEL auth:rt:{hash}              |
   |                   |                  |--- remove from session SET -------->|
-  |                   |                  |    SREM auth:sess:{userId}         |
+  |                   |                  |    SREM auth:sess:{hmac(subject)}  |
   |                   |                  |--- hook.afterLogout() -->           |
   |                   |--- clearAuthSession() -->|                            |
   |<-- 200 (session cleared per tokenDelivery)   |                            |

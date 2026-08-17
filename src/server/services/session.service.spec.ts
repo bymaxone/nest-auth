@@ -2105,4 +2105,47 @@ describe('SessionService', () => {
       }
     })
   })
+  // The public boundary refuses a tenant that names nothing. Every method here takes the tenant
+  // positionally beside a `string` user id and all of them are exported, so `''` is a shape a
+  // caller can produce — and it derived `dashboard::{userId}`, an index nobody writes. Each of
+  // these swept, listed or revoked against that key and RETURNED NORMALLY: work reported as done
+  // while every session it named stayed live.
+  //
+  // The check cannot live in `userSubject`: the rotation scripts must be called with the empty
+  // placeholder identity to discover a grace pointer, so that builder has to stay total, and an
+  // empty entry in a script's KEYS array is not "no key" — the eval wrapper prefixes it into a
+  // real key named `auth:`.
+  describe('blank tenant at the public boundary', () => {
+    it.each([
+      [
+        'createSession',
+        (s: SessionService) => s.createSession('user-1', '', 'raw', '1.2.3.4', 'UA')
+      ],
+      ['listSessions', (s: SessionService) => s.listSessions('user-1', '')],
+      ['revokeSession', (s: SessionService) => s.revokeSession('user-1', '', 'a'.repeat(64))],
+      [
+        'revokeOtherSession',
+        (s: SessionService) => s.revokeOtherSession('user-1', '', 'a'.repeat(64))
+      ],
+      [
+        'revokeAllExceptCurrent',
+        (s: SessionService) => s.revokeAllExceptCurrent('user-1', '', 'a'.repeat(64))
+      ]
+    ])('%s refuses it', async (_label, call) => {
+      // The DETAILS, not merely the exception type. `rejects.toThrow(AuthException)` passes for a
+      // throw that names no field and carries no message — and a validation error whose payload is
+      // empty tells the caller nothing about what to fix, which is the same defect one level down
+      // from the one being guarded here.
+      await expect(call(service)).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              { field: 'tenantId', message: 'tenantId is required to name a session index' }
+            ]
+          }
+        }
+      })
+    })
+  })
 })

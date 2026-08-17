@@ -752,6 +752,15 @@ export class AuthService {
    *   passing the wrong one revokes the colliding id in another tenant instead.
    */
   async revokeAllSessions(userId: string, tenantId: string): Promise<void> {
+    // A blank tenant derives `dashboard::{userId}` — an index and an epoch nobody writes. Both
+    // operations below would succeed against them and this method would return normally: a
+    // "sign out everywhere" reported as done while every session and access token stayed valid.
+    // Refused at the boundary, because that is where a caller can be wrong.
+    if (tenantId === '') {
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        { field: 'tenantId', message: "tenantId is required to revoke a user's sessions" }
+      ])
+    }
     await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
     await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
   }
