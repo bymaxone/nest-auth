@@ -1419,10 +1419,10 @@ it, including cookie names you have since changed.
 > - `both` → **both of them**, or your document is incomplete in exactly the quiet way described
 >   above.
 >
-> One honest caveat on doing any of it: **`AUTH_SECURITY_SCHEMES` is not part of the public API
-> today**, so you will be writing the names as string literals (`bymaxAuthAccessCookie`,
-> `bymaxAuthAccessBearer`) and nothing checks your spelling against ours. Exporting them so this
-> stops being a literal is tracked; until it ships, this paragraph is the whole contract.
+> One note on doing any of it: **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, so
+> import the names rather than writing `bymaxAuthAccessCookie` and `bymaxAuthAccessBearer` as
+> string literals — the compiler then checks your spelling against ours, and a rename reaches you
+> as a build error instead of a document that silently declares a scheme nothing defines.
 >
 > **The wrong outcomes are not one failure, and the difference is the point.** Where the scheme
 > does not exist, nest-core's `assertSchemesDeclared` **throws** and the document never builds —

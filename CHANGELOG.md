@@ -18,6 +18,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **`AUTH_SECURITY_SCHEMES` is exported from the package entry**, and `AUTH_ERROR_STATUS` from
+  `./shared` alongside it. Both were offered to consumers by documentation while shipping from
+  nowhere they could import.
+
+  The scheme names are stable identifiers — renaming one is a break a generated client feels —
+  while their DEFINITIONS are derived from configuration, which is why the names are worth
+  exporting and the definitions are not. A platform-only deployment guarding its own routes with
+  `JwtAuthGuard` has to declare the dashboard access scheme itself, because `schemesFor` gates
+  dashboard schemes on `dashboardMounted`; before this it was told to write
+  `bymaxAuthAccessCookie` by hand, with nothing checking the spelling, in a section whose whole
+  subject is that literals drift from configuration.
+
+  The 1.4.3 entry and the README both said the constant was not public and to use string
+  literals. **That advice is now wrong**; the 1.4.3 section is left as written, because it was
+  true when it shipped, and this entry is the correction. The README paragraph is rewritten.
+
 ### Fixed
 
 - **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves
@@ -46,6 +64,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   Redis — two runs of the same path, one populated and one not. The cause was traced rather than
   guessed, and it also explains their second observation: a `revoked` line with no `detected` line
   before it is the same repeat replay.
+
+- **The README's own contract test could not fail for a name mentioned anywhere in a barrel.**
+  It searched the barrel's SOURCE TEXT for the identifier, so a name in a comment, a JSDoc
+  paragraph or an internal import satisfied it without being exported. `src/client/index.ts`
+  carries the sharpest instance — a comment reading _"Constants like `AUTH_ERROR_CODES` and
+  `AUTH_ROUTES` stay [in shared]"_ — so a README documenting either import FROM `/client` passed
+  on the strength of the very sentence saying it does not export them. Measured: across the five
+  barrels, 77 capitalised tokens appear in text without being exports.
+
+  It now reads the barrel's export DECLARATIONS from the TypeScript AST, and two arms were added:
+  no barrel may `export *` (which would name nothing and make the check under-report), and the
+  README may not call a symbol non-public that the entry point exports — the contradiction this
+  release ships the fix for.
 
 - **A rate-limited refresh signed the user out of a session that was still valid.**
   `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a

@@ -21,7 +21,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import ts from 'typescript'
+
 import { AUTH_SECURITY_SCHEMES } from '../../src/server/openapi/auth-openapi-fragment'
+
+/**
+ * Recorded when a barrel uses `export * from`, which names nothing this suite can collect.
+ *
+ * Not a name a barrel could export — so it can only appear because a star export did.
+ */
+const STAR_EXPORT_MARKER = '*'
 
 /** The README, read once. */
 const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
@@ -62,6 +71,85 @@ function documentedImports(): Map<string, Set<string>> {
   return found
 }
 
+/**
+ * Every name a barrel actually exports, read from its export declarations.
+ *
+ * The first version of this searched the barrel's SOURCE TEXT for the identifier, which is not a
+ * check: a name mentioned in a comment, in a JSDoc paragraph, or in an internal import satisfies
+ * it without being exported. `src/client/index.ts` carries the sharpest instance — a comment
+ * reading _"Constants like `AUTH_ERROR_CODES` and `AUTH_ROUTES` stay [in shared]"_, so a README
+ * that documented importing either FROM `/client` would have passed on the strength of the very
+ * sentence saying it does not export them. Across the five barrels, 77 capitalised tokens appear
+ * in text without being exports.
+ *
+ * Reading the declarations instead means the test fails when an export is deleted, and keeps
+ * failing however much prose still names it. Every barrel here uses named clauses
+ * (`export { X } from`, `export type { X } from`) or direct declarations — none uses `export *`,
+ * which would need following into the re-exported module; that is asserted below rather than
+ * assumed, because a future `export *` would silently shrink what this sees.
+ *
+ * @param file - Absolute path to the barrel.
+ * @returns The exported names, type-only exports included — a consumer importing a type gets the
+ *   same failure from a missing one.
+ */
+function barrelExports(file: string): Set<string> {
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+  const names = new Set<string>()
+
+  for (const statement of source.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      // `export * from './x'` — nothing named to collect, and following it is out of scope here.
+      // The suite asserts none exists rather than quietly under-reporting.
+      if (statement.exportClause === undefined) {
+        names.add(STAR_EXPORT_MARKER)
+        continue
+      }
+      if (ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) names.add(element.name.text)
+      }
+      continue
+    }
+
+    // `export const X`, `export class X`, `export function X`, `export type X`, `export interface X`
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined
+    if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        names.add(declaration.name.getText(source))
+      }
+    } else if (
+      (ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement)) &&
+      statement.name
+    ) {
+      names.add(statement.name.text)
+    }
+  }
+
+  return names
+}
+
+/**
+ * Collapses a Markdown passage to one line, so a claim survives being rewrapped.
+ *
+ * Prettier reflows this README on every commit, which moves the line break inside any sentence
+ * long enough to matter. A pattern anchored to the original wrapping would stop matching the day
+ * a neighbouring word changed length — silently, and in the direction of passing.
+ *
+ * Blockquote markers go too: the paragraph this exists for lives inside a `>` block, where the
+ * continuation line begins `> ` and would otherwise sit in the middle of the flattened sentence.
+ *
+ * @param markdown - The document, or any part of it.
+ * @returns The same text with every run of whitespace and blockquote marker reduced to one space.
+ */
+function flatten(markdown: string): string {
+  return markdown.replace(/\s*\n\s*>?\s*/g, ' ')
+}
+
 describe('README contract (E2E)', () => {
   // Every subpath the README imports from is one this package actually publishes. A typo here
   // sends a reader to a path that does not resolve, which no amount of correct symbol names fixes.
@@ -80,13 +168,50 @@ describe('README contract (E2E)', () => {
     for (const [subpath, names] of documentedImports()) {
       const barrel = BARRELS[subpath]
       if (barrel === undefined) continue
-      const source = readFileSync(join(__dirname, barrel), 'utf8')
+      const exported = barrelExports(join(__dirname, barrel))
       for (const name of names) {
-        if (!new RegExp(`\\b${name}\\b`).test(source)) broken.push(`${subpath}: ${name}`)
+        if (!exported.has(name)) broken.push(`${subpath}: ${name}`)
       }
     }
 
     expect(broken).toEqual([])
+  })
+
+  // `export *` would make the arm above under-report — it names nothing, so every symbol behind
+  // it would read as missing (a false failure) or, if this suite were made lenient, as present
+  // (a false pass). Neither is acceptable, so the shape itself is what is pinned: if a barrel
+  // ever needs one, this test is the prompt to teach `barrelExports` to follow it.
+  it('uses no star export in any barrel', () => {
+    const starring = Object.entries(BARRELS)
+      .filter(([, barrel]) => barrelExports(join(__dirname, barrel)).has(STAR_EXPORT_MARKER))
+      .map(([subpath]) => subpath)
+
+    expect(starring).toEqual([])
+  })
+
+  // A README may say a symbol is not public. That claim is checkable against the same barrels the
+  // arm above reads, and it needs to be: this file's own subject shipped an export of
+  // `AUTH_SECURITY_SCHEMES` while a paragraph four hundred lines away still told consumers it was
+  // not public and to write the names as string literals. Two opposite instructions in one
+  // document, and the export made the wrong one wrong rather than merely dated.
+  //
+  // Matched against the FLATTENED README, not the file. Prettier rewraps prose on every commit, so
+  // a claim reads `` `X` is not part of the public\n> API `` as often as it reads on one line — a
+  // pattern that stops at a newline would be defeated by reformatting alone, which is the kind of
+  // gate that looks green because it went blind. Every barrel is checked, not just the entry:
+  // nothing makes the server barrel the only one a stale claim can outlive.
+  it('calls nothing unexported that a barrel exports', () => {
+    const exported = new Set(
+      Object.values(BARRELS).flatMap((barrel) => [...barrelExports(join(__dirname, barrel))])
+    )
+    const claimedPrivate = [
+      ...flatten(README).matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`[^.]{0,80}?is not part of the public/g)
+    ]
+      .map((match) => match[1])
+      .filter((name): name is string => name !== undefined)
+      .filter((name) => exported.has(name))
+
+    expect([...new Set(claimedPrivate)]).toEqual([])
   })
 
   // The scheme-set table names four schemes as stable identifiers a generated client depends on.
