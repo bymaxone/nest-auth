@@ -73,10 +73,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   on the strength of the very sentence saying it does not export them. Measured: across the five
   barrels, 77 capitalised tokens appear in text without being exports.
 
-  It now reads the barrel's export DECLARATIONS from the TypeScript AST, and two arms were added:
-  no barrel may `export *` (which would name nothing and make the check under-report), and the
-  README may not call a symbol non-public that the entry point exports — the contradiction this
-  release ships the fix for.
+  It now reads the barrel's export DECLARATIONS from the TypeScript AST, and four arms joined it:
+  no barrel may `export *` (which would name nothing and make the check under-report); the README
+  may not call a symbol non-public that a barrel exports (the contradiction this release ships the
+  fix for); the documented subpaths are checked against **`package.json#exports`** rather than the
+  suite's own hand-kept map, which agreed with the manifest only for as long as somebody kept both
+  in step; and every published subpath must have a source barrel mapped, because an unmapped one
+  was skipped silently by the arms above.
+
+  The scheme-table check had the same defect in a second form: it searched the **whole README** for
+  each scheme name, so deleting the `controllers.platform` row still passed — the name appears
+  three more times below the table. That table had already lost a row twice, under a check that
+  was running the whole time. Completeness is now asked of the table alone; invention is still
+  asked of the whole document, because a name the prose made up is wrong wherever it sits.
+
+  And the claim that `AUTH_ERROR_STATUS` ships from `/shared` was prose, which this suite does not
+  read — removing the export left it green. It is shown as an import now, which the suite does
+  read.
 
 - **A rate-limited refresh signed the user out of a session that was still valid.**
   `createAuthFetch`'s refresh reduced the response to `response.ok`, so `429`, `401`, `503` and a

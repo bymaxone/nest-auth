@@ -35,6 +35,44 @@ const STAR_EXPORT_MARKER = '*'
 /** The README, read once. */
 const README = readFileSync(join(__dirname, '../../README.md'), 'utf8')
 
+/**
+ * The subpaths a manifest publishes, as a consumer would write them.
+ *
+ * Narrowed rather than cast. `JSON.parse` answers `any`, and asserting the shape onto it would
+ * turn a manifest without an `exports` map into `Object.keys(undefined)` — a `TypeError` from
+ * inside a helper, at a point that says nothing about what is wrong. A manifest that cannot be
+ * read is a real failure of this suite's subject, so it says so.
+ *
+ * @param file - Absolute path to `package.json`.
+ * @returns Each export key rewritten from `.`-relative form to the specifier a consumer imports.
+ * @throws {@link Error} when the manifest declares no `exports` map.
+ */
+function publishedSubpaths(file: string): string[] {
+  const manifest: unknown = JSON.parse(readFileSync(file, 'utf8'))
+  const exports =
+    typeof manifest === 'object' && manifest !== null
+      ? (manifest as { exports?: unknown }).exports
+      : undefined
+
+  if (typeof exports !== 'object' || exports === null) {
+    throw new Error(`${file} declares no exports map`)
+  }
+
+  return Object.keys(exports).map((subpath) => subpath.replace(/^\./, '@bymax-one/nest-auth'))
+}
+
+/**
+ * The subpaths this package actually publishes, from the manifest.
+ *
+ * {@link BARRELS} cannot answer this: it is a hand-kept map from subpath to source file, so it
+ * agrees with `package.json#exports` only for as long as somebody keeps both in step. Dropping
+ * `./react` from the exports map would leave every README import of it passing, which is the
+ * drift this arm exists to catch — the manifest is the only thing a consumer's resolver reads.
+ */
+const PUBLISHED: ReadonlySet<string> = new Set(
+  publishedSubpaths(join(__dirname, '../../package.json'))
+)
+
 /** Where each documented subpath's public surface actually comes from. */
 const BARRELS: Readonly<Record<string, string>> = {
   '@bymax-one/nest-auth': '../../src/server/index.ts',
@@ -150,13 +188,65 @@ function flatten(markdown: string): string {
   return markdown.replace(/\s*\n\s*>?\s*/g, ' ')
 }
 
+/**
+ * The rows of the scheme table, and nothing else in the document.
+ *
+ * The completeness check below used to search the WHOLE README, which cannot fail for the
+ * regression it names: every scheme is repeated in the "four names" paragraph directly under the
+ * table and again in the guard documentation, so deleting the `controllers.platform` row left
+ * `bymaxPlatformAccessBearer` present three more times and the arm green. The table lost that row
+ * twice before anything noticed — by a check that was already running.
+ *
+ * Located by content rather than by line number: the table is the one whose header names what the
+ * document says, and anchoring on a line number would make the arm silently inspect prose the
+ * first time a paragraph above it grew.
+ *
+ * @param readme - The document.
+ * @returns The table's body rows joined, or `''` when the table is not found — which the caller
+ *   fails on rather than reading as "no schemes missing".
+ */
+function schemeTable(readme: string): string {
+  const rows = readme
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith('|'))
+
+  const header = rows.findIndex((line) => line.includes('what the document says'))
+  if (header === -1) return ''
+
+  // Header, separator, then rows until the table ends — `rows` is already only table lines, and
+  // the next table in the document starts with its own header, so stop at one.
+  const body: string[] = []
+  for (const line of rows.slice(header + 2)) {
+    if (line.includes('what the document says')) break
+    body.push(line)
+  }
+
+  return body.join('\n')
+}
+
 describe('README contract (E2E)', () => {
   // Every subpath the README imports from is one this package actually publishes. A typo here
   // sends a reader to a path that does not resolve, which no amount of correct symbol names fixes.
+  //
+  // Checked against `package.json#exports` rather than against `BARRELS`. The first version asked
+  // the hand-kept map, which answers "is this a subpath this suite knows a source file for" — a
+  // different question, and one that stays green when the manifest drops the subpath entirely.
   it('imports only from subpaths this package publishes', () => {
-    const unknown = [...documentedImports().keys()].filter((sub) => BARRELS[sub] === undefined)
+    const unknown = [...documentedImports().keys()].filter((sub) => !PUBLISHED.has(sub))
 
     expect(unknown).toEqual([])
+  })
+
+  // `BARRELS` feeds the export arms below, so a published subpath it does not know about would be
+  // skipped there in silence — `barrel === undefined` continues rather than fails. Pinning the two
+  // lists against each other is what keeps that skip from being invisible.
+  it('knows a source barrel for every published subpath', () => {
+    const unmapped = [...PUBLISHED]
+      .filter((subpath) => subpath !== '@bymax-one/nest-auth/package.json')
+      .filter((subpath) => BARRELS[subpath] === undefined)
+
+    expect(unmapped).toEqual([])
   })
 
   // The claim itself: every symbol the README tells a consumer to import IS exported from the
@@ -218,12 +308,20 @@ describe('README contract (E2E)', () => {
   // They are values of `AUTH_SECURITY_SCHEMES`, so the table and the constant are two copies of
   // one list — and the table lost the platform-only row twice before anything noticed. Asserted
   // in both directions: a scheme absent from the prose is as wrong as a name the prose invented.
-  it('names every security scheme, and invents none', () => {
+  it('names every security scheme in the table, and invents none anywhere', () => {
     const declared = Object.values(AUTH_SECURITY_SCHEMES)
-    const missingFromReadme = declared.filter((name) => !README.includes(name))
+    const table = schemeTable(README)
 
-    expect(missingFromReadme).toEqual([])
+    // The table must be found. An empty one would make the next assertion pass by naming nothing.
+    expect(table).not.toBe('')
 
+    // Completeness is asked of the TABLE, because that is the passage whose job is to be complete.
+    const missingFromTable = declared.filter((name) => !table.includes(name))
+
+    expect(missingFromTable).toEqual([])
+
+    // Invention is asked of the whole document, and deliberately: a scheme name the prose made up
+    // sends a reader to write a literal that matches nothing, wherever the sentence sits.
     const invented = [...README.matchAll(/`(bymax[A-Za-z]*(?:Auth|Platform)[A-Za-z]*)`/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined)

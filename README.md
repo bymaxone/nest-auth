@@ -1722,8 +1722,17 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 |  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                  |
 |  `500` | `auth.internal`                                                                                                                                                                                                                                                   |
 
-`AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you need the mapping at runtime — for a typed client, an
-API document, or a test that asserts against it.
+`AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you
+need the mapping at runtime — for a typed client, an API document, or a test that asserts against
+it:
+
+```ts
+import { AUTH_ERROR_CODES, AUTH_ERROR_STATUS } from '@bymax-one/nest-auth/shared'
+```
+
+Shown as an import rather than described, on purpose: prose is not covered by this package's
+README contract test, and an import is. The claim above it — that both ship from `/shared` — went
+one release stated and unenforced.
 
 > **Assert your fixtures against the catalogue, not against string literals.** `AUTH_ERROR_CODES`
 > is exported from `@bymax-one/nest-auth/shared` so a suite can check that every code it branches
