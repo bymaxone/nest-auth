@@ -250,7 +250,8 @@
       "nothing to delete and reports success while those refresh tokens keep rotating. Either",
       "re-add the members under the derived index key, or delete the member keys and their detail",
       "records BEFORE dropping the index. The second costs a forced re-login and is the safer of",
-      "the two; the first preserves sessions and must be done atomically per user."    ]
+      "the two; the first preserves sessions and must be done atomically per user."
+    ]
   },
   "identifierPreimages": {
     "$comment": [

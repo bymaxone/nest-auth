@@ -422,6 +422,7 @@ export class TokenManagerService {
 
     const seed = await this.readSeedSession(`rt:${oldHash}`, ip, userAgent)
     this.assertWithinAbsoluteLifetime(seed)
+    this.assertRotatableTenant(seed)
     const newSession = this.buildSession(
       seed.userId,
       seed.tenantId,
@@ -504,6 +505,36 @@ export class TokenManagerService {
       this.logger.error(
         `onRefreshTokenReuseDetected hook threw synchronously: ${describeChannelStatus(err)}`
       )
+    }
+  }
+
+  /**
+   * Refuses to rotate a dashboard session whose record names no tenant.
+   *
+   * `parseSession` validates `userId`, `role` and `mfaEnabled` but not `tenantId`, so a record
+   * written before the index carried one reaches here with the field absent. Rotating it would do
+   * two wrong things at once: write the new session under `dashboard:undefined:{userId}`, an
+   * index belonging to no tenant and swept by no revoke-all, and mint an access token with no
+   * tenant claim — which every dashboard guard then refuses, so the caller gets a session that
+   * cannot be used and cannot be revoked.
+   *
+   * Refusing is the same answer the migration note gives: a pre-upgrade session dies and the user
+   * signs in again. That is a cost; rotating into a keyspace nobody sweeps is a hole.
+   *
+   * The platform plane is exempt — its subject carries no tenant segment by design.
+   *
+   * @param session - The seed session read from the presented token.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID`, indistinguishable from any other
+   *   invalid refresh: the remedy is the same and the difference would only tell a token holder
+   *   how old the record is.
+   */
+  private assertRotatableTenant(session: RefreshSession): void {
+    // Only a record that NAMES a user is judged. `readSeedSession` answers a placeholder with an
+    // empty identity when the live key is gone, and that placeholder is how the grace-window path
+    // is reached — refusing it here would turn every grace recovery into an invalid refresh.
+    if (session.userId === '') return
+    if (session.tenantId === undefined || session.tenantId === '') {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
   }
 
@@ -619,6 +650,10 @@ export class TokenManagerService {
     // token and a full-length refresh session by presenting a token inside its grace window:
     // the one path where the cap is easiest to reach is the one where it did not apply.
     this.assertWithinAbsoluteLifetime(graceSession)
+    // Re-checked here for the same reason, and it is the same one word of argument: the seed the
+    // top-level check saw was the placeholder, whose tenant is empty by construction. The record
+    // that actually mints the next session is this one.
+    this.assertRotatableTenant(graceSession)
     const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(

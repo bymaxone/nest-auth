@@ -501,6 +501,21 @@ describe('TokenManagerService', () => {
       mockRedis.set.mockResolvedValue(undefined)
     }
 
+    /**
+     * A record written before the session index carried a tenant. `parseSession` accepts it —
+     * it validates `userId`, `role` and `mfaEnabled`, never `tenantId` — so this is the exact
+     * shape a live deployment holds at the moment it upgrades.
+     */
+    const PRE_UPGRADE_SESSION = JSON.stringify({
+      userId: 'user-1',
+      role: 'member',
+      device: 'Browser',
+      ip: '1.2.3.4',
+      mfaEnabled: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      familyId: FAMILY
+    })
+
     /** Arms a rotation whose presented token was already consumed but is inside its grace window. */
     function armGraceRotation(sessionJson = OLD_SESSION): void {
       mockRedis.get.mockResolvedValue(null)
@@ -531,6 +546,42 @@ describe('TokenManagerService', () => {
 
     // Verifies that mfaEnabled:true in the stored session is propagated into the rotated access token.
     // This is a critical security property: MfaRequiredGuard must continue to enforce MFA after rotation.
+
+    // Scenario: a dashboard record with no tenant is presented for rotation, on each of the two
+    // paths that can mint from one.
+    // Expected: REFRESH_TOKEN_INVALID, and nothing written.
+    // Why: rotating it would write the new session under `dashboard:undefined:{userId}` — an
+    // index belonging to no tenant, which no revoke-all sweeps — and mint an access token with no
+    // tenant claim, which every dashboard guard then refuses. The caller would hold a session
+    // that cannot be used and cannot be revoked. A forced re-login is the documented cost of the
+    // migration; a keyspace nobody sweeps is not a cost, it is a hole.
+    it.each([
+      ['the live record', () => armLiveRotation(PRE_UPGRADE_SESSION)],
+      ['the recovered grace record', () => armGraceRotation(PRE_UPGRADE_SESSION)]
+    ])('refuses to rotate a dashboard session named by %s without a tenant', async (_l, arm) => {
+      arm()
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.writeRecoveredSession).not.toHaveBeenCalled()
+    })
+
+    // The same record on the PLATFORM plane rotates normally: a platform subject carries no
+    // tenant segment at all, so its absence is the correct shape rather than a missing field.
+    it('still rotates a platform session that names no tenant', async () => {
+      mockRedis.get.mockResolvedValue(PRE_UPGRADE_SESSION)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: PRE_UPGRADE_SESSION
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      await expect(
+        service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+      ).resolves.toBeDefined()
+    })
+
     it('should propagate mfaEnabled:true from the stored session into the rotated access token', async () => {
       armLiveRotation(
         JSON.stringify({

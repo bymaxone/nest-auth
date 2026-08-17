@@ -88,6 +88,26 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   sessions survive a revoke-all that never saw them. **Both libraries must ship this in the same
   release.**
 
+  **Three paths now fail closed on a dashboard subject with no tenant**, because
+  `userSubject` builds `dashboard:{tenantId}:{userId}` and an absent tenant interpolates as the
+  literal text `undefined` — a keyspace belonging to no tenant, in which nothing has ever been
+  written. The MFA flows already refused a blank tenant for exactly this reason; these three did
+  not.
+
+  - `AuthRevocationService.isAccessTokenRevoked` **failed open**: it read the epoch under
+    `dashboard:undefined:{sub}`, got `0`, and reported a bulk-revoked token as valid. It is
+    exported for callers that never pass a guard — a realtime bridge checking a socket — and its
+    payload type marks `tenantId` optional, so the omission is a shape a caller can produce. A
+    dashboard payload without a tenant is now treated as **revoked**, without touching the store.
+  - `reissueTokens` accepted a **pre-upgrade record**: `parseSession` validates `userId`, `role`
+    and `mfaEnabled` but never `tenantId`, so a session written before this change rotated into
+    `dashboard:undefined:{userId}` and minted an access token with no tenant claim — one every
+    dashboard guard then refuses. The caller held a session that could be neither used nor
+    revoked. Both the primary and the grace-recovery path now refuse it as
+    `REFRESH_TOKEN_INVALID`; the platform plane is exempt, its subject carries no tenant segment.
+  - `revokeFamily` derived an index for such a record and pruned a key nobody writes while the
+    real index kept every member. It now omits the index, exactly as logout already did.
+
   **A live keyspace must be migrated, not dropped.** Deleting the old keys is unsafe in both
   directions, and each direction is a hole rather than an inconvenience.
 

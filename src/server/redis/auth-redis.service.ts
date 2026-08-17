@@ -744,8 +744,17 @@ export class AuthRedisService {
     const p = prefixesFor(kind)
     const members = await this.smembers(`${p.family}:${familyId}`)
     const { userId: ownerId, tenantId } = await this.readFamilyOwner(members, p.live)
-    const indexKey =
-      ownerId === '' ? '' : this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
+
+    // No owner, or a dashboard owner whose record names no tenant, means NO index to prune —
+    // the same answer logout gives a pre-upgrade record, and for the same reason. Deriving one
+    // anyway would build `dashboard:undefined:{ownerId}`, a keyspace belonging to no tenant: the
+    // prune would succeed against a key nobody writes while the real index kept every member,
+    // and the operation would report a revocation that did not reach the index. The Lua script
+    // takes an empty index key and skips that step.
+    const nameable = ownerId !== '' && (kind === 'platform' || tenantId !== undefined)
+    const indexKey = nameable
+      ? this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
+      : ''
     const removed = await this.eval(
       REVOKE_FAMILY_LUA,
       [`${p.family}:${familyId}`],
