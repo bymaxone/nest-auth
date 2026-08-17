@@ -744,8 +744,9 @@ export class AuthRedisService {
    *
    * @param members - The family index members (bare session hashes).
    * @param livePrefix - The live-session prefix for the plane (`rt` or `prt`).
-   * @returns The owner's id, or `''` when no member record is readable — every member may have
-   *   already expired, in which case there is nothing left to prune and nobody left to name.
+   * @returns The owner's id, or `''` when no member NAMES one — every member record gone, or a
+   *   record that will not parse, or one carrying no `userId`. The three are indistinguishable
+   *   from here, so a caller reporting this must say what was observed rather than why.
    */
   private async readFamilyOwner(members: string[], livePrefix: string): Promise<string> {
     for (const hash of members) {

@@ -30,6 +30,7 @@ import ts from 'typescript'
 import { describeChannelStatus, describeError } from '../../src/server/utils/describe-error'
 import { logSafe } from '../../src/server/utils/log-safe'
 import { maskEmail } from '../../src/server/utils/mask-email'
+import { ownerFragment } from '../../src/server/utils/owner-fragment'
 
 /** Source root, from this suite's location under `test/e2e/`. */
 const SRC_ROOT = join(__dirname, '../../src')
@@ -68,7 +69,13 @@ function breaksRecord(value: string): boolean {
  * — it appears inside a `${...}` nowhere in `src/` — so removing it from this set costs nothing
  * and closes the shape where it would have been read as a boundary it never enforced.
  */
-const GUARDS = new Set(['logSafe', 'maskEmail', 'describeChannelStatus', 'describeError'])
+const GUARDS = new Set([
+  'logSafe',
+  'maskEmail',
+  'describeChannelStatus',
+  'describeError',
+  'ownerFragment'
+])
 
 /**
  * Expressions this library authors, so no guard applies.
@@ -526,16 +533,29 @@ describe('log-injection guard (E2E)', () => {
     ['logSafe', (value: string) => logSafe(value)],
     ['maskEmail', (value: string) => maskEmail(value)],
     ['describeChannelStatus', (value: string) => describeChannelStatus(new Error(value))],
-    ['describeError', (value: string) => describeError(new Error(value), [])]
+    ['describeError', (value: string) => describeError(new Error(value), [])],
+    ['ownerFragment', (value: string) => ownerFragment(value)]
   ])('%s never returns a value that can break a log record', (name, guard) => {
     expect(GUARDS.has(name)).toBe(true)
 
+    // Every class `breaksRecord` recognises, not a sample of them. The matrix supplied LS
+    // (U+2028) and not PS (U+2029) while `breaksRecord` treats the pair identically, so a guard
+    // that passed PS through would have left this green — a hole in the security property this
+    // test exists to claim FOR EVERY GUARD, which is the worst place to carry one.
     for (const injection of [
       'a@example.com\nforged',
+      'a@example.com\rforged',
       'a@example.com\r\nforged',
       'a@example.com\u0085forged',
-      'a@example.com\u2028forged'
+      'a@example.com\u2028forged',
+      'a@example.com\u2029forged'
     ]) {
+      // The input has to be hostile for the assertion below to mean anything. Stated here rather
+      // than derived from `breaksRecord`'s set — deriving it would make the matrix agree with the
+      // implementation by construction, which is the circularity this file already refuses for
+      // the guards themselves. A benign entry now fails loudly instead of quietly weakening the
+      // row it sits in.
+      expect(breaksRecord(injection)).toBe(true)
       expect(breaksRecord(guard(injection))).toBe(false)
     }
   })

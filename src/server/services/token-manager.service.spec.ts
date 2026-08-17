@@ -860,6 +860,41 @@ describe('TokenManagerService', () => {
       expect(mockHooks.onRefreshTokenReuseDetected).not.toHaveBeenCalled()
     })
 
+    // The same case, in the LOG rather than the hook — and the log is what an on-call reads.
+    // `revokeFamily` names no owner when no member record does. The way that usually happens is
+    // the second-and-later replay of an already-revoked family — the consumed marker outlives the
+    // sessions it points at, so reuse is detected again while every record that could name the
+    // owner is gone — but a member can also have expired, failed to parse, or carried no `userId`,
+    // and the three are indistinguishable from here. The line used to read `userId=` in all of
+    // them: an empty field on the strongest compromise signal this library produces, precisely on
+    // REPEAT attack traffic. An empty field reads as a defect in the logger and makes a reader
+    // distrust the tool rather than the event.
+    it('says the owner is unknown, and what was observed, when the family names none', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+
+      await expect(service.reissueTokens('replayed', '1.2.3.4', 'Browser')).rejects.toThrow(
+        AuthException
+      )
+
+      // The whole line, not three substrings of it, and the line itself rather than every warning
+      // joined — the flow emits two, and joining them lets a substring assertion pass on text from
+      // the wrong one. `ownerFragment`'s own suite pins the fragment; what this pins is that the
+      // fragment reaches THIS line, in place of the bare `userId=` it used to carry, with the
+      // family still named beside it — the only handle left on the lineage once no member can
+      // name its owner.
+      const revocationLine = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .find((line) => line.includes('token family revoked'))
+
+      expect(revocationLine).toBe(
+        'reissueTokens: token family revoked after reuse detection ' +
+          `userId=<unknown: no live session remains in this family to name it> familyId=${FAMILY}`
+      )
+      warnSpy.mockRestore()
+    })
+
     // fails as REFRESH_TOKEN_INVALID — the reaction never resurrects the token.
     it('should revoke the compromised family when a consumed token is replayed', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
@@ -1948,6 +1983,35 @@ describe('TokenManagerService', () => {
       expect(mockRedis.revokeFamily).toHaveBeenCalledWith(PLATFORM_FAMILY, 'platform')
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('reuse of a consumed refresh token detected')
+      warnSpy.mockRestore()
+    })
+
+    // The unknown-owner line on the PLATFORM plane. `reissuePlatformTokens` builds its warning
+    // through the same `ownerFragment`, and nothing but this pins that it does: the plane's other
+    // replay tests hand back a populated `ownerId`, so the empty case ran only on the dashboard
+    // side. A regression could restore a bare `userId=` here — on the plane whose accounts hold
+    // the most authority — without a single test going red.
+    it('says the owner is unknown, and what was observed, on the platform plane', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'reused',
+        familyId: PLATFORM_FAMILY
+      })
+      mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
+
+      await expect(
+        service.reissuePlatformTokens('replayed-platform', '9.9.9.9', 'Attacker')
+      ).rejects.toThrow(AuthException)
+
+      const revocationLine = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .find((line) => line.includes('token family revoked'))
+
+      expect(revocationLine).toBe(
+        'reissuePlatformTokens: token family revoked after reuse detection ' +
+          `userId=<unknown: no live session remains in this family to name it> familyId=${PLATFORM_FAMILY}`
+      )
       warnSpy.mockRestore()
     })
 

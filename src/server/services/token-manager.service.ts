@@ -26,6 +26,7 @@ import type { SafeAuthUser } from '../interfaces/user-repository.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { ownerFragment } from '../utils/owner-fragment'
 import { createEmptyHookContext } from '../utils/sanitize-headers'
 import { readStampedEpoch } from '../utils/stamped-epoch'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
@@ -465,7 +466,7 @@ export class TokenManagerService {
       const { ownerId } = await this.redis.revokeFamily(outcome.familyId)
       this.logger.warn(
         `reissueTokens: token family revoked after reuse detection ` +
-          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+          `${ownerFragment(ownerId)} familyId=${logSafe(outcome.familyId)}`
       )
       // The one moment the library can say "this is not a guess about risk": a token that was
       // already exchanged has been presented again, so one of its two holders is not the owner.
@@ -880,7 +881,7 @@ export class TokenManagerService {
       // highest-privilege identity in the system.
       this.logger.warn(
         `reissuePlatformTokens: token family revoked after reuse detection ` +
-          `userId=${logSafe(ownerId)} familyId=${logSafe(outcome.familyId)}`
+          `${ownerFragment(ownerId)} familyId=${logSafe(outcome.familyId)}`
       )
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
