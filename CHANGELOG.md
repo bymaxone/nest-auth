@@ -98,9 +98,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   in production, in one locale.
 
   **Apply to a derived backend.** The MFA keyspace relocates too, on top of the session and epoch
-  migration described below, and under the same rule: copy state forward, never drop it. The MFA
-  keys are where dropping is least acceptable — a discarded `rcu:` claim makes a spent recovery
-  code usable again.
+  migration described below, under the same first rule — copy state forward, never drop it — but
+  **not** under the same fan-out. Those keys already carried the tenant, so the remap is 1:1 for
+  every pair, with one exception that is the entire point of this entry: a pair that was
+  **colliding** shared one old key, and that key has to be written to each of the pairs that shared
+  it. There is no way to tell from the old key which of them last wrote it, so copy it to all of
+  them and let the safe direction win — for `rcu:`, a claim present on a code that was never spent
+  costs one unusable recovery code, while a claim missing on a code that WAS spent makes it usable
+  again. The MFA keys are where dropping is least acceptable for exactly that reason.
 
 - **Suspending one tenant's user revoked another tenant's.** The session index and the token
   epoch were keyed on the bare user id — `sess:{userId}` and `ep:{userId}` — while the status
@@ -198,20 +203,37 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **A live keyspace must be migrated, not dropped.** Deleting the old keys is unsafe in both
   directions, and each direction is a hole rather than an inconvenience.
 
+  **On the dashboard plane the migration is a fan-out: one old key becomes N new ones.** The old
+  keys are tenant-blind — `ep:{userId}` and `sess:{userId}` name a bare user id — which is the
+  defect this release removes, so a single old key served **every** tenant that has a user with
+  that id, and each of those pairs derives its own key now. Copying an old key to one derived key
+  and dropping it migrates one tenant and silently resets all the others: for them it is not a
+  partial migration, it is exactly the deletion described below. Enumerate the tenants that user
+  id appears in and write every one of them. On the platform plane the mapping is 1:1 — that
+  subject carries no tenant — so the fan-out is a dashboard-only obligation.
+
   Deleting an old `ep:{userId}` does not expire the tokens it revoked. `getUserTokenEpoch` answers
   `0` for an absent key — `Number(null)` is `0`, and that is deliberately the "never bumped"
   default — and under `0` the `stamped < epoch` test is false for **every** token. A password
   reset, an MFA reset or a sign-out-everywhere that had already invalidated an access token is
   undone by the migration, and that token works again for the rest of its lifetime. Epochs must be
-  **copied** to the derived key, with a TTL at least the remainder of the old one, and only then
-  dropped. An epoch may never move backwards.
+  **copied to every derived key the old one served**, each with at least the old value and at
+  least the remainder of its TTL, and only then dropped. An epoch may never move backwards.
 
   Deleting an old `sess:{userId}` does not end the sessions it listed. Its `rt:`/`rp:` members
   outlive the index and become unreachable: a later revoke-all reads the new, empty index, finds
   nothing to delete, and reports success while those refresh tokens keep rotating. Either re-add
-  the members under the derived index key, or delete the member keys and their `sd:` details
+  the members under the derived index keys, or delete the member keys and their `sd:` details
   **before** dropping the index. The second costs a forced re-login and is the safer of the two;
   the first preserves sessions and must be done atomically per user.
+
+  Re-adding is where the fan-out bites hardest, because the old index **mixes tenants**: its
+  members are the sessions of every tenant's user with that id, so emptying it into one derived
+  index would hand that tenant another's live sessions — worse than the collision being fixed,
+  because it turns a shared keyspace into a listable, revocable cross-tenant handle. Partition
+  instead: every member names an `rt:`/`rp:` record carrying its **own** `tenantId`, so read the
+  record, derive that pair's index, and place the member there. A member whose record is already
+  gone is a dead session and is dropped rather than guessed at.
 
   **Both obligations apply to the PLATFORM twins, `pep:{userId}` and `psess:{userId}`, which this
   release relocates identically.** They are the easier pair to forget and the worse pair to get
