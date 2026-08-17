@@ -169,7 +169,13 @@ describe('SessionService', () => {
     it('stores sd:{hash} in Redis with the correct TTL', async () => {
       const hash = sha256(rawToken)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.set).toHaveBeenCalledWith(`sd:${hash}`, expect.any(String), TTL)
     })
@@ -178,7 +184,13 @@ describe('SessionService', () => {
     it('returns the sha256 hash of the raw refresh token', async () => {
       const expected = sha256(rawToken)
 
-      const result = await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      const result = await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(result).toBe(expected)
     })
@@ -187,7 +199,13 @@ describe('SessionService', () => {
     it('truncates IP to 45 characters before storage', async () => {
       const longIp = 'a'.repeat(60)
 
-      await service.createSession(userId, 'tenant-1', rawToken, longIp, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: longIp,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
@@ -198,7 +216,13 @@ describe('SessionService', () => {
 
     // Verifies that stores the parsed device string (non-empty) in the detail record.
     it('stores the parsed device string (non-empty) in the detail record', async () => {
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
@@ -209,7 +233,13 @@ describe('SessionService', () => {
 
     // Verifies that stores createdAt and lastActivityAt as numbers in the detail record.
     it('stores createdAt and lastActivityAt as numbers in the detail record', async () => {
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.set).toHaveBeenCalledTimes(1)
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
@@ -222,7 +252,13 @@ describe('SessionService', () => {
 
     // Verifies that calls enforceSessionLimit after storing the detail (smembers called).
     it('calls enforceSessionLimit after storing the detail (smembers called)', async () => {
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
         `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
@@ -243,7 +279,13 @@ describe('SessionService', () => {
       // Provide detail records for each existing session
       mockRedis.get.mockResolvedValue(makeDetailJson(Date.now() - 1000))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.del).not.toHaveBeenCalled()
     })
@@ -265,7 +307,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(idx === 0 ? 0 : now - (6 - idx) * 1000))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${oldestHash}`)
       expect(mockRedis.srem).toHaveBeenCalledWith(
@@ -287,7 +335,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(idx === 0 ? 0 : now - idx * 500))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       const delCalls = mockRedis.del.mock.calls.map((c) => c[0])
       const sremCalls = mockRedis.srem.mock.calls.map((c) => c[1])
@@ -315,7 +369,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(now - 1000))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       const delCalls = mockRedis.del.mock.calls.map((c) => c[0])
       expect(delCalls).not.toContain(`rt:${newHash}`)
@@ -330,7 +390,13 @@ describe('SessionService', () => {
       mockRedis.del.mockRejectedValue(new Error('Redis connection error'))
 
       await expect(
-        service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+        service.createSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          rawRefreshToken: rawToken,
+          ip: ip,
+          userAgent: userAgent
+        })
       ).resolves.not.toThrow()
       expect(Logger.prototype.error).toHaveBeenCalled()
     })
@@ -339,7 +405,13 @@ describe('SessionService', () => {
     it('fires the onNewSession hook after the session is stored', async () => {
       mockHooks.onNewSession.mockResolvedValue(undefined)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // Hook is fire-and-forget — flush microtasks
       await flushMicrotasks()
@@ -351,7 +423,13 @@ describe('SessionService', () => {
     it('passes a SafeAuthUser (no credentials) to the onNewSession hook', async () => {
       mockHooks.onNewSession.mockResolvedValue(undefined)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       await flushMicrotasks()
 
@@ -367,7 +445,13 @@ describe('SessionService', () => {
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.smembers.mockResolvedValue([])
 
-      await svcNoHooks.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await svcNoHooks.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(mockHooks.onNewSession).not.toHaveBeenCalled()
@@ -393,7 +477,13 @@ describe('SessionService', () => {
         updatedAt: new Date()
       })
 
-      await svcPartialHooks.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await svcPartialHooks.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(mockHooks.onNewSession).not.toHaveBeenCalled()
@@ -404,7 +494,13 @@ describe('SessionService', () => {
       mockHooks.onNewSession.mockRejectedValue(new Error('hook error'))
 
       await expect(
-        service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+        service.createSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          rawRefreshToken: rawToken,
+          ip: ip,
+          userAgent: userAgent
+        })
       ).resolves.not.toThrow()
 
       await flushMicrotasks()
@@ -417,7 +513,13 @@ describe('SessionService', () => {
       mockUserRepo.findById.mockResolvedValue(null)
       mockHooks.onNewSession.mockResolvedValue(undefined)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(mockHooks.onNewSession).not.toHaveBeenCalled()
@@ -428,7 +530,13 @@ describe('SessionService', () => {
       mockUserRepo.findById.mockRejectedValue(new Error('db error'))
 
       await expect(
-        service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+        service.createSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          rawRefreshToken: rawToken,
+          ip: ip,
+          userAgent: userAgent
+        })
       ).resolves.not.toThrow()
 
       await flushMicrotasks()
@@ -447,7 +555,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
       mockRedis.get.mockResolvedValue(makeDetailJson(now - 5000))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(resolver).toHaveBeenCalledTimes(1)
     })
@@ -478,7 +592,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
       mockRedis.get.mockResolvedValue(makeDetailJson(Date.now() - 5000))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // Two over the default of five, so the default's eviction actually runs. Under the
       // unvalidated resolver `NaN` evicted nothing and reported success.
@@ -519,7 +639,13 @@ describe('SessionService', () => {
         return makeDetailJson(Date.now() - (7 - index) * 1000)
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // The seven live members are evicted down to the cap, so the count of deletions names
       // WHICH limit applied: the resolver's, or the default of five.
@@ -541,7 +667,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
       mockRedis.get.mockResolvedValue(makeDetailJson(Date.now()))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(Logger.prototype.error).toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
@@ -558,7 +690,13 @@ describe('SessionService', () => {
       const hashes = Array.from({ length: 4 }, (_, i) => sha256(`nf-tok-${i}`))
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // resolver not called because findById returned null first
       expect(resolver).not.toHaveBeenCalled()
@@ -577,7 +715,13 @@ describe('SessionService', () => {
       })
       mockHooks.onSessionEvicted.mockResolvedValue(undefined)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(mockHooks.onSessionEvicted).toHaveBeenCalledWith(
@@ -598,7 +742,13 @@ describe('SessionService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.srem.mockResolvedValue(1)
 
-      await svcNoHooks.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await svcNoHooks.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(mockHooks.onSessionEvicted).not.toHaveBeenCalled()
@@ -618,7 +768,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(now - idx * 100))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // hashes[0] has no detail → createdAt 0 → evicted first
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
@@ -637,7 +793,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(now - idx * 100))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.del).toHaveBeenCalledWith(`rt:${hashes[0]}`)
     })
@@ -655,7 +817,13 @@ describe('SessionService', () => {
       mockHooks.onSessionEvicted.mockRejectedValue(new Error('hook exploded'))
 
       // Act
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       // Assert — error was logged, not thrown
@@ -665,7 +833,13 @@ describe('SessionService', () => {
     // Verifies that a user-agent containing Edg/ is stored with an Edge browser label.
     it('detects Edge browser from Edg/ token', async () => {
       const edgeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/123.0'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, edgeUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: edgeUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -675,7 +849,13 @@ describe('SessionService', () => {
     // Verifies that a user-agent containing OPR/ is stored with an Opera browser label.
     it('detects Opera browser from OPR/ token', async () => {
       const operaUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 OPR/123.0'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, operaUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: operaUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -686,7 +866,13 @@ describe('SessionService', () => {
     it('detects Safari browser (Safari + Version tokens, no Chrome/Edg/OPR)', async () => {
       const safariUA =
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, safariUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: safariUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -697,7 +883,13 @@ describe('SessionService', () => {
     it('detects Android OS', async () => {
       const androidUA =
         'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/112.0 Mobile Safari/537.36'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, androidUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: androidUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -708,7 +900,13 @@ describe('SessionService', () => {
     it('detects iOS from iPhone token', async () => {
       const iosUA =
         'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 Version/16.4 Mobile Safari/604.1'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, iosUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: iosUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -719,7 +917,13 @@ describe('SessionService', () => {
     it('detects Windows OS', async () => {
       const windowsUA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/112.0 Safari/537.36'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, windowsUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: windowsUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -730,7 +934,13 @@ describe('SessionService', () => {
     it('detects Linux OS', async () => {
       const linuxUA =
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/112.0 Safari/537.36'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, linuxUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: linuxUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -744,7 +954,13 @@ describe('SessionService', () => {
     it('detects Chrome browser from Chrome/ token', async () => {
       const chromeUA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, chromeUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: chromeUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -756,7 +972,13 @@ describe('SessionService', () => {
     // (`else if (false)`), 140:36 (empty block), and 141 (`browser = ''`).
     it('detects Firefox browser from Firefox/ token', async () => {
       const firefoxUA = 'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, firefoxUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: firefoxUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -770,7 +992,13 @@ describe('SessionService', () => {
     it('detects macOS from a Macintosh UA', async () => {
       const macUA =
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, macUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: macUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -783,7 +1011,13 @@ describe('SessionService', () => {
     // on line 142 and the Linux `if (true)` mutant on line 157 — both would mislabel an unknown UA.
     it('labels an unrecognised user-agent as Unknown Browser on Unknown OS', async () => {
       const unknownUA = 'curl/7.88.1'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, unknownUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: unknownUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -796,7 +1030,13 @@ describe('SessionService', () => {
     // Safari despite the missing Version token.
     it('does not label a Safari-token-only UA (no Version) as Safari', async () => {
       const safariNoVersionUA = 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Safari/605.1.15'
-      await service.createSession(userId, 'tenant-1', rawToken, ip, safariNoVersionUA)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: safariNoVersionUA
+      })
       const stored = JSON.parse((mockRedis.set.mock.calls[0]! as [string, string, number])[1]) as {
         device: string
       }
@@ -809,7 +1049,13 @@ describe('SessionService', () => {
     it('passes an 8-character truncated sessionHash to the onNewSession hook', async () => {
       mockHooks.onNewSession.mockResolvedValue(undefined)
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       const sessionInfo = mockHooks.onNewSession.mock.calls[0]?.[1] as { sessionHash: string }
@@ -821,7 +1067,13 @@ describe('SessionService', () => {
     // Expected: smembers called with `sess:user-1`. Why: kills the StringLiteral mutant on line 591
     // (`smembers(\`sess:${userId}\`)` → `smembers('')`).
     it('reads the session SET using the sess:{userId} key during enforcement', async () => {
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
         `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
@@ -842,7 +1094,13 @@ describe('SessionService', () => {
       ])
       mockRedis.get.mockResolvedValue(makeDetailJson(Date.now()))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.del).not.toHaveBeenCalled()
     })
@@ -855,7 +1113,13 @@ describe('SessionService', () => {
       const rtHashes = Array.from({ length: 5 }, (_, i) => sha256(`at-limit-${i}`))
       mockRedis.smembers.mockResolvedValue(rtHashes.map((h) => `rt:${h}`))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(mockRedis.get).not.toHaveBeenCalled()
       expect(mockRedis.del).not.toHaveBeenCalled()
@@ -880,7 +1144,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(createdAtByIndex[idx]!))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       // sd: detail must be read with the proper key shape.
       expect(mockRedis.get).toHaveBeenCalledWith(`sd:${hashes[0]}`)
@@ -918,7 +1188,13 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(1_000_000 + hashes.indexOf(hashPart)))
       })
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       const delKeys = mockRedis.del.mock.calls.map((c) => c[0])
       expect(delKeys).toContain(`rt:${badHash}`)
@@ -936,7 +1212,13 @@ describe('SessionService', () => {
       })
       mockRedis.del.mockRejectedValue(new Error('Redis down'))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -958,7 +1240,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue(hashes.map((h) => `rt:${h}`))
       mockRedis.get.mockResolvedValue(makeDetailJson(Date.now()))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
         expect.stringContaining(`maxSessionsResolver threw — falling back to defaultMaxSessions: `)
@@ -971,7 +1259,13 @@ describe('SessionService', () => {
     it('logs the exact message when the onNewSession hook rejects', async () => {
       mockHooks.onNewSession.mockRejectedValue(new Error('hook boom'))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
@@ -985,7 +1279,13 @@ describe('SessionService', () => {
     it('logs the exact message when findById rejects inside the onNewSession flow', async () => {
       mockUserRepo.findById.mockRejectedValue(new Error('db boom'))
 
-      await service.createSession(userId, 'tenant-1', rawToken, ip, userAgent)
+      await service.createSession({
+        userId: userId,
+        tenantId: 'tenant-1',
+        rawRefreshToken: rawToken,
+        ip: ip,
+        userAgent: userAgent
+      })
       await flushMicrotasks()
 
       expect(Logger.prototype.error).toHaveBeenCalledWith(
@@ -1005,7 +1305,7 @@ describe('SessionService', () => {
     it('returns an empty array when there are no rt: members', async () => {
       mockRedis.smembers.mockResolvedValue([])
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toEqual([])
     })
@@ -1015,7 +1315,7 @@ describe('SessionService', () => {
       const hash = sha256('grace-token')
       mockRedis.smembers.mockResolvedValue([`rp:${hash}`])
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toEqual([])
       expect(mockRedis.get).not.toHaveBeenCalled()
@@ -1027,7 +1327,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      await service.listSessions(userId, 'tenant-1')
+      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(mockRedis.get).toHaveBeenCalledWith(`sd:${hash}`)
     })
@@ -1045,7 +1345,7 @@ describe('SessionService', () => {
         })
       )
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(1)
       expect(result[0]).toMatchObject({
@@ -1065,7 +1365,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result[0]!.sessionHash).toHaveLength(64)
       expect(result[0]!.sessionHash).toMatch(/^[a-f0-9]{64}$/)
@@ -1077,7 +1377,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1', hash)
+      const result = await service.listSessions({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: hash
+      })
 
       expect(result[0]!.isCurrent).toBe(true)
     })
@@ -1088,7 +1392,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1', undefined)
+      const result = await service.listSessions({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: undefined
+      })
 
       expect(result[0]!.isCurrent).toBe(false)
     })
@@ -1099,7 +1407,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1', '')
+      const result = await service.listSessions({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: ''
+      })
 
       expect(result[0]!.isCurrent).toBe(false)
     })
@@ -1111,7 +1423,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash1}`, `rt:${hash2}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1', hash1)
+      const result = await service.listSessions({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: hash1
+      })
 
       const other = result.find((s) => s.sessionHash === hash2)
       expect(other?.isCurrent).toBe(false)
@@ -1128,7 +1444,7 @@ describe('SessionService', () => {
       })
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result.map((s) => s.sessionHash)).not.toContain(staleHash)
     })
@@ -1143,7 +1459,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${staleHash}`])
       mockRedis.get.mockResolvedValue(null)
 
-      await service.listSessions(userId, 'tenant-1')
+      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       await flushMicrotasks()
 
@@ -1162,7 +1478,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${sha256('healthy-token')}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      await service.listSessions(userId, 'tenant-1')
+      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       await flushMicrotasks()
 
@@ -1179,7 +1495,7 @@ describe('SessionService', () => {
       mockRedis.get.mockResolvedValue(JSON.stringify({ foo: 'bar' }))
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1191,7 +1507,7 @@ describe('SessionService', () => {
       mockRedis.get.mockResolvedValue('{{{invalid')
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1207,7 +1523,7 @@ describe('SessionService', () => {
       })
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result.map((s) => s.sessionHash)).not.toContain(throwHash)
     })
@@ -1221,7 +1537,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${throwHash}`])
       mockRedis.get.mockRejectedValue(new Error('Redis connection lost'))
 
-      await service.listSessions(userId, 'tenant-1')
+      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       await flushMicrotasks()
 
@@ -1250,7 +1566,9 @@ describe('SessionService', () => {
       mockRedis.get.mockResolvedValue(null)
       mockRedis.pruneDeadMembers.mockRejectedValueOnce(new Error('prune failed'))
 
-      await expect(service.listSessions(userId, 'tenant-1')).resolves.toEqual([])
+      await expect(service.listSessions({ userId: userId, tenantId: 'tenant-1' })).resolves.toEqual(
+        []
+      )
 
       await flushMicrotasks()
 
@@ -1273,7 +1591,7 @@ describe('SessionService', () => {
         return Promise.resolve(makeDetailJson(200))
       })
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result[0]!.sessionHash).toBe(hash2)
       expect(result[1]!.sessionHash).toBe(hash3)
@@ -1286,7 +1604,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000, { ip: '203.0.113.42' }))
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result[0]!.ip).toBe('203.0.113.42')
     })
@@ -1301,7 +1619,7 @@ describe('SessionService', () => {
       )
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1313,7 +1631,7 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${rtHash}`, `rp:${rpHash}`])
       mockRedis.get.mockResolvedValue(makeDetailJson(1000))
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(1)
       expect(result[0]!.sessionHash).toBe(rtHash)
@@ -1325,7 +1643,7 @@ describe('SessionService', () => {
     it('reads the session SET using the sess:{userId} key', async () => {
       mockRedis.smembers.mockResolvedValue([])
 
-      await service.listSessions(userId, 'tenant-1')
+      await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
         `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
@@ -1343,7 +1661,7 @@ describe('SessionService', () => {
       )
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1358,7 +1676,7 @@ describe('SessionService', () => {
       )
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1374,7 +1692,7 @@ describe('SessionService', () => {
       )
       mockRedis.srem.mockResolvedValue(1)
 
-      const result = await service.listSessions(userId, 'tenant-1')
+      const result = await service.listSessions({ userId: userId, tenantId: 'tenant-1' })
 
       expect(result).toHaveLength(0)
     })
@@ -1391,7 +1709,7 @@ describe('SessionService', () => {
     it('throws SESSION_NOT_FOUND for a hash shorter than 64 chars', async () => {
       let thrownShort: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', 'abc123')
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: 'abc123' })
       } catch (e) {
         thrownShort = e
       }
@@ -1403,7 +1721,7 @@ describe('SessionService', () => {
       const longHash = 'a'.repeat(65)
       let thrownLong: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', longHash)
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: longHash })
       } catch (e) {
         thrownLong = e
       }
@@ -1418,7 +1736,7 @@ describe('SessionService', () => {
       const prefixed = `z${sha256('anchor-prefix-token')}`
       let thrown: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', prefixed)
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: prefixed })
       } catch (e) {
         thrown = e
       }
@@ -1437,7 +1755,7 @@ describe('SessionService', () => {
       const suffixed = `${sha256('anchor-suffix-token')}z`
       let thrown: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', suffixed)
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: suffixed })
       } catch (e) {
         thrown = e
       }
@@ -1453,7 +1771,11 @@ describe('SessionService', () => {
       const upperHash = 'A'.repeat(64)
       let thrownUpper: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', upperHash)
+        await service.revokeSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          sessionHash: upperHash
+        })
       } catch (e) {
         thrownUpper = e
       }
@@ -1465,7 +1787,11 @@ describe('SessionService', () => {
       const invalidHash = 'g'.repeat(64)
       let thrownInvalid: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', invalidHash)
+        await service.revokeSession({
+          userId: userId,
+          tenantId: 'tenant-1',
+          sessionHash: invalidHash
+        })
       } catch (e) {
         thrownInvalid = e
       }
@@ -1477,7 +1803,7 @@ describe('SessionService', () => {
       const hash = sha256('revoke-token')
       mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeSession(userId, 'tenant-1', hash)
+      await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
 
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.any(String),
@@ -1498,7 +1824,7 @@ describe('SessionService', () => {
       const hash = sha256('revoke-script-token')
       mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeSession(userId, 'tenant-1', hash)
+      await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
 
       const script = (mockRedis.eval.mock.calls[0] as [string, string[], string[]])[0]
       expect(script).toContain('SISMEMBER')
@@ -1513,7 +1839,7 @@ describe('SessionService', () => {
 
       let thrownLuaZero: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', hash)
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
       } catch (e) {
         thrownLuaZero = e
       }
@@ -1525,7 +1851,9 @@ describe('SessionService', () => {
       const hash = sha256('success-revoke-token')
       mockRedis.eval.mockResolvedValue(1)
 
-      await expect(service.revokeSession(userId, 'tenant-1', hash)).resolves.toBeUndefined()
+      await expect(
+        service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
+      ).resolves.toBeUndefined()
     })
 
     // Verifies that treats non-number Lua return values as 0 (SESSION_NOT_FOUND).
@@ -1535,7 +1863,7 @@ describe('SessionService', () => {
 
       let thrown: unknown
       try {
-        await service.revokeSession(userId, 'tenant-1', hash)
+        await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
       } catch (e) {
         thrown = e
       }
@@ -1550,7 +1878,11 @@ describe('SessionService', () => {
 
       let thrownBola: unknown
       try {
-        await service.revokeSession('attacker-user', 'tenant-1', victimHash)
+        await service.revokeSession({
+          userId: 'attacker-user',
+          tenantId: 'tenant-1',
+          sessionHash: victimHash
+        })
       } catch (e) {
         thrownBola = e
       }
@@ -1562,7 +1894,9 @@ describe('SessionService', () => {
       const hash = sha256('redis-crash-token')
       mockRedis.eval.mockRejectedValue(new Error('ECONNRESET'))
 
-      await expect(service.revokeSession(userId, 'tenant-1', hash)).rejects.toThrow('ECONNRESET')
+      await expect(
+        service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: hash })
+      ).rejects.toThrow('ECONNRESET')
     })
   })
 
@@ -1578,7 +1912,11 @@ describe('SessionService', () => {
     it('bumps the token epoch so the revoked device loses its access token too', async () => {
       mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeOtherSession('user-1', 'tenant-1', 'a'.repeat(64))
+      await service.revokeOtherSession({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        sessionHash: 'a'.repeat(64)
+      })
 
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
     })
@@ -1590,7 +1928,11 @@ describe('SessionService', () => {
       mockRedis.eval.mockResolvedValue(0)
 
       await expect(
-        service.revokeOtherSession('user-1', 'tenant-1', 'a'.repeat(64))
+        service.revokeOtherSession({
+          userId: 'user-1',
+          tenantId: 'tenant-1',
+          sessionHash: 'a'.repeat(64)
+        })
       ).rejects.toThrow(AuthException)
 
       expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
@@ -1604,7 +1946,11 @@ describe('SessionService', () => {
     it('throws SESSION_NOT_FOUND for invalid currentSessionHash format', async () => {
       let thrown: unknown
       try {
-        await service.revokeAllExceptCurrent(userId, 'tenant-1', 'not-valid')
+        await service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: 'not-valid'
+        })
       } catch (e) {
         thrown = e
       }
@@ -1630,7 +1976,11 @@ describe('SessionService', () => {
       mockRedis.srem.mockResolvedValue(1)
       mockRedis.del.mockResolvedValue(undefined)
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: currentHash
+      })
 
       const deleted = mockRedis.del.mock.calls.map((args) => args[0])
       expect(deleted).toContain(`rp:${otherHash}`)
@@ -1653,7 +2003,11 @@ describe('SessionService', () => {
       const currentHash = sha256('rae-smembers-key')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`])
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: currentHash
+      })
 
       expect(mockRedis.smembers).toHaveBeenCalledWith(
         `sess:${hmacSha256(`dashboard:tenant-1:${userId}`, HMAC_KEY)}`
@@ -1672,7 +2026,11 @@ describe('SessionService', () => {
       ])
       mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: currentHash
+      })
 
       const evalCalls = mockRedis.eval.mock.calls
       const revokedHashes = evalCalls.map((c) => {
@@ -1689,7 +2047,11 @@ describe('SessionService', () => {
       const currentHash = sha256('timing-safe-current')
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`])
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: currentHash
+      })
 
       // eval should NOT have been called (current session skipped)
       expect(mockRedis.eval).not.toHaveBeenCalled()
@@ -1704,7 +2066,11 @@ describe('SessionService', () => {
       mockRedis.eval.mockResolvedValue(0)
 
       await expect(
-        service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: currentHash
+        })
       ).resolves.toBeUndefined()
     })
 
@@ -1715,9 +2081,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${currentHash}`, `rt:${otherHash}`])
       mockRedis.eval.mockRejectedValue(new Error('Unexpected Redis failure'))
 
-      await expect(service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)).rejects.toThrow(
-        'Unexpected Redis failure'
-      )
+      await expect(
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: currentHash
+        })
+      ).rejects.toThrow('Unexpected Redis failure')
     })
 
     // Verifies that re-throws AuthException with a code other than SESSION_NOT_FOUND.
@@ -1734,7 +2104,11 @@ describe('SessionService', () => {
         .mockRejectedValue(new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID))
 
       await expect(
-        service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: currentHash
+        })
       ).rejects.toBeInstanceOf(AuthException)
 
       revokeSpy.mockRestore()
@@ -1746,7 +2120,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([])
 
       await expect(
-        service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: currentHash
+        })
       ).resolves.toBeUndefined()
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
@@ -1768,7 +2146,11 @@ describe('SessionService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.srem.mockResolvedValue(1)
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', currentHash)
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: currentHash
+      })
 
       // Not routed through the session-revocation Lua — it is not a session.
       expect(mockRedis.eval).not.toHaveBeenCalled()
@@ -1790,7 +2172,11 @@ describe('SessionService', () => {
 
       // Should resolve (not throw) because SESSION_NOT_FOUND is swallowed
       await expect(
-        service.revokeAllExceptCurrent('attacker', 'tenant-1', currentHash)
+        service.revokeAllExceptCurrent({
+          userId: 'attacker',
+          tenantId: 'tenant-1',
+          currentSessionHash: currentHash
+        })
       ).resolves.toBeUndefined()
     })
 
@@ -1803,7 +2189,11 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([`rt:${'a'.repeat(64)}`, `rt:${'b'.repeat(64)}`])
       mockRedis.eval.mockResolvedValue(1)
 
-      await service.revokeAllExceptCurrent(userId, 'tenant-1', 'a'.repeat(64))
+      await service.revokeAllExceptCurrent({
+        userId: userId,
+        tenantId: 'tenant-1',
+        currentSessionHash: 'a'.repeat(64)
+      })
 
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith(userId, 'tenant-1', 'dashboard')
     })
@@ -1817,7 +2207,11 @@ describe('SessionService', () => {
       mockRedis.eval.mockRejectedValue(new Error('redis down'))
 
       await expect(
-        service.revokeAllExceptCurrent(userId, 'tenant-1', 'a'.repeat(64))
+        service.revokeAllExceptCurrent({
+          userId: userId,
+          tenantId: 'tenant-1',
+          currentSessionHash: 'a'.repeat(64)
+        })
       ).rejects.toThrow('redis down')
       expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
     })
@@ -2067,7 +2461,13 @@ describe('SessionService', () => {
       mockRedis.smembers.mockResolvedValue([])
       mockUserRepo.findById.mockResolvedValue({ id: 'user-1' })
 
-      await service.createSession('user-1', 'tenant-1', 'raw-token', '1.2.3.4', 'Chrome')
+      await service.createSession({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        rawRefreshToken: 'raw-token',
+        ip: '1.2.3.4',
+        userAgent: 'Chrome'
+      })
 
       expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith(
         `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
@@ -2078,7 +2478,7 @@ describe('SessionService', () => {
     it('prunes dead grace members when listing sessions', async () => {
       mockRedis.smembers.mockResolvedValue([])
 
-      await service.listSessions('user-1', 'tenant-1')
+      await service.listSessions({ userId: 'user-1', tenantId: 'tenant-1' })
 
       expect(mockRedis.pruneExpiredGraceMembers).toHaveBeenCalledWith(
         `sess:${hmacSha256('dashboard:tenant-1:user-1', HMAC_KEY)}`,
@@ -2094,7 +2494,9 @@ describe('SessionService', () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 
       try {
-        await expect(service.listSessions('user-1', 'tenant-1')).resolves.toEqual([])
+        await expect(
+          service.listSessions({ userId: 'user-1', tenantId: 'tenant-1' })
+        ).resolves.toEqual([])
         // Let the fire-and-forget rejection settle before asserting on the log.
         await Promise.resolve()
         // Named, not merely counted: an operator seeing a run of these needs to know the prune
@@ -2119,17 +2521,34 @@ describe('SessionService', () => {
     it.each([
       [
         'createSession',
-        (s: SessionService) => s.createSession('user-1', '', 'raw', '1.2.3.4', 'UA')
+        (s: SessionService) =>
+          s.createSession({
+            userId: 'user-1',
+            tenantId: '',
+            rawRefreshToken: 'raw',
+            ip: '1.2.3.4',
+            userAgent: 'UA'
+          })
       ],
-      ['listSessions', (s: SessionService) => s.listSessions('user-1', '')],
-      ['revokeSession', (s: SessionService) => s.revokeSession('user-1', '', 'a'.repeat(64))],
+      ['listSessions', (s: SessionService) => s.listSessions({ userId: 'user-1', tenantId: '' })],
+      [
+        'revokeSession',
+        (s: SessionService) =>
+          s.revokeSession({ userId: 'user-1', tenantId: '', sessionHash: 'a'.repeat(64) })
+      ],
       [
         'revokeOtherSession',
-        (s: SessionService) => s.revokeOtherSession('user-1', '', 'a'.repeat(64))
+        (s: SessionService) =>
+          s.revokeOtherSession({ userId: 'user-1', tenantId: '', sessionHash: 'a'.repeat(64) })
       ],
       [
         'revokeAllExceptCurrent',
-        (s: SessionService) => s.revokeAllExceptCurrent('user-1', '', 'a'.repeat(64))
+        (s: SessionService) =>
+          s.revokeAllExceptCurrent({
+            userId: 'user-1',
+            tenantId: '',
+            currentSessionHash: 'a'.repeat(64)
+          })
       ]
     ])('%s refuses it', async (_label, call) => {
       // The DETAILS, not merely the exception type. `rejects.toThrow(AuthException)` passes for a

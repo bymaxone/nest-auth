@@ -66,9 +66,27 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   The platform plane keeps no tenant segment. Its admins are cross-tenant and have none, exactly
   as `userSubject`'s platform arm has always said.
 
-  **Apply to a derived backend.** Five methods take the tenant they always needed:
-  `SessionService.createSession`, `.listSessions`, `.revokeSession`, `.revokeOtherSession` and
-  `.revokeAllExceptCurrent`, plus `AuthService.revokeAllSessions` and the three
+  **Apply to a derived backend.** The five `SessionService` methods —
+  `createSession`, `listSessions`, `revokeSession`, `revokeOtherSession`,
+  `revokeAllExceptCurrent` — now take a **single object** instead of positional arguments:
+
+  ```ts
+  // before
+  await sessions.listSessions(user.sub, currentHash)
+  // after
+  await sessions.listSessions({ userId: user.sub, tenantId: user.tenantId, currentSessionHash })
+  ```
+
+  The object is the point, not a style preference. Threading the tenant through positionally put
+  a second `string` beside `userId`, and the old two-argument call **still compiled** against the
+  new signature — binding the session hash to `tenantId` and returning an empty listing that is
+  indistinguishable from "this user has no sessions". On `revokeSession` the same transposition
+  is a revocation that silently reaches nothing. A named field cannot be transposed; the worst it
+  can be is misspelled, which the compiler catches. `CreateSessionParams`, `ListSessionsParams`,
+  `RevokeSessionParams` and `RevokeAllExceptCurrentParams` are exported from the package entry so
+  a caller can name the shape.
+
+  Also taking the tenant they always needed: `AuthService.revokeAllSessions` and the three
   `AuthRedisService` entry points (`invalidateUserSessions`, `getUserTokenEpoch`,
   `bumpUserTokenEpoch`), whose `kind` argument also **loses its default** — a positional tenant
   next to a positional plane is a transposition nobody notices, and the two call sites that

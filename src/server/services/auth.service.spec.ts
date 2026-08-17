@@ -2091,13 +2091,13 @@ describe('AuthService', () => {
 
       await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        'user-1',
-        'tenant-1',
-        AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'Browser'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'Browser'
+      })
     })
 
     /*
@@ -2778,13 +2778,13 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        USER.id,
-        'tenant-1',
-        AUTH_RESULT.rawRefreshToken,
-        expect.any(String),
-        expect.any(String)
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: expect.any(String),
+        userAgent: expect.any(String)
+      })
     })
 
     // Verifies that login calls sessionService.createSession with the user id and raw refresh token when sessions are enabled.
@@ -2806,13 +2806,13 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        USER.id,
-        'tenant-1',
-        AUTH_RESULT.rawRefreshToken,
-        expect.any(String),
-        expect.any(String)
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: expect.any(String),
+        userAgent: expect.any(String)
+      })
     })
 
     // Verifies that logout calls sessionService.revokeSession with the user id and the sha256 hash of the refresh token.
@@ -2829,11 +2829,11 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.revokeSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(
-        USER.id,
-        USER.tenantId,
-        expect.stringMatching(/^[a-f0-9]{64}$/)
-      )
+      expect(mockSessionService.revokeSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: USER.tenantId,
+        sessionHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
     })
 
     // A record written before the session index carried a tenant. The index key cannot be named

@@ -2585,13 +2585,13 @@ describe('MfaService', () => {
 
       await sessionEnabledService.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        SAFE_USER.id,
-        'tenant-1',
-        MOCK_AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'Browser'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: SAFE_USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: MOCK_AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'Browser'
+      })
     })
   })
 

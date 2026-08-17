@@ -251,6 +251,22 @@ export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).
 export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
+
+/**
+ * The parameter objects of {@link SessionService}'s five entry points.
+ *
+ * Exported because a consumer building one — a scheduled sweep, an admin console — should be able
+ * to name its shape rather than assemble an object literal and hope. Objects rather than
+ * positional arguments because most of these fields are `string`: `listSessions(userId, hash)`
+ * type checked against the old positional form and treated the hash as the tenant, returning an
+ * empty listing indistinguishable from "this user has no sessions".
+ */
+export type {
+  CreateSessionParams,
+  ListSessionsParams,
+  RevokeAllExceptCurrentParams,
+  RevokeSessionParams
+} from './services/session.service'
 // `TokenDeliveryService` (v1.0.10+) is the only correct way to set the lib's
 // auth cookies on a custom controller's response — replicating the cookie
 // attributes inline would silently drift when the lib changes. Use it from

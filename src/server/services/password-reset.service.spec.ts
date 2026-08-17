@@ -302,11 +302,11 @@ describe('PasswordResetService', () => {
     it('ends every other session, keeping the caller signed in', async () => {
       await service.changePassword('u1', dto, 'raw-refresh')
 
-      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
-        'u1',
-        'tenant-1',
-        sha256('raw-refresh')
-      )
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
+        userId: 'u1',
+        tenantId: 'tenant-1',
+        currentSessionHash: sha256('raw-refresh')
+      })
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 

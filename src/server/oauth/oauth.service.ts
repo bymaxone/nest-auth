@@ -514,13 +514,13 @@ export class OAuthService {
 
     // Create a tracked session if session management is enabled.
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(
-        safeUser.id,
-        safeUser.tenantId,
-        result.rawRefreshToken,
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
         ip,
         userAgent
-      )
+      })
     }
 
     this.logger.log(

@@ -1735,29 +1735,22 @@ class SessionService {
    * 7. Runs the onNewSession hook
    *
    * @param userId User ID
-   * @param tenantId Tenant the account belongs to; scopes the session index
-   * @param refreshToken Opaque session token
-   * @param ipAddress Request IP
-   * @param userAgent Request User-Agent
+   * Takes an OBJECT, not positional arguments: most of these fields are `string`, so any two of
+   * them can be swapped without the compiler noticing. `listSessions(userId, currentHash)` type
+   * checked against the earlier positional form and treated the hash as the tenant, returning an
+   * empty listing indistinguishable from "this user has no sessions".
+   *
+   * @param params See CreateSessionParams — userId, tenantId, rawRefreshToken, ip, userAgent
    */
-  createSession(
-    userId: string,
-    tenantId: string,
-    refreshToken: string,
-    ipAddress: string,
-    userAgent: string
-  ): Promise<void>
+  createSession(params: CreateSessionParams): Promise<string>
 
   /**
    * Lists all of the user's active sessions.
    *
+   * @param params See ListSessionsParams — userId, tenantId, currentSessionHash?
    * @returns Array of sessions with device, IP, timestamps, and a current-session indicator
    */
-  listSessions(
-    userId: string,
-    tenantId: string,
-    currentSessionHash?: string
-  ): Promise<SessionInfo[]>
+  listSessions(params: ListSessionsParams): Promise<SessionInfo[]>
 
   /**
    * Revokes a specific session.
@@ -1771,17 +1764,13 @@ class SessionService {
    *
    * @throws AUTH_ERROR_CODES.SESSION_NOT_FOUND if session not found
    */
-  revokeSession(userId: string, tenantId: string, sessionHash: string): Promise<void>
+  revokeSession(params: RevokeSessionParams): Promise<void>
 
   /**
    * Revokes all sessions except the current one.
    * Useful for "log out of all other devices".
    */
-  revokeAllExceptCurrent(
-    userId: string,
-    tenantId: string,
-    currentSessionHash: string
-  ): Promise<void>
+  revokeAllExceptCurrent(params: RevokeAllExceptCurrentParams): Promise<void>
 
   /**
    * Applies the session limit using the FIFO strategy.

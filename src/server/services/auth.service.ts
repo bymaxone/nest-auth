@@ -253,13 +253,13 @@ export class AuthService {
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(
-        safeUser.id,
-        safeUser.tenantId,
-        result.rawRefreshToken,
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
         ip,
         userAgent
-      )
+      })
     }
 
     this.logger.log(
@@ -448,13 +448,13 @@ export class AuthService {
 
     // Track the session when sessions are enabled (enforces concurrent session limit).
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(
-        safeUser.id,
-        safeUser.tenantId,
-        result.rawRefreshToken,
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
         ip,
         userAgent
-      )
+      })
     }
 
     this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
@@ -545,7 +545,7 @@ export class AuthService {
     // reading like a revocation that happened.
     if (this.options.sessions.enabled && userId && tenantId !== undefined) {
       await this.sessionService
-        .revokeSession(userId, tenantId, sessionHash)
+        .revokeSession({ userId, tenantId, sessionHash })
         .catch((err: unknown) => {
           const errCode =
             err instanceof AuthException
@@ -858,13 +858,13 @@ export class AuthService {
     const result = await this.tokenManager.issueTokens(safeUser, ip, userAgent)
 
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(
-        safeUser.id,
-        safeUser.tenantId,
-        result.rawRefreshToken,
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
         ip,
         userAgent
-      )
+      })
     }
 
     this.logger.log(

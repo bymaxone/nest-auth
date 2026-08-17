@@ -865,13 +865,13 @@ describe('InvitationService', () => {
       await svcWithSessions.acceptInvitation(dto, TEST_IP, TEST_AGENT, TEST_HEADERS)
 
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        AUTH_USER.id,
-        'tenant-1',
-        AUTH_RESULT.rawRefreshToken,
-        TEST_IP,
-        TEST_AGENT
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: AUTH_USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: TEST_IP,
+        userAgent: TEST_AGENT
+      })
     })
 
     // Verifies that the service completes without error when afterInvitationAccepted is not defined on hooks.

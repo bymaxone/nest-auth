@@ -182,6 +182,71 @@ function toSafeUser(user: AuthUser): SafeAuthUser {
 // ---------------------------------------------------------------------------
 
 /**
+ * Everything {@link SessionService.createSession} needs to record a session.
+ *
+ * An object rather than positional arguments, and the reason is the subject of this release: four
+ * of the five fields are `string`, so any two of them can be swapped without the compiler
+ * noticing. `createSession(userId, rawRefreshToken, ip, userAgent)` — the shape before the tenant
+ * was threaded through — still type checks against a positional signature that inserted
+ * `tenantId` second, and silently records the session under a tenant named by a refresh token.
+ * A named field cannot be transposed; at worst it is misspelled, which is a compile error.
+ */
+export interface CreateSessionParams {
+  /** Internal user ID for whom the session is being created. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** The raw opaque refresh token; hashed before storage. */
+  rawRefreshToken: string
+  /** Client IP address for the new session. */
+  ip: string
+  /** Raw `User-Agent` header value, for device detection. */
+  userAgent: string
+}
+
+/** Everything {@link SessionService.listSessions} needs. See {@link CreateSessionParams}. */
+export interface ListSessionsParams {
+  /** Internal user ID whose sessions are being listed. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /**
+   * SHA-256 hash of the caller's active session, when known; the matching entry comes back with
+   * `isCurrent: true`. Optional, which is what made the positional form dangerous — arity did not
+   * catch a two-argument call.
+   *
+   * Written `?: string | undefined` rather than `?: string` because the project runs
+   * `exactOptionalPropertyTypes`: under it the two are different types, and a caller forwarding a
+   * value it already holds as `string | undefined` — which every controller reading an optional
+   * header does — cannot assign to the narrower one.
+   */
+  currentSessionHash?: string | undefined
+}
+
+/**
+ * Names one session to revoke, for {@link SessionService.revokeSession} and
+ * {@link SessionService.revokeOtherSession}. See {@link CreateSessionParams}.
+ */
+export interface RevokeSessionParams {
+  /** Internal user ID that must own the session. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** SHA-256 hash of the session being revoked. */
+  sessionHash: string
+}
+
+/** Everything {@link SessionService.revokeAllExceptCurrent} needs. See {@link CreateSessionParams}. */
+export interface RevokeAllExceptCurrentParams {
+  /** Internal user ID whose other sessions are ending. */
+  userId: string
+  /** Tenant that user belongs to; scopes the session index. */
+  tenantId: string
+  /** SHA-256 hash of the session to KEEP — the caller's own. */
+  currentSessionHash: string
+}
+
+/**
  * Manages user session lifecycle for @bymax-one/nest-auth.
  *
  * Handles session creation, concurrent session enforcement (FIFO eviction),
@@ -255,19 +320,16 @@ export class SessionService {
    * before the SET member is committed, the limit check will see one fewer
    * session than actually exists, allowing a permanent extra session.
    *
-   * @param userId - Internal user ID for whom the session is being created.
-   * @param rawRefreshToken - The raw opaque refresh token (hashed before storage).
-   * @param ip - Client IP address for the new session.
-   * @param userAgent - Raw `User-Agent` header value for device detection.
+   * @param params - See {@link CreateSessionParams}.
    * @returns The SHA-256 hash of `rawRefreshToken` used as the session key.
    */
-  async createSession(
-    userId: string,
-    tenantId: string,
-    rawRefreshToken: string,
-    ip: string,
-    userAgent: string
-  ): Promise<string> {
+  async createSession({
+    userId,
+    tenantId,
+    rawRefreshToken,
+    ip,
+    userAgent
+  }: CreateSessionParams): Promise<string> {
     this.assertTenant(tenantId)
     const hash = sha256(rawRefreshToken)
     const device = parseUserAgent(userAgent)
@@ -337,16 +399,14 @@ export class SessionService {
    *
    * Results are sorted by `createdAt` descending (newest session first).
    *
-   * @param userId - Internal user ID whose sessions are being listed.
-   * @param currentSessionHash - Optional SHA-256 hash of the caller's active session;
-   *   matched session will have `isCurrent: true`.
+   * @param params - See {@link ListSessionsParams}.
    * @returns Array of {@link SessionInfo} sorted newest-first.
    */
-  async listSessions(
-    userId: string,
-    tenantId: string,
-    currentSessionHash?: string
-  ): Promise<SessionInfo[]> {
+  async listSessions({
+    userId,
+    tenantId,
+    currentSessionHash
+  }: ListSessionsParams): Promise<SessionInfo[]> {
     this.assertTenant(tenantId)
     // Drop the grace members whose pointers have already expired, before reading the index.
     // A rotation adds one per refresh and only a revoke-all ever removed them, so an account
@@ -461,7 +521,7 @@ export class SessionService {
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
-  async revokeSession(userId: string, tenantId: string, sessionHash: string): Promise<void> {
+  async revokeSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(sessionHash)
 
@@ -504,9 +564,9 @@ export class SessionService {
    * @param sessionHash - SHA-256 hash of the refresh token identifying the session.
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
-  async revokeOtherSession(userId: string, tenantId: string, sessionHash: string): Promise<void> {
+  async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
     this.assertTenant(tenantId)
-    await this.revokeSession(userId, tenantId, sessionHash)
+    await this.revokeSession({ userId, tenantId, sessionHash })
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access
     // token for a session that is in fact still alive.
@@ -540,11 +600,11 @@ export class SessionService {
    * @throws {unknown} Propagates any error thrown by `revokeSession` — including
    *   {@link AuthException} with various codes, Redis errors, or other runtime errors.
    */
-  async revokeAllExceptCurrent(
-    userId: string,
-    tenantId: string,
-    currentSessionHash: string
-  ): Promise<void> {
+  async revokeAllExceptCurrent({
+    userId,
+    tenantId,
+    currentSessionHash
+  }: RevokeAllExceptCurrentParams): Promise<void> {
     this.assertTenant(tenantId)
     this.assertValidSessionHash(currentSessionHash)
 
@@ -557,7 +617,7 @@ export class SessionService {
       if (timingSafeCompare(hash, currentSessionHash)) continue
 
       try {
-        await this.revokeSession(userId, tenantId, hash)
+        await this.revokeSession({ userId, tenantId, sessionHash: hash })
       } catch (err: unknown) {
         // SESSION_NOT_FOUND is expected when a concurrent logout already removed
         // this session between our SMEMBERS read and the Lua revocation. Any

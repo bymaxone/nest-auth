@@ -585,11 +585,11 @@ export class PasswordResetService {
     // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
     // session sweep alone leaves valid until they expire.
     if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
-      await this.sessionService.revokeAllExceptCurrent(
+      await this.sessionService.revokeAllExceptCurrent({
         userId,
-        user.tenantId,
-        sha256(currentRefreshToken)
-      )
+        tenantId: user.tenantId,
+        currentSessionHash: sha256(currentRefreshToken)
+      })
     } else {
       await this.redis.invalidateUserSessions(userId, user.tenantId, 'dashboard')
       await this.redis.bumpUserTokenEpoch(userId, user.tenantId, 'dashboard')

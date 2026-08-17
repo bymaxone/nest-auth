@@ -711,13 +711,13 @@ export class InvitationService {
     // Omitting this would leave the invitation-created account invisible in
     // GET /sessions and unrevokable via DELETE /sessions/:id.
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(
-        safeUser.id,
-        safeUser.tenantId,
-        result.rawRefreshToken,
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
         ip,
         userAgent
-      )
+      })
     }
 
     this.logger.log(
