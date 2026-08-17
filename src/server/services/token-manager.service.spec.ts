@@ -861,12 +861,14 @@ describe('TokenManagerService', () => {
     })
 
     // The same case, in the LOG rather than the hook — and the log is what an on-call reads.
-    // A family with no live member is the second-and-later replay of one already torn down: the
-    // consumed marker outlives the sessions it points at, so reuse is detected again while every
-    // record that could name the owner is gone. The line used to read `userId=` there, an empty
-    // field on the strongest compromise signal this library produces, precisely on REPEAT attack
-    // traffic. An empty field reads as a defect in the logger and makes a reader distrust the
-    // tool rather than the event.
+    // `revokeFamily` names no owner when no member record does. The way that usually happens is
+    // the second-and-later replay of an already-revoked family — the consumed marker outlives the
+    // sessions it points at, so reuse is detected again while every record that could name the
+    // owner is gone — but a member can also have expired, failed to parse, or carried no `userId`,
+    // and the three are indistinguishable from here. The line used to read `userId=` in all of
+    // them: an empty field on the strongest compromise signal this library produces, precisely on
+    // REPEAT attack traffic. An empty field reads as a defect in the logger and makes a reader
+    // distrust the tool rather than the event.
     it('says the owner is unknown, and what was observed, when the family names none', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
