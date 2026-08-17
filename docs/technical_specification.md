@@ -1757,7 +1757,7 @@ class SessionService {
    *
    * Flow:
    * 1. Verifies that sessionHash belongs to the user via SISMEMBER on the derived session
-   *    index — `auth:sess:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{userId}")}`, not the
+   *    index — `auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`, not the
    *    bare-id key this document described before the index was tenant-scoped
    * 2. If it does not belong, throws SESSION_NOT_FOUND (prevents BOLA/IDOR)
    * 3. Removes the refresh token, the session from the SET, and the session details
@@ -3265,7 +3265,8 @@ rather than a missing feature.
 
 The session keyspaces are keyed by different things on purpose. A rotation touches
 `rt:{oldHash}`, `rt:{newHash}`, `rp:{oldHash}`, `cf:{oldHash}`, `fam:{familyId}`
-and the derived session index `sess:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{userId}")}`
+and the derived session index
+`sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`
 in one atomic step — six keys derived from four unrelated
 identifiers, with no hash tag among them. Cluster assigns slots by key, so those
 six land on up to six nodes and the script is refused with `CROSSSLOT Keys in

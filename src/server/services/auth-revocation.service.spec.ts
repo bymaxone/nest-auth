@@ -105,7 +105,7 @@ describe('AuthRevocationService', () => {
 
   /**
    * Fail-closed on a dashboard payload with no tenant.
-   * Rule: the epoch key is derived from `dashboard:{tenantId}:{userId}`, and an absent tenant
+   * Rule: the epoch key is derived from the tenant-scoped subject, and an absent tenant
    * interpolates as the literal `undefined` — a keyspace belonging to no tenant, where nothing has
    * ever been bumped. Reading it answers 0, `stamped < 0` is false for every token, and a
    * bulk-revoked token would be reported VALID. This service is exported for callers that never

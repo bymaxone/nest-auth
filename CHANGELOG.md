@@ -116,13 +116,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   can get an account suspended in their own tenant.
 
   Both keys now derive the way every other account-naming key in this library already did:
-  `{prefix}:{hmac_sha256(hmacKey, userSubject)}`, where `userSubject` is
-  `dashboard:{tenantId}:{userId}` or `platform:{userId}`. That shape was not invented here — it
-  is the preimage the five MFA store keys, the three MFA failure counters and the
-  recent-authentication marker have used since they were fixed for the same reason, and the wire
-  contract already carried its argument. The two joining it close the gap between what
-  `recentAuthKey`'s own documentation claimed — _"keyed by HMAC rather than the raw id, like
-  every other user-derived key in this library"_ — and what was true.
+  `{prefix}:{hmac_sha256(hmacKey, userSubject)}`. The **derivation** was not invented here — it is
+  what the five MFA store keys, the three MFA failure counters and the recent-authentication
+  marker have used since they were fixed for the same reason, and the wire contract already
+  carried its argument. The two joining it close the gap between what `recentAuthKey`'s own
+  documentation claimed — _"keyed by HMAC rather than the raw id, like every other user-derived
+  key in this library"_ — and what was true.
+
+  The **subject** those keys are derived from does change in this release, and the entry above is
+  why: it is now `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}` on the dashboard plane
+  and `platform:{userId}` on the platform one. The form it inherited from the MFA keyspace —
+  `dashboard:{tenantId}:{userId}`, without the length prefix — is the one that was not injective.
 
   The HMAC is the second half and it matters on its own: rust-auth reads this keyspace, so a
   bare id there was an account identifier in the clear to anyone with store access. A user id
@@ -180,20 +184,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   sessions survive a revoke-all that never saw them. **Both libraries must ship this in the same
   release.**
 
-  **Three paths now fail closed on a dashboard subject with no tenant**, because
-  `userSubject` builds `dashboard:{tenantId}:{userId}` and an absent tenant interpolates as the
-  literal text `undefined` — a keyspace belonging to no tenant, in which nothing has ever been
-  written. The MFA flows already refused a blank tenant for exactly this reason; these three did
+  **Three paths now fail closed on a dashboard subject with no tenant**, because an absent
+  tenant interpolates as the literal text `undefined`, so `userSubject` builds
+  `dashboard:9:undefined:{userId}` — a keyspace belonging to no tenant, in which nothing has ever
+  been written. The MFA flows already refused a blank tenant for exactly this reason; these three did
   not.
 
   - `AuthRevocationService.isAccessTokenRevoked` **failed open**: it read the epoch under
-    `dashboard:undefined:{sub}`, got `0`, and reported a bulk-revoked token as valid. It is
+    `dashboard:9:undefined:{sub}`, got `0`, and reported a bulk-revoked token as valid. It is
     exported for callers that never pass a guard — a realtime bridge checking a socket — and its
     payload type marks `tenantId` optional, so the omission is a shape a caller can produce. A
     dashboard payload without a tenant is now treated as **revoked**, without touching the store.
   - `reissueTokens` accepted a **pre-upgrade record**: `parseSession` validates `userId`, `role`
     and `mfaEnabled` but never `tenantId`, so a session written before this change rotated into
-    `dashboard:undefined:{userId}` and minted an access token with no tenant claim — one every
+    `dashboard:9:undefined:{userId}` and minted an access token with no tenant claim — one every
     dashboard guard then refuses. The caller held a session that could be neither used nor
     revoked. Both the primary and the grace-recovery path now refuse it as
     `REFRESH_TOKEN_INVALID`; the platform plane is exempt, its subject carries no tenant segment.
