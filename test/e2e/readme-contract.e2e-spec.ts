@@ -23,7 +23,10 @@ import { join } from 'node:path'
 
 import ts from 'typescript'
 
-import { AUTH_SECURITY_SCHEMES } from '../../src/server/openapi/auth-openapi-fragment'
+// Through the package entry, not the implementation module. This branch is the one that adds
+// that export, so reading it here is both the convention and a use of the thing being shipped:
+// the scheme-table arm now compares the README against the exact value a consumer receives.
+import { AUTH_SECURITY_SCHEMES } from '../../src/server/index'
 
 /**
  * Recorded when a barrel uses `export * from`, which names nothing this suite can collect.
@@ -31,6 +34,15 @@ import { AUTH_SECURITY_SCHEMES } from '../../src/server/openapi/auth-openapi-fra
  * Not a name a barrel could export — so it can only appear because a star export did.
  */
 const STAR_EXPORT_MARKER = '*'
+
+/**
+ * `bymax`-prefixed tokens that are not scheme names and never will be.
+ *
+ * One entry: the GitHub organisation, which the README names 15 times. Kept as an explicit list
+ * because the alternative — a pattern shaped so the organisation falls outside it — excluded real
+ * misspellings as a side effect and no reader could tell that from the regex.
+ */
+const NOT_A_SCHEME: ReadonlySet<string> = new Set(['bymaxone'])
 
 /** The scheme table's header cell, which is how it is found rather than by line number. */
 const TABLE_HEADER = 'what the document says'
@@ -110,6 +122,24 @@ function documentedImports(): Map<string, Set<string>> {
   }
 
   return found
+}
+
+/**
+ * Every `import` of this package the README shows that is NOT a named-import form.
+ *
+ * `documentedImports` parses `import { … } from '…'` and nothing else, so a default or namespace
+ * import produced no map entry at all — and this package has **no default export**, which makes
+ * `import Auth from '@bymax-one/nest-auth'` a broken consumer example that left both the subpath
+ * and the symbol arms green. Silence read as "nothing to check" where it meant "the one form that
+ * cannot work".
+ *
+ * @returns Each offending import statement, verbatim, for a failure message that shows the line.
+ */
+function nonNamedImports(): string[] {
+  // Anything importing this package that does not open with `{` after the (optional) `type`.
+  const pattern = /import\s+(?!type\s+\{)(?!\{)[^;\n]*?from\s+'(@bymax-one\/nest-auth[^']*)'/g
+
+  return [...README.matchAll(pattern)].map((match) => match[0])
 }
 
 /**
@@ -271,6 +301,14 @@ describe('README contract (E2E)', () => {
     expect(broken).toEqual([])
   })
 
+  // This package exports named bindings only — there is no default and no namespace worth
+  // documenting. A README showing `import Auth from '@bymax-one/nest-auth'` is a broken example a
+  // reader copies verbatim, and the named-import parser above is blind to it by construction: it
+  // matches nothing, contributes nothing, and every other arm then passes on an empty set.
+  it('documents no import form this package cannot satisfy', () => {
+    expect(nonNamedImports()).toEqual([])
+  })
+
   // `export *` would make the arm above under-report — it names nothing, so every symbol behind
   // it would read as missing (a false failure) or, if this suite were made lenient, as present
   // (a false pass). Neither is acceptable, so the shape itself is what is pinned: if a barrel
@@ -327,24 +365,32 @@ describe('README contract (E2E)', () => {
     // Invention is asked of the whole document, and deliberately: a scheme name the prose made up
     // sends a reader to write a literal that matches nothing, wherever the sentence sits.
     //
-    // Two things the candidate pattern must not do, each of which it did in turn.
+    // Four things the candidate pattern must not do, each of which it did in turn.
     //
     // It must not require the spellings it is hunting for: `bymax[A-Za-z]*(?:Auth|Platform)…`
     // never matched `bymaxAythAccessCookie`, so a transposed letter — the likeliest way a
     // hand-written name goes wrong — was not even a candidate.
     //
-    // And it must not require Markdown delimiters. Backtick-wrapped only left the fenced-code
-    // comment and the object expression uncovered: `bymaxAuthAccessCookie` appears 5 times bare
-    // against 3 in backticks, so two of its five mentions were invisible.
+    // It must not require Markdown delimiters. Backtick-wrapped only left the fenced-code comment
+    // and the object expression uncovered: `bymaxAuthAccessCookie` appears 5 times bare against 3
+    // in backticks, so two of its five mentions were invisible.
     //
-    // The shape that remains is the schemes' own: `bymax` followed by an UPPERCASE letter. That
-    // is what excludes `bymaxone`, the GitHub organisation, which appears 15 times and is not a
-    // scheme. The trade is that a lowercased first segment (`bymaxauthAccessCookie`) is not a
-    // candidate — a different mistake from a misspelling, and one no reader would write while
-    // copying a camelCase name.
-    const invented = [...README.matchAll(/(bymax[A-Z][A-Za-z]*)/g)]
+    // It must not require a shape either. `bymax[A-Z]…` excluded the organisation name for free,
+    // which was convenient and wrong twice over: `bymaxauthAccessCookie` produced no candidate,
+    // and `bymaxAuthAccessCookie_2` TRUNCATED at the underscore and read as the valid name — an
+    // invented scheme passing because the pattern stopped before the part that made it invented.
+    //
+    // So it matches a whole identifier-like token, and the organisation is excluded by NAME. That
+    // exclusion is a list of one, stated where a reader can see it, rather than a shape rule
+    // whose consequences have to be worked out.
+    //
+    // The `+` is load-bearing: with `*`, the `bymax` in `@bymax-one/nest-auth` matched as a bare
+    // prefix — the hyphen is not an identifier character, so the token ended there — and every
+    // package specifier in the document became an invented scheme.
+    const invented = [...README.matchAll(/(bymax[A-Za-z0-9_$]+)/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined)
+      .filter((name) => !NOT_A_SCHEME.has(name))
       .filter((name) => !declared.includes(name as (typeof declared)[number]))
 
     expect([...new Set(invented)]).toEqual([])
