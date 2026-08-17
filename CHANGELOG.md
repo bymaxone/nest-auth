@@ -30,10 +30,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   compromise it produces, and `userId` is the only field an on-call can act on. It emptied
   precisely on **repeat** attack traffic, which is the traffic worth reading.
 
-  The line now says what is unknown and why: `userId=<unknown: every session in this family was
-already revoked>`. An empty field reads as a defect in the logger and makes a reader distrust
-  the tool instead of the event; a family being torn down twice is itself the fact worth seeing.
-  The `familyId` is still named, because it is the only handle left on the lineage.
+  The line now says what is unknown and what was measured:
+  `userId=<unknown: no live session remains in this family to name it>`. An empty field reads as a
+  defect in the logger and makes a reader distrust the tool instead of the event; a family with no
+  readable member is itself the fact worth seeing. The `familyId` is still named, because it is
+  the only handle left on the lineage.
+
+  It names the observation and not a cause on purpose. `readFamilyOwner` answers with nothing for
+  three different reasons — every member record gone, a member whose JSON will not parse, a member
+  carrying no `userId` — and only the first is the already-revoked case, which even then cannot be
+  told apart from ordinary TTL expiry. A line asserting "already revoked" would send an on-call
+  looking for a revocation during what may be store corruption.
 
   Reported by the `@bymax-one/bymax-one` seat from a measured audit against real Postgres and
   Redis — two runs of the same path, one populated and one not. The cause was traced rather than

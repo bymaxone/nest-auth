@@ -18,13 +18,17 @@ describe('ownerFragment', () => {
   // an already-revoked family — the consumed marker outlives the sessions it points at, so reuse
   // is detected again while every record that could name the owner is gone. An empty `userId=`
   // reads as a defect in the logger, which makes a reader distrust the tool instead of the event.
-  it('says the owner is unknown, and why, when no member survived', () => {
-    const line = ownerFragment('')
-
-    expect(line).toContain('unknown')
-    expect(line).toContain('already revoked')
-    // Never the bare field, which is the shape being fixed.
-    expect(line).not.toBe('userId=')
+  //
+  // Asserted whole, not by substring. A `toContain('unknown')` pair passed the wording this
+  // replaced — which claimed the family had been "already revoked", a cause `readFamilyOwner`
+  // cannot distinguish from expiry or from a record that will not parse. Substrings survive a
+  // rewrite that changes what the line MEANS, so the exact fragment is the assertion, and the
+  // literal is written out here rather than imported: a test that reads the value from the code
+  // it is checking pins nothing.
+  it('says the owner is unknown, and what was observed, when no member named one', () => {
+    expect(ownerFragment('')).toBe(
+      'userId=<unknown: no live session remains in this family to name it>'
+    )
   })
 
   // The owner comes off a stored record whose contents belong to the consumer, so it is guarded

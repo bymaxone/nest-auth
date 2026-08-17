@@ -867,7 +867,7 @@ describe('TokenManagerService', () => {
     // field on the strongest compromise signal this library produces, precisely on REPEAT attack
     // traffic. An empty field reads as a defect in the logger and makes a reader distrust the
     // tool rather than the event.
-    it('says the owner is unknown, and why, when the family names none', async () => {
+    it('says the owner is unknown, and what was observed, when the family names none', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
       mockRedis.revokeFamily.mockResolvedValue({ removed: 0, ownerId: '' })
@@ -876,13 +876,20 @@ describe('TokenManagerService', () => {
         AuthException
       )
 
-      const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
-      expect(warned).toContain('token family revoked after reuse detection')
-      expect(warned).toContain('already revoked')
-      // Never the bare field, which is the shape being fixed.
-      expect(warned).not.toContain('userId= ')
-      // The family is still named, because it is the only handle left on the lineage.
-      expect(warned).toContain(`familyId=${FAMILY}`)
+      // The whole line, not three substrings of it, and the line itself rather than every warning
+      // joined — the flow emits two, and joining them lets a substring assertion pass on text from
+      // the wrong one. `ownerFragment`'s own suite pins the fragment; what this pins is that the
+      // fragment reaches THIS line, in place of the bare `userId=` it used to carry, with the
+      // family still named beside it — the only handle left on the lineage once no member can
+      // name its owner.
+      const revocationLine = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .find((line) => line.includes('token family revoked'))
+
+      expect(revocationLine).toBe(
+        'reissueTokens: token family revoked after reuse detection ' +
+          `userId=<unknown: no live session remains in this family to name it> familyId=${FAMILY}`
+      )
       warnSpy.mockRestore()
     })
 
