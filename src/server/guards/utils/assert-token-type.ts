@@ -13,7 +13,7 @@ import { AuthException } from '../../errors/auth-exception'
  * produces UUID v4 strings. Enforcing the exact shape at the guard boundary
  * prevents a signed-but-malformed token (e.g. one whose `jti` contains colons,
  * slashes, or other characters) from being used to build unexpected Redis key
- * patterns downstream (`rv:${jti}`, `sess:${jti}`, etc.).
+ * patterns downstream (`rv:${jti}` and the derived session index, etc.).
  */
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -59,7 +59,7 @@ export function assertValidJti(jti: unknown): asserts jti is string {
  * Upper bound for the `sub` (subject) claim length.
  *
  * The `sub` value is used directly as the user-identifier component of
- * several Redis keys (`us:${sub}`, `sess:${sub}`, and downstream HMAC
+ * several Redis keys (`us:${sub}`, the derived session index, and downstream HMAC
  * inputs). A pathologically long subject (e.g. from a custom user-id
  * format that accidentally concatenated metadata) would bloat key sizes
  * and Redis memory without offering any legitimate value. 256 characters

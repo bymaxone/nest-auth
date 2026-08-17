@@ -86,8 +86,25 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   in `conformance/wire-contract.json` and byte-shared with `@bymax-one/rust-auth`; a backend on
   the old shape writes `sess:{userId}` while one on the new shape reads `sess:{hmac}`, so
   sessions survive a revoke-all that never saw them. **Both libraries must ship this in the same
-  release.** Live keyspaces need the old keys dropped or drained — a session index and an epoch
-  both expire on their own TTLs, so dropping costs a forced re-login and never a security hole.
+  release.**
+
+  **A live keyspace must be migrated, not dropped.** Deleting the old keys is unsafe in both
+  directions, and each direction is a hole rather than an inconvenience.
+
+  Deleting an old `ep:{userId}` does not expire the tokens it revoked. `getUserTokenEpoch` answers
+  `0` for an absent key — `Number(null)` is `0`, and that is deliberately the "never bumped"
+  default — and under `0` the `stamped < epoch` test is false for **every** token. A password
+  reset, an MFA reset or a sign-out-everywhere that had already invalidated an access token is
+  undone by the migration, and that token works again for the rest of its lifetime. Epochs must be
+  **copied** to the derived key, with a TTL at least the remainder of the old one, and only then
+  dropped. An epoch may never move backwards.
+
+  Deleting an old `sess:{userId}` does not end the sessions it listed. Its `rt:`/`rp:` members
+  outlive the index and become unreachable: a later revoke-all reads the new, empty index, finds
+  nothing to delete, and reports success while those refresh tokens keep rotating. Either re-add
+  the members under the derived index key, or delete the member keys and their `sd:` details
+  **before** dropping the index. The second costs a forced re-login and is the safer of the two;
+  the first preserves sessions and must be done atomically per user.
 
 ### Fixed
 

@@ -150,6 +150,22 @@ function getErrorCode(err: unknown): string {
   return (err.getResponse() as { error: { code: string } }).error.code
 }
 
+/**
+ * The platform session index key logout must prune, derived here rather than imported.
+ *
+ * Spelled out from the documented preimage — `platform:{userId}`, HMACed with `hmacKey`, under the
+ * `psess:` prefix — so this suite pins the KEY rather than agreeing with whatever
+ * `sessionIndexKey` currently returns. The three assertions below previously spelled
+ * `'psess:' + userId`, which is the pre-HMAC shape: they passed while logout wrote to a key
+ * nothing else read, so the tests that looked like coverage were the reason the site was missed.
+ *
+ * @param userId - The admin whose index is pruned.
+ * @returns The prefixed key.
+ */
+function platformIndexKey(userId: string): string {
+  return 'psess:' + hmacSha256('platform:' + userId, HMAC_KEY)
+}
+
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
 
@@ -589,8 +605,8 @@ describe('PlatformAuthService', () => {
 
       await service.logout('access.jwt', rawRefreshToken)
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prp:' + tokenHash)
       expect(mockRedis.del).toHaveBeenCalledWith('psd:' + tokenHash)
     })
 
@@ -633,15 +649,15 @@ describe('PlatformAuthService', () => {
 
     // Verifies that prt:{hash} is removed from the per-user psess: SET so that
     // a future revokeAllPlatformSessions call does not try to delete an already-gone key.
-    it('should srem prt:{hash} from psess:{userId}', async () => {
+    it('should srem prt:{hash} from the derived platform index', async () => {
       await service.logout('access.jwt', rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prt:' + tokenHash)
     })
 
     // Verifies that prp:{hash} is also removed from the per-user psess: SET.
-    it('should srem prp:{hash} from psess:{userId}', async () => {
+    it('should srem prp:{hash} from the derived platform index', async () => {
       await service.logout('access.jwt', rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prp:' + tokenHash)
     })
   })
 

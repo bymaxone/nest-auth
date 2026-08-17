@@ -114,7 +114,7 @@
       "must obey. Both implementations must gate on the same witness, or one of them keeps the",
       "window the other closed."
     ],
-    "gate": "EXISTS {sessionIndex}:{userId}, and EXISTS {familyIndex}:{familyId} when the record names a family",
+    "gate": "EXISTS {sessionIndex}, and EXISTS {familyIndex}:{familyId} when the record names a family",
     "writes": [
       "refreshSession",
       "sessionIndex",
@@ -233,10 +233,24 @@
       "",
       "**This change has no compatibility path and needs both libraries in the same release.** A",
       "backend on the old shape writes `sess:{userId}` while one on the new shape reads",
-      "`sess:{hmac}`: sessions stay alive and unswept, and a revoke-all misses them. Live keyspaces",
-      "need the old keys draining or dropping; a session index and an epoch both expire on their",
-      "own TTLs, so dropping costs a forced re-login and never a security hole."
-    ]
+      "`sess:{hmac}`: sessions stay alive and unswept, and a revoke-all misses them.",
+      "",
+      "**A live keyspace must be MIGRATED, not dropped.** Deleting the old keys is unsafe in both",
+      "directions, and each direction is a hole rather than an inconvenience.",
+      "",
+      "Deleting an old `ep:{userId}` does not expire the tokens it revoked. The reader answers 0",
+      "for an absent key, and under 0 the `stamped < epoch` test is false for EVERY token — so a",
+      "password reset, an MFA reset or a sign-out-everywhere that had already invalidated an",
+      "access token is undone, and that token works again for the rest of its lifetime. Epochs",
+      "must be COPIED to the derived key, with a TTL at least the remainder of the old one, and",
+      "only then dropped. An epoch may never move backwards.",
+      "",
+      "Deleting an old `sess:{userId}` does not end the sessions it listed. Its `rt:`/`rp:` members",
+      "outlive it and become unreachable: a later revoke-all reads the new, empty index, finds",
+      "nothing to delete and reports success while those refresh tokens keep rotating. Either",
+      "re-add the members under the derived index key, or delete the member keys and their detail",
+      "records BEFORE dropping the index. The second costs a forced re-login and is the safer of",
+      "the two; the first preserves sessions and must be done atomically per user."    ]
   },
   "identifierPreimages": {
     "$comment": [

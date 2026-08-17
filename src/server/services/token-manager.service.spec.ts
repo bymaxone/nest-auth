@@ -351,10 +351,17 @@ describe('TokenManagerService', () => {
       )
     })
 
-    // Scenario: platform issuance registers the prt: member in sess:{adminId} and sets the TTL.
-    // Expected: sadd(`sess:${hmacSha256('dashboard:tenant-1:admin-1', HMAC_KEY)}`, 'prt:<newHash>') and expire(`sess:${hmacSha256('dashboard:tenant-1:admin-1', HMAC_KEY)}`, 7*86400). Why:
-    // kills the StringLiteral mutants on lines 234 (key → '', member → '') and 235 (expire key → '').
-    it('adds the prt: member to psess:{adminId} and expires the SET with the refresh TTL', async () => {
+    // Scenario: a platform issuance, watching who writes the index.
+    // Expected: one `writeNewSession` carrying `kind: 'platform'` and the admin's id, and NO
+    // `sadd`/`expire` from the service itself. Why: index membership and its TTL are the atomic
+    // script's job — doing them here as a second step reopens the window where a revoke-all
+    // sweeps between the session write and the SADD and misses a session that already exists.
+    //
+    // The plane matters and the earlier version of this comment had it wrong: it named the
+    // DASHBOARD key, `sess:{hmac('dashboard:tenant-1:admin-1')}`, for a platform scenario whose
+    // key is `psess:{hmac('platform:admin-1')}`. The two never meet, which is what the sibling
+    // test below asserts; a comment naming the wrong one teaches the opposite of the design.
+    it('leaves index membership and its TTL to the atomic session write', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
