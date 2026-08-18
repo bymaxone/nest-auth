@@ -116,12 +116,24 @@ function readPort(
   // Fold inherited members down. `UpdatePasswordParams extends TenantScopedUserRef` declares no
   // `tenantId` of its own, and a rule that only read own-members would report it as unscoped —
   // failing on the shape that is actually correct, which is the way a gate loses its audience.
-  for (const [name, parents] of heritage) {
-    const own = localTypes.get(name)
-    if (!own) continue
-    for (const parent of parents) {
-      for (const [prop, type] of localTypes.get(parent) ?? []) {
-        if (!own.has(prop)) own.set(prop, type)
+  //
+  // Iterated to a FIXED POINT rather than in one pass. A single sweep is order-dependent: with
+  // `Child extends Parent` and `Parent extends Base`, a file declaring `Child` first processes it
+  // before `Parent` has received `Base.tenantId`, so a valid payload is reported as unscoped. The
+  // loop below cannot care about declaration order, which is what the comment above it claims.
+  // Bounded by the number of interfaces, since each pass either adds a property or stops.
+  for (let changed = true; changed;) {
+    changed = false
+    for (const [name, parents] of heritage) {
+      const own = localTypes.get(name)
+      if (!own) continue
+      for (const parent of parents) {
+        for (const [prop, type] of localTypes.get(parent) ?? []) {
+          if (!own.has(prop)) {
+            own.set(prop, type)
+            changed = true
+          }
+        }
       }
     }
   }
@@ -292,8 +304,15 @@ describe('tenant-scoped port', () => {
     // depends on: revert any one of these to positional strings and a stale implementation starts
     // compiling again.
     it('names an account through a single payload object', () => {
+      // Both halves, because either one alone passes the shape this arm exists to refuse. Testing
+      // only for a `string` parameter waves through two parameters, and a positional alias like
+      // `id: UserId` — a branded string is still a positional string. Testing only the count
+      // waves through `findById(id: string)`. The type must also RESOLVE to a payload declared in
+      // this file, which is what makes it an object rather than a rename.
       const positional = methods
-        .filter((method) => method.params.some((parameter) => parameter.type === 'string'))
+        .filter(
+          (method) => method.params.length !== 1 || !localTypes.has(method.params[0]?.type ?? '')
+        )
         .map((method) => method.name)
 
       expect(positional).toEqual([])

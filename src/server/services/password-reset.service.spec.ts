@@ -367,6 +367,12 @@ describe('PasswordResetService', () => {
     })
 
     // The tenant arm as its own failure: the same id in two tenants must not share one budget.
+    //
+    // Each identifier is asserted by VALUE, then the inequality on top. `toBeDefined()` would have
+    // been satisfied by any two strings, so a mutation that changed the derivation — dropping the
+    // flow prefix, swapping the subject for the bare id — still produced two defined, different
+    // values and survived. The inequality alone states the isolation; the values state that the
+    // isolation comes from the preimage this code is supposed to build.
     it('gives the same id in two tenants two different budgets', async () => {
       await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
       const first = mockBruteForce.resetFailures.mock.calls[0]?.[0]
@@ -375,8 +381,12 @@ describe('PasswordResetService', () => {
       await service.changePassword('u1', 'tenant-2', dto, 'raw-refresh')
       const second = mockBruteForce.resetFailures.mock.calls[0]?.[0]
 
-      expect(first).toBeDefined()
-      expect(second).toBeDefined()
+      expect(first).toBe(
+        hmacSha256(`reauth:change-password:${userSubject('dashboard', 'u1', 'tenant-1')}`, HMAC_KEY)
+      )
+      expect(second).toBe(
+        hmacSha256(`reauth:change-password:${userSubject('dashboard', 'u1', 'tenant-2')}`, HMAC_KEY)
+      )
       expect(first).not.toBe(second)
     })
 

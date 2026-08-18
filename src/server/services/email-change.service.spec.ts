@@ -275,6 +275,10 @@ describe('EmailChangeService', () => {
     // differ, or failures against one tenant's account lock the other's out of changing its own
     // address. `userSubject` is injective, so this holds for a tenant id containing the delimiter
     // as much as for a plain one.
+    //
+    // Each identifier is asserted by VALUE, then the inequality on top. `toBeDefined()` would have
+    // been satisfied by any two strings, so a mutation that changed the derivation still produced
+    // two defined, different values and survived it.
     it('gives the same id in two tenants two different budgets', async () => {
       await service.requestChange('user-1', 'tenant-1', dto)
       const first = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
@@ -283,8 +287,18 @@ describe('EmailChangeService', () => {
       await service.requestChange('user-1', 'tenant-2', dto)
       const second = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
 
-      expect(first).toBeDefined()
-      expect(second).toBeDefined()
+      expect(first).toBe(
+        hmacSha256(
+          `reauth:email-change:${userSubject('dashboard', 'user-1', 'tenant-1')}`,
+          'test-hmac-key'
+        )
+      )
+      expect(second).toBe(
+        hmacSha256(
+          `reauth:email-change:${userSubject('dashboard', 'user-1', 'tenant-2')}`,
+          'test-hmac-key'
+        )
+      )
       expect(first).not.toBe(second)
     })
 
