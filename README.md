@@ -1351,19 +1351,30 @@ it, including cookie names you have since changed.
 > for — reported by a consumer who ran the comparison below and found their document **more wrong
 > after adopting than before**. The mechanism is in `augmentOperation`: an operation with no
 > requirement of its own, no override and no fragment falls through to `ownRouteSecurity`, which
-> answers `undefined` for anything that is not a health or metrics route — so **your** guarded
-> routes carry no requirement and inherit the document default. Remove that default and every one
-> of those routes reads as needing no credential.
+> answers `undefined` for anything that is not a route nest-core answers for itself — the health
+> probes, and from **nest-core 1.5.3** an unprotected metrics endpoint (through 1.5.2 metrics was
+> not among them). So **your** guarded routes carry no requirement and inherit the document
+> default. Remove that default and every one of those routes reads as needing no credential.
 >
 > **Keep the condition attached, because it decides how much of your API is affected.** This
 > reaches the routes that state nothing of their own — no `@ApiSecurity`-style decorator feeding
-> the scanned operation, no entry in nest-core's `operationSecurity`, and not a health or metrics
-> route under a policy that answers for them. Anything carrying its own requirement outranks the
-> document default and is untouched, which is exactly why the fix works at all. If your backend
-> annotates every guarded route individually, this note does not apply to you; the reason it bit
-> two consumers is that annotating each route is the thing a document-level default exists to
-> avoid. The health probes are the exception that still moves: they lose their explicit `[]`,
-> because `ownRouteSecurity` returns it only when `openapi.security.length > 0`.
+> the scanned operation, no entry in nest-core's `operationSecurity`, and not a route nest-core
+> answers for itself. Anything carrying its own requirement outranks the document default and is
+> untouched, which is exactly why the fix works at all. If your backend annotates every guarded
+> route individually, this note does not apply to you; the reason it bit two consumers is that
+> annotating each route is the thing a document-level default exists to avoid.
+>
+> **nest-core's own routes are the exception that still moves.** It emits an explicit `security: []`
+> for the health probes — and, from 1.5.3, for a metrics endpoint left unprotected — but only when
+> the **served document actually carries a non-empty top-level `security`**, whether that came from
+> `openapi.security` or was already on the generated document before `augmentDocument` saw it.
+> Remove the default and the `[]` goes with it. Write the default as an explicit empty list and
+> nothing is being overridden, so the member stays absent either way.
+>
+> (Through 1.5.2 that condition read `openapi.security.length > 0` alone, which answered `false`
+> for a document that carried its own default without one being configured — so those routes
+> inherited a credential nest-core does not check. If you build the document yourself rather than
+> handing the default to `openapi.security`, that is your shape, and 1.5.3 is the fix.)
 >
 > **On nest-core below 1.5.0, nothing reports this.** No error, no unmatched key, no failing
 > build — the document simply stops asking for credentials on the routes the library never knew
