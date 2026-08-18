@@ -82,6 +82,37 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   That is precisely the cross-tenant revocation the entry below removes, reintroduced through the
   delimiter.
 
+  **Whether a given deployment could reach that collision depends on its user ids, and the two
+  halves are not equally exposed.** The `tenantId` half is attacker-chosen by default: it arrives
+  in the request body, validated only for length and control characters, and a deployment only
+  takes that away by configuring `tenantIdResolver`. The `userId` half comes from
+  `IUserRepository`, and the **scheme** is the host's — but the resulting value is not
+  automatically outside the caller's reach, because `CreateUserData` carries `email` and `name`
+  straight from the registration request. `name` in particular is validated for length and
+  nothing else: no charset constraint, so `:` passes. A host that derives its id from either
+  field has handed the caller influence over both halves.
+
+  The arithmetic makes the user id the gate. For `{t1}:{u1}` and `{t2}:{u2}` to render the same
+  string with `(t1,u1) ≠ (t2,u2)`, one of the two **user ids** must itself contain a `:` — there
+  is no way to move the boundary otherwise. Three tiers follow, and they are not the same risk:
+
+  - **Host-generated ids with no colon** (UUID, a sequence): unreachable. The preimage is
+    ambiguous in principle and no input can exercise it.
+  - **Composite host-assigned ids** (`dept:1234`, a stored `tenant:user` subject): reachable by
+    accident. Two unrelated accounts can collide with nobody trying.
+  - **Ids derived from caller-supplied input** (the address, a slug of the display name):
+    reachable **on purpose**. The attacker picks the tenant, then picks a name or address that
+    splits it where they want, and both halves are theirs.
+
+  That third tier is the reason the previous wording mattered: it read as though the user id were
+  always the host's to control, which would have left this the mildest of the three.
+
+  That does not make the fix conditional. A library may not assume the shape of ids its consumers
+  assign — it is the same assumption `findById` taking a tenant already refuses to make — and a
+  preimage that is injective only for well-behaved input is not injective. But an operator
+  reading this entry should be able to tell which side of that line they are on, and the previous
+  wording did not let them.
+
   **This predates the release.** The same preimage shipped in 1.4.3 as `mfaSubject`, backing the
   MFA keyspace; renaming it to `userSubject` and extending it to `sess:`/`ep:` widened the blast
   radius rather than creating it.
