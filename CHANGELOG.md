@@ -105,12 +105,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     the tenant, then picks a value that splits the preimage where they want, and both halves are
     theirs.
 
-    The qualifier carries the tier, and it is a property of the **stored string**, not of the
-    process that produced it. The test is one line: can a `:` appear in the id a caller can
-    steer? Slugging to `[a-z0-9-]` answers no, and so does rendering a digest as bare hex or
-    base64url. Hashing alone answers nothing — `sha256:9f86d0…` is a hashed id that carries the
-    delimiter, because the encoding put it back. Read the id you actually store, not the
-    provenance of its input and not the transform's reputation.
+    The qualifier carries the tier, and it is a property of the **set of ids the scheme can
+    produce**, not of one id and not of the transform that made it. A colon in the id is
+    necessary and not sufficient. The condition is a suffix one:
+
+    > can the scheme produce two valid ids `u1` and `u2` with `u1 = p + ":" + u2`?
+
+    Only then does moving the tenant boundary turn one pair into another, because the attacker
+    lengthens the tenant by `p` and the two preimages render the same string.
+
+    That is why a fixed-width `sha256:{64 hex}` id is **not** exposed despite carrying a colon:
+    every id in that scheme is the same length, so none can be a proper suffix of another, and no
+    tenant makes `t1:u1` equal `t2:u2`. An address stored verbatim **is** exposed —
+    `ana:silva@x.com` and `silva@x.com` can both be ids, and the second is a suffix of the first
+    after a colon. Slugging to `[a-z0-9-]`, or rendering a digest as bare hex or base64url,
+    removes the delimiter and settles it earlier.
+
+    Read the id set you can actually store — not the provenance of its input, not the transform's
+    reputation, and not one example id in isolation.
 
   That third tier is the reason the previous wording mattered: it read as though the user id were
   always the host's to control, which would have left this the mildest of the three. The tier is
