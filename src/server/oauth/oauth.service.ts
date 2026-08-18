@@ -371,11 +371,11 @@ export class OAuthService {
     }
 
     // Look up an existing user linked to this OAuth identity.
-    const existingAuthUser = await this.userRepo.findByOAuthId(
+    const existingAuthUser = await this.userRepo.findByOAuthId({
       provider,
-      profile.providerId,
+      providerId: profile.providerId,
       tenantId
-    )
+    })
 
     // Strip credential fields before passing to the hook.
     const existingUser: SafeAuthUser | null = existingAuthUser ? toSafeUser(existingAuthUser) : null
@@ -424,7 +424,7 @@ export class OAuthService {
         // Nothing portable can be done about that here — `IUserRepository` is host-implemented
         // and its errors are untyped — so the check closes the deterministic case and leaves
         // the race to the constraint.
-        if (await this.userRepo.findByEmail(profile.email, tenantId)) {
+        if (await this.userRepo.findByEmail({ email: profile.email, tenantId })) {
           this.logger.warn(
             `oauth: create refused — ${maskEmail(profile.email)} already exists in tenant ${logSafe(tenantId)}`
           )
@@ -451,14 +451,17 @@ export class OAuthService {
           // Hook returned 'link' but there is no existing user — treat as OAuth failure.
           throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
         }
-        await this.userRepo.linkOAuth(
-          existingAuthUser.id,
-          existingAuthUser.tenantId,
+        await this.userRepo.linkOAuth({
+          id: existingAuthUser.id,
+          tenantId: existingAuthUser.tenantId,
           provider,
-          profile.providerId
-        )
+          providerId: profile.providerId
+        })
         // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
-        const linked = await this.userRepo.findById(existingAuthUser.id, existingAuthUser.tenantId)
+        const linked = await this.userRepo.findById({
+          id: existingAuthUser.id,
+          tenantId: existingAuthUser.tenantId
+        })
         if (!linked) {
           throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
         }

@@ -12,6 +12,7 @@ import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
 import { SessionService } from './session.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { userSubject } from '../constants/user-subject'
 import { generateSecureToken, hmacSha256, sha256, timingSafeCompare } from '../crypto/secure-token'
 import type { ChangePasswordDto } from '../dto/change-password.dto'
 import type { ForgotPasswordDto } from '../dto/forgot-password.dto'
@@ -196,7 +197,10 @@ export class PasswordResetService {
     }
 
     try {
-      const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail({ email: dto.email, tenantId }),
+        tenantId
+      )
 
       if (user && !this.isBlocked(user.status)) {
         const { method } = this.options.passwordReset
@@ -327,7 +331,10 @@ export class PasswordResetService {
     // After successful OTP verification, ensure the account still exists before
     // issuing the verifiedToken. Use PASSWORD_RESET_TOKEN_INVALID to prevent
     // distinguishing "OTP consumed for a deleted account" from other failures.
-    const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
+    const user = tenantScoped(
+      await this.userRepo.findByEmail({ email: dto.email, tenantId }),
+      tenantId
+    )
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
@@ -381,7 +388,10 @@ export class PasswordResetService {
     }
 
     try {
-      const user = tenantScoped(await this.userRepo.findByEmail(dto.email, tenantId), tenantId)
+      const user = tenantScoped(
+        await this.userRepo.findByEmail({ email: dto.email, tenantId }),
+        tenantId
+      )
       if (user && !this.isBlocked(user.status)) {
         // `sendOtp` stores the OTP in Redis synchronously, then fires the email
         // provider call as fire-and-forget (void). Timing normalization in the
@@ -452,7 +462,7 @@ export class PasswordResetService {
     const identifier = this.otpIdentifier(tenantId, email)
     await this.otpService.verify(PASSWORD_RESET_PURPOSE, identifier, otp)
 
-    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
     if (!user) {
       // OTP was consumed but user disappeared — treat as token invalid.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
@@ -552,7 +562,7 @@ export class PasswordResetService {
   ): Promise<void> {
     // Scoped, like every other read of an account. The unscoped form is why the write below had
     // no tenant to pass: a lookup by bare id cannot tell the caller which tenant it answered for.
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     // A verified token whose subject no longer exists, and an account with no local password,
     // answer identically: the caller cannot prove a credential this account does not have.
     if (!user?.passwordHash) {
@@ -565,7 +575,15 @@ export class PasswordResetService {
     // locks the owner out of their own account. The per-route IP limit is not that control: a
     // distributed caller sidesteps it, and it is not keyed to the account being attacked. The
     // counter is namespaced by flow so it cannot lock the owner out of `login` instead.
-    const bfIdentifier = hmacSha256(`reauth:change-password:${userId}`, this.options.hmacKey)
+    // Derived from the tenant-scoped SUBJECT, not the bare id. Keyed on `${userId}` alone this
+    // counter was tenant-blind: a repository id is unique only within a tenant, so failures
+    // against `t1/u1` spent `t2/u1`'s budget and locked that account out with no credential, and
+    // a success on either side cleared the other's. `userSubject` is injective, so two tenants
+    // sharing an id get two counters.
+    const bfIdentifier = hmacSha256(
+      `reauth:change-password:${userSubject('dashboard', userId, tenantId)}`,
+      this.options.hmacKey
+    )
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`changePassword: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -582,7 +600,7 @@ export class PasswordResetService {
 
     await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
     const passwordHash = await this.passwordService.hash(dto.newPassword)
-    await this.userRepo.updatePassword(userId, tenantId, passwordHash)
+    await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash })
 
     // End every other session, and the access tokens with them. `revokeAllExceptCurrent`
     // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
@@ -653,7 +671,7 @@ export class PasswordResetService {
    * then is invalidated as soon as one is set.
    */
   private async passwordFingerprintOf(userId: string, tenantId: string): Promise<string> {
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     // Stryker disable next-line StringLiteral: the sentinel's VALUE is unobservable today, because
     // the only consumer that tests for it — `assertResetTokenStillBound` — reads an empty
     // fingerprint as "this token predates the binding" and accepts it. So a passwordless account's
@@ -702,7 +720,7 @@ export class PasswordResetService {
   ): Promise<void> {
     // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
-    await this.userRepo.updatePassword(userId, tenantId, passwordHash)
+    await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash })
     // Revoke every session AND invalidate already-issued access tokens. This is two Redis
     // operations (a Lua session-invalidation followed by the epoch bump), not a single atomic
     // transaction — the bump simply must land before the reset returns. Deleting the refresh
@@ -716,7 +734,7 @@ export class PasswordResetService {
     // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
     // serves the notification, which a reset needs at least as much as a change does: the
     // classic takeover completes a reset from a compromised mailbox and deletes the mail.
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     if (user) {
       await this.notifyPasswordChanged(user)
       if (this.hooks?.afterPasswordReset) {

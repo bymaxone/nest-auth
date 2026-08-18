@@ -326,7 +326,7 @@ export class MfaService {
         // but it is the only form the type system reads, and `updateMfa` requires a tenant for
         // the same reason `findById` does.
         this.assertDashboardTenant(tenantId)
-        await this.userRepo.updateMfa(userId, tenantId, update)
+        await this.userRepo.updateMfa({ id: userId, tenantId, data: update })
       }
     } catch (err: unknown) {
       this.logger.error(
@@ -451,7 +451,7 @@ export class MfaService {
       } else {
         // Narrows the tenant for the dashboard write, as in `reencryptSecret`.
         this.assertDashboardTenant(tenantId)
-        await this.userRepo.updateMfa(userId, tenantId, write)
+        await this.userRepo.updateMfa({ id: userId, tenantId, data: write })
       }
       return true
     } finally {
@@ -1950,7 +1950,7 @@ export class MfaService {
       // what makes that a compile-time fact rather than a claim about the callers: the entry
       // points do all refuse a dashboard flow without a tenant, but a `void` guard narrows
       // nothing, so the read used to accept `string | undefined` on the strength of prose.
-      const user = await this.userRepo.findById(userId, tenantId)
+      const user = await this.userRepo.findById({ id: userId, tenantId })
       if (!user) throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       assertNotBlocked(user.status, this.options.blockedStatuses)
       return user

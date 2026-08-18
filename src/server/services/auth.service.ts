@@ -147,14 +147,14 @@ export class AuthService {
       // is not an admin flow — it is a read on behalf of one account — and an unscoped answer
       // would have the guard comparing the verified hash against a DIFFERENT row, which either
       // drops a legitimate upgrade or admits a write the guard exists to refuse.
-      const current = await this.userRepo.findById(userId, tenantId)
+      const current = await this.userRepo.findById({ id: userId, tenantId })
       if (current?.passwordHash !== verifiedHash) {
         this.logger.log(
           `rehash on verify skipped — the stored hash changed userId=${logSafe(userId)}`
         )
         return
       }
-      await this.userRepo.updatePassword(userId, tenantId, upgraded)
+      await this.userRepo.updatePassword({ id: userId, tenantId, passwordHash: upgraded })
     } catch (err: unknown) {
       this.logger.error(
         `rehash on verify failed — the stored hash is unchanged: ${describeChannelStatus(err)}`
@@ -234,7 +234,7 @@ export class AuthService {
     //
     // The dummy derivation is the same one the login path spends on an unknown address, so this
     // adds no amplification a login could not already be used for.
-    const existing = await this.userRepo.findByEmail(dto.email, tenantId)
+    const existing = await this.userRepo.findByEmail({ email: dto.email, tenantId })
     if (existing) {
       await this.passwordService.compareDummy(dto.password)
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
@@ -346,7 +346,7 @@ export class AuthService {
       await this.hooks.beforeLogin(dto.email, tenantId, context)
     }
 
-    const user = await this.userRepo.findByEmail(dto.email, tenantId)
+    const user = await this.userRepo.findByEmail({ email: dto.email, tenantId })
 
     // User-not-found path: run a dummy scrypt derivation before failing so that an
     // unknown e-mail takes the same wall-clock time as a known e-mail with a wrong
@@ -476,7 +476,7 @@ export class AuthService {
     this.logger.log(`login: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)}`)
 
     // Non-blocking side effects.
-    void this.userRepo.updateLastLogin(user.id, tenantId).catch((err: unknown) => {
+    void this.userRepo.updateLastLogin({ id: user.id, tenantId }).catch((err: unknown) => {
       this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
     })
     if (this.hooks?.afterLogin) {
@@ -633,7 +633,10 @@ export class AuthService {
     // status of a homonym in another tenant and, on the re-stamp path below, sign that account's
     // tenant and role into the caller's token. The session record already carries the tenant the
     // login resolved, which is the one this token is for.
-    const user = await this.userRepo.findById(result.session.userId, result.session.tenantId)
+    const user = await this.userRepo.findById({
+      id: result.session.userId,
+      tenantId: result.session.tenantId
+    })
     if (!user) {
       // The account is gone. The session record outlived it, so end it rather than hand back
       // a token for a user nobody can look up.
@@ -801,7 +804,7 @@ export class AuthService {
    * @throws {@link AuthException} with `TOKEN_INVALID` if the user no longer exists.
    */
   async getMe(userId: string, tenantId: string): Promise<SafeAuthUser> {
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -862,7 +865,7 @@ export class AuthService {
     ip: string,
     userAgent: string
   ): Promise<AuthResult> {
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -900,9 +903,11 @@ export class AuthService {
       `issueTokensForUserId: success userId=${logSafe(safeUser.id)} tenantId=${logSafe(safeUser.tenantId)}`
     )
 
-    void this.userRepo.updateLastLogin(user.id, safeUser.tenantId).catch((err: unknown) => {
-      this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
-    })
+    void this.userRepo
+      .updateLastLogin({ id: user.id, tenantId: safeUser.tenantId })
+      .catch((err: unknown) => {
+        this.logger.error(`updateLastLogin failed: ${describeError(err, [user.id])}`)
+      })
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
         this.hooks.afterLogin(safeUser, {
@@ -958,14 +963,14 @@ export class AuthService {
     email = normalizeEmail(email)
     await this.otpService.verify('email_verification', this.otpIdentifier(tenantId, email), otp)
 
-    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
     if (!user) {
       // Treat as OTP_INVALID rather than USER_NOT_FOUND to avoid a timing oracle
       // for callers probing email existence after a brute-forced OTP.
       throw new AuthException(AUTH_ERROR_CODES.OTP_INVALID)
     }
 
-    await this.userRepo.updateEmailVerified(user.id, tenantId, true)
+    await this.userRepo.updateEmailVerified({ id: user.id, tenantId, verified: true })
 
     // Drop the verified-flag the UserStatusGuard caches under `uev:{tenantId}:{userId}`, so the
     // account reaches its protected routes on the very next request rather than after the cache TTL.
@@ -1017,7 +1022,7 @@ export class AuthService {
       return // Already sent recently — silently succeed.
     }
 
-    const user = tenantScoped(await this.userRepo.findByEmail(email, tenantId), tenantId)
+    const user = tenantScoped(await this.userRepo.findByEmail({ email, tenantId }), tenantId)
     if (user && !user.emailVerified) {
       await this.sendVerificationOtp(tenantId, email, user.id)
     }

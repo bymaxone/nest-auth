@@ -368,7 +368,11 @@ describe('oauth flow (E2E)', () => {
       expect(hookController.lastCall?.profile.providerId).toBe(MOCK_PROVIDER_ID)
 
       // The mock repo persists the new user under the OAuth fields.
-      const persisted = await repo.findByOAuthId('google', MOCK_PROVIDER_ID, 'tenant-1')
+      const persisted = await repo.findByOAuthId({
+        provider: 'google',
+        providerId: MOCK_PROVIDER_ID,
+        tenantId: 'tenant-1'
+      })
       expect(persisted).not.toBeNull()
       expect(persisted?.email).toBe(MOCK_EMAIL)
       expect(persisted?.passwordHash).toBeNull()

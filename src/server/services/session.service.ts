@@ -368,7 +368,7 @@ export class SessionService {
       }
 
       void this.userRepo
-        .findById(userId, tenantId)
+        .findById({ id: userId, tenantId })
         .then((user) => {
           if (!user) return
           // Explicit `void` so the inner promise's lifecycle is unambiguous —
@@ -930,7 +930,7 @@ export class SessionService {
     }
 
     try {
-      const user = await this.userRepo.findById(userId, tenantId)
+      const user = await this.userRepo.findById({ id: userId, tenantId })
       if (!user) return defaultMaxSessions
       const resolved = await maxSessionsResolver(user)
       if (!Number.isInteger(resolved) || resolved < 1) {

@@ -17,6 +17,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { userSubject } from '../constants/user-subject'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -250,16 +251,55 @@ describe('EmailChangeService', () => {
     })
 
     // The budget is keyed to THIS account and THIS flow, which is the whole reason it is a
-    // separate counter. Two failures are possible here and both are severe in opposite
-    // directions: a key that drops the user id gives every account one shared counter, so any
-    // caller's failures lock out every user in the deployment; a key that drops the flow prefix
-    // merges this budget with `login`'s, so guessing here locks the owner out of signing in.
-    it('keys the failure budget to the account and to this flow alone', async () => {
+    // separate counter. Three failures are possible here and all are severe: a key that drops the
+    // user id gives every account one shared counter, so any caller's failures lock out every user
+    // in the deployment; a key that drops the flow prefix merges this budget with `login`'s, so
+    // guessing here locks the owner out of signing in; and a key that drops the TENANT makes two
+    // tenants' user `1` share one budget, which is a cross-tenant lockout with no credential.
+    //
+    // The expectation is DERIVED from `userSubject` rather than pinned as a digest. A pinned hex
+    // string passes for any preimage that produced it, including the tenant-blind one this arm
+    // now exists to refuse — the constant was updated, the rule was not, and nothing noticed.
+    it('keys the failure budget to the account, the flow and the tenant', async () => {
       await service.requestChange('user-1', 'tenant-1', dto)
 
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
-        hmacSha256('reauth:email-change:user-1', 'test-hmac-key')
+        hmacSha256(
+          `reauth:email-change:${userSubject('dashboard', 'user-1', 'tenant-1')}`,
+          'test-hmac-key'
+        )
       )
+    })
+
+    // The tenant arm, stated as its own failure. Same user id, two tenants: the identifiers must
+    // differ, or failures against one tenant's account lock the other's out of changing its own
+    // address. `userSubject` is injective, so this holds for a tenant id containing the delimiter
+    // as much as for a plain one.
+    //
+    // Each identifier is asserted by VALUE, then the inequality on top. `toBeDefined()` would have
+    // been satisfied by any two strings, so a mutation that changed the derivation still produced
+    // two defined, different values and survived it.
+    it('gives the same id in two tenants two different budgets', async () => {
+      await service.requestChange('user-1', 'tenant-1', dto)
+      const first = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
+
+      mockBruteForce.isLockedOut.mockClear()
+      await service.requestChange('user-1', 'tenant-2', dto)
+      const second = mockBruteForce.isLockedOut.mock.calls[0]?.[0]
+
+      expect(first).toBe(
+        hmacSha256(
+          `reauth:email-change:${userSubject('dashboard', 'user-1', 'tenant-1')}`,
+          'test-hmac-key'
+        )
+      )
+      expect(second).toBe(
+        hmacSha256(
+          `reauth:email-change:${userSubject('dashboard', 'user-1', 'tenant-2')}`,
+          'test-hmac-key'
+        )
+      )
+      expect(first).not.toBe(second)
     })
 
     // The control for the test above: two accounts must not share one counter, or a single
@@ -338,7 +378,10 @@ describe('EmailChangeService', () => {
     it('checks uniqueness within the caller tenant', async () => {
       await service.requestChange('user-1', 'tenant-1', dto)
 
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: NEW_EMAIL,
+        tenantId: 'tenant-1'
+      })
     })
 
     // Normalized on the way in, so the address is stored, mailed and checked in the one form
@@ -346,7 +389,10 @@ describe('EmailChangeService', () => {
     it('normalizes the target address before doing anything with it', async () => {
       await service.requestChange('user-1', 'tenant-1', { ...dto, newEmail: '  NEW@Example.COM  ' })
 
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(NEW_EMAIL, 'tenant-1')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: NEW_EMAIL,
+        tenantId: 'tenant-1'
+      })
       const [, addressed] = mockEmailProvider.sendEmailChangeVerification.mock.calls[0] as [
         string,
         string
@@ -398,7 +444,11 @@ describe('EmailChangeService', () => {
       await service.confirmChange({ token: TOKEN })
 
       expect(mockRedis.getdel).toHaveBeenCalledWith(`ec:${sha256(TOKEN)}`)
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith({
+        id: 'user-1',
+        tenantId: 'tenant-1',
+        email: NEW_EMAIL
+      })
       // The notice goes to the address the account is LEAVING — the last message the owner can
       // receive somewhere they still control, and what turns a silent takeover into a visible
       // one (NIST SP 800-63B §4.6).
@@ -565,7 +615,11 @@ describe('EmailChangeService', () => {
       )
 
       await expect(service.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith({
+        id: 'user-1',
+        tenantId: 'tenant-1',
+        email: NEW_EMAIL
+      })
     })
 
     // Re-checked here and not only at request time: the two are separated by the whole TTL,
@@ -605,7 +659,11 @@ describe('EmailChangeService', () => {
       )
 
       await expect(silent.confirmChange({ token: TOKEN })).resolves.toBeUndefined()
-      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith('user-1', 'tenant-1', NEW_EMAIL)
+      expect(mockUserRepo.updateEmail).toHaveBeenCalledWith({
+        id: 'user-1',
+        tenantId: 'tenant-1',
+        email: NEW_EMAIL
+      })
     })
 
     // A stored `null` is the one non-object JSON value that reaches the type guard: it parses

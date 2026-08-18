@@ -114,7 +114,7 @@ describe('UserStatusGuard', () => {
     const ctx = makeContext({ sub: 'user-1' })
     await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
 
-    expect(mockUserRepo.findById).toHaveBeenCalledWith('user-1', 'tenant-1')
+    expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-1' })
     expect(mockRedis.set).toHaveBeenCalledWith('us:tenant-1:user-1', 'active', 60)
     // With verification enforcement OFF, only the status is cached — the verified flag is neither
     // read nor written. Pins the `if (requireVerified)` guard: were it always-true, this miss would
@@ -292,7 +292,7 @@ describe('UserStatusGuard', () => {
       mockRedis.set.mockResolvedValue(undefined)
       const ctx = makeContext({ sub: 'user-1' })
       await expect(guard.canActivate(ctx as never)).resolves.toBe(true)
-      expect(mockUserRepo.findById).toHaveBeenCalledWith('user-1', 'tenant-1')
+      expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-1' })
       expect(mockRedis.set).toHaveBeenCalledWith('uev:tenant-1:user-1', '1', 60)
     })
 

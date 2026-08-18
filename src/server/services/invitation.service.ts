@@ -156,7 +156,7 @@ export class InvitationService {
     }
 
     // Fetch the inviter to validate their role authorization.
-    const inviter = await this.userRepo.findById(inviterUserId, tenantId)
+    const inviter = await this.userRepo.findById({ id: inviterUserId, tenantId })
     if (!inviter) {
       // The JWT references a user that no longer exists — treat as an invalid token.
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
@@ -487,7 +487,7 @@ export class InvitationService {
   async revokeInvitation(revokerUserId: string, email: string, tenantId: string): Promise<boolean> {
     const normalizedEmail = normalizeEmail(email)
 
-    const revoker = await this.userRepo.findById(revokerUserId, tenantId)
+    const revoker = await this.userRepo.findById({ id: revokerUserId, tenantId })
     if (!revoker) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
@@ -590,7 +590,10 @@ export class InvitationService {
    *   grant what the invitation grants.
    */
   private async assertInviterStillAuthorised(invitation: StoredInvitation): Promise<void> {
-    const inviter = await this.userRepo.findById(invitation.inviterUserId, invitation.tenantId)
+    const inviter = await this.userRepo.findById({
+      id: invitation.inviterUserId,
+      tenantId: invitation.tenantId
+    })
 
     // One null test, not two. The good-standing check used to carry its own `inviter !== null`
     // and then the conjunction below repeated it — so neither could be removed without the
@@ -682,7 +685,10 @@ export class InvitationService {
     await this.assertInviterStillAuthorised(invitation)
 
     // Guard against duplicate registrations within the same tenant.
-    const existing = await this.userRepo.findByEmail(invitation.email, invitation.tenantId)
+    const existing = await this.userRepo.findByEmail({
+      email: invitation.email,
+      tenantId: invitation.tenantId
+    })
     if (existing) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }

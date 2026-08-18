@@ -263,11 +263,11 @@ describe('MFA — integration smoke tests', () => {
       service.verifyAndEnable('user-1', validCode, '1.2.3.4', 'Browser', 'dashboard', 'tenant-1')
     ).resolves.toBeUndefined()
 
-    expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
-      'user-1',
-      'tenant-1',
-      expect.objectContaining({ mfaEnabled: true })
-    )
+    expect(mockUserRepo.updateMfa).toHaveBeenCalledWith({
+      id: 'user-1',
+      tenantId: 'tenant-1',
+      data: expect.objectContaining({ mfaEnabled: true })
+    })
 
     // ── Step 3: challenge via mfa temp token ──
     // Generate a fresh TOTP code (next step to avoid anti-replay on the same code)
@@ -378,11 +378,11 @@ describe('MFA — integration smoke tests', () => {
 
     const result = await svc2.challenge('temp.token', plainCode, '1.2.3.4', 'Browser')
     expect(result).toMatchObject({ accessToken: 'at' })
-    expect(mockUserRepo.updateMfa).toHaveBeenCalledWith(
-      'user-1',
-      'tenant-1',
-      expect.objectContaining({ mfaEnabled: true, mfaRecoveryCodes: [] })
-    )
+    expect(mockUserRepo.updateMfa).toHaveBeenCalledWith({
+      id: 'user-1',
+      tenantId: 'tenant-1',
+      data: expect.objectContaining({ mfaEnabled: true, mfaRecoveryCodes: [] })
+    })
   })
 
   // ---------------------------------------------------------------------------

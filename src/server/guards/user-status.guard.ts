@@ -83,7 +83,7 @@ export class UserStatusGuard implements CanActivate {
 
     if (status === null || (requireVerified && verified === null)) {
       // A miss on either fact resolves both from one repository read, scoped to the JWT's tenant.
-      const userRecord = await this.userRepo.findById(userId, tenantId)
+      const userRecord = await this.userRepo.findById({ id: userId, tenantId })
       if (!userRecord) {
         // User deleted after JWT was issued.
         throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)

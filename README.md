@@ -170,8 +170,16 @@ import type {
   AuthUser,
   CreateUserData,
   CreateWithOAuthData,
+  FindUserByEmailParams,
+  FindUserByOAuthIdParams,
   IUserRepository,
-  UpdateMfaData
+  LinkOAuthParams,
+  TenantScopedUserRef,
+  UpdateEmailParams,
+  UpdateEmailVerifiedParams,
+  UpdateMfaParams,
+  UpdatePasswordParams,
+  UpdateStatusParams
 } from '@bymax-one/nest-auth'
 import { PrismaService } from './prisma.service'
 
@@ -179,13 +187,13 @@ import { PrismaService } from './prisma.service'
 export class PrismaUserRepository implements IUserRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findById(id: string, tenantId: string): Promise<AuthUser | null> {
+  async findById({ id, tenantId }: TenantScopedUserRef): Promise<AuthUser | null> {
     // Both halves of the key, always. An id is unique only within a tenant, so `findUnique`
     // by id alone can answer with another tenant's row.
     return this.prisma.user.findFirst({ where: { id, tenantId } })
   }
 
-  async findByEmail(email: string, tenantId: string): Promise<AuthUser | null> {
+  async findByEmail({ email, tenantId }: FindUserByEmailParams): Promise<AuthUser | null> {
     return this.prisma.user.findUnique({
       where: { email_tenantId: { email: email.toLowerCase(), tenantId } }
     })
@@ -210,11 +218,11 @@ export class PrismaUserRepository implements IUserRepository {
   // UNIQUE where-clause, so it cannot accept `{ id, tenantId }` unless your schema declares that
   // pair unique — and `update({ where: { id } })` is the tenant-blind write this port exists to
   // prevent. `updateMany` accepts the compound filter and touches nothing outside the tenant.
-  async updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void> {
+  async updatePassword({ id, tenantId, passwordHash }: UpdatePasswordParams): Promise<void> {
     await this.prisma.user.updateMany({ where: { id, tenantId }, data: { passwordHash } })
   }
 
-  async updateMfa(id: string, tenantId: string, data: UpdateMfaData): Promise<void> {
+  async updateMfa({ id, tenantId, data }: UpdateMfaParams): Promise<void> {
     await this.prisma.user.updateMany({
       where: { id, tenantId },
       data: {
@@ -225,49 +233,44 @@ export class PrismaUserRepository implements IUserRepository {
     })
   }
 
-  async updateLastLogin(id: string, tenantId: string): Promise<void> {
+  async updateLastLogin({ id, tenantId }: TenantScopedUserRef): Promise<void> {
     await this.prisma.user.updateMany({
       where: { id, tenantId },
       data: { lastLoginAt: new Date() }
     })
   }
 
-  async updateStatus(id: string, tenantId: string, status: string): Promise<void> {
+  async updateStatus({ id, tenantId, status }: UpdateStatusParams): Promise<void> {
     await this.prisma.user.updateMany({ where: { id, tenantId }, data: { status } })
   }
 
-  async updateEmailVerified(id: string, tenantId: string, verified: boolean): Promise<void> {
+  async updateEmailVerified({ id, tenantId, verified }: UpdateEmailVerifiedParams): Promise<void> {
     await this.prisma.user.updateMany({
       where: { id, tenantId },
       data: { emailVerified: verified }
     })
   }
 
-  async updateEmail(id: string, tenantId: string, email: string): Promise<void> {
+  async updateEmail({ id, tenantId, email }: UpdateEmailParams): Promise<void> {
     await this.prisma.user.updateMany({
       where: { id, tenantId },
       data: { email: email.toLowerCase() }
     })
   }
 
-  async findByOAuthId(
-    provider: string,
-    providerId: string,
-    tenantId: string
-  ): Promise<AuthUser | null> {
+  async findByOAuthId({
+    provider,
+    providerId,
+    tenantId
+  }: FindUserByOAuthIdParams): Promise<AuthUser | null> {
     return this.prisma.user.findFirst({
       where: { oauthProvider: provider, oauthProviderId: providerId, tenantId }
     })
   }
 
-  async linkOAuth(
-    userId: string,
-    tenantId: string,
-    provider: string,
-    providerId: string
-  ): Promise<void> {
+  async linkOAuth({ id, tenantId, provider, providerId }: LinkOAuthParams): Promise<void> {
     await this.prisma.user.updateMany({
-      where: { id: userId, tenantId },
+      where: { id, tenantId },
       data: { oauthProvider: provider, oauthProviderId: providerId }
     })
   }
@@ -953,7 +956,7 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 >
 > Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and for
 > anything richer read the account **tenant-scoped**, the way that guard does —
-> `findById(request.user.sub, request.user.tenantId)`. The tenant argument is required by the
+> `findById({ id: request.user.sub, tenantId: request.user.tenantId })`. The tenant argument is required by the
 > port and cannot be dropped: ids may collide across tenants, so a lookup by bare id can resolve
 > another tenant's account. That is what the library's own guards do, which
 > is why the claim can be left as it is. `mfaVerified` behaves the same way and for the same

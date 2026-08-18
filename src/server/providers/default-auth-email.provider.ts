@@ -50,9 +50,34 @@ import { describeChannelStatus } from '../utils/describe-error'
  * The delivery channel {@link DefaultAuthEmailProvider} sends through.
  *
  * Narrow by design: it names only the one call the provider makes, so the provider couples to no
- * concrete mailer. `@bymax-one/nest-notification`'s `EmailService.send` satisfies it structurally
- * — its input carries these fields and more, all the extras optional — and so does any adapter
- * exposing the same shape.
+ * concrete mailer. Any adapter exposing this shape satisfies it.
+ *
+ * **Structural fit is not enough, and a channel that merely fits will drop the one field that
+ * matters.** `containsCredential` is this interface's own name for "publish none of this
+ * message's content". A channel that has never heard of this library reads every other field —
+ * `to`, `subject`, `html`, `text` — and ignores that one, because nothing tells it to look. The
+ * result is not a missing feature: it is a relay answering `550` with the offending body quoted,
+ * a reset code reaching an audit record, and a `send` call that looked correctly wired.
+ *
+ * So an implementation owes a TRANSLATION, not just a matching shape. Whatever the channel calls
+ * "do not publish this payload", set it from `containsCredential` on every call.
+ *
+ * `@bymax-one/nest-notification`'s `EmailService.send` is the worked example, and it is also the
+ * trap. It satisfies this interface structurally — its input carries these fields and more, all
+ * the extras optional — so it can be passed in directly and will compile. Do not. Its own switch
+ * is spelled `publishProviderText`, so a direct pass hands it a `containsCredential` it does not
+ * read while its own flag stays at the default. Wire an adapter instead:
+ *
+ * ```ts
+ * const sink: AuthEmailSink = {
+ *   send: ({ containsCredential, ...message }) =>
+ *     mailer.send({ ...message, publishProviderText: !containsCredential })
+ * }
+ * ```
+ *
+ * Named rather than left general because the direct pass is what a reader reaches for once they
+ * know the shapes line up, and this paragraph is the only thing standing between that instinct
+ * and a published credential. The field name is that library's to change; the obligation is not.
  */
 export interface AuthEmailSink {
   /**
