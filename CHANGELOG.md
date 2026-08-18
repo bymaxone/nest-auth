@@ -286,6 +286,47 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   subject carries no tenant segment — `platform:{userId}` — but the HMAC relocates the key just as
   it does on the dashboard plane, so "we have no tenants" is not a reason to skip either step.
 
+- **The dashboard user port let every account read and write skip the tenant.** The sibling half
+  of the entry above, on the layer the keyspace fix cannot reach. `IUserRepository` documented the
+  rule — _"ids may not be unique across tenants"_ — and then declined to enforce it, in three
+  shapes that hid one another because they sat on adjacent lines:
+
+  - `findById(id, tenantId?)` took the tenant as **optional**, for _"internal admin flows where
+    cross-tenant access is intentional"_. All twelve of this library's own call sites omitted it,
+    and not one was such a flow: `getMe`, `changePassword`, the email-change request and confirm,
+    the three invitation authority checks, the OAuth re-fetch, the session-limit resolver, the
+    WebSocket ticket snapshot and the password-reset fingerprint all read the account by bare id.
+    On a host that numbers users per tenant, each of those could resolve **another tenant's row**
+    — and then decide status, role, MFA state or a password change against it.
+  - Six mutators — `updatePassword`, `updateLastLogin`, `updateStatus`, `updateEmailVerified`,
+    `updateEmail`, `linkOAuth` — took **no tenant at all**, under JSDoc telling implementations
+    they MUST scope the write. An obligation the signature does not permit fulfilling is not a
+    contract; the implementation has nothing to scope by.
+  - `updateMfa` typed its tenant `string | undefined` beneath a sentence promising it was _"never
+    omitted for a dashboard account"_.
+
+  Every method now requires `tenantId: string`, positioned immediately after the account id, and
+  the library passes it everywhere. `MfaService` gained `assertDashboardTenant`, an assertion
+  signature splitting the dashboard half out of the existing `assertPlaneTenant` so the guard the
+  entry points already ran narrows the type instead of only throwing.
+
+  **The rule is now a test, not a paragraph.** `test/e2e/tenant-scoped-port.e2e-spec.ts` reads the
+  port's TypeScript AST and fails when a method can name an account without a tenant, when the
+  tenant is typed anything but `string`, when it does not follow the id, or when
+  `IPlatformUserRepository` — whose admins belong to no tenant — grows one. It also compares the
+  README's example `PrismaUserRepository` signature-for-signature against the port: that example
+  is what a consumer pastes in, and it had drifted to `update({ where: { id } })` on six mutators,
+  a query that crosses tenants by construction. Prose does not close by grep.
+
+  **Apply to a derived backend.** Your `IUserRepository` implementation must take `tenantId` as
+  the second argument of `findById`, `updatePassword`, `updateMfa`, `updateLastLogin`,
+  `updateStatus`, `updateEmailVerified`, `updateEmail` and `linkOAuth`, and must filter on it. On
+  Prisma that means `updateMany({ where: { id, tenantId } })` rather than
+  `update({ where: { id } })` — `update` takes a unique clause and so cannot carry the pair. Two
+  service methods take the tenant too: `AuthService.getMe(userId, tenantId)` and
+  `AuthService.issueTokensForUserId(userId, tenantId, ip, userAgent)`; pass `user.tenantId` from
+  the verified claims. The README's example implementation shows the whole shape.
+
 ### Fixed
 
 - **The compromise line left `userId` empty on repeat attack traffic.** `revokeFamily` resolves

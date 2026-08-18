@@ -337,7 +337,7 @@ describe('AuthController', () => {
 
       const result = await controller.me(JWT_PAYLOAD as never)
 
-      expect(mockAuthService.getMe).toHaveBeenCalledWith(JWT_PAYLOAD.sub)
+      expect(mockAuthService.getMe).toHaveBeenCalledWith(JWT_PAYLOAD.sub, JWT_PAYLOAD.tenantId)
       expect(result).toBe(SAFE_USER)
     })
 

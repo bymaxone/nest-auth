@@ -141,10 +141,17 @@ describe('PasswordResetController', () => {
       mockTokenDelivery.extractRefreshToken.mockReturnValue('current-refresh')
       mockPasswordResetService.changePassword.mockResolvedValue(undefined)
 
-      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+      await controller.changePassword(
+        { sub: 'user-1', tenantId: 'tenant-1' } as DashboardJwtPayload,
+        dto,
+        mockReq
+      )
 
       expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith(
         'user-1',
+        // The tenant is read from the same verified claims as the subject — the body cannot
+        // name it either.
+        'tenant-1',
         dto,
         // The caller's own refresh token rides along so the service can spare THIS session
         // while ending every other one. Without it the user is signed out of the device they
@@ -159,9 +166,18 @@ describe('PasswordResetController', () => {
       mockTokenDelivery.extractRefreshToken.mockReturnValue(undefined)
       mockPasswordResetService.changePassword.mockResolvedValue(undefined)
 
-      await controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+      await controller.changePassword(
+        { sub: 'user-1', tenantId: 'tenant-1' } as DashboardJwtPayload,
+        dto,
+        mockReq
+      )
 
-      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith('user-1', dto, undefined)
+      expect(mockPasswordResetService.changePassword).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        dto,
+        undefined
+      )
     })
 
     // 204: the route answers with nothing, so a client cannot read anything about the account
@@ -171,7 +187,11 @@ describe('PasswordResetController', () => {
       mockPasswordResetService.changePassword.mockResolvedValue(undefined)
 
       await expect(
-        controller.changePassword({ sub: 'user-1' } as DashboardJwtPayload, dto, mockReq)
+        controller.changePassword(
+          { sub: 'user-1', tenantId: 'tenant-1' } as DashboardJwtPayload,
+          dto,
+          mockReq
+        )
       ).resolves.toBeUndefined()
     })
   })

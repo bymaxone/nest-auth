@@ -92,6 +92,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     not apply. Trimming ~4 KB of JSDoc out of the two new files changed the bundle by ZERO
 //     bytes — measured, not assumed — because tsup does not carry those files' comments into the
 //     output. The growth is the handler table and the derivation: code, not documentation.
+//     Raised to 122 KiB for the tenant-scoping round: the session index and token epoch keyed on
+//     the tenant-scoped subject, that subject made injective with a byte-length prefix, and the
+//     seven `IUserRepository` mutators taking the tenant their reads already took. Measured
+//     114.82 -> 115.27 KiB across the two changes, against 0.18 KiB of headroom — so the second
+//     one failed the gate by 0.27 KiB. Both are shipped controls with red-checked tests behind
+//     them, which is the distinction this budget exists to force, and 122 puts headroom back at
+//     ~5.8%, inside this entry's historical band.
+//     One correction to the entry above, because it left a wrong impression of the WHOLE bundle:
+//     the prose lever emphatically DOES apply here. Measured on the built artifact, stripping
+//     every block comment takes `dist/server/index.mjs` from 115.27 to 63.39 KiB brotli — 51.88
+//     KiB, or 45% of the subpath, is JSDoc. The zero-byte result above was true of the two
+//     OpenAPI files specifically, not of the module. Acting on that is a build-config decision
+//     with a stack-trace tradeoff rather than something to do while unblocking a PR, so it is
+//     tracked separately; recorded here so the next person reads a measurement instead of the
+//     narrower claim.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -125,7 +140,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 115 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 122 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.25 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

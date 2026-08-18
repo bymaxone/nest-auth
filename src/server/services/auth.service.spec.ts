@@ -1903,7 +1903,7 @@ describe('AuthService', () => {
     // Verifies that getMe returns the safe user object without credential fields.
     it('should return the safe user when found', async () => {
       mockUserRepo.findById.mockResolvedValue(USER)
-      const result = await service.getMe('user-1')
+      const result = await service.getMe('user-1', 'tenant-1')
       expect(result).not.toHaveProperty('passwordHash')
       expect(result.id).toBe('user-1')
     })
@@ -1911,9 +1911,9 @@ describe('AuthService', () => {
     // Verifies that getMe throws TOKEN_INVALID when the user no longer exists (deleted after JWT issued).
     it('should throw TOKEN_INVALID when user not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
-      await expect(service.getMe('ghost')).rejects.toThrow(AuthException)
+      await expect(service.getMe('ghost', 'tenant-1')).rejects.toThrow(AuthException)
       try {
-        await service.getMe('ghost')
+        await service.getMe('ghost', 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
@@ -1938,7 +1938,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockSessionService.createSession.mockResolvedValue(undefined)
 
-      const result = await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      const result = await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
 
       expect(result).toBe(AUTH_RESULT)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
@@ -1957,9 +1957,9 @@ describe('AuthService', () => {
     it('should throw TOKEN_INVALID when target user does not exist', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.issueTokensForUserId('ghost', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('ghost', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
     })
 
@@ -1972,11 +1972,11 @@ describe('AuthService', () => {
     it('should throw ACCOUNT_SUSPENDED when target user is suspended', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, status: 'suspended' })
 
-      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED })
@@ -2017,11 +2017,11 @@ describe('AuthService', () => {
       const svc = module.get(AuthService)
       mockUserRepo.findById.mockResolvedValue({ ...USER, emailVerified: false })
 
-      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED })
@@ -2041,11 +2041,11 @@ describe('AuthService', () => {
     it('should throw MFA_REQUIRED when target user has MFA enabled', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: true })
 
-      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_REQUIRED })
@@ -2089,7 +2089,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockSessionService.createSession.mockResolvedValue(undefined)
 
-      await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
 
       expect(mockSessionService.createSession).toHaveBeenCalledWith({
         userId: 'user-1',
@@ -2111,7 +2111,7 @@ describe('AuthService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Hooks are fire-and-forget — flush microtasks before asserting.
       await new Promise((resolve) => setImmediate(resolve))
 
@@ -2134,7 +2134,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockUserRepo.updateLastLogin.mockRejectedValue(new Error('db error'))
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
@@ -2154,7 +2154,7 @@ describe('AuthService', () => {
         new Error(`UPDATE users SET last_login WHERE id = '${USER.id}' failed`)
       )
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       await new Promise((r) => setImmediate(r))
 
       const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
@@ -2177,7 +2177,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockHooks.afterLogin.mockRejectedValue(new Error('hook error'))
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
@@ -2214,9 +2214,9 @@ describe('AuthService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
 
-      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).resolves.toBe(
-        AUTH_RESULT
-      )
+      await expect(
+        svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).resolves.toBe(AUTH_RESULT)
       // Hook mock from the outer scope must not have been called by this
       // freshly-built service (which uses `null` hooks).
       expect(mockHooks.afterLogin).not.toHaveBeenCalled()
@@ -2341,7 +2341,7 @@ describe('AuthService', () => {
         '123456'
       )
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
-      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
+      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, USER.tenantId, true)
       // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
       // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
       // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
@@ -3140,7 +3140,11 @@ describe('AuthService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockPasswordService.needsRehash).toHaveBeenCalledWith(USER.passwordHash)
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(USER.id, 'scrypt:131072:8:1:aa:bb')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(
+        USER.id,
+        USER.tenantId,
+        'scrypt:131072:8:1:aa:bb'
+      )
     })
 
     // The re-read is TENANT-SCOPED. `IUserRepository.findById` takes the argument precisely so
