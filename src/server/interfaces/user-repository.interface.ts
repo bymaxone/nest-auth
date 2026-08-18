@@ -203,9 +203,15 @@ export interface CreateWithOAuthData {
  * now fails to compile. That property is the whole reason for the shape; `tenant-scoped-port`
  * pins it with a type test, because it is invisible in the signature itself.
  *
- * One residual hole, stated rather than hidden: TypeScript always accepts an implementation
- * taking NO parameters. Such an implementation cannot put a value in the wrong slot, so it
- * cannot corrupt anything — it is a stub, not a stale port.
+ * One residual hole, stated rather than hidden, and stated narrowly: TypeScript always accepts an
+ * implementation taking NO parameters. What the object shape buys is only that a value cannot be
+ * bound into the wrong positional slot — it says nothing about what the body then does. A
+ * zero-parameter implementation still compiles and can read or write whatever it likes, unscoped,
+ * exactly as a parameterised one that ignores its argument can.
+ *
+ * This shape closes a defect the compiler can see. Whether an implementation actually filters on
+ * the tenant is a claim only that implementation can honour, and this port states it as a MUST on
+ * every method rather than pretending to enforce it.
  */
 export interface TenantScopedUserRef {
   /** The user's unique identifier. */
