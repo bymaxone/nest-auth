@@ -57,25 +57,40 @@ interface PortMethod {
 function readPort(
   file: string,
   interfaceName: string
-): { methods: PortMethod[]; localTypes: Map<string, Set<string>> } {
+): { methods: PortMethod[]; localTypes: Map<string, Map<string, string>> } {
   const text = readFileSync(file, 'utf8')
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
 
   const methods: PortMethod[] = []
-  /** Every interface in the file, mapped to the property names it declares as REQUIRED. */
-  const localTypes = new Map<string, Set<string>>()
+  /**
+   * Every interface in the file, mapped to its REQUIRED properties and the TYPE of each.
+   *
+   * The type, not merely the name. An earlier version stored names only, so a payload declaring
+   * `tenantId: string | undefined` satisfied the rule below while permitting exactly the
+   * tenant-blind call the rule exists to refuse — the same defect the direct-parameter arm had
+   * already been written to catch, reintroduced one indirection away.
+   */
+  const localTypes = new Map<string, Map<string, string>>()
+  /** `extends` edges, resolved after the whole file is read so declaration order cannot matter. */
+  const heritage = new Map<string, string[]>()
   let found = false
 
   for (const statement of source.statements) {
     if (!ts.isInterfaceDeclaration(statement)) continue
 
-    const required = new Set<string>()
+    const required = new Map<string, string>()
     for (const member of statement.members) {
       if (ts.isPropertySignature(member) && member.questionToken === undefined && member.name) {
-        required.add(member.name.getText(source))
+        required.set(member.name.getText(source), member.type?.getText(source) ?? 'unknown')
       }
     }
     localTypes.set(statement.name.text, required)
+    heritage.set(
+      statement.name.text,
+      (statement.heritageClauses ?? []).flatMap((clause) =>
+        clause.types.map((t) => t.expression.getText(source))
+      )
+    )
 
     if (statement.name.text !== interfaceName) continue
     found = true
@@ -97,6 +112,19 @@ function readPort(
 
   if (!found) throw new Error(`${interfaceName} is not declared in ${file}`)
   if (methods.length === 0) throw new Error(`${interfaceName} declares no methods in ${file}`)
+
+  // Fold inherited members down. `UpdatePasswordParams extends TenantScopedUserRef` declares no
+  // `tenantId` of its own, and a rule that only read own-members would report it as unscoped —
+  // failing on the shape that is actually correct, which is the way a gate loses its audience.
+  for (const [name, parents] of heritage) {
+    const own = localTypes.get(name)
+    if (!own) continue
+    for (const parent of parents) {
+      for (const [prop, type] of localTypes.get(parent) ?? []) {
+        if (!own.has(prop)) own.set(prop, type)
+      }
+    }
+  }
 
   return { methods, localTypes }
 }
@@ -153,6 +181,42 @@ function readReadmeExample(file: string, className: string): PortMethod[] {
   return methods
 }
 
+/**
+ * Type-checks one snippet against the real port and returns its errors.
+ *
+ * An in-memory `ts.Program` so the probe never touches disk, reading the actual interface file
+ * through the default host — the point is to measure what a consumer's `tsc` measures, not what a
+ * hand-rolled matcher believes about it.
+ *
+ * @param source - TypeScript to compile. Imports resolve relative to the repository.
+ * @returns One message per diagnostic; empty when the snippet type-checks.
+ */
+function compileErrors(source: string): string[] {
+  const NAME = join(__dirname, '__port-probe__.ts')
+  const options: ts.CompilerOptions = {
+    strict: true,
+    noEmit: true,
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    skipLibCheck: true
+  }
+  const host = ts.createCompilerHost(options, true)
+  const original = host.getSourceFile.bind(host)
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreate) =>
+    fileName === NAME
+      ? ts.createSourceFile(fileName, source, languageVersion, true)
+      : original(fileName, languageVersion, onError, shouldCreate)
+  host.fileExists = (fileName) => fileName === NAME || ts.sys.fileExists(fileName)
+  host.readFile = (fileName) => (fileName === NAME ? source : ts.sys.readFile(fileName))
+
+  const program = ts.createProgram([NAME], options, host)
+  return program
+    .getSemanticDiagnostics()
+    .concat(program.getSyntacticDiagnostics())
+    .map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '))
+}
+
 const USER_PORT = join(INTERFACES, 'user-repository.interface.ts')
 const PLATFORM_PORT = join(INTERFACES, 'platform-user-repository.interface.ts')
 const README = join(__dirname, '../../README.md')
@@ -194,6 +258,10 @@ describe('tenant-scoped port', () => {
     // drifted. The three shapes of this defect were each hidden by the others sitting on adjacent
     // lines, and a gate that stops at the first one reproduces exactly that.
     it('names every account through a tenant', () => {
+      /** A payload type counts only when it REQUIRES `tenantId` and types it exactly `string`. */
+      const carriesTenant = (type: string): boolean =>
+        localTypes.get(type)?.get('tenantId') === 'string'
+
       const unscoped = methods
         .filter((method) => {
           const direct = method.params.find((parameter) => parameter.name === 'tenantId')
@@ -204,36 +272,81 @@ describe('tenant-scoped port', () => {
           if (direct) return direct.type !== 'string'
 
           // No `tenantId` parameter: the only acceptable alternative is a payload type that
-          // requires one, which is how `create` and `createWithOAuth` carry it.
-          return !method.params.some((parameter) => localTypes.get(parameter.type)?.has('tenantId'))
+          // requires one, typed `string`. Requiring the TYPE and not merely the property is the
+          // point — `tenantId: string | undefined` is a required property that still permits
+          // nothing being passed, so a name-only check would wave through the defect this arm
+          // rejects two lines above when it appears directly.
+          return !method.params.some((parameter) => carriesTenant(parameter.type))
         })
         .map((method) => method.name)
 
       expect(unscoped).toEqual([])
     })
 
-    // Ordering is not cosmetic here. A method taking a bare `string` id and a bare `string` tenant
-    // type checks with the two transposed, and then writes to whatever row the consumer's query
-    // finds for `(tenantId, id)` — a defect with no compiler symptom and no runtime symptom until
-    // the wrong account changes. One consistent position is what makes a transposition visible
-    // when reading the call, and consistency only pays if nothing is allowed to differ.
+    // Every account-naming method takes ONE parameter, and it is an object.
     //
-    // Scoped to methods that name the account by an id, because that is where the ambiguity lives.
-    // `findByOAuthId` names it by a `(provider, providerId)` pair and puts the tenant after both;
-    // there is no id for it to be confused with, so pinning it to index 1 would be a rule invented
-    // for the gate's convenience rather than for the risk.
-    it('takes the tenant immediately after the account id', () => {
-      const misplaced = methods
-        .filter((method) => {
-          const idAt = method.params.findIndex(
-            (parameter) => parameter.name === 'id' || parameter.name === 'userId'
-          )
-
-          return idAt !== -1 && method.params[idAt + 1]?.name !== 'tenantId'
-        })
+    // This replaces an arm that pinned the tenant to the position after the id. That arm was
+    // guarding a transposition — two bare `string`s next to each other type check swapped — and
+    // the object form removes the hazard rather than policing it, so the old rule now has nothing
+    // to say. What matters instead is that the shape stays an object, which is what the arm below
+    // depends on: revert any one of these to positional strings and a stale implementation starts
+    // compiling again.
+    it('names an account through a single payload object', () => {
+      const positional = methods
+        .filter((method) => method.params.some((parameter) => parameter.type === 'string'))
         .map((method) => method.name)
 
-      expect(misplaced).toEqual([])
+      expect(positional).toEqual([])
+    })
+
+    // The property none of the arms above can see, and the only one that closes the defect.
+    //
+    // Every rule so far reads the DECLARATION. None of them can tell you whether a consumer's
+    // pre-upgrade implementation still satisfies it — and for the positional form the answer was
+    // yes. TypeScript's structural typing accepts an implementation with FEWER parameters, so
+    // `findById(id)` satisfied `findById(id: string, tenantId: string)` and ignored the tenant on
+    // a clean build; the scoping this port exists to require simply did not bind. The write side
+    // was worse: the library called `updatePassword(id, tenantId, hash)`, a stale two-parameter
+    // implementation bound `passwordHash = tenantId`, and the tenant id went into the credential
+    // column.
+    //
+    // So this arm compiles a stale implementation against the real port and requires the compiler
+    // to REFUSE it. It is the only assertion here that can fail if somebody reverts the shape,
+    // because a positional signature looks equally correct in every other check.
+    //
+    // Written with the real `tsc` rather than a string match on the error, so it measures what a
+    // consumer's build measures.
+    it('refuses a pre-upgrade implementation', () => {
+      const probe = `
+        import type { IUserRepository } from '${USER_PORT.replace(/\\/g, '/').replace(/\.ts$/, '')}'
+        declare const stale: {
+          findById(id: string, tenantId: string): Promise<never>
+          updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void>
+        }
+        const port: Pick<IUserRepository, 'findById' | 'updatePassword'> = stale
+        void port
+      `
+      expect(compileErrors(probe).length).toBeGreaterThan(0)
+    })
+
+    // The same probe with the CURRENT shape must compile, or the arm above would pass for the
+    // wrong reason — a broken harness, a bad import path, a typo in the probe — and report the
+    // port as safe while measuring nothing. A negative test needs its positive twin.
+    it('accepts an implementation on the current shape', () => {
+      const probe = `
+        import type {
+          IUserRepository,
+          TenantScopedUserRef,
+          UpdatePasswordParams
+        } from '${USER_PORT.replace(/\\/g, '/').replace(/\.ts$/, '')}'
+        declare const fresh: {
+          findById(params: TenantScopedUserRef): Promise<never>
+          updatePassword(params: UpdatePasswordParams): Promise<void>
+        }
+        const port: Pick<IUserRepository, 'findById' | 'updatePassword'> = fresh
+        void port
+      `
+      expect(compileErrors(probe)).toEqual([])
     })
   })
 
@@ -246,14 +359,20 @@ describe('tenant-scoped port', () => {
       expect(example.length).toBe(userPort.methods.length)
     })
 
-    // Signature-for-signature, not merely "has a tenant somewhere". A consumer copies this class
-    // and edits the bodies; if a parameter list here disagrees with the port, their edit starts
-    // from a shape that either fails to compile or — worse, on two same-typed neighbours —
-    // compiles with the id and the tenant transposed.
-    it('declares the same parameters as the port', () => {
-      const port = new Map(userPort.methods.map((method) => [method.name, method.params]))
+    // Type-for-type, not merely "has a tenant somewhere". A consumer copies this class and edits
+    // the bodies; if a parameter type here disagrees with the port, their edit starts from a shape
+    // that does not compile.
+    //
+    // The parameter NAME is deliberately excluded, and that is a change from when both sides were
+    // positional. An implementation destructures — `{ id, tenantId }: TenantScopedUserRef` — while
+    // the interface names the whole object `params`. Neither the compiler nor a reader cares, so
+    // requiring them to match would fail the example for being written the way an implementation
+    // is actually written. The type is what has to agree, because the type is what is checked.
+    it('declares the same parameter types as the port', () => {
+      const types = (method: PortMethod): string => method.params.map((p) => p.type).join(', ')
+      const port = new Map(userPort.methods.map((method) => [method.name, types(method)]))
       const drifted = example
-        .filter((method) => JSON.stringify(port.get(method.name)) !== JSON.stringify(method.params))
+        .filter((method) => port.get(method.name) !== types(method))
         .map((method) => method.name)
 
       expect(drifted).toEqual([])

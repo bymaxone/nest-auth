@@ -64,6 +64,49 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **The tenant-scoped user port did not bind, and a stale implementation destroyed the password
+  hash.** `IUserRepository`'s ten account-naming methods took the tenant as a positional
+  `string`. TypeScript accepts an implementation with FEWER parameters, so a consumer who
+  upgraded and did not touch their repository still type-checked — proven, not argued:
+
+  ```
+  $ tsc --noEmit --strict   # a pre-upgrade implementation against the shipped port
+  exit code: 0
+  ```
+
+  Two consequences. Their `findById(id)` ignored the tenant, so the cross-tenant read the entry
+  below closes stayed open on a clean build, with no error and no warning. And the library calls
+  `updatePassword(userId, tenantId, hash)`: a stale two-parameter implementation bound
+  `passwordHash = tenantId` and wrote the tenant id into the credential column.
+
+  **Every one of those methods now takes a single object.** An object parameter is structurally
+  incompatible with the old positional shape, so the same implementation fails to compile instead
+  of failing in production. `TenantScopedUserRef` and the eight params types are exported from the
+  package entry, because a consumer implements this port and needs to name what it receives.
+
+  ```ts
+  // before
+  await repo.updatePassword(userId, tenantId, hash)
+  // after
+  await repo.updatePassword({ id: userId, tenantId, passwordHash: hash })
+  ```
+
+  The property is pinned by a type test that compiles a stale implementation against the real port
+  and requires `tsc` to refuse it, with a positive twin that compiles the current shape — a
+  negative test that cannot pass for the wrong reason. Nothing else in the suite can see this:
+  every other check reads the declaration, and a positional signature reads as correct in all of
+  them. One residual hole is stated rather than hidden: TypeScript always accepts an
+  implementation taking NO parameters, which cannot put a value in the wrong slot.
+
+- **Two re-authentication counters were tenant-blind.** `changePassword` and `requestChange`
+  scoped their account read and then derived the brute-force identifier from
+  `reauth:{flow}:{userId}` — the bare id. A repository id is unique only within a tenant, so
+  failures against `t1/u1` spent `t2/u1`'s budget and locked that account out of changing its own
+  password or address without any credential, and a success on either side cleared the other's
+  count. Both now derive from the injective `userSubject`, and the tests assert the separation
+  rather than pinning a digest — a pinned hex string is satisfied by any preimage that produces
+  it, so updating the constant after a preimage change keeps the test green with its rule gone.
+
 - **Two tenants could share one session index, one token epoch and one recovery-code claim.**
   The subject every user-derived key is HMACed over was `dashboard:{tenantId}:{userId}`, and a
   bare `:` between two free-form components is not injective. Both halves may legitimately

@@ -9,6 +9,7 @@ import {
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import type { ResolvedOptions } from '../config/resolved-options'
+import { userSubject } from '../constants/user-subject'
 import { generateSecureToken, hmacSha256, sha256 } from '../crypto/secure-token'
 import type { ChangeEmailDto } from '../dto/change-email.dto'
 import type { ConfirmEmailChangeDto } from '../dto/confirm-email-change.dto'
@@ -148,7 +149,7 @@ export class EmailChangeService implements OnModuleInit {
   async requestChange(userId: string, tenantId: string, dto: ChangeEmailDto): Promise<void> {
     const newEmail = normalizeEmail(dto.newEmail)
 
-    const user = await this.userRepo.findById(userId, tenantId)
+    const user = await this.userRepo.findById({ id: userId, tenantId })
     // A verified token whose subject no longer exists, and an account with no local password,
     // answer identically: the caller cannot prove a credential this account does not have.
     if (!user?.passwordHash) {
@@ -161,7 +162,14 @@ export class EmailChangeService implements OnModuleInit {
     // account recovers through, which is persistence rather than a single theft. The per-route
     // IP limit is not that control: a distributed caller sidesteps it, and it is not keyed to
     // the account under attack. Namespaced by flow so it cannot lock the owner out of `login`.
-    const bfIdentifier = hmacSha256(`reauth:email-change:${userId}`, this.options.hmacKey)
+    // Derived from the tenant-scoped SUBJECT, not the bare id — the same defect and the same
+    // fix as the change-password counter. Tenant-blind, two tenants' user `1` shared one budget,
+    // so failures against one locked the other out of its own address change without a
+    // credential, and either one's success cleared the other's count.
+    const bfIdentifier = hmacSha256(
+      `reauth:email-change:${userSubject('dashboard', userId, tenantId)}`,
+      this.options.hmacKey
+    )
     if (await this.bruteForce.isLockedOut(bfIdentifier)) {
       this.logger.warn(`requestChange: account locked userId=${logSafe(userId)}`)
       throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_LOCKED)
@@ -237,7 +245,7 @@ export class EmailChangeService implements OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
 
-    const user = await this.userRepo.findById(context.userId, context.tenantId)
+    const user = await this.userRepo.findById({ id: context.userId, tenantId: context.tenantId })
     if (!user) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID)
     }
@@ -254,7 +262,11 @@ export class EmailChangeService implements OnModuleInit {
     await this.assertAddressIsFree(user, context.newEmail)
 
     const oldEmail = user.email
-    await this.userRepo.updateEmail(context.userId, context.tenantId, context.newEmail)
+    await this.userRepo.updateEmail({
+      id: context.userId,
+      tenantId: context.tenantId,
+      email: context.newEmail
+    })
     this.logger.log(
       `confirmChange: address changed userId=${logSafe(context.userId)} ` +
         `from=${maskEmail(oldEmail)} to=${maskEmail(context.newEmail)}`
@@ -286,7 +298,7 @@ export class EmailChangeService implements OnModuleInit {
     if (normalizeEmail(user.email) === newEmail) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }
-    const existing = await this.userRepo.findByEmail(newEmail, user.tenantId)
+    const existing = await this.userRepo.findByEmail({ email: newEmail, tenantId: user.tenantId })
     if (existing) {
       throw new AuthException(AUTH_ERROR_CODES.EMAIL_ALREADY_EXISTS)
     }

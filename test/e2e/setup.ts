@@ -43,8 +43,17 @@ import type {
   AuthUser,
   CreateUserData,
   CreateWithOAuthData,
+  FindUserByEmailParams,
+  FindUserByOAuthIdParams,
   IUserRepository,
-  UpdateMfaData
+  LinkOAuthParams,
+  TenantScopedUserRef,
+  UpdateEmailParams,
+  UpdateEmailVerifiedParams,
+  UpdateMfaData,
+  UpdateMfaParams,
+  UpdatePasswordParams,
+  UpdateStatusParams
 } from '../../src/server/interfaces/user-repository.interface'
 import { AuthExceptionFilter } from '../../src/server/filters/auth-exception.filter'
 import { createAuthValidationPipe } from '../../src/server/pipes/auth-validation.pipe'
@@ -105,7 +114,7 @@ export function createMockUserRepository(): MockUserRepository {
   const repo: MockUserRepository = {
     users,
 
-    async findById(id: string, tenantId: string): Promise<AuthUser | null> {
+    async findById({ id, tenantId }: TenantScopedUserRef): Promise<AuthUser | null> {
       const user = users.get(id) ?? null
       // Both halves of the key. This is the port's own MUST, implemented rather than assumed:
       // the e2e flows run against this repository, so a route that dropped the tenant would
@@ -131,7 +140,7 @@ export function createMockUserRepository(): MockUserRepository {
       users.set(id, mutate(user))
     },
 
-    async findByEmail(email: string, tenantId: string): Promise<AuthUser | null> {
+    async findByEmail({ email, tenantId }: FindUserByEmailParams): Promise<AuthUser | null> {
       const id = emailIndex.get(emailKey(email, tenantId))
       return id ? (users.get(id) ?? null) : null
     },
@@ -156,11 +165,11 @@ export function createMockUserRepository(): MockUserRepository {
       return user
     },
 
-    async updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void> {
+    async updatePassword({ id, tenantId, passwordHash }: UpdatePasswordParams): Promise<void> {
       repo.scoped(id, tenantId, (user) => ({ ...user, passwordHash }))
     },
 
-    async updateMfa(id: string, tenantId: string, data: UpdateMfaData): Promise<void> {
+    async updateMfa({ id, tenantId, data }: UpdateMfaParams): Promise<void> {
       const user = users.get(id)
       if (!user || user.tenantId !== tenantId) return
       // Strip the existing optional fields first, then re-add only when present —
@@ -175,19 +184,23 @@ export function createMockUserRepository(): MockUserRepository {
       users.set(id, next)
     },
 
-    async updateLastLogin(id: string, tenantId: string): Promise<void> {
+    async updateLastLogin({ id, tenantId }: TenantScopedUserRef): Promise<void> {
       repo.scoped(id, tenantId, (user) => ({ ...user, lastLoginAt: new Date() }))
     },
 
-    async updateStatus(id: string, tenantId: string, status: string): Promise<void> {
+    async updateStatus({ id, tenantId, status }: UpdateStatusParams): Promise<void> {
       repo.scoped(id, tenantId, (user) => ({ ...user, status }))
     },
 
-    async updateEmailVerified(id: string, tenantId: string, verified: boolean): Promise<void> {
+    async updateEmailVerified({
+      id,
+      tenantId,
+      verified
+    }: UpdateEmailVerifiedParams): Promise<void> {
       repo.scoped(id, tenantId, (user) => ({ ...user, emailVerified: verified }))
     },
 
-    async updateEmail(id: string, tenantId: string, email: string): Promise<void> {
+    async updateEmail({ id, tenantId, email }: UpdateEmailParams): Promise<void> {
       const user = users.get(id)
       if (user?.tenantId !== tenantId) return
       // The address is proven before this runs, so the account stays verified across the
@@ -207,11 +220,11 @@ export function createMockUserRepository(): MockUserRepository {
       emailIndex.set(emailKey(email, user.tenantId), id)
     },
 
-    async findByOAuthId(
-      provider: string,
-      providerId: string,
-      tenantId: string
-    ): Promise<AuthUser | null> {
+    async findByOAuthId({
+      provider,
+      providerId,
+      tenantId
+    }: FindUserByOAuthIdParams): Promise<AuthUser | null> {
       for (const user of users.values()) {
         if (
           user.tenantId === tenantId &&
@@ -224,15 +237,10 @@ export function createMockUserRepository(): MockUserRepository {
       return null
     },
 
-    async linkOAuth(
-      userId: string,
-      tenantId: string,
-      provider: string,
-      providerId: string
-    ): Promise<void> {
-      const user = users.get(userId)
+    async linkOAuth({ id, tenantId, provider, providerId }: LinkOAuthParams): Promise<void> {
+      const user = users.get(id)
       if (user && user.tenantId === tenantId) {
-        users.set(userId, {
+        users.set(id, {
           ...user,
           oauthProvider: provider,
           oauthProviderId: providerId

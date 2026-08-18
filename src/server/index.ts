@@ -114,13 +114,32 @@ export type {
   SafeAuthPlatformUser,
   UpdatePlatformMfaData
 } from './interfaces/platform-user-repository.interface'
+/**
+ * The parameter shapes every tenant-scoped `IUserRepository` method takes.
+ *
+ * Exported because a consumer IMPLEMENTS this port and needs to name what it receives. They are
+ * objects rather than positional strings for a reason the signature cannot show: TypeScript
+ * accepts an implementation with fewer parameters, so a pre-upgrade `findById(id)` satisfied the
+ * positional `findById(id, tenantId)` and ignored the tenant on a clean build — and a stale
+ * `updatePassword(id, passwordHash)` bound the tenant id into the credential column. An object is
+ * structurally incompatible with the old shape, so the same implementation now fails to compile.
+ */
 export type {
   AuthUser,
   CreateUserData,
   CreateWithOAuthData,
+  FindUserByEmailParams,
+  FindUserByOAuthIdParams,
   IUserRepository,
+  LinkOAuthParams,
   SafeAuthUser,
-  UpdateMfaData
+  TenantScopedUserRef,
+  UpdateEmailParams,
+  UpdateEmailVerifiedParams,
+  UpdateMfaData,
+  UpdateMfaParams,
+  UpdatePasswordParams,
+  UpdateStatusParams
 } from './interfaces/user-repository.interface'
 
 // ---------------------------------------------------------------------------

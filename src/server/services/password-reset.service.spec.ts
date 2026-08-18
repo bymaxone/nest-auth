@@ -23,6 +23,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { userSubject } from '../constants/user-subject'
 import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -222,7 +223,11 @@ describe('PasswordResetService', () => {
         'a-brand-new-one',
         'newPassword'
       )
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'tenant-1', 'scrypt:new')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith({
+        id: 'u1',
+        tenantId: 'tenant-1',
+        passwordHash: 'scrypt:new'
+      })
     })
 
     // The reason ASVS §6.2.3 asks for the current password at all: a session is not proof of
@@ -343,16 +348,36 @@ describe('PasswordResetService', () => {
       expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
     })
 
-    // The re-proof budget is keyed to this account AND this flow. Dropping the account id gives
-    // the whole deployment one shared counter, so anyone's failures lock out everyone; dropping
-    // the flow prefix merges it with `login`'s, so guessing here locks the owner out of signing in
-    // — which is the outcome this control exists to prevent, arrived at from the other side.
-    it('keys the failure budget to the account and to this flow alone', async () => {
+    // The re-proof budget is keyed to this account, this flow AND this tenant. Dropping the
+    // account id gives the whole deployment one shared counter, so anyone's failures lock out
+    // everyone; dropping the flow prefix merges it with `login`'s, so guessing here locks the
+    // owner out of signing in — the outcome this control exists to prevent, arrived at from the
+    // other side; dropping the tenant makes two tenants' user `1` share a budget, so failures
+    // against one lock the other out of changing its own password, with no credential.
+    //
+    // DERIVED from `userSubject`, not pinned as a digest. A hex constant is satisfied by any
+    // preimage that produces it, so updating the constant after a preimage change keeps the test
+    // green while the rule it was written for is gone.
+    it('keys the failure budget to the account, the flow and the tenant', async () => {
       await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
-        hmacSha256('reauth:change-password:u1', HMAC_KEY)
+        hmacSha256(`reauth:change-password:${userSubject('dashboard', 'u1', 'tenant-1')}`, HMAC_KEY)
       )
+    })
+
+    // The tenant arm as its own failure: the same id in two tenants must not share one budget.
+    it('gives the same id in two tenants two different budgets', async () => {
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      const first = mockBruteForce.resetFailures.mock.calls[0]?.[0]
+
+      mockBruteForce.resetFailures.mockClear()
+      await service.changePassword('u1', 'tenant-2', dto, 'raw-refresh')
+      const second = mockBruteForce.resetFailures.mock.calls[0]?.[0]
+
+      expect(first).toBeDefined()
+      expect(second).toBeDefined()
+      expect(first).not.toBe(second)
     })
 
     // Both refusals below answer with a code that says nothing about which account or why, so
@@ -1278,7 +1303,11 @@ describe('PasswordResetService', () => {
       // 'tenant1' — the reset record's own tenant, not one the caller supplied: the token
       // flow has no authenticated claims to read it from, so the write is scoped by what was
       // stamped when the token was minted.
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'tenant1', '$hashed$')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith({
+        id: 'u1',
+        tenantId: 'tenant1',
+        passwordHash: '$hashed$'
+      })
       // Full revocation: refresh sessions are deleted AND the user's token epoch is advanced,
       // so already-issued stateless access tokens are rejected immediately rather than staying
       // valid until their exp.

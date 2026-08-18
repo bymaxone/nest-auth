@@ -260,7 +260,10 @@ describe('AuthService', () => {
     // matches every email-keyed control.
     it('should normalize the email before lookup and persistence', async () => {
       await service.register({ ...dto, email: '  New.USER@Example.COM  ' }, mockReq)
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('new.user@example.com', 'tenant-1')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: 'new.user@example.com',
+        tenantId: 'tenant-1'
+      })
       expect(mockUserRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'new.user@example.com' })
       )
@@ -556,7 +559,10 @@ describe('AuthService', () => {
       await svc.register(bodyWithoutTenant, mockReq)
 
       // The resolved tenantId from the resolver ('resolved-tenant') should be used in findByEmail.
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(dto.email, 'resolved-tenant')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: dto.email,
+        tenantId: 'resolved-tenant'
+      })
     })
 
     // Verifies the refusal itself on the flow the audit found it on. A caller that named a tenant
@@ -1056,7 +1062,10 @@ describe('AuthService', () => {
       await service.login({ ...dto, email: '  USER@Example.COM  ' }, mockReq)
       const canonicalIdentifier = hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
       expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(canonicalIdentifier)
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        tenantId: 'tenant-1'
+      })
     })
 
     // Verifies that a wrong password records a brute-force failure and throws INVALID_CREDENTIALS.
@@ -1636,7 +1645,7 @@ describe('AuthService', () => {
 
       await service.refresh('old-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockUserRepo.findById).toHaveBeenCalledWith('u1', 't1')
+      expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'u1', tenantId: 't1' })
     })
 
     // Verifies that refresh delegates to tokenManager.reissueTokens and returns the rotated result.
@@ -2340,8 +2349,15 @@ describe('AuthService', () => {
         expectedIdentifier,
         '123456'
       )
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
-      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, USER.tenantId, true)
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        tenantId: 'tenant-1'
+      })
+      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith({
+        id: USER.id,
+        tenantId: USER.tenantId,
+        verified: true
+      })
       // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
       // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
       // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
@@ -2427,7 +2443,10 @@ describe('AuthService', () => {
         hmacSha256('tenant-1:user@example.com', HMAC_KEY),
         '123456'
       )
-      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        tenantId: 'tenant-1'
+      })
     })
 
     it('draws on the same resend cooldown whatever case the caller sends', async () => {
@@ -3140,11 +3159,11 @@ describe('AuthService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockPasswordService.needsRehash).toHaveBeenCalledWith(USER.passwordHash)
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(
-        USER.id,
-        USER.tenantId,
-        'scrypt:131072:8:1:aa:bb'
-      )
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith({
+        id: USER.id,
+        tenantId: USER.tenantId,
+        passwordHash: 'scrypt:131072:8:1:aa:bb'
+      })
     })
 
     // The re-read is TENANT-SCOPED. `IUserRepository.findById` takes the argument precisely so
@@ -3160,7 +3179,7 @@ describe('AuthService', () => {
       await service.login(dto, mockReq)
       await new Promise((resolve) => setImmediate(resolve))
 
-      expect(mockUserRepo.findById).toHaveBeenCalledWith(USER.id, USER.tenantId)
+      expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: USER.id, tenantId: USER.tenantId })
     })
 
     // Scenario: the account's password changed between the login that scheduled the upgrade and
