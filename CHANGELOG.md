@@ -105,28 +105,45 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend.** Every `IUserRepository` method that names an account takes ONE
   object now — `findById`, `findByEmail`, `updatePassword`, `updateMfa`, `updateLastLogin`,
   `updateStatus`, `updateEmailVerified`, `updateEmail`, `findByOAuthId` and `linkOAuth`. Destructure
-  it and keep filtering on the tenant. **Eight of the ten are keyed by `id`** — on Prisma those are
-  still `updateMany({ where: { id, tenantId } })` rather than `update({ where: { id } })`, because
-  `update` takes a unique clause and cannot carry the pair. **The other two are not keyed by `id`
-  at all:** `findByEmail` receives `{ email, tenantId }` and `findByOAuthId` receives
+  it and keep filtering on the tenant. **Eight of the ten are keyed by `id`.** Seven of those are
+  writes: on Prisma they are still `updateMany({ where: { id, tenantId } })` rather than
+  `update({ where: { id } })`, because `update` takes a unique clause and cannot carry the pair.
+  The eighth, `findById`, is a **read** — it filters on the same pair through `findFirst`, because
+  `findUnique` by id alone can answer with another tenant's row. **The other two are not keyed by
+  `id` at all:** `findByEmail` receives `{ email, tenantId }` and `findByOAuthId` receives
   `{ provider, providerId, tenantId }`, and each filters on its own lookup key plus the tenant.
 
   ```ts
-  // before → after, for the shapes that change
+  // before → after, for every signature that changed
   findById(id, tenantId)
   findById({ id, tenantId })
-
-  updatePassword(id, tenantId, passwordHash)
-  updatePassword({ id, tenantId, passwordHash })
-
-  linkOAuth(userId, tenantId, provider, providerId)
-  linkOAuth({ id, tenantId, provider, providerId })
 
   findByEmail(email, tenantId)
   findByEmail({ email, tenantId })
 
+  updatePassword(id, tenantId, passwordHash)
+  updatePassword({ id, tenantId, passwordHash })
+
+  updateMfa(id, tenantId, data)
+  updateMfa({ id, tenantId, data })
+
+  updateLastLogin(id, tenantId)
+  updateLastLogin({ id, tenantId })
+
+  updateStatus(id, tenantId, status)
+  updateStatus({ id, tenantId, status })
+
+  updateEmailVerified(id, tenantId, verified)
+  updateEmailVerified({ id, tenantId, verified })
+
+  updateEmail(id, tenantId, email)
+  updateEmail({ id, tenantId, email })
+
   findByOAuthId(provider, providerId, tenantId)
   findByOAuthId({ provider, providerId, tenantId })
+
+  linkOAuth(userId, tenantId, provider, providerId)
+  linkOAuth({ id, tenantId, provider, providerId })
   ```
 
   **This supersedes the note in the tenant-scoping entry below**, which told you to take `tenantId`
