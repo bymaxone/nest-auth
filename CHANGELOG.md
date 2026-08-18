@@ -100,29 +100,39 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     ambiguous in principle and no input can exercise it.
   - **Composite host-assigned ids** (`dept:1234`, a stored `tenant:user` subject): reachable by
     accident. Two unrelated accounts can collide with nobody trying.
-  - **Ids derived from caller-supplied input in a way that PRESERVES the delimiter** (the address
-    stored verbatim; a `{name}:{n}` disambiguator): reachable **on purpose**. The attacker picks
-    the tenant, then picks a value that splits the preimage where they want, and both halves are
-    theirs.
+  - **Ids derived from caller-supplied input in a way that PRESERVES the delimiter** (the display
+    name stored verbatim; a `{name}:{n}` disambiguator): reachable **on purpose**. The attacker
+    picks the tenant, then picks a value that splits the preimage where they want, and both
+    halves are theirs. `name` is the field that carries this: `@IsString`, `@MinLength(2)`,
+    `@MaxLength(128)` and **no charset rule**, so a `:` passes. The address does not — `@IsEmail`
+    rejects an unquoted `:` in the local part, so an address-derived id cannot carry one.
 
-    The qualifier carries the tier, and it is a property of the **set of ids the scheme can
-    produce**, not of one id and not of the transform that made it. A colon in the id is
-    necessary and not sufficient. The condition is a suffix one:
+    The qualifier carries the tier, and it is a property of the **sets of values the two sides
+    admit**, not of one id and not of the transform that made it. A colon in the id is necessary
+    and not sufficient. Both halves have to cooperate:
 
-    > can the scheme produce two valid ids `u1` and `u2` with `u1 = p + ":" + u2`?
+    > can the id scheme produce two valid ids `u1` and `u2` with `u1 = p + ":" + u2`, **and** is
+    > `t + ":" + p` still a valid tenant for some tenant `t` the caller can send?
 
-    Only then does moving the tenant boundary turn one pair into another, because the attacker
-    lengthens the tenant by `p` and the two preimages render the same string.
+    Only then does moving the boundary turn one pair into the other. The tenant clause is not
+    decoration: a body-supplied tenant is non-empty, at most 128 characters and control-free, so
+    a scheme whose only suffix pair needs a 200-character or control-bearing `p` satisfies the
+    first clause and is still unreachable.
 
-    That is why a fixed-width `sha256:{64 hex}` id is **not** exposed despite carrying a colon:
-    every id in that scheme is the same length, so none can be a proper suffix of another, and no
-    tenant makes `t1:u1` equal `t2:u2`. An address stored verbatim **is** exposed —
-    `ana:silva@x.com` and `silva@x.com` can both be ids, and the second is a suffix of the first
-    after a colon. Slugging to `[a-z0-9-]`, or rendering a digest as bare hex or base64url,
-    removes the delimiter and settles it earlier.
+    A worked pair that clears every validator this library applies:
 
-    Read the id set you can actually store — not the provenance of its input, not the transform's
-    reputation, and not one example id in isolation.
+    ```
+    name 'ana:silva' -> id 'ana:silva'      tenant 'acme'      -> dashboard:acme:ana:silva
+    name 'silva'     -> id 'silva'          tenant 'acme:ana'  -> dashboard:acme:ana:silva
+    ```
+
+    And the case that does **not** qualify despite carrying a colon: a fixed-width
+    `sha256:{64 hex}` id. Every id in that scheme is the same length, so none is a proper suffix
+    of another, and no tenant makes `t1:u1` equal `t2:u2`. Slugging to `[a-z0-9-]`, or rendering
+    a digest as bare hex or base64url, removes the delimiter and settles it a step earlier.
+
+    Read the value sets you can actually store — not the provenance of the input, not the
+    transform's reputation, and not one example id in isolation.
 
   That third tier is the reason the previous wording mattered: it read as though the user id were
   always the host's to control, which would have left this the mildest of the three. The tier is
