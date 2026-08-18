@@ -100,12 +100,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     ambiguous in principle and no input can exercise it.
   - **Composite host-assigned ids** (`dept:1234`, a stored `tenant:user` subject): reachable by
     accident. Two unrelated accounts can collide with nobody trying.
-  - **Ids derived from caller-supplied input** (the address, a slug of the display name):
-    reachable **on purpose**. The attacker picks the tenant, then picks a name or address that
-    splits it where they want, and both halves are theirs.
+  - **Ids derived from caller-supplied input in a way that PRESERVES the delimiter** (the address
+    stored verbatim; a `{name}:{n}` disambiguator): reachable **on purpose**. The attacker picks
+    the tenant, then picks a value that splits the preimage where they want, and both halves are
+    theirs.
+
+    The qualifier carries the tier, and it is a property of the **stored string**, not of the
+    process that produced it. The test is one line: can a `:` appear in the id a caller can
+    steer? Slugging to `[a-z0-9-]` answers no, and so does rendering a digest as bare hex or
+    base64url. Hashing alone answers nothing — `sha256:9f86d0…` is a hashed id that carries the
+    delimiter, because the encoding put it back. Read the id you actually store, not the
+    provenance of its input and not the transform's reputation.
 
   That third tier is the reason the previous wording mattered: it read as though the user id were
-  always the host's to control, which would have left this the mildest of the three.
+  always the host's to control, which would have left this the mildest of the three. The tier is
+  narrow on purpose — a note that over-warns gets discounted the same way one that under-warns
+  gets ignored, and only one of those failures is visible to whoever wrote it.
 
   That does not make the fix conditional. A library may not assume the shape of ids its consumers
   assign — it is the same assumption `findById` taking a tenant already refuses to make — and a
