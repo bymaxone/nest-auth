@@ -102,6 +102,66 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   of failing in production. `TenantScopedUserRef` and the eight params types are exported from the
   package entry, because a consumer implements this port and needs to name what it receives.
 
+  **Apply to a derived backend.** Every `IUserRepository` method that names an account takes ONE
+  object now — `findById`, `findByEmail`, `updatePassword`, `updateMfa`, `updateLastLogin`,
+  `updateStatus`, `updateEmailVerified`, `updateEmail`, `findByOAuthId` and `linkOAuth`. Destructure
+  it and keep filtering on the tenant. **Eight of the ten are keyed by `id`.** Seven of those are
+  writes: on Prisma they are still `updateMany({ where: { id, tenantId } })` rather than
+  `update({ where: { id } })`, because `update` takes a unique clause and cannot carry the pair.
+  The eighth, `findById`, is a **read** — it filters on the same pair through `findFirst`, because
+  `findUnique` by id alone can answer with another tenant's row. **The other two are not keyed by
+  `id` at all:** `findByEmail` receives `{ email, tenantId }` and `findByOAuthId` receives
+  `{ provider, providerId, tenantId }`, and each filters on its own lookup key plus the tenant.
+
+  ```ts
+  // before → after, for every signature that changed
+  findById(id, tenantId)
+  findById({ id, tenantId })
+
+  findByEmail(email, tenantId)
+  findByEmail({ email, tenantId })
+
+  updatePassword(id, tenantId, passwordHash)
+  updatePassword({ id, tenantId, passwordHash })
+
+  updateMfa(id, tenantId, data)
+  updateMfa({ id, tenantId, data })
+
+  updateLastLogin(id, tenantId)
+  updateLastLogin({ id, tenantId })
+
+  updateStatus(id, tenantId, status)
+  updateStatus({ id, tenantId, status })
+
+  updateEmailVerified(id, tenantId, verified)
+  updateEmailVerified({ id, tenantId, verified })
+
+  updateEmail(id, tenantId, email)
+  updateEmail({ id, tenantId, email })
+
+  findByOAuthId(provider, providerId, tenantId)
+  findByOAuthId({ provider, providerId, tenantId })
+
+  linkOAuth(userId, tenantId, provider, providerId)
+  linkOAuth({ id, tenantId, provider, providerId })
+  ```
+
+  **This supersedes the note in the tenant-scoping entry below**, which told you to take `tenantId`
+  as the _second argument_. Follow that note today and the implementation does not compile:
+  `findById(id: string, tenantId: string)` is rejected against `findById(params: TenantScopedUserRef)`
+  with `TS2416 — Target signature provides too few arguments`. That loud failure is the entire point
+  of the shape.
+
+  What still passes silently is narrower, and worth stating exactly rather than overstating:
+  TypeScript accepts an implementation declaring FEWER parameters than the signature, so one taking
+  no parameters at all compiles — and so does one that takes the object and never reads `tenantId`
+  off it. The compiler rules out a value bound into the wrong slot. It cannot rule out a body that
+  ignores the tenant, which is why every method documents the scoping as a MUST.
+
+  The `AuthService` guidance in that note is unaffected:
+  `getMe(userId, tenantId)` and `issueTokensForUserId(userId, tenantId, ip, userAgent)` are
+  unchanged. The README's example implementation shows the whole shape.
+
   ```ts
   // before
   await repo.updatePassword(userId, tenantId, hash)
@@ -416,7 +476,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   is what a consumer pastes in, and it had drifted to `update({ where: { id } })` on six mutators,
   a query that crosses tenants by construction. Prose does not close by grep.
 
-  **Apply to a derived backend.** Your `IUserRepository` implementation must take `tenantId` as
+  **Apply to a derived backend.** **Superseded — see the object-parameter entry above.** The
+  positional shape described here no longer compiles against the port: written as this note
+  describes it, the implementation is rejected with `TS2416`. Kept as written because this entry
+  describes the release it shipped in; the note above is the one to follow.
+
+  Your `IUserRepository` implementation must take `tenantId` as
   the second argument of `findById`, `updatePassword`, `updateMfa`, `updateLastLogin`,
   `updateStatus`, `updateEmailVerified`, `updateEmail` and `linkOAuth`, and must filter on it. On
   Prisma that means `updateMany({ where: { id, tenantId } })` rather than
