@@ -336,16 +336,47 @@ describe('tenant-scoped port', () => {
     // Written with the real `tsc` rather than a string match on the error, so it measures what a
     // consumer's build measures.
     it('refuses a pre-upgrade implementation', () => {
+      // The signatures a consumer had BEFORE the tenant was added — one parameter on `findById`,
+      // two on `updatePassword`. Not the intermediate positional shape: that one is refused for
+      // the trivial reason that an object is not a string, and pinning it would leave the actual
+      // defect — fewer-parameter assignability — undemonstrated.
       const probe = `
         import type { IUserRepository } from '${USER_PORT.replace(/\\/g, '/').replace(/\.ts$/, '')}'
         declare const stale: {
-          findById(id: string, tenantId: string): Promise<never>
-          updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void>
+          findById(id: string): Promise<never>
+          updatePassword(id: string, passwordHash: string): Promise<void>
         }
         const port: Pick<IUserRepository, 'findById' | 'updatePassword'> = stale
         void port
       `
       expect(compileErrors(probe).length).toBeGreaterThan(0)
+    })
+
+    // The hazard itself, pinned so the arm above is legible.
+    //
+    // TypeScript accepts an implementation declaring FEWER parameters than the signature. That is
+    // not a quirk of our port — it is the language rule that made the positional form unsafe, and
+    // it is the reason the object shape was chosen rather than a reordering. This arm compiles the
+    // same stale implementation against a local copy of the OLD positional signatures and requires
+    // it to be ACCEPTED.
+    //
+    // If TypeScript ever tightened this, the arm goes red and tells the next reader that the
+    // justification in `TenantScopedUserRef`'s JSDoc has expired — which is more useful than the
+    // arm quietly continuing to pass for a reason nobody would re-derive.
+    it('shows why the positional form could not bind: fewer parameters are accepted', () => {
+      const probe = `
+        interface OldPositionalPort {
+          findById(id: string, tenantId: string): Promise<never>
+          updatePassword(id: string, tenantId: string, passwordHash: string): Promise<void>
+        }
+        declare const stale: {
+          findById(id: string): Promise<never>
+          updatePassword(id: string, passwordHash: string): Promise<void>
+        }
+        const port: OldPositionalPort = stale
+        void port
+      `
+      expect(compileErrors(probe)).toEqual([])
     })
 
     // The same probe with the CURRENT shape must compile, or the arm above would pass for the
