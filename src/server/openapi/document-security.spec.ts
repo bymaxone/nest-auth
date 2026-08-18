@@ -54,6 +54,39 @@ describe('authDocumentSecurity', () => {
     }
   })
 
+  // Verifies an OMITTED delivery resolves the way the module resolves it, rather than falling
+  // through both predicates. `tokenDelivery` is optional in `BymaxAuthModuleOptions`, so a
+  // deployment that never set it is relying on the documented `'cookie'` default and passes
+  // `undefined` here by simply forwarding its own options.
+  //
+  // Unresolved this is the worst answer the function can give: both predicates answer `false` for
+  // `undefined`, so a dashboard guard would derive an EMPTY requirement list — a document telling
+  // every generated client that the consumer's guarded routes need no credential.
+  it('resolves an omitted delivery the way the module does', () => {
+    const omitted = authDocumentSecurity({ guard: 'dashboard', tokenDelivery: undefined })
+
+    expect(omitted).toEqual([{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }])
+    expect(omitted).toEqual(authDocumentSecurity({ guard: 'dashboard', tokenDelivery: 'cookie' }))
+  })
+
+  // Verifies the invariant behind that fix, over every input the signature accepts: a guarded
+  // family never derives an empty requirement. An empty list is not a weaker answer — it is the
+  // opposite answer, and it is the one shape that fails silently, because a document declaring a
+  // route open produces no error anywhere. It is asserted separately from the case above so a
+  // future third delivery mode cannot slip through unresolved.
+  it.each([
+    ['dashboard', 'cookie'],
+    ['dashboard', 'bearer'],
+    ['dashboard', 'both'],
+    ['dashboard', undefined],
+    ['platform', 'cookie'],
+    ['platform', 'bearer'],
+    ['platform', 'both'],
+    ['platform', undefined]
+  ] as const)('never derives an empty requirement — %s/%s', (guard, tokenDelivery) => {
+    expect(authDocumentSecurity({ guard, tokenDelivery }).length).toBeGreaterThan(0)
+  })
+
   // Verifies the platform family ignores `tokenDelivery` entirely. `extractPlatformAccessToken`
   // reads the Authorization header in every mode, so a cookie-only deployment still authenticates
   // its platform admins by header — and a default derived from delivery alone would name a cookie

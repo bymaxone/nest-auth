@@ -37,6 +37,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   security: authDocumentSecurity({ guard: 'dashboard', tokenDelivery })
   ```
 
+  **Pass the option exactly as you wrote it, `undefined` included.** `tokenDelivery` is optional
+  on the module, so a deployment relying on the documented `'cookie'` default has nothing to
+  forward — and requiring a narrowed value here would have forced `options.tokenDelivery ?? 'cookie'`
+  at the call site, putting a library decision back into consumer code one line further out.
+  Omission resolves through the same constant the module resolves it with.
+
   It also settles the part a hand-written default usually gets wrong. Under `tokenDelivery: 'both'`
   the result is a two-entry **list** — OpenAPI reads that as OR, either transport satisfies it.
   Merged into one entry with two schemes it would mean AND, describing a server that demands the

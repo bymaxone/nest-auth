@@ -21,7 +21,8 @@
  * deployment deliver tokens.
  */
 import { AUTH_SECURITY_SCHEMES, deliversBearer, deliversCookie } from './auth-openapi-fragment'
-import type { TokenDeliverySetting } from './auth-openapi-fragment'
+import { DEFAULT_OPTIONS } from '../config/default-options'
+import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 /**
  * Which of this library's guards protects the consumer's own routes.
@@ -49,8 +50,16 @@ export interface AuthDocumentSecurityParams {
    * `JwtPlatformGuard` is `'platform'`.
    */
   readonly guard: AuthGuardFamily
-  /** The value passed to `BymaxAuthModule.forRoot({ tokenDelivery })`. */
-  readonly tokenDelivery: TokenDeliverySetting
+  /**
+   * The value passed to `BymaxAuthModule.forRoot({ tokenDelivery })` — **including `undefined`**.
+   *
+   * Optional there, so a deployment that never set it is relying on the library's default, and
+   * this accepts the option exactly as it is written rather than making the caller narrow it. A
+   * required parameter here would force `options.tokenDelivery ?? 'cookie'` at every call site,
+   * which hardcodes a library decision into consumer code — the failure this whole function
+   * exists to remove, reintroduced one line further out.
+   */
+  readonly tokenDelivery: BymaxAuthModuleOptions['tokenDelivery']
 }
 
 /**
@@ -115,9 +124,17 @@ export function authDocumentSecurity({
   // Shared rather than restated: a document default naming a scheme the fragment does not declare
   // is the boot failure this function exists to remove, and two copies of the condition is where
   // that divergence would come from.
+  // Omission resolved through the SAME default the module resolves it with. Reading it from
+  // `DEFAULT_OPTIONS` rather than writing `'cookie'` here keeps one source: a change to the
+  // module default reaches this derivation without anyone remembering that a second copy exists.
+  //
+  // Left unresolved, both predicates answer `false` for `undefined` and a dashboard guard would
+  // derive an EMPTY requirement list — a document declaring the consumer's guarded routes open.
+  const delivery = tokenDelivery ?? DEFAULT_OPTIONS.tokenDelivery
+
   const schemes = [
-    ...(deliversCookie(tokenDelivery) ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
-    ...(deliversBearer(tokenDelivery) ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
+    ...(deliversCookie(delivery) ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
+    ...(deliversBearer(delivery) ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
   ]
 
   return Object.freeze(schemes.map(requirementFor))
