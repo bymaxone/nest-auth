@@ -1367,7 +1367,7 @@ it, including cookie names you have since changed.
 > **nest-core's own routes are the exception that still moves.** It emits an explicit `security: []`
 > for the health probes — and, from 1.5.3, for a metrics endpoint left unprotected — but only when
 > the **served document actually carries a non-empty top-level `security`**, whether that came from
-> `openapi.security` or was already on the generated document before `augmentDocument` saw it.
+> `openapi.security` or was already on the generated document handed to nest-core.
 > Remove the default and the `[]` goes with it. Write the default as an explicit empty list and
 > nothing is being overridden, so the member stays absent either way.
 >
