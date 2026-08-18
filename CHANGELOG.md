@@ -105,9 +105,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     the tenant, then picks a value that splits the preimage where they want, and both halves are
     theirs.
 
-    The qualifier carries the tier. A derivation that hashes its input, or slugs it to
-    `[a-z0-9-]` as most slug helpers do, produces no colon and lands in the first tier however
-    caller-controlled the source was. Read the derivation, not the provenance.
+    The qualifier carries the tier, and it is a property of the **stored string**, not of the
+    process that produced it. The test is one line: can a `:` appear in the id a caller can
+    steer? Slugging to `[a-z0-9-]` answers no, and so does rendering a digest as bare hex or
+    base64url. Hashing alone answers nothing — `sha256:9f86d0…` is a hashed id that carries the
+    delimiter, because the encoding put it back. Read the id you actually store, not the
+    provenance of its input and not the transform's reputation.
 
   That third tier is the reason the previous wording mattered: it read as though the user id were
   always the host's to control, which would have left this the mildest of the three. The tier is
