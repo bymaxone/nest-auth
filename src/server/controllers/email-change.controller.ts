@@ -87,7 +87,7 @@ export class EmailChangeController {
     @Body() dto: ChangeEmailDto,
     @CurrentUser() user: DashboardJwtPayload
   ): Promise<void> {
-    await this.emailChangeService.requestChange(user.sub, dto)
+    await this.emailChangeService.requestChange(user.sub, user.tenantId, dto)
   }
 
   // ---------------------------------------------------------------------------

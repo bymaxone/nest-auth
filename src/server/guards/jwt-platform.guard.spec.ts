@@ -381,7 +381,11 @@ describe('JwtPlatformGuard', () => {
       )
       // The PLATFORM epoch — the two planes have colliding id spaces, so reading `ep:` here
       // would let a dashboard user's reset revoke an unrelated admin's tokens and vice versa.
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'platform')
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(
+        VALID_PAYLOAD.sub,
+        undefined,
+        'platform'
+      )
     })
 
     // A token stamped at the current generation is still valid — the bump must not lock the

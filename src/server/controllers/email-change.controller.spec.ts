@@ -60,7 +60,7 @@ describe('EmailChangeController', () => {
     it('applies the change to the authenticated caller, not to anyone the body names', async () => {
       await controller.requestChange(dto, JWT_PAYLOAD)
 
-      expect(mockService.requestChange).toHaveBeenCalledWith('user-1', dto)
+      expect(mockService.requestChange).toHaveBeenCalledWith('user-1', JWT_PAYLOAD.tenantId, dto)
     })
 
     it('returns undefined (HTTP 204 No Content)', async () => {

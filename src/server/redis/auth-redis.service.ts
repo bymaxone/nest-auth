@@ -9,6 +9,7 @@ import type { Redis } from 'ioredis'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_REDIS_CLIENT } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { TOKEN_EPOCH_RETENTION_SECONDS } from '../constants/token-epoch'
+import { sessionIndexKey, tokenEpochKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 
@@ -299,6 +300,8 @@ return #members
 export interface RefreshRotationParams {
   /** Which identity plane is rotating; selects the whole prefix set. */
   kind: 'dashboard' | 'platform'
+  /** The tenant the rotating session belongs to; part of the index key on the dashboard plane. */
+  tenantId: string | undefined
   /** SHA-256 of the presented (old) refresh token. */
   oldHash: string
   /** SHA-256 of the freshly minted refresh token. */
@@ -358,12 +361,23 @@ export class AuthRedisService {
    */
   readonly #redis: Redis
 
+  /**
+   * The identifier-HMAC key, for the two keyspaces that name an account.
+   *
+   * Also an ECMAScript private field, for the same reason as {@link #redis} and a sharper one:
+   * this is key material. `ResolvedOptions` withholds it from serialization; keeping it
+   * non-enumerable here means the service cannot leak it back through a `JSON.stringify` of
+   * whichever guard or service it was injected into.
+   */
+  readonly #hmacKey: string
+
   constructor(
     @Inject(BYMAX_AUTH_REDIS_CLIENT) redis: Redis,
     @Inject(BYMAX_AUTH_OPTIONS) options: ResolvedOptions
   ) {
     this.#redis = redis
     this.namespace = options.redisNamespace
+    this.#hmacKey = options.hmacKey
   }
 
   // ---------------------------------------------------------------------------
@@ -577,7 +591,7 @@ export class AuthRedisService {
         `${p.grace}:${params.oldHash}`,
         `${p.consumed}:${params.oldHash}`,
         `${p.family}:${params.familyId}`,
-        `${p.index}:${params.userId}`
+        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId)
       ],
       [
         params.newSessionJson,
@@ -613,6 +627,8 @@ export class AuthRedisService {
    */
   async writeNewSession(params: {
     kind: 'dashboard' | 'platform'
+    /** The tenant the session belongs to; part of the index key on the dashboard plane. */
+    tenantId: string | undefined
     tokenHash: string
     sessionJson: string
     familyId: string
@@ -624,7 +640,7 @@ export class AuthRedisService {
       CREATE_SESSION_LUA,
       [
         `${p.live}:${params.tokenHash}`,
-        `${p.index}:${params.userId}`,
+        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
         // Always passed, even with no family: a Lua script's key list is fixed at the call
         // site, and the script skips the key rather than the caller skipping the argument.
         `${p.family}:${params.familyId}`
@@ -647,6 +663,8 @@ export class AuthRedisService {
    */
   async writeRecoveredSession(params: {
     kind: 'dashboard' | 'platform'
+    /** The tenant the session belongs to; part of the index key on the dashboard plane. */
+    tenantId: string | undefined
     newHash: string
     newSessionJson: string
     familyId: string
@@ -658,7 +676,7 @@ export class AuthRedisService {
       RECOVER_GRACE_LUA,
       [
         `${p.live}:${params.newHash}`,
-        `${p.index}:${params.userId}`,
+        sessionIndexKey(params.kind, params.userId, this.#hmacKey, params.tenantId),
         `${p.family}:${params.familyId}`
       ],
       [params.newSessionJson, String(params.refreshTtl), params.familyId, p.live, params.newHash]
@@ -711,7 +729,10 @@ export class AuthRedisService {
    * Idempotent: an empty, unknown, or already-cleared family is a no-op.
    *
    * @param familyId - The family id carried by the consumed-token marker.
-   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`.
+   * @param kind - Which identity plane the family belongs to. Defaults to `'dashboard'`. Unlike
+   *   the three methods that lost their default in this change, this one takes no positional
+   *   tenant beside it — the owner and its tenant come off the family's own record — so there is
+   *   no adjacent same-typed argument for it to be transposed with.
    * @returns The number of members removed and the account the family belonged to. The owner
    *   is reported because the caller cannot obtain it any other way: the presented token's own
    *   `rt:` key was deleted when it was rotated, so at reuse-detection time the family index is
@@ -725,8 +746,18 @@ export class AuthRedisService {
     if (familyId === '') return { removed: 0, ownerId: '' }
     const p = prefixesFor(kind)
     const members = await this.smembers(`${p.family}:${familyId}`)
-    const ownerId = await this.readFamilyOwner(members, p.live)
-    const indexKey = ownerId === '' ? '' : this.prefix(`${p.index}:${ownerId}`)
+    const { userId: ownerId, tenantId } = await this.readFamilyOwner(members, p.live)
+
+    // No owner, or a dashboard owner whose record names no tenant, means NO index to prune —
+    // the same answer logout gives a pre-upgrade record, and for the same reason. Deriving one
+    // anyway would build `dashboard:9:undefined:{ownerId}`, a keyspace belonging to no tenant: the
+    // prune would succeed against a key nobody writes while the real index kept every member,
+    // and the operation would report a revocation that did not reach the index. The Lua script
+    // takes an empty index key and skips that step.
+    const nameable = ownerId !== '' && (kind === 'platform' || (tenantId ?? '') !== '')
+    const indexKey = nameable
+      ? this.prefix(sessionIndexKey(kind, ownerId, this.#hmacKey, tenantId))
+      : ''
     const removed = await this.eval(
       REVOKE_FAMILY_LUA,
       [`${p.family}:${familyId}`],
@@ -742,28 +773,39 @@ export class AuthRedisService {
    * names the owner. Reading it here rather than decoding JSON inside the revocation script
    * keeps the script free of `cjson` and uses a real parser on the stored record.
    *
+   * The TENANT comes off the same record, because the index key the caller then builds is
+   * scoped to it. Reading the two together is what keeps them from disagreeing: an owner
+   * resolved from one member and a tenant guessed from anywhere else would name a key that
+   * belongs to neither.
+   *
    * @param members - The family index members (bare session hashes).
    * @param livePrefix - The live-session prefix for the plane (`rt` or `prt`).
-   * @returns The owner's id, or `''` when no member NAMES one — every member record gone, or a
-   *   record that will not parse, or one carrying no `userId`. The three are indistinguishable
-   *   from here, so a caller reporting this must say what was observed rather than why.
+   * @returns The owner and its tenant; `userId` is `''` when no member NAMES one — every member
+   *   record gone, or a record that will not parse, or one carrying no `userId`. The three are
+   *   indistinguishable from here, so a caller reporting this must say what was observed rather
+   *   than why.
    */
-  private async readFamilyOwner(members: string[], livePrefix: string): Promise<string> {
+  private async readFamilyOwner(
+    members: string[],
+    livePrefix: string
+  ): Promise<{ userId: string; tenantId: string | undefined }> {
     for (const hash of members) {
       const record = await this.get(`${livePrefix}:${hash}`)
       if (record === null) continue
-      let userId: unknown
+      let parsed: Record<string, unknown> | undefined
       try {
-        userId = (JSON.parse(record) as Record<string, unknown>)['userId']
+        parsed = JSON.parse(record) as Record<string, unknown>
       } catch {
         // Deliberately swallowed: an unreadable member names no owner, and the next member
-        // may still name one. The loop's own guard rejects the undefined that leaves here.
+        // may still name one. The guard below rejects the undefined that leaves here.
       }
+      const userId = parsed?.['userId']
       if (typeof userId === 'string' && userId !== '') {
-        return userId
+        const tenantId = parsed?.['tenantId']
+        return { userId, tenantId: typeof tenantId === 'string' ? tenantId : undefined }
       }
     }
-    return ''
+    return { userId: '', tenantId: undefined }
   }
 
   // ---------------------------------------------------------------------------
@@ -959,21 +1001,27 @@ export class AuthRedisService {
    * Atomically deletes all refresh sessions for a user on the given identity plane.
    *
    * Each plane sweeps only its own index — `sess:` for dashboard, `psess:` for platform — so
-   * an admin and a user who happen to share an id never revoke each other's sessions.
+   * an admin and a user who happen to share an id never revoke each other's sessions. The
+   * dashboard index is scoped to the tenant as well, because that plane's ids are only unique
+   * within one: without it a sweep aimed at `t1/u1` also emptied `t2/u1`.
    *
    * @param userId - Internal user or admin ID whose sessions will be invalidated.
-   * @param kind - Which identity plane to revoke. Defaults to `'dashboard'`.
+   * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+   * @param kind - Which identity plane to revoke. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    */
   async invalidateUserSessions(
     userId: string,
-    kind: 'dashboard' | 'platform' = 'dashboard'
+    tenantId: string | undefined,
+    kind: 'dashboard' | 'platform'
   ): Promise<void> {
+    const key = sessionIndexKey(kind, userId, this.#hmacKey, tenantId)
     if (kind === 'platform') {
-      await this.sweepSessionIndex(`psess:${userId}`, 'prt:', 'prp:', 'psd:')
+      await this.sweepSessionIndex(key, 'prt:', 'prp:', 'psd:')
       return
     }
 
-    await this.sweepSessionIndex(`sess:${userId}`, 'rt:', 'rp:', 'sd:')
+    await this.sweepSessionIndex(key, 'rt:', 'rp:', 'sd:')
   }
 
   /**
@@ -1020,14 +1068,17 @@ export class AuthRedisService {
    * bumped carries one.
    *
    * @param userId - Internal user or admin ID to look up.
-   * @param kind - Which identity plane to read. Defaults to `'dashboard'`.
+   * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+   * @param kind - Which identity plane to read. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    * @returns The stored epoch, or `0` when none is stored or the value is unreadable.
    */
   async getUserTokenEpoch(
     userId: string,
-    kind: 'dashboard' | 'platform' = 'dashboard'
+    tenantId: string | undefined,
+    kind: 'dashboard' | 'platform'
   ): Promise<number> {
-    const raw = await this.get(`${kind === 'platform' ? 'pep' : 'ep'}:${userId}`)
+    const raw = await this.get(tokenEpochKey(kind, userId, this.#hmacKey, tenantId))
     // `Number(null)` is 0, which is exactly the "never bumped" default, so an absent key needs
     // no branch of its own. Anything that is not a whole number — a corrupt value, a float —
     // reads as 0 too: comparing a stamped epoch against NaN is always false, which would
@@ -1045,28 +1096,49 @@ export class AuthRedisService {
    * cannot serve that purpose when the token is allowed to be absent or expired — and taking
    * the owner from an unverified token would let a caller aim the revocation at someone else.
    *
-   * A record that is missing, unparseable, or carries no string `userId` answers `''`: there
-   * is nothing to attribute the logout to, which the caller treats as "no live session".
+   * A record that is missing, unparseable, or carries no string `userId` answers an empty
+   * `userId`: there is nothing to attribute the logout to, which the caller treats as "no live
+   * session".
+   *
+   * **The tenant comes from the same record, and that is the point.** Revoking the session
+   * needs the owner's index key, which is tenant-scoped on the dashboard plane — and the one
+   * place the tenant can be read without trusting the caller is the record the refresh token
+   * just proved possession of. Taking it from an access token's claims would let a caller aim a
+   * revocation at the colliding id in another tenant, which is the same reasoning that already
+   * kept the OWNER out of those claims.
    *
    * @param key - The un-namespaced session key (`rt:{hash}` or `prt:{hash}`).
-   * @returns The recorded user id, or `''`.
+   * @returns The recorded owner and tenant; `userId` is `''` when there is no usable record.
    */
-  async readSessionOwner(key: string): Promise<string> {
+  async readSessionOwner(key: string): Promise<{ userId: string; tenantId: string | undefined }> {
+    const none = { userId: '', tenantId: undefined }
     const raw = await this.get(key)
-    if (raw === null) return ''
+    if (raw === null) return none
     try {
       const parsed: unknown = JSON.parse(raw)
       // Stryker disable next-line ConditionalExpression,LogicalOperator: defensive shape guard
       // fully masked by what follows — a scalar reads `['userId']` as `undefined` and fails the
       // string test, and `null` throws on the index and is caught below. Every mutant of it
-      // returns the same empty string through a different path
-      if (typeof parsed !== 'object' || parsed === null) return ''
-      const userId = (parsed as Record<string, unknown>)['userId']
-      return typeof userId === 'string' ? userId : ''
+      // returns the same empty owner through a different path
+      if (typeof parsed !== 'object' || parsed === null) return none
+      const record = parsed as Record<string, unknown>
+      const userId = record['userId']
+      if (typeof userId !== 'string') return none
+      const tenantId = record['tenantId']
+      // A BLANK tenant is normalised to absent, not returned as a usable value. Callers test
+      // presence to decide whether they can name an index, and `''` builds `dashboard:0::{userId}`
+      // — a keyspace belonging to no tenant, exactly as `dashboard:9:undefined:` does. Returning it
+      // as a string made `AuthService.logout`'s `tenantId !== undefined` check pass and then miss
+      // the real index, leaving the member and its detail record behind. One shape of "no tenant"
+      // at the boundary means every caller downstream gets the same answer.
+      return {
+        userId,
+        tenantId: typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined
+      }
     } catch {
       // A malformed record names nobody. The session parser reports it on the paths that
       // need to fail loudly; here the caller only wants an owner or the absence of one.
-      return ''
+      return none
     }
   }
 
@@ -1080,14 +1152,17 @@ export class AuthRedisService {
    * runs from the latest bump: by then every token stamped below it has expired anyway.
    *
    * @param userId - Internal user or admin ID whose outstanding access tokens are revoked.
-   * @param kind - Which identity plane to bump. Defaults to `'dashboard'`.
+   * @param tenantId - The tenant the dashboard account belongs to; ignored on the platform plane.
+   * @param kind - Which identity plane to bump. **Required** — the default was removed because
+   *   a positional plane beside a positional tenant is a transposition nobody notices.
    * @returns The epoch after the increment.
    */
   async bumpUserTokenEpoch(
     userId: string,
-    kind: 'dashboard' | 'platform' = 'dashboard'
+    tenantId: string | undefined,
+    kind: 'dashboard' | 'platform'
   ): Promise<number> {
-    const key = `${kind === 'platform' ? 'pep' : 'ep'}:${userId}`
+    const key = tokenEpochKey(kind, userId, this.#hmacKey, tenantId)
     // `EXPIRE` on EVERY increment, not only the first — which is why this cannot reuse
     // `incrWithFixedTtl`, whose refusal to extend is the whole point of a fixed rate-limit
     // window. Here that behaviour would anchor the retention window to the *first* bump a user

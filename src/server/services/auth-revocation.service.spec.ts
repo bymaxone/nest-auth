@@ -13,7 +13,12 @@ import type { RevocableTokenPayload } from './auth-revocation.service'
 import type { AuthRedisService } from '../redis/auth-redis.service'
 
 /** A verified dashboard token payload the check reads. */
-const PAYLOAD: RevocableTokenPayload = { jti: 'jti-1', sub: 'user-1', epoch: 3 }
+const PAYLOAD: RevocableTokenPayload = {
+  jti: 'jti-1',
+  sub: 'user-1',
+  tenantId: 'tenant-1',
+  epoch: 3
+}
 
 /** Builds the service over a redis stub with the two reads it uses, defaulted to "not revoked". */
 function buildService(overrides?: { blacklist?: string | null; epoch?: number }): {
@@ -83,7 +88,7 @@ describe('AuthRevocationService', () => {
 
     await service.isAccessTokenRevoked(PAYLOAD, 'platform')
 
-    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'platform')
+    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'platform')
   })
 
   /**
@@ -95,6 +100,45 @@ describe('AuthRevocationService', () => {
 
     await service.isAccessTokenRevoked(PAYLOAD)
 
-    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'dashboard')
+    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
+  })
+
+  /**
+   * Fail-closed on a dashboard payload with no tenant.
+   * Rule: the epoch key is derived from the tenant-scoped subject, and an absent tenant
+   * interpolates as the literal `undefined` — a keyspace belonging to no tenant, where nothing has
+   * ever been bumped. Reading it answers 0, `stamped < 0` is false for every token, and a
+   * bulk-revoked token would be reported VALID. This service is exported for callers that never
+   * pass a guard, and `tenantId` is optional in its public payload type, so the omission is a
+   * shape a caller can actually produce.
+   */
+  it.each([
+    ['undefined', undefined],
+    ['empty', '']
+  ])('treats a dashboard token with a %s tenant as revoked', async (_label, tenantId) => {
+    const { service, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
+
+    await expect(service.isAccessTokenRevoked({ ...PAYLOAD, tenantId }, 'dashboard')).resolves.toBe(
+      true
+    )
+
+    // And it never reaches the store: there is no key worth reading for a subject it cannot name.
+    expect(getUserTokenEpoch).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The platform plane is unaffected.
+   * Rule: platform admins are cross-tenant and their subject carries no tenant segment, so an
+   * absent tenant there is the normal shape rather than a malformed one. Guarding both planes
+   * with one rule would refuse every platform check.
+   */
+  it('still reads the epoch for a platform token with no tenant', async () => {
+    const { service, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
+
+    await expect(
+      service.isAccessTokenRevoked({ ...PAYLOAD, tenantId: undefined }, 'platform')
+    ).resolves.toBe(false)
+
+    expect(getUserTokenEpoch).toHaveBeenCalledWith('user-1', undefined, 'platform')
   })
 })

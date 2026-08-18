@@ -7,6 +7,7 @@ import type { JwtSignOptions } from '@nestjs/jwt'
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { ResolvedOptions } from '../config/resolved-options'
 import { RECENT_AUTH_TTL_SECONDS, recentAuthKey } from '../constants/recent-auth'
+import { sessionIndexKey } from '../constants/user-keys'
 import { generateSecureToken, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -219,7 +220,7 @@ export class TokenManagerService {
   ): Promise<AuthResult> {
     // Stamp the user's current token epoch so a later bump (a password reset) invalidates this
     // token at verification, without the server having to enumerate outstanding tokens.
-    const epoch = await this.redis.getUserTokenEpoch(user.id)
+    const epoch = await this.redis.getUserTokenEpoch(user.id, user.tenantId, 'dashboard')
     const accessToken = this.issueAccess({
       sub: user.id,
       tenantId: user.tenantId,
@@ -254,6 +255,7 @@ export class TokenManagerService {
     // rust-auth has always written this in one `MULTI/EXEC`; see `CREATE_SESSION_LUA`.
     await this.redis.writeNewSession({
       kind: 'dashboard',
+      tenantId: user.tenantId,
       tokenHash,
       sessionJson: this.serializeSession(session),
       familyId,
@@ -299,7 +301,7 @@ export class TokenManagerService {
     userAgent: string,
     overrides?: { mfaVerified?: boolean }
   ): Promise<PlatformAuthResult> {
-    const epoch = await this.redis.getUserTokenEpoch(admin.id, 'platform')
+    const epoch = await this.redis.getUserTokenEpoch(admin.id, undefined, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: admin.id,
       role: admin.role,
@@ -330,6 +332,7 @@ export class TokenManagerService {
     // same id.
     await this.redis.writeNewSession({
       kind: 'platform',
+      tenantId: undefined,
       tokenHash,
       sessionJson: this.serializeSession(session),
       familyId,
@@ -419,6 +422,7 @@ export class TokenManagerService {
 
     const seed = await this.readSeedSession(`rt:${oldHash}`, ip, userAgent)
     this.assertWithinAbsoluteLifetime(seed)
+    this.assertRotatableTenant(seed)
     const newSession = this.buildSession(
       seed.userId,
       seed.tenantId,
@@ -432,6 +436,7 @@ export class TokenManagerService {
 
     const outcome = await this.redis.rotateRefreshSession({
       kind: 'dashboard',
+      tenantId: seed.tenantId,
       oldHash,
       newHash,
       newSessionJson: this.serializeSession(newSession),
@@ -519,6 +524,36 @@ export class TokenManagerService {
       this.logger.error(
         `onRefreshTokenReuseDetected hook threw synchronously: ${describeChannelStatus(err)}`
       )
+    }
+  }
+
+  /**
+   * Refuses to rotate a dashboard session whose record names no tenant.
+   *
+   * `parseSession` validates `userId`, `role` and `mfaEnabled` but not `tenantId`, so a record
+   * written before the index carried one reaches here with the field absent. Rotating it would do
+   * two wrong things at once: write the new session under `dashboard:9:undefined:{userId}`, an
+   * index belonging to no tenant and swept by no revoke-all, and mint an access token with no
+   * tenant claim — which every dashboard guard then refuses, so the caller gets a session that
+   * cannot be used and cannot be revoked.
+   *
+   * Refusing is the same answer the migration note gives: a pre-upgrade session dies and the user
+   * signs in again. That is a cost; rotating into a keyspace nobody sweeps is a hole.
+   *
+   * The platform plane is exempt — its subject carries no tenant segment by design.
+   *
+   * @param session - The seed session read from the presented token.
+   * @throws {@link AuthException} with `REFRESH_TOKEN_INVALID`, indistinguishable from any other
+   *   invalid refresh: the remedy is the same and the difference would only tell a token holder
+   *   how old the record is.
+   */
+  private assertRotatableTenant(session: RefreshSession): void {
+    // Only a record that NAMES a user is judged. `readSeedSession` answers a placeholder with an
+    // empty identity when the live key is gone, and that placeholder is how the grace-window path
+    // is reached — refusing it here would turn every grace recovery into an invalid refresh.
+    if (session.userId === '') return
+    if (session.tenantId === undefined || session.tenantId === '') {
+      throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
   }
 
@@ -634,6 +669,10 @@ export class TokenManagerService {
     // token and a full-length refresh session by presenting a token inside its grace window:
     // the one path where the cap is easiest to reach is the one where it did not apply.
     this.assertWithinAbsoluteLifetime(graceSession)
+    // Re-checked here for the same reason, and it is the same one word of argument: the seed the
+    // top-level check saw was the placeholder, whose tenant is empty by construction. The record
+    // that actually mints the next session is this one.
+    this.assertRotatableTenant(graceSession)
     const anotherNewRefresh = generateSecureToken()
     const anotherNewHash = sha256(anotherNewRefresh)
     const anotherSession = this.buildSession(
@@ -655,6 +694,7 @@ export class TokenManagerService {
     // Deliberately NO `rp:{anotherNewHash}` write — see JSDoc above.
     const written = await this.redis.writeRecoveredSession({
       kind: 'dashboard',
+      tenantId: graceSession.tenantId,
       newHash: anotherNewHash,
       newSessionJson: this.serializeSession(anotherSession),
       familyId: graceSession.familyId,
@@ -804,7 +844,7 @@ export class TokenManagerService {
     // re-complete the MFA challenge after rotation to re-acquire a verified token.
     // The epoch is re-read at rotation time, so a reset that lands mid-session is picked up
     // by the very next rotation rather than being carried over from the old token.
-    const epoch = await this.redis.getUserTokenEpoch(session.userId)
+    const epoch = await this.redis.getUserTokenEpoch(session.userId, session.tenantId, 'dashboard')
     const accessToken = this.issueAccess({
       sub: session.userId,
       tenantId: session.tenantId,
@@ -865,6 +905,7 @@ export class TokenManagerService {
 
     const outcome = await this.redis.rotateRefreshSession({
       kind: 'platform',
+      tenantId: undefined,
       oldHash,
       newHash,
       newSessionJson: this.serializeSession(newSession),
@@ -983,6 +1024,7 @@ export class TokenManagerService {
     // Deliberately NO `prp:{anotherNewHash}` write — see JSDoc above.
     const written = await this.redis.writeRecoveredSession({
       kind: 'platform',
+      tenantId: undefined,
       newHash: anotherNewHash,
       newSessionJson: this.serializeSession(anotherSession),
       familyId: graceSession.familyId,
@@ -994,7 +1036,10 @@ export class TokenManagerService {
     }
     // Remove the consumed grace pointer from the per-user SET — the key itself is still live
     // (the script leaves it for its remaining window); the SET entry is what a revoke-all uses.
-    await this.redis.srem(`psess:${graceSession.userId}`, `prp:${oldHash}`)
+    await this.redis.srem(
+      sessionIndexKey('platform', graceSession.userId, this.options.hmacKey, undefined),
+      `prp:${oldHash}`
+    )
     await this.redis.del(`psd:${oldHash}`)
     await this.writePlatformSessionDetail(anotherNewHash, ip, userAgent, refreshTtl)
 
@@ -1013,7 +1058,7 @@ export class TokenManagerService {
     rawRefreshToken: string
   ): Promise<RotatedTokenResult> {
     // mfaVerified is always false after rotation (same semantics as buildRotatedResult).
-    const epoch = await this.redis.getUserTokenEpoch(session.userId, 'platform')
+    const epoch = await this.redis.getUserTokenEpoch(session.userId, undefined, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: session.userId,
       role: session.role,
@@ -1062,7 +1107,7 @@ export class TokenManagerService {
       type: 'platform',
       mfaEnabled,
       mfaVerified: claims.mfaVerified,
-      epoch: await this.redis.getUserTokenEpoch(claims.sub, 'platform')
+      epoch: await this.redis.getUserTokenEpoch(claims.sub, undefined, 'platform')
     })
   }
 
@@ -1144,7 +1189,7 @@ export class TokenManagerService {
       ...(tenantId !== undefined ? { tenantId } : {}),
       // Stamped so the challenge token dies with the rest of the account's credentials. See
       // the claim's own documentation for what it was surviving.
-      epoch: await this.redis.getUserTokenEpoch(userId, context)
+      epoch: await this.redis.getUserTokenEpoch(userId, tenantId, context)
     }
 
     const token = this.jwtService.sign(payload, {
@@ -1239,8 +1284,12 @@ export class TokenManagerService {
     // path an attacker would reach by dropping the field, so it is refused rather than degraded to.
     // (RFC 8725 §3.9/§3.12; ASVS 6.6.2 — the out-of-band token must be bound to its originating
     // request.) A token minted before the claim existed is refused, and the user redoes login.
+    // Blank counts as missing. `''` passes `!== undefined` and then names `dashboard:0::{userId}`,
+    // an epoch nobody has ever bumped — so the revocation gate below would read 0 and accept a
+    // challenge that a password or MFA reset had revoked. That is the tenant-blind lookup this
+    // comment refuses, reached through the one shape the check did not cover.
     if (
-      (payload.context === 'dashboard' && payload.tenantId === undefined) ||
+      (payload.context === 'dashboard' && (payload.tenantId ?? '') === '') ||
       (payload.context === 'platform' && payload.tenantId !== undefined)
     ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
@@ -1272,7 +1321,8 @@ export class TokenManagerService {
     // The check lives here rather than in `MfaService.challenge` so every caller of the temp
     // token inherits it.
     if (
-      readStampedEpoch(payload) < (await this.redis.getUserTokenEpoch(payload.sub, payload.context))
+      readStampedEpoch(payload) <
+      (await this.redis.getUserTokenEpoch(payload.sub, payload.tenantId, payload.context))
     ) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID)
     }

@@ -215,14 +215,14 @@ describe('PasswordResetService', () => {
     // hash before anything is written, the new one goes through the breach checker, and the
     // write lands.
     it('verifies the current password, screens the new one, and persists it', async () => {
-      await service.changePassword('u1', dto, 'raw-refresh')
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockPasswordService.compare).toHaveBeenCalledWith('the-old-one', 'scrypt:stored')
       expect(mockPasswordService.assertAcceptable).toHaveBeenCalledWith(
         'a-brand-new-one',
         'newPassword'
       )
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'scrypt:new')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'tenant-1', 'scrypt:new')
     })
 
     // The reason ASVS §6.2.3 asks for the current password at all: a session is not proof of
@@ -231,7 +231,9 @@ describe('PasswordResetService', () => {
     it('refuses when the current password does not match, and writes nothing', async () => {
       mockPasswordService.compare.mockResolvedValue(false)
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
       expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
@@ -244,7 +246,9 @@ describe('PasswordResetService', () => {
     it('refuses an account with no local password', async () => {
       mockUserRepo.findById.mockResolvedValue({ id: 'u1', email: 'o@e.com', status: 'active' })
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
       expect(mockPasswordService.compare).not.toHaveBeenCalled()
@@ -258,7 +262,9 @@ describe('PasswordResetService', () => {
     it('refuses once the re-proof failure budget for this account is spent', async () => {
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.ACCOUNT_LOCKED } }
       })
       // Refused before the KDF, so a locked account is not an amplifier either.
@@ -270,7 +276,9 @@ describe('PasswordResetService', () => {
       mockPasswordService.compare.mockResolvedValue(false)
       mockBruteForce.recordFailure.mockClear()
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toBeDefined()
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toBeDefined()
 
       expect(mockBruteForce.recordFailure).toHaveBeenCalledTimes(1)
     })
@@ -280,7 +288,7 @@ describe('PasswordResetService', () => {
     it('clears the budget once the current password is proved', async () => {
       mockBruteForce.resetFailures.mockClear()
 
-      await service.changePassword('u1', dto, 'raw-refresh')
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledTimes(1)
     })
@@ -290,7 +298,9 @@ describe('PasswordResetService', () => {
     it('refuses when the account no longer exists', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toMatchObject({
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.INVALID_CREDENTIALS } }
       })
     })
@@ -300,12 +310,13 @@ describe('PasswordResetService', () => {
     // so — and `revokeAllExceptCurrent` bumps the epoch, which is what reaches the stateless
     // access tokens the other devices hold.
     it('ends every other session, keeping the caller signed in', async () => {
-      await service.changePassword('u1', dto, 'raw-refresh')
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
-      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith(
-        'u1',
-        sha256('raw-refresh')
-      )
+      expect(mockSessionService.revokeAllExceptCurrent).toHaveBeenCalledWith({
+        userId: 'u1',
+        tenantId: 'tenant-1',
+        currentSessionHash: sha256('raw-refresh')
+      })
       expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
     })
 
@@ -313,11 +324,11 @@ describe('PasswordResetService', () => {
     // that every one of them goes — a change that leaves an unidentified session alive is the
     // failure this control exists to prevent.
     it('ends every session when the caller cannot be identified', async () => {
-      await service.changePassword('u1', dto, undefined)
+      await service.changePassword('u1', 'tenant-1', dto, undefined)
 
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
     })
 
     // An EMPTY token is "cannot be identified" too, not a token. Treated as one it would spare the
@@ -325,11 +336,11 @@ describe('PasswordResetService', () => {
     // the request down the keep-one path, where the sweep is scoped to "all except this hash"
     // rather than the unconditional invalidation this case calls for.
     it('ends every session when the caller presents an empty token', async () => {
-      await service.changePassword('u1', dto, '')
+      await service.changePassword('u1', 'tenant-1', dto, '')
 
       expect(mockSessionService.revokeAllExceptCurrent).not.toHaveBeenCalled()
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant-1', 'dashboard')
     })
 
     // The re-proof budget is keyed to this account AND this flow. Dropping the account id gives
@@ -337,7 +348,7 @@ describe('PasswordResetService', () => {
     // the flow prefix merges it with `login`'s, so guessing here locks the owner out of signing in
     // — which is the outcome this control exists to prevent, arrived at from the other side.
     it('keys the failure budget to the account and to this flow alone', async () => {
-      await service.changePassword('u1', dto, 'raw-refresh')
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockBruteForce.resetFailures).toHaveBeenCalledWith(
         hmacSha256('reauth:change-password:u1', HMAC_KEY)
@@ -353,7 +364,9 @@ describe('PasswordResetService', () => {
       // lockout would decide every test after this one.
       mockBruteForce.isLockedOut.mockResolvedValueOnce(true)
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+      await expect(service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')).rejects.toThrow(
+        AuthException
+      )
 
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('account locked')
@@ -367,7 +380,9 @@ describe('PasswordResetService', () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       mockPasswordService.compare.mockResolvedValueOnce(false)
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+      await expect(service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')).rejects.toThrow(
+        AuthException
+      )
 
       const warned = warnSpy.mock.calls.map((call) => String(call[0])).join(' ')
       expect(warned).toContain('current password rejected')
@@ -400,7 +415,9 @@ describe('PasswordResetService', () => {
         })
       )
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).resolves.toBeUndefined()
 
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
       expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalled()
@@ -415,7 +432,9 @@ describe('PasswordResetService', () => {
         throw new Error('550 user@example.com: recipient rejected — smtp down')
       })
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).resolves.toBeUndefined()
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
@@ -441,7 +460,9 @@ describe('PasswordResetService', () => {
         new Error('550 user@example.com: recipient rejected — smtp down')
       )
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).resolves.toBeUndefined()
       // The rejection is handled on a later tick than the resolution of `changePassword`.
       await new Promise((resolve) => setImmediate(resolve))
 
@@ -470,7 +491,9 @@ describe('PasswordResetService', () => {
         new AuthException(AUTH_ERROR_CODES.PASSWORD_COMPROMISED)
       )
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).rejects.toThrow(AuthException)
+      await expect(service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')).rejects.toThrow(
+        AuthException
+      )
       expect(mockUserRepo.updatePassword).not.toHaveBeenCalled()
     })
 
@@ -478,7 +501,7 @@ describe('PasswordResetService', () => {
     // transaction. The classic takeover starts with a compromised mailbox, so this notice is
     // what turns "the victim finds out days later" into "the victim finds out now".
     it('notifies the account that its password changed', async () => {
-      await service.changePassword('u1', dto, 'raw-refresh')
+      await service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
 
       expect(mockEmailProvider.sendPasswordChangedNotification).toHaveBeenCalledWith(
         'tenant-1',
@@ -493,7 +516,9 @@ describe('PasswordResetService', () => {
         new Error('smtp down')
       )
 
-      await expect(service.changePassword('u1', dto, 'raw-refresh')).resolves.toBeUndefined()
+      await expect(
+        service.changePassword('u1', 'tenant-1', dto, 'raw-refresh')
+      ).resolves.toBeUndefined()
       expect(mockUserRepo.updatePassword).toHaveBeenCalled()
     })
   })
@@ -1250,12 +1275,15 @@ describe('PasswordResetService', () => {
         baseDto.newPassword,
         'newPassword'
       )
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', '$hashed$')
+      // 'tenant1' — the reset record's own tenant, not one the caller supplied: the token
+      // flow has no authenticated claims to read it from, so the write is scoped by what was
+      // stamped when the token was minted.
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith('u1', 'tenant1', '$hashed$')
       // Full revocation: refresh sessions are deleted AND the user's token epoch is advanced,
       // so already-issued stateless access tokens are rejected immediately rather than staying
       // valid until their exp.
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 'tenant1', 'dashboard')
     })
 
     // Scenario: token flow; expected: getdel is called with a `pw_reset:<sha256>` key, never an
@@ -1558,8 +1586,8 @@ describe('PasswordResetService', () => {
 
       // Assert
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u2')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u2', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u2', 'tenant1', 'dashboard')
       // Pin the verifiedToken Redis key template — emptying it (`getdel('')`) reads the wrong key.
       const [key] = mockRedis.getdel.mock.calls[0] as [string]
       expect(key).toMatch(/^pw_vtok:[0-9a-f]{64}$/)
@@ -1647,8 +1675,8 @@ describe('PasswordResetService', () => {
         '654321'
       )
       expect(mockPasswordService.hash).toHaveBeenCalledWith(baseDto.newPassword)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3')
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u3')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u3', 'tenant1', 'dashboard')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u3', 'tenant1', 'dashboard')
     })
 
     // Verifies that throws PASSWORD_RESET_TOKEN_INVALID when no proof field is present (otp method).

@@ -277,7 +277,11 @@ describe('JwtAuthGuard', () => {
       expect((caught!.getResponse() as { error: { code: string } }).error.code).toBe(
         AUTH_ERROR_CODES.TOKEN_INVALID
       )
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(VALID_PAYLOAD.sub, 'dashboard')
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(
+        VALID_PAYLOAD.sub,
+        'tenant-1',
+        'dashboard'
+      )
     })
 
     // A token stamped at the current generation is still valid — the bump must not lock the

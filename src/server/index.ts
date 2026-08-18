@@ -211,6 +211,15 @@ export { VerifyOtpDto } from './dto/verify-otp.dto'
 // ---------------------------------------------------------------------------
 
 export { AuthService } from './services/auth.service'
+/**
+ * The shape {@link AuthService.revokeAllSessions} takes, for the same reason the `SessionService`
+ * params types below are exported: a consumer calling it — a ban handler, an admin console — should
+ * be able to name the object rather than assemble a literal and hope. Both fields are `string`, and
+ * `revokeAllSessions(user.tenantId, user.id)` type checked against the old positional form, derived
+ * an unrelated subject and returned normally: a "sign out everywhere" reported as done that revoked
+ * nothing, or that revoked a colliding account in another tenant instead.
+ */
+export type { RevokeAllSessionsParams } from './services/auth.service'
 // NOTE: `EmailChangeService` is only registered when `controllers.emailChange !== false`
 // (the default). Importing it for a host module with the controller disabled causes an
 // injection error — register it in `extraProviders` in that case.
@@ -251,6 +260,22 @@ export { SessionService } from './services/session.service'
 // Aliased to avoid collision with SessionInfo from email-provider.interface (which
 // represents an email send session, not an auth session).
 export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
+
+/**
+ * The parameter objects of {@link SessionService}'s five entry points.
+ *
+ * Exported because a consumer building one — a scheduled sweep, an admin console — should be able
+ * to name its shape rather than assemble an object literal and hope. Objects rather than
+ * positional arguments because most of these fields are `string`: `listSessions(userId, hash)`
+ * type checked against the old positional form and treated the hash as the tenant, returning an
+ * empty listing indistinguishable from "this user has no sessions".
+ */
+export type {
+  CreateSessionParams,
+  ListSessionsParams,
+  RevokeAllExceptCurrentParams,
+  RevokeSessionParams
+} from './services/session.service'
 // `TokenDeliveryService` (v1.0.10+) is the only correct way to set the lib's
 // auth cookies on a custom controller's response — replicating the cookie
 // attributes inline would silently drift when the lib changes. Use it from

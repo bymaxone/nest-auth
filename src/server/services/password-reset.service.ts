@@ -337,7 +337,7 @@ export class PasswordResetService {
       userId: user.id,
       email: dto.email,
       tenantId: tenantId,
-      passwordFingerprint: await this.passwordFingerprintOf(user.id)
+      passwordFingerprint: await this.passwordFingerprintOf(user.id, user.tenantId)
     }
     await this.redis.set(
       `pw_vtok:${sha256(rawVerifiedToken)}`,
@@ -437,7 +437,7 @@ export class PasswordResetService {
     }
 
     await this.assertResetTokenStillBound(context)
-    await this.applyPasswordReset(context.userId, newPassword)
+    await this.applyPasswordReset(context.userId, context.tenantId, newPassword)
   }
 
   /**
@@ -458,7 +458,7 @@ export class PasswordResetService {
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
-    await this.applyPasswordReset(user.id, newPassword)
+    await this.applyPasswordReset(user.id, user.tenantId, newPassword)
   }
 
   /**
@@ -489,7 +489,7 @@ export class PasswordResetService {
     }
 
     await this.assertResetTokenStillBound(context)
-    await this.applyPasswordReset(context.userId, newPassword)
+    await this.applyPasswordReset(context.userId, context.tenantId, newPassword)
   }
 
   /**
@@ -546,10 +546,13 @@ export class PasswordResetService {
    */
   async changePassword(
     userId: string,
+    tenantId: string,
     dto: ChangePasswordDto,
     currentRefreshToken?: string
   ): Promise<void> {
-    const user = await this.userRepo.findById(userId)
+    // Scoped, like every other read of an account. The unscoped form is why the write below had
+    // no tenant to pass: a lookup by bare id cannot tell the caller which tenant it answered for.
+    const user = await this.userRepo.findById(userId, tenantId)
     // A verified token whose subject no longer exists, and an account with no local password,
     // answer identically: the caller cannot prove a credential this account does not have.
     if (!user?.passwordHash) {
@@ -579,16 +582,20 @@ export class PasswordResetService {
 
     await this.passwordService.assertAcceptable(dto.newPassword, 'newPassword')
     const passwordHash = await this.passwordService.hash(dto.newPassword)
-    await this.userRepo.updatePassword(userId, passwordHash)
+    await this.userRepo.updatePassword(userId, tenantId, passwordHash)
 
     // End every other session, and the access tokens with them. `revokeAllExceptCurrent`
     // bumps the epoch itself, which is what reaches the stateless access tokens — the ones a
     // session sweep alone leaves valid until they expire.
     if (currentRefreshToken !== undefined && currentRefreshToken.length > 0) {
-      await this.sessionService.revokeAllExceptCurrent(userId, sha256(currentRefreshToken))
+      await this.sessionService.revokeAllExceptCurrent({
+        userId,
+        tenantId: user.tenantId,
+        currentSessionHash: sha256(currentRefreshToken)
+      })
     } else {
-      await this.redis.invalidateUserSessions(userId)
-      await this.redis.bumpUserTokenEpoch(userId)
+      await this.redis.invalidateUserSessions(userId, user.tenantId, 'dashboard')
+      await this.redis.bumpUserTokenEpoch(userId, user.tenantId, 'dashboard')
     }
 
     await this.notifyPasswordChanged(user)
@@ -645,8 +652,8 @@ export class PasswordResetService {
    * local password yields the empty string, which is a value like any other: a token minted
    * then is invalidated as soon as one is set.
    */
-  private async passwordFingerprintOf(userId: string): Promise<string> {
-    const user = await this.userRepo.findById(userId)
+  private async passwordFingerprintOf(userId: string, tenantId: string): Promise<string> {
+    const user = await this.userRepo.findById(userId, tenantId)
     // Stryker disable next-line StringLiteral: the sentinel's VALUE is unobservable today, because
     // the only consumer that tests for it — `assertResetTokenStillBound` — reads an empty
     // fingerprint as "this token predates the binding" and accepts it. So a passwordless account's
@@ -675,7 +682,11 @@ export class PasswordResetService {
    */
   private async assertResetTokenStillBound(context: ResetContext): Promise<void> {
     if (context.passwordFingerprint === '') return
-    if (context.passwordFingerprint === (await this.passwordFingerprintOf(context.userId))) return
+    if (
+      context.passwordFingerprint ===
+      (await this.passwordFingerprintOf(context.userId, context.tenantId))
+    )
+      return
 
     this.logger.warn(
       `reset: refusing a token issued against a password that has since changed ` +
@@ -684,10 +695,14 @@ export class PasswordResetService {
     throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
   }
 
-  private async applyPasswordReset(userId: string, newPassword: string): Promise<void> {
+  private async applyPasswordReset(
+    userId: string,
+    tenantId: string,
+    newPassword: string
+  ): Promise<void> {
     // The breach check ran in `resetPassword`, before the proof was spent — see the note there.
     const passwordHash = await this.passwordService.hash(newPassword)
-    await this.userRepo.updatePassword(userId, passwordHash)
+    await this.userRepo.updatePassword(userId, tenantId, passwordHash)
     // Revoke every session AND invalidate already-issued access tokens. This is two Redis
     // operations (a Lua session-invalidation followed by the epoch bump), not a single atomic
     // transaction — the bump simply must land before the reset returns. Deleting the refresh
@@ -695,13 +710,13 @@ export class PasswordResetService {
     // tracked per-jti), so a stolen access token would survive a reset-after-compromise for
     // the full access-token TTL. The Lua-backed session deletion is itself atomic, avoiding
     // the race where a concurrent login adds a session between the SMEMBERS read and the DEL.
-    await this.redis.invalidateUserSessions(userId)
-    await this.redis.bumpUserTokenEpoch(userId)
+    await this.redis.invalidateUserSessions(userId, tenantId, 'dashboard')
+    await this.redis.bumpUserTokenEpoch(userId, tenantId, 'dashboard')
 
     // afterPasswordReset — fire-and-forget; errors must not propagate. The same repository read
     // serves the notification, which a reset needs at least as much as a change does: the
     // classic takeover completes a reset from a compromised mailbox and deletes the mail.
-    const user = await this.userRepo.findById(userId)
+    const user = await this.userRepo.findById(userId, tenantId)
     if (user) {
       await this.notifyPasswordChanged(user)
       if (this.hooks?.afterPasswordReset) {
@@ -734,7 +749,7 @@ export class PasswordResetService {
       userId,
       email,
       tenantId,
-      passwordFingerprint: await this.passwordFingerprintOf(userId)
+      passwordFingerprint: await this.passwordFingerprintOf(userId, tenantId)
     }
     await this.redis.set(
       tokenKey,

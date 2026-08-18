@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
 
 import { BYMAX_AUTH_HOOKS, BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
+import { hmacSha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
@@ -57,7 +58,7 @@ const mockRedis = {
   revokeFamily: jest.fn().mockResolvedValue({ removed: 1, ownerId: 'user-1' }),
   invalidateUserSessions: jest.fn().mockResolvedValue(undefined),
   revokeAllUserTokens: jest.fn().mockResolvedValue(undefined),
-  readSessionOwner: jest.fn().mockResolvedValue('user-1'),
+  readSessionOwner: jest.fn().mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' }),
   // The grace arm writes its recovered session through one atomic script; the default is the
   // ordinary "the account still has an index, the write landed".
   writeRecoveredSession: jest.fn().mockResolvedValue(true),
@@ -349,10 +350,17 @@ describe('TokenManagerService', () => {
       )
     })
 
-    // Scenario: platform issuance registers the prt: member in sess:{adminId} and sets the TTL.
-    // Expected: sadd('sess:admin-1', 'prt:<newHash>') and expire('sess:admin-1', 7*86400). Why:
-    // kills the StringLiteral mutants on lines 234 (key → '', member → '') and 235 (expire key → '').
-    it('adds the prt: member to psess:{adminId} and expires the SET with the refresh TTL', async () => {
+    // Scenario: a platform issuance, watching who writes the index.
+    // Expected: one `writeNewSession` carrying `kind: 'platform'` and the admin's id, and NO
+    // `sadd`/`expire` from the service itself. Why: index membership and its TTL are the atomic
+    // script's job — doing them here as a second step reopens the window where a revoke-all
+    // sweeps between the session write and the SADD and misses a session that already exists.
+    //
+    // The plane matters and the earlier version of this comment had it wrong: it named the
+    // DASHBOARD key, `sess:{hmac('dashboard:8:tenant-1:admin-1')}`, for a platform scenario whose
+    // key is `psess:{hmac('platform:admin-1')}`. The two never meet, which is what the sibling
+    // test below asserts; a comment naming the wrong one teaches the opposite of the design.
+    it('leaves index membership and its TTL to the atomic session write', async () => {
       mockRedis.set.mockResolvedValue(undefined)
 
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
@@ -396,7 +404,9 @@ describe('TokenManagerService', () => {
       await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Firefox')
 
       const indexedKeys = mockRedis.sadd.mock.calls.map((call) => call[0] as string)
-      expect(indexedKeys).not.toContain('sess:admin-1')
+      expect(indexedKeys).not.toContain(
+        `sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`
+      )
     })
 
     // Scenario: a platform session needs a detail record so a listing can describe it.
@@ -490,6 +500,41 @@ describe('TokenManagerService', () => {
       mockRedis.set.mockResolvedValue(undefined)
     }
 
+    /**
+     * A record written before the session index carried a tenant. `parseSession` accepts it —
+     * it validates `userId`, `role` and `mfaEnabled`, never `tenantId` — so this is the exact
+     * shape a live deployment holds at the moment it upgrades.
+     */
+    const PRE_UPGRADE_SESSION = JSON.stringify({
+      userId: 'user-1',
+      role: 'member',
+      device: 'Browser',
+      ip: '1.2.3.4',
+      mfaEnabled: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      familyId: FAMILY
+    })
+
+    /**
+     * The same record with a BLANK tenant rather than an absent one.
+     *
+     * A distinct shape, not a variation: an unset environment variable arrives as `''` by the time
+     * it reaches a key builder, and `dashboard:0::{userId}` is a third keyspace exactly as
+     * `dashboard:9:undefined:{userId}` is. `parseSession` accepts both. The MFA guard has always
+     * refused the blank one for this reason; only the absent one was covered here, so a mutation
+     * dropping the `=== ''` half of the check survived a full run.
+     */
+    const BLANK_TENANT_SESSION = JSON.stringify({
+      userId: 'user-1',
+      tenantId: '',
+      role: 'member',
+      device: 'Browser',
+      ip: '1.2.3.4',
+      mfaEnabled: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      familyId: FAMILY
+    })
+
     /** Arms a rotation whose presented token was already consumed but is inside its grace window. */
     function armGraceRotation(sessionJson = OLD_SESSION): void {
       mockRedis.get.mockResolvedValue(null)
@@ -520,6 +565,72 @@ describe('TokenManagerService', () => {
 
     // Verifies that mfaEnabled:true in the stored session is propagated into the rotated access token.
     // This is a critical security property: MfaRequiredGuard must continue to enforce MFA after rotation.
+
+    // Scenario: a dashboard record with no tenant is presented for rotation, on each of the two
+    // paths that can mint from one.
+    // Expected: REFRESH_TOKEN_INVALID, and nothing written.
+    // Why: rotating it would write the new session under `dashboard:9:undefined:{userId}` — an
+    // index belonging to no tenant, which no revoke-all sweeps — and mint an access token with no
+    // tenant claim, which every dashboard guard then refuses. The caller would hold a session
+    // that cannot be used and cannot be revoked. A forced re-login is the documented cost of the
+    // migration; a keyspace nobody sweeps is not a cost, it is a hole.
+    it.each([
+      ['the live record, tenant absent', () => armLiveRotation(PRE_UPGRADE_SESSION)],
+      ['the grace record, tenant absent', () => armGraceRotation(PRE_UPGRADE_SESSION)],
+      ['the live record, tenant blank', () => armLiveRotation(BLANK_TENANT_SESSION)],
+      ['the grace record, tenant blank', () => armGraceRotation(BLANK_TENANT_SESSION)]
+    ])('refuses to rotate a dashboard session named by %s', async (_l, arm) => {
+      arm()
+
+      await expect(
+        service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+      expect(mockRedis.writeRecoveredSession).not.toHaveBeenCalled()
+    })
+
+    // The placeholder path, asserted directly rather than relied on. `readSeedSession` answers
+    // `buildSession('', '', ...)` when the live key is gone — empty user AND empty tenant — and
+    // that placeholder is how the grace window is reached at all. Without the `userId === ''`
+    // early return, the tenant check would fire on it and turn every grace recovery into an
+    // invalid refresh: the guard would refuse the one path it is not judging.
+    it('lets the empty placeholder through to the grace window', async () => {
+      armGraceRotation()
+
+      // The concrete result, not merely "something resolved". `toBeDefined` passes for any value
+      // this method could return, so it would keep passing on a recovery that produced the wrong
+      // tokens or the wrong identity — no use in a suite gated on mutation.
+      const result = await service.reissueTokens('old-refresh-token', '1.2.3.4', 'Browser')
+
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
+      expect(result.session.userId).toBe('user-1')
+      expect(result.session.tenantId).toBe('tenant-1')
+      expect(mockRedis.writeRecoveredSession).toHaveBeenCalled()
+    })
+
+    // The same record on the PLATFORM plane rotates normally: a platform subject carries no
+    // tenant segment at all, so its absence is the correct shape rather than a missing field.
+    it('still rotates a platform session that names no tenant', async () => {
+      mockRedis.get.mockResolvedValue(PRE_UPGRADE_SESSION)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: PRE_UPGRADE_SESSION
+      })
+      mockRedis.set.mockResolvedValue(undefined)
+
+      const result = await service.reissuePlatformTokens(
+        'old-platform-refresh',
+        '1.2.3.4',
+        'Browser'
+      )
+
+      // Pinned like its dashboard twin: the exemption has to produce a usable rotation, not just
+      // avoid throwing. A mutation that broke what the platform path returns would otherwise pass.
+      expect(result.accessToken).toBe(FIXED_JWT)
+      expect(result.rawRefreshToken).toBe(FIXED_REFRESH_TOKEN)
+      expect(result.session.userId).toBe('user-1')
+    })
+
     it('should propagate mfaEnabled:true from the stored session into the rotated access token', async () => {
       armLiveRotation(
         JSON.stringify({
@@ -568,6 +679,8 @@ describe('TokenManagerService', () => {
       expect(mockRedis.get).toHaveBeenCalledWith(`rt:${oldHash}`)
       expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith({
         kind: 'dashboard',
+        // The tenant, so the script names the same index the sweep does.
+        tenantId: 'tenant-1',
         oldHash,
         newHash: NEW_HASH,
         newSessionJson: expect.stringContaining(`"familyId":"${FAMILY}"`),
@@ -648,8 +761,14 @@ describe('TokenManagerService', () => {
       // seeing the session the rotation had just minted, leaving it alive and rotating after a
       // revocation the user was told had happened. The script gets the owner it needs; the
       // key-level assertions over `sess:` live in the redis service spec, against the script.
-      expect(mockRedis.sadd).not.toHaveBeenCalledWith('sess:user-1', expect.anything())
-      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:user-1', expect.anything())
+      expect(mockRedis.sadd).not.toHaveBeenCalledWith(
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
+        expect.anything()
+      )
+      expect(mockRedis.srem).not.toHaveBeenCalledWith(
+        `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`,
+        expect.anything()
+      )
       expect(mockRedis.rotateRefreshSession).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'user-1' })
       )
@@ -950,7 +1069,7 @@ describe('TokenManagerService', () => {
 
     // Scenario: primary rotation rewrites the per-user SET — remove old rt:, add new rt: and the
     // grace pointer, then expire the SET with the refresh TTL (days*86400).
-    // Expected: exact srem/sadd/expire calls on 'sess:user-1'. Why: kills the StringLiteral
+    // Expected: exact srem/sadd/expire calls on `sess:${hmacSha256('dashboard:8:tenant-1:user-1', HMAC_KEY)}`. Why: kills the StringLiteral
     // mutants on each key/member and the arithmetic mutant on `* 86_400` via the pinned TTL.
     it('hands the rotation script every key it needs to index the new session', async () => {
       const oldHash = sha256('old-refresh-token')
@@ -1555,6 +1674,30 @@ describe('TokenManagerService', () => {
       expect(mockRedis.get).not.toHaveBeenCalled()
     })
 
+    // The BLANK form of the same refusal. `''` passes `!== undefined`, so it reached the epoch
+    // read and named `dashboard:0::{userId}` — an epoch nobody has ever bumped, which answers 0 and
+    // accepts a challenge a password or MFA reset had revoked. The token type this guards is the
+    // one that hands back a full session on completion, so accepting a revoked one undoes the
+    // reset entirely.
+    it('refuses a dashboard token whose tenant is blank', async () => {
+      mockJwtService.verify.mockReturnValue({
+        jti: FIXED_UUID,
+        sub: 'user-1',
+        type: 'mfa_challenge',
+        context: 'dashboard',
+        tenantId: '',
+        iat: 0,
+        exp: 9999999999
+      })
+
+      await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.MFA_TEMP_TOKEN_INVALID } }
+      })
+      // Refused on the claim alone — it never reaches the Redis lookup or the epoch read.
+      expect(mockRedis.get).not.toHaveBeenCalled()
+      expect(mockRedis.getUserTokenEpoch).not.toHaveBeenCalled()
+    })
+
     // The mirror rule: a platform token MUST NOT carry a tenant it does not have. The Redis entry
     // is present and the epoch matches, so the ONLY thing that can refuse this token is the
     // plane/tenant binding — isolating that branch from the single-use and epoch gates.
@@ -1621,7 +1764,11 @@ describe('TokenManagerService', () => {
 
         await expect(service.verifyMfaTempToken(FIXED_JWT)).rejects.toThrow(AuthException)
         // Read from the plane the challenge names — the two epochs are separate counters.
-        expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith('user-1', context)
+        expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith(
+          'user-1',
+          context === 'platform' ? undefined : 'tenant-1',
+          context
+        )
       }
     )
 
@@ -1827,7 +1974,7 @@ describe('TokenManagerService', () => {
 
       expect(token).toBe('restamped.platform.jwt')
       // The epoch is read from the PLATFORM counter — the two planes are separate generations.
-      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.getUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       expect(mockJwtService.sign).toHaveBeenCalledWith(
         expect.objectContaining({
           sub: 'admin-1',
@@ -2067,7 +2214,7 @@ describe('TokenManagerService', () => {
       const touched = [...mockRedis.sadd.mock.calls, ...mockRedis.srem.mock.calls].map(
         (call) => call[0] as string
       )
-      expect(touched).not.toContain('sess:admin-1')
+      expect(touched).not.toContain(`sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`)
       expect(mockRedis.del).toHaveBeenCalledWith(`psd:${oldHash}`)
     })
 
@@ -2122,8 +2269,14 @@ describe('TokenManagerService', () => {
 
       await service.reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:admin-1', `prp:${oldHash}`)
-      expect(mockRedis.srem).not.toHaveBeenCalledWith('sess:admin-1', `prp:${oldHash}`)
+      expect(mockRedis.srem).toHaveBeenCalledWith(
+        `psess:${hmacSha256('platform:admin-1', HMAC_KEY)}`,
+        `prp:${oldHash}`
+      )
+      expect(mockRedis.srem).not.toHaveBeenCalledWith(
+        `sess:${hmacSha256('dashboard:8:tenant-1:admin-1', HMAC_KEY)}`,
+        `prp:${oldHash}`
+      )
       // Session, index and family membership are one atomic step.
       expect(mockRedis.writeRecoveredSession).toHaveBeenCalledWith(
         expect.objectContaining({

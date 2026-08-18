@@ -22,6 +22,7 @@ import { plainToInstance } from 'class-transformer'
 import { validate } from 'class-validator'
 import type { Redis } from 'ioredis'
 
+import { sessionIndexKey } from './constants/user-keys'
 import { AuthController } from './controllers/auth.controller'
 import { AcceptInvitationDto } from './dto/accept-invitation.dto'
 import { LoginDto } from './dto/login.dto'
@@ -30,7 +31,7 @@ import { RegisterDto } from './dto/register.dto'
 import { VerifyEmailDto } from './dto/verify-email.dto'
 import { VerifyOtpDto } from './dto/verify-otp.dto'
 import { encrypt } from './crypto/aes-gcm'
-import { mfaSubject } from './constants/mfa-subject'
+import { userSubject } from './constants/user-subject'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
 import { resolveOptions } from './config/resolved-options'
@@ -58,8 +59,8 @@ interface WireContract {
   }
   redisKeyPrefixes: Record<string, string>
   identifierPreimages: Record<string, string>
-  mfaSubjectPreimages: Record<string, string>
-  mfaSubjectDerivedKeys: Record<string, string>
+  userSubjectPreimages: Record<string, string>
+  userSubjectDerivedKeys: Record<string, string>
   requestFieldBounds: Record<string, { min?: number; max?: number }>
   sessionIndexMembers: Record<string, string>
   familyIndexMembers: Record<string, string>
@@ -129,7 +130,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'd7d0bdf3080946eac8bc79bba989091c6358c18d9489c3e1b7df611b692c0396'
+const CONTRACT_SHA256 = 'bf3e8b63a7ce6dbb8d2aacd85f7d2aae660131e62ec809aa851d378cf98d0f91'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -246,55 +247,66 @@ describe('cross-implementation conformance', () => {
   // -------------------------------------------------------------------------
 
   describe('MFA subject preimages', () => {
-    // Renders a contract preimage template (`dashboard:{tenantId}:{userId}`) against concrete
-    // values, so the expectation is derived from the contract rather than repeated here — a change
-    // on either side turns the test red.
+    // Renders a contract preimage template against concrete values, so the expectation is derived
+    // from the contract rather than repeated here — a change on either side turns the test red.
+    //
+    // `{utf8ByteLength(tenantId)}` is computed, not substituted with a constant: the prefix is the
+    // whole point of the template, and hard-coding its value would let the two drift apart while
+    // the test stayed green.
     const render = (template: string): string =>
-      template.replace('{tenantId}', 'T').replace('{userId}', 'U')
+      template
+        .replace('{utf8ByteLength(tenantId)}', String(Buffer.byteLength('T', 'utf8')))
+        .replace('{tenantId}', 'T')
+        .replace('{userId}', 'U')
 
-    // The subject every MFA store key and failure counter is HMAC'd over. `mfaSubject` is the one
+    // The subject every MFA store key and failure counter is HMAC'd over. `userSubject` is the one
     // place both libraries build it, so it must render exactly the two templates the contract pins.
     it('builds the tenant-scoped subject the contract pins', () => {
-      const { dashboard, platform } = contract.mfaSubjectPreimages
+      const { dashboard, platform } = contract.userSubjectPreimages
 
-      expect(mfaSubject('dashboard', 'U', 'T')).toBe(render(dashboard!))
-      expect(mfaSubject('platform', 'U', undefined)).toBe(render(platform!))
+      expect(userSubject('dashboard', 'U', 'T')).toBe(render(dashboard!))
+      expect(userSubject('platform', 'U', undefined)).toBe(render(platform!))
     })
 
     // Driven by the plane, not by whether a tenant was supplied: a tenant passed on the platform
     // plane cannot move the preimage off `platform:{userId}`. This is the half of the cross-library
     // agreement that keeps a platform admin's keys where the contract says they are.
     it('derives the platform subject from the plane, ignoring any tenant', () => {
-      const { platform } = contract.mfaSubjectPreimages
+      const { platform } = contract.userSubjectPreimages
 
-      expect(mfaSubject('platform', 'U', 'T')).toBe(render(platform!))
-      expect(mfaSubject('platform', 'U', 'T')).toBe(mfaSubject('platform', 'U', undefined))
+      expect(userSubject('platform', 'U', 'T')).toBe(render(platform!))
+      expect(userSubject('platform', 'U', 'T')).toBe(userSubject('platform', 'U', undefined))
     })
 
     // The dashboard and platform subjects never collide for the same id, and two tenants never
     // collide — the properties the whole block exists to guarantee.
     it('keeps planes and tenants in separate subjects', () => {
-      const { dashboard, platform } = contract.mfaSubjectPreimages
+      const { dashboard, platform } = contract.userSubjectPreimages
 
       expect(dashboard).toContain('{tenantId}')
       expect(platform).not.toContain('{tenantId}')
-      expect(mfaSubject('dashboard', 'U', 'T')).not.toBe(mfaSubject('platform', 'U', undefined))
-      expect(mfaSubject('dashboard', 'U', 'tenant-a')).not.toBe(
-        mfaSubject('dashboard', 'U', 'tenant-b')
+      expect(userSubject('dashboard', 'U', 'T')).not.toBe(userSubject('platform', 'U', undefined))
+      expect(userSubject('dashboard', 'U', 'tenant-a')).not.toBe(
+        userSubject('dashboard', 'U', 'tenant-b')
       )
     })
 
-    // Every subject-derived key names `mfaSubject` in the contract, so the block cannot list a key
-    // that silently derives from something else. Two of the eight share ONE preimage — the
-    // anti-replay marker and the recovery-code claim — and are separated only by their prefix.
-    it('derives all six named keys from the subject', () => {
-      const derived = Object.entries(contract.mfaSubjectDerivedKeys).filter(
+    // Every subject-derived key names `userSubject` in the contract, so the block cannot list a key
+    // that silently derives from something else. Two of them share ONE preimage — the anti-replay
+    // marker and the recovery-code claim — and are separated only by their prefix.
+    //
+    // Eight now, not six: the session index and the token epoch joined when they stopped being
+    // keyed on the bare user id. The count is asserted rather than left open because the whole
+    // value of this block is that a key deriving from the subject and NOT listed here is invisible
+    // to the contract — which is exactly how those two spent so long tenant-blind.
+    it('derives all eight named keys from the subject', () => {
+      const derived = Object.entries(contract.userSubjectDerivedKeys).filter(
         ([name]) => name !== '$comment'
       )
 
-      expect(derived.length).toBe(6)
+      expect(derived.length).toBe(8)
       for (const [, formula] of derived) {
-        expect(formula).toContain('mfaSubject')
+        expect(formula).toContain('userSubject')
       }
     })
   })
@@ -312,18 +324,18 @@ describe('cross-implementation conformance', () => {
     const PREFIX_SOURCES: Record<string, string> = {
       dashboardRefreshSession: 'services/token-manager.service.ts',
       dashboardGracePointer: 'services/token-manager.service.ts',
-      dashboardSessionIndex: 'services/token-manager.service.ts',
+      dashboardSessionIndex: 'constants/user-keys.ts',
       dashboardSessionDetail: 'services/session.service.ts',
       platformRefreshSession: 'services/token-manager.service.ts',
       platformGracePointer: 'services/token-manager.service.ts',
-      platformSessionIndex: 'services/token-manager.service.ts',
+      platformSessionIndex: 'constants/user-keys.ts',
       platformSessionDetail: 'services/token-manager.service.ts',
       dashboardConsumedFamilyMarker: 'redis/auth-redis.service.ts',
       dashboardFamilyIndex: 'services/token-manager.service.ts',
       platformConsumedFamilyMarker: 'redis/auth-redis.service.ts',
       platformFamilyIndex: 'services/token-manager.service.ts',
-      dashboardTokenEpoch: 'redis/auth-redis.service.ts',
-      platformTokenEpoch: 'redis/auth-redis.service.ts',
+      dashboardTokenEpoch: 'constants/user-keys.ts',
+      platformTokenEpoch: 'constants/user-keys.ts',
       accessTokenBlacklist: 'guards/jwt-auth.guard.ts',
       totpReplayMarker: 'services/mfa.service.ts',
       passwordResetToken: 'services/password-reset.service.ts',
@@ -628,11 +640,12 @@ describe('cross-implementation conformance', () => {
         const redis = { eval: jest.fn() }
         const service = new AuthRedisService(
           redis as unknown as Redis,
-          { redisNamespace: 'auth' } as unknown as ResolvedOptions
+          { redisNamespace: 'auth', hmacKey: 'test-hmac-key' } as unknown as ResolvedOptions
         )
 
         await service.writeNewSession({
           kind: kind as 'dashboard' | 'platform',
+          tenantId: kind === 'platform' ? undefined : 'tenant-1',
           tokenHash: 'a'.repeat(64),
           sessionJson: '{}',
           familyId: 'fam-1',
@@ -647,7 +660,11 @@ describe('cross-implementation conformance', () => {
         // script writes all three under one TTL, and a key that arrived empty would silently
         // write the whole session under the namespace root.
         expect(call).toContain(`auth:${prefix}:${'a'.repeat(64)}`)
-        expect(call).toContain(`auth:${index}:u1`)
+        // The index is derived, not interpolated: it names the ACCOUNT, so it carries the
+        // tenant on the dashboard plane and is HMACed like every other subject-derived key.
+        expect(call).toContain(
+          `auth:${sessionIndexKey(kind as 'dashboard' | 'platform', 'u1', 'test-hmac-key', kind === 'platform' ? undefined : 'tenant-1')}`
+        )
         expect(call).toContain(`auth:${family}:fam-1`)
         // The member is `{prefix}:{hash}`, built in the script from these two arguments.
         expect(call).toContain(prefix)
@@ -983,7 +1000,7 @@ describe('cross-implementation conformance', () => {
       const redis = { set: jest.fn(), eval: jest.fn() }
       const service = new AuthRedisService(
         redis as unknown as Redis,
-        { redisNamespace: 'auth' } as unknown as ResolvedOptions
+        { redisNamespace: 'auth', hmacKey: 'test-hmac-key' } as unknown as ResolvedOptions
       )
       const snapshot = {
         sub: 'u1',
@@ -1012,7 +1029,7 @@ describe('cross-implementation conformance', () => {
       const redis = { set: jest.fn(), eval: jest.fn() }
       const service = new AuthRedisService(
         redis as unknown as Redis,
-        { redisNamespace: 'auth' } as unknown as ResolvedOptions
+        { redisNamespace: 'auth', hmacKey: 'test-hmac-key' } as unknown as ResolvedOptions
       )
 
       await service.mintWsTicket(

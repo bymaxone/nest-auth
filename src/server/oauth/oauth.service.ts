@@ -451,9 +451,14 @@ export class OAuthService {
           // Hook returned 'link' but there is no existing user — treat as OAuth failure.
           throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
         }
-        await this.userRepo.linkOAuth(existingAuthUser.id, provider, profile.providerId)
+        await this.userRepo.linkOAuth(
+          existingAuthUser.id,
+          existingAuthUser.tenantId,
+          provider,
+          profile.providerId
+        )
         // Re-fetch by primary key (more direct than findByOAuthId — id is already known).
-        const linked = await this.userRepo.findById(existingAuthUser.id)
+        const linked = await this.userRepo.findById(existingAuthUser.id, existingAuthUser.tenantId)
         if (!linked) {
           throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
         }
@@ -514,7 +519,13 @@ export class OAuthService {
 
     // Create a tracked session if session management is enabled.
     if (this.options.sessions.enabled) {
-      await this.sessionService.createSession(safeUser.id, result.rawRefreshToken, ip, userAgent)
+      await this.sessionService.createSession({
+        userId: safeUser.id,
+        tenantId: safeUser.tenantId,
+        rawRefreshToken: result.rawRefreshToken,
+        ip,
+        userAgent
+      })
     }
 
     this.logger.log(

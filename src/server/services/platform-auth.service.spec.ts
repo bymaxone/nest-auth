@@ -150,6 +150,22 @@ function getErrorCode(err: unknown): string {
   return (err.getResponse() as { error: { code: string } }).error.code
 }
 
+/**
+ * The platform session index key logout must prune, derived here rather than imported.
+ *
+ * Spelled out from the documented preimage — `platform:{userId}`, HMACed with `hmacKey`, under the
+ * `psess:` prefix — so this suite pins the KEY rather than agreeing with whatever
+ * `sessionIndexKey` currently returns. The three assertions below previously spelled
+ * `'psess:' + userId`, which is the pre-HMAC shape: they passed while logout wrote to a key
+ * nothing else read, so the tests that looked like coverage were the reason the site was missed.
+ *
+ * @param userId - The admin whose index is pruned.
+ * @returns The prefixed key.
+ */
+function platformIndexKey(userId: string): string {
+  return 'psess:' + hmacSha256('platform:' + userId, HMAC_KEY)
+}
+
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
 
@@ -470,7 +486,7 @@ describe('PlatformAuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
       mockRedis.srem.mockResolvedValue(1)
       // The stored record names the owner — logout no longer takes it from token claims.
-      mockRedis.readSessionOwner.mockResolvedValue(userId)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId, tenantId: undefined })
       mockTokenManager.verifyPlatformIgnoringExpiry.mockReturnValue({
         sub: userId,
         jti,
@@ -522,7 +538,7 @@ describe('PlatformAuthService', () => {
       ['', '(no live session)']
     ])('logs the owner as %s when the record names %s', async (owner, expected) => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      mockRedis.readSessionOwner.mockResolvedValue(owner)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: owner, tenantId: undefined })
 
       await service.logout('access.jwt', rawRefreshToken)
 
@@ -554,7 +570,7 @@ describe('PlatformAuthService', () => {
     // There is no owner to prune the index for, and the operation is still a success: logout
     // is idempotent, and answering an error would tell a caller whether a token was live.
     it('should not touch the session index when no live session matched', async () => {
-      mockRedis.readSessionOwner.mockResolvedValue('')
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: undefined })
 
       const owner = await service.logout('access.jwt', rawRefreshToken)
 
@@ -568,7 +584,10 @@ describe('PlatformAuthService', () => {
     // A forged access token must not be able to blacklist a `jti` it does not own: the
     // signature is still checked, only the expiry is waived.
     it('should read the owner from the stored record, not from the token claims', async () => {
-      mockRedis.readSessionOwner.mockResolvedValue('the-real-owner')
+      mockRedis.readSessionOwner.mockResolvedValue({
+        userId: 'the-real-owner',
+        tenantId: undefined
+      })
 
       const owner = await service.logout('access.jwt', rawRefreshToken)
 
@@ -586,8 +605,8 @@ describe('PlatformAuthService', () => {
 
       await service.logout('access.jwt', rawRefreshToken)
 
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prp:' + tokenHash)
       expect(mockRedis.del).toHaveBeenCalledWith('psd:' + tokenHash)
     })
 
@@ -630,15 +649,15 @@ describe('PlatformAuthService', () => {
 
     // Verifies that prt:{hash} is removed from the per-user psess: SET so that
     // a future revokeAllPlatformSessions call does not try to delete an already-gone key.
-    it('should srem prt:{hash} from psess:{userId}', async () => {
+    it('should srem prt:{hash} from the derived platform index', async () => {
       await service.logout('access.jwt', rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prt:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prt:' + tokenHash)
     })
 
     // Verifies that prp:{hash} is also removed from the per-user psess: SET.
-    it('should srem prp:{hash} from psess:{userId}', async () => {
+    it('should srem prp:{hash} from the derived platform index', async () => {
       await service.logout('access.jwt', rawRefreshToken)
-      expect(mockRedis.srem).toHaveBeenCalledWith('psess:' + userId, 'prp:' + tokenHash)
+      expect(mockRedis.srem).toHaveBeenCalledWith(platformIndexKey(userId), 'prp:' + tokenHash)
     })
   })
 
@@ -744,8 +763,12 @@ describe('PlatformAuthService', () => {
         await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
         // Compensated, not merely refused: the rotation already minted a live pair, and
         // leaving it would hand back the access this gate exists to end.
-        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
-        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+          'admin-1',
+          undefined,
+          'platform'
+        )
+        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       }
     )
 
@@ -759,7 +782,11 @@ describe('PlatformAuthService', () => {
       mockPlatformUserRepo.findById.mockResolvedValue(null)
 
       await expect(service.refresh('old-refresh', ip, userAgent)).rejects.toThrow(AuthException)
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
     })
 
     // Verifies that errors thrown by reissuePlatformTokens propagate without wrapping —
@@ -828,7 +855,11 @@ describe('PlatformAuthService', () => {
     it('should delegate to redis.invalidateUserSessions with the userId', async () => {
       mockRedis.invalidateUserSessions.mockResolvedValue(undefined)
       await service.revokeAllPlatformSessions('admin-1')
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'admin-1',
+        undefined,
+        'platform'
+      )
     })
 
     // Scenario: the same call, watching the token epoch. Expected: bumped, on the PLATFORM
@@ -842,7 +873,7 @@ describe('PlatformAuthService', () => {
 
       await service.revokeAllPlatformSessions('admin-1')
 
-      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', 'platform')
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('admin-1', undefined, 'platform')
       const sweepOrder = mockRedis.invalidateUserSessions.mock.invocationCallOrder[0] as number
       const bumpOrder = mockRedis.bumpUserTokenEpoch.mock.invocationCallOrder[0] as number
       expect(sweepOrder).toBeLessThan(bumpOrder)

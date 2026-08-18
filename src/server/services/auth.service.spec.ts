@@ -1344,7 +1344,7 @@ describe('AuthService', () => {
     beforeEach(() => {
       // The stored session names its owner — logout reads it from there rather than from the
       // access token's claims, so an absent or expired token cannot name someone else's.
-      mockRedis.readSessionOwner.mockResolvedValue(USER.id)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: USER.id, tenantId: USER.tenantId })
     })
 
     // The owner is read under the presented token's OWN key. A wrong key here reads as "no
@@ -1370,7 +1370,7 @@ describe('AuthService', () => {
       ['', '(no live session)']
     ])('logs the owner as %s when the record names %s', async (owner, expected) => {
       const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
-      mockRedis.readSessionOwner.mockResolvedValue(owner)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: owner, tenantId: 'tenant-1' })
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'j',
         sub: 'user-1',
@@ -1506,7 +1506,7 @@ describe('AuthService', () => {
     // Why: the route is public now, so `sub` is only as trustworthy as the signature — and
     // the whole point of allowing an expired token is that it may be missing entirely.
     it('should take the session owner from the stored record, not the token claims', async () => {
-      mockRedis.readSessionOwner.mockResolvedValue('real-owner')
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: 'real-owner', tenantId: 'tenant-1' })
       mockTokenManager.verifyIgnoringExpiry.mockReturnValue({
         jti: 'j',
         sub: 'someone-else',
@@ -1542,7 +1542,7 @@ describe('AuthService', () => {
     // Scenario: a refresh token that matches no live session — already logged out, or expired
     // while the user was away. Expected: no throw, no hook, and the caller learns nothing.
     it('should complete quietly when no live session matches the refresh token', async () => {
-      mockRedis.readSessionOwner.mockResolvedValue('')
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: undefined })
       mockTokenManager.verifyIgnoringExpiry.mockImplementation(() => {
         throw new Error('Malformed')
       })
@@ -1686,8 +1686,8 @@ describe('AuthService', () => {
         )
         // The compensation is total: the session just minted goes with all the others, and the
         // epoch bump kills the access token that was issued a line earlier.
-        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
-        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1')
+        expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 't1', 'dashboard')
+        expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('u1', 't1', 'dashboard')
       }
     )
 
@@ -1891,7 +1891,7 @@ describe('AuthService', () => {
       await expect(service.refresh('old-refresh', '1.2.3.4', 'Browser')).rejects.toThrow(
         AuthException
       )
-      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1')
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith('u1', 't1', 'dashboard')
     })
   })
 
@@ -1903,7 +1903,7 @@ describe('AuthService', () => {
     // Verifies that getMe returns the safe user object without credential fields.
     it('should return the safe user when found', async () => {
       mockUserRepo.findById.mockResolvedValue(USER)
-      const result = await service.getMe('user-1')
+      const result = await service.getMe('user-1', 'tenant-1')
       expect(result).not.toHaveProperty('passwordHash')
       expect(result.id).toBe('user-1')
     })
@@ -1911,9 +1911,9 @@ describe('AuthService', () => {
     // Verifies that getMe throws TOKEN_INVALID when the user no longer exists (deleted after JWT issued).
     it('should throw TOKEN_INVALID when user not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
-      await expect(service.getMe('ghost')).rejects.toThrow(AuthException)
+      await expect(service.getMe('ghost', 'tenant-1')).rejects.toThrow(AuthException)
       try {
-        await service.getMe('ghost')
+        await service.getMe('ghost', 'tenant-1')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.TOKEN_INVALID })
@@ -1938,7 +1938,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockSessionService.createSession.mockResolvedValue(undefined)
 
-      const result = await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      const result = await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
 
       expect(result).toBe(AUTH_RESULT)
       expect(mockTokenManager.issueTokens).toHaveBeenCalledWith(
@@ -1957,9 +1957,9 @@ describe('AuthService', () => {
     it('should throw TOKEN_INVALID when target user does not exist', async () => {
       mockUserRepo.findById.mockResolvedValue(null)
 
-      await expect(service.issueTokensForUserId('ghost', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('ghost', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       expect(mockTokenManager.issueTokens).not.toHaveBeenCalled()
     })
 
@@ -1972,11 +1972,11 @@ describe('AuthService', () => {
     it('should throw ACCOUNT_SUSPENDED when target user is suspended', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, status: 'suspended' })
 
-      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED })
@@ -2017,11 +2017,11 @@ describe('AuthService', () => {
       const svc = module.get(AuthService)
       mockUserRepo.findById.mockResolvedValue({ ...USER, emailVerified: false })
 
-      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED })
@@ -2041,11 +2041,11 @@ describe('AuthService', () => {
     it('should throw MFA_REQUIRED when target user has MFA enabled', async () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: true })
 
-      await expect(service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).rejects.toThrow(
-        AuthException
-      )
+      await expect(
+        service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
       try {
-        await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+        await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       } catch (e) {
         expect((e as AuthException).getResponse()).toMatchObject({
           error: expect.objectContaining({ code: AUTH_ERROR_CODES.MFA_REQUIRED })
@@ -2089,14 +2089,15 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockSessionService.createSession.mockResolvedValue(undefined)
 
-      await svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
 
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        'user-1',
-        AUTH_RESULT.rawRefreshToken,
-        '1.2.3.4',
-        'Browser'
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: '1.2.3.4',
+        userAgent: 'Browser'
+      })
     })
 
     /*
@@ -2110,7 +2111,7 @@ describe('AuthService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Hooks are fire-and-forget — flush microtasks before asserting.
       await new Promise((resolve) => setImmediate(resolve))
 
@@ -2133,7 +2134,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockUserRepo.updateLastLogin.mockRejectedValue(new Error('db error'))
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
@@ -2153,7 +2154,7 @@ describe('AuthService', () => {
         new Error(`UPDATE users SET last_login WHERE id = '${USER.id}' failed`)
       )
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       await new Promise((r) => setImmediate(r))
 
       const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
@@ -2176,7 +2177,7 @@ describe('AuthService', () => {
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
       mockHooks.afterLogin.mockRejectedValue(new Error('hook error'))
 
-      await service.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')
+      await service.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
       // Allow the fire-and-forget promise to settle.
       await new Promise((r) => setImmediate(r))
 
@@ -2213,9 +2214,9 @@ describe('AuthService', () => {
       mockUserRepo.findById.mockResolvedValue({ ...USER, mfaEnabled: false })
       mockTokenManager.issueTokens.mockResolvedValue(AUTH_RESULT)
 
-      await expect(svc.issueTokensForUserId('user-1', '1.2.3.4', 'Browser')).resolves.toBe(
-        AUTH_RESULT
-      )
+      await expect(
+        svc.issueTokensForUserId('user-1', 'tenant-1', '1.2.3.4', 'Browser')
+      ).resolves.toBe(AUTH_RESULT)
       // Hook mock from the outer scope must not have been called by this
       // freshly-built service (which uses `null` hooks).
       expect(mockHooks.afterLogin).not.toHaveBeenCalled()
@@ -2340,7 +2341,7 @@ describe('AuthService', () => {
         '123456'
       )
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('user@example.com', 'tenant-1')
-      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, true)
+      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith(USER.id, USER.tenantId, true)
       // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
       // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
       // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
@@ -2777,12 +2778,13 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        USER.id,
-        AUTH_RESULT.rawRefreshToken,
-        expect.any(String),
-        expect.any(String)
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: expect.any(String),
+        userAgent: expect.any(String)
+      })
     })
 
     // Verifies that login calls sessionService.createSession with the user id and raw refresh token when sessions are enabled.
@@ -2804,12 +2806,13 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.createSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        USER.id,
-        AUTH_RESULT.rawRefreshToken,
-        expect.any(String),
-        expect.any(String)
-      )
+      expect(mockSessionService.createSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: 'tenant-1',
+        rawRefreshToken: AUTH_RESULT.rawRefreshToken,
+        ip: expect.any(String),
+        userAgent: expect.any(String)
+      })
     })
 
     // Verifies that logout calls sessionService.revokeSession with the user id and the sha256 hash of the refresh token.
@@ -2826,10 +2829,32 @@ describe('AuthService', () => {
 
       // Assert
       expect(mockSessionService.revokeSession).toHaveBeenCalledTimes(1)
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(
-        USER.id,
-        expect.stringMatching(/^[a-f0-9]{64}$/)
-      )
+      expect(mockSessionService.revokeSession).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: USER.tenantId,
+        sessionHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    })
+
+    // A record written before the session index carried a tenant. The index key cannot be named
+    // without one, and guessing would sweep a key belonging to nobody while reading like a
+    // revocation that happened — so the call is skipped. The session still dies: `rt:{hash}` is
+    // deleted before this point, which is what actually ends it. Pinned because the branch is
+    // reachable only from stored data, so nothing else in the suite reaches it.
+    it('logout: skips the index revoke when the record names no tenant', async () => {
+      mockRedis.del.mockResolvedValue(undefined)
+      mockRedis.set.mockResolvedValue(undefined)
+      // Once, so the shared mock is not left tenant-less for the tests that follow.
+      mockRedis.readSessionOwner.mockResolvedValueOnce({ userId: USER.id, tenantId: undefined })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValue({ jti: 'jti1', exp: 9_999_999_999 })
+      mockHooks.afterLogout.mockResolvedValue(undefined)
+
+      const owner = await sessionEnabledService.logout('access.jwt', 'raw-refresh-token')
+
+      expect(owner).toBe(USER.id)
+      expect(mockSessionService.revokeSession).not.toHaveBeenCalled()
+      // The record itself is gone, which is what ends the session.
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^rt:[0-9a-f]{64}$/))
     })
 
     // Verifies that logout completes without throwing when revokeSession rejects with SESSION_NOT_FOUND.
@@ -3030,7 +3055,7 @@ describe('AuthService', () => {
       })
       mockRedis.set.mockResolvedValue(undefined)
       mockRedis.del.mockResolvedValue(undefined)
-      mockRedis.readSessionOwner.mockResolvedValue('user-1')
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: 'user-1', tenantId: 'tenant-1' })
 
       await expect(noHooksService.logout('access.token', 'raw-refresh')).resolves.toBe('user-1')
       expect(mockHooks.afterLogout).not.toHaveBeenCalled()
@@ -3115,7 +3140,11 @@ describe('AuthService', () => {
       await new Promise((resolve) => setImmediate(resolve))
 
       expect(mockPasswordService.needsRehash).toHaveBeenCalledWith(USER.passwordHash)
-      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(USER.id, 'scrypt:131072:8:1:aa:bb')
+      expect(mockUserRepo.updatePassword).toHaveBeenCalledWith(
+        USER.id,
+        USER.tenantId,
+        'scrypt:131072:8:1:aa:bb'
+      )
     })
 
     // The re-read is TENANT-SCOPED. `IUserRepository.findById` takes the argument precisely so
@@ -3248,6 +3277,46 @@ describe('AuthService', () => {
       expect(logged).toContain('tenantId=tenant-1')
       expect(logged).not.toContain('user@example.com')
       logSpy.mockRestore()
+    })
+  })
+  describe('revokeAllSessions', () => {
+    // A blank tenant derives `dashboard:0::{userId}` — an index and an epoch nobody writes. Both
+    // Redis calls would succeed against them and this method would return normally: a
+    // "sign out everywhere" reported as done while every session and access token stayed valid.
+    // Refused at the boundary, because that is where a caller can be wrong; `userSubject` itself
+    // has to stay total, since the rotation scripts are called with an empty placeholder identity
+    // to discover a grace pointer.
+    it('refuses a blank tenant instead of sweeping a key nobody writes', async () => {
+      // The DETAILS, not merely the exception type: an empty payload would tell the caller
+      // nothing about what to fix and would still satisfy `toThrow(AuthException)`.
+      await expect(
+        service.revokeAllSessions({ userId: 'user-1', tenantId: '' })
+      ).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              { field: 'tenantId', message: "tenantId is required to revoke a user's sessions" }
+            ]
+          }
+        }
+      })
+
+      expect(mockRedis.invalidateUserSessions).not.toHaveBeenCalled()
+      expect(mockRedis.bumpUserTokenEpoch).not.toHaveBeenCalled()
+    })
+
+    // The ordinary path still reaches both channels: the session index AND the token epoch, so a
+    // revocation ends stateless access tokens rather than only refresh sessions.
+    it('sweeps the index and bumps the epoch for a real tenant', async () => {
+      await service.revokeAllSessions({ userId: 'user-1', tenantId: 'tenant-1' })
+
+      expect(mockRedis.invalidateUserSessions).toHaveBeenCalledWith(
+        'user-1',
+        'tenant-1',
+        'dashboard'
+      )
+      expect(mockRedis.bumpUserTokenEpoch).toHaveBeenCalledWith('user-1', 'tenant-1', 'dashboard')
     })
   })
 })
