@@ -105,22 +105,43 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend.** Every `IUserRepository` method that names an account takes ONE
   object now — `findById`, `findByEmail`, `updatePassword`, `updateMfa`, `updateLastLogin`,
   `updateStatus`, `updateEmailVerified`, `updateEmail`, `findByOAuthId` and `linkOAuth`. Destructure
-  it and keep filtering on both halves; on Prisma that is still `updateMany({ where: { id, tenantId } })`
-  rather than `update({ where: { id } })`, because `update` takes a unique clause and cannot carry
-  the pair.
+  it and keep filtering on the tenant. **Eight of the ten are keyed by `id`** — on Prisma those are
+  still `updateMany({ where: { id, tenantId } })` rather than `update({ where: { id } })`, because
+  `update` takes a unique clause and cannot carry the pair. **The other two are not keyed by `id`
+  at all:** `findByEmail` receives `{ email, tenantId }` and `findByOAuthId` receives
+  `{ provider, providerId, tenantId }`, and each filters on its own lookup key plus the tenant.
 
   ```ts
-  // before                                  // after
-  findById(id, tenantId)                     findById({ id, tenantId })
-  updatePassword(id, tenantId, passwordHash) updatePassword({ id, tenantId, passwordHash })
-  linkOAuth(userId, tenantId, p, providerId) linkOAuth({ id, tenantId, provider, providerId })
+  // before → after, for the shapes that change
+  findById(id, tenantId)
+  findById({ id, tenantId })
+
+  updatePassword(id, tenantId, passwordHash)
+  updatePassword({ id, tenantId, passwordHash })
+
+  linkOAuth(userId, tenantId, provider, providerId)
+  linkOAuth({ id, tenantId, provider, providerId })
+
+  findByEmail(email, tenantId)
+  findByEmail({ email, tenantId })
+
+  findByOAuthId(provider, providerId, tenantId)
+  findByOAuthId({ provider, providerId, tenantId })
   ```
 
   **This supersedes the note in the tenant-scoping entry below**, which told you to take `tenantId`
-  as the _second argument_. That instruction is now wrong, and it was wrong in a way worth naming:
-  a positional implementation written exactly as that note described still compiles against this
-  port today — TypeScript accepts fewer parameters — so following it produced a repository that
-  looked migrated and silently was not. The `AuthService` guidance in that note is unaffected:
+  as the _second argument_. Follow that note today and the implementation does not compile:
+  `findById(id: string, tenantId: string)` is rejected against `findById(params: TenantScopedUserRef)`
+  with `TS2416 — Target signature provides too few arguments`. That loud failure is the entire point
+  of the shape.
+
+  What still passes silently is narrower, and worth stating exactly rather than overstating:
+  TypeScript accepts an implementation declaring FEWER parameters than the signature, so one taking
+  no parameters at all compiles — and so does one that takes the object and never reads `tenantId`
+  off it. The compiler rules out a value bound into the wrong slot. It cannot rule out a body that
+  ignores the tenant, which is why every method documents the scoping as a MUST.
+
+  The `AuthService` guidance in that note is unaffected:
   `getMe(userId, tenantId)` and `issueTokensForUserId(userId, tenantId, ip, userAgent)` are
   unchanged. The README's example implementation shows the whole shape.
 
@@ -439,9 +460,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   a query that crosses tenants by construction. Prose does not close by grep.
 
   **Apply to a derived backend.** **Superseded — see the object-parameter entry above.** The
-  positional shape described here no longer compiles against the port, and an implementation
-  written to it compiles while ignoring the tenant. Kept as written because this entry describes
-  the release it shipped in; the note above is the one to follow.
+  positional shape described here no longer compiles against the port: written as this note
+  describes it, the implementation is rejected with `TS2416`. Kept as written because this entry
+  describes the release it shipped in; the note above is the one to follow.
 
   Your `IUserRepository` implementation must take `tenantId` as
   the second argument of `findById`, `updatePassword`, `updateMfa`, `updateLastLogin`,
