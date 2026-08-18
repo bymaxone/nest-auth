@@ -104,8 +104,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     name stored verbatim; a `{name}:{n}` disambiguator): reachable **on purpose**. The attacker
     picks the tenant, then picks a value that splits the preimage where they want, and both
     halves are theirs. `name` is the field that carries this: `@IsString`, `@MinLength(2)`,
-    `@MaxLength(128)` and **no charset rule**, so a `:` passes. The address does not — `@IsEmail`
-    rejects an unquoted `:` in the local part, so an address-derived id cannot carry one.
+    `@MaxLength(128)` and **no charset rule**, so a `:` passes.
+
+    The address is the instructive near-miss. `@IsEmail` does accept a colon —
+    `"ana:silva"@x.com` is a valid addr-spec with a quoted local part, and class-validator
+    takes it. What saves the scheme is the second half of the condition below: splitting there
+    leaves `silva"@x.com`, and that is not a valid address, so no second account can hold it.
+    The colon is present and the suffix pair still cannot be formed.
 
     The qualifier carries the tier, and it is a property of the **sets of values the two sides
     admit**, not of one id and not of the transform that made it. A colon in the id is necessary
