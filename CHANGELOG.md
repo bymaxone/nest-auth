@@ -20,6 +20,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **The sink's own documentation routed consumers into the wiring that drops
+  `containsCredential`.** `AuthEmailSink` said `@bymax-one/nest-notification`'s
+  `EmailService.send` "satisfies it structurally". True of the shape and false of the semantics:
+  passed in directly, as that sentence invites, `containsCredential: true` lands in a property
+  that library does not read, while its own switch — `publishProviderText` — stays at its
+  default. A relay answering `550` with the offending body quoted then puts a reset code in an
+  audit record, from a `send` call that looked correctly wired.
+
+  The JSDoc now states that structural fit is not enough, that an implementation owes a
+  **translation** of the flag into whatever its channel calls the same thing, and it names that
+  library as both the worked example and the trap, with the adapter to copy. Nothing about the
+  types changed; the field was always emitted. What changed is that the documentation stops
+  pointing at the one configuration where it is ignored.
+
+  Raised by the `nest-notification` seat, which is taking the symmetric half on its side. Emitting
+  `publishProviderText` from here was considered and rejected: it would put another contract's
+  vocabulary into this package's published surface, and that field has a rename open upstream.
+
 - **The reuse-detection hook reported a compromise and no way to act on it.**
   `onRefreshTokenReuseDetected` fires on the strongest evidence this library produces — a refresh
   token presented after it was already exchanged, so one of its two holders is not the owner — and
