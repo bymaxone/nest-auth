@@ -18,6 +18,52 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **`authDocumentSecurity()` — the document-level default, derived instead of copied.** An OpenAPI
+  contributor carries operations and components, never the document root, so the top-level
+  `security` that covers a consumer's OWN routes stays theirs to set. But the scheme it has to
+  name, and whether that scheme exists at all, are decided by THIS library's configuration. The
+  consumer was left writing a name they do not control.
+
+  Exporting `AUTH_SECURITY_SCHEMES` narrowed that and did not close it: a correct spelling read
+  off a constant still leaves "which of the four applies to my deployment" unanswered, and the
+  answer takes the guard family and `tokenDelivery` together. Every consumer setting a default was
+  re-deriving it by reading this package's source.
+
+  ```ts
+  import { authDocumentSecurity } from '@bymax-one/nest-auth'
+
+  security: authDocumentSecurity({ guard: 'dashboard', tokenDelivery })
+  ```
+
+  **Pass the option exactly as you wrote it, `undefined` included.** `tokenDelivery` is optional
+  on the module, so a deployment relying on the documented `'cookie'` default has nothing to
+  forward — and requiring a narrowed value here would have forced `options.tokenDelivery ?? 'cookie'`
+  at the call site, putting a library decision back into consumer code one line further out.
+  Omission resolves through the same constant the module resolves it with.
+
+  It also settles the part a hand-written default usually gets wrong. Under `tokenDelivery: 'both'`
+  the result is a two-entry **list** — OpenAPI reads that as OR, either transport satisfies it.
+  Merged into one entry with two schemes it would mean AND, describing a server that demands the
+  same credential twice.
+
+  **Reported from a live failure, not from review.** A consumer whose `tokenDelivery` is a
+  validated environment enum kept a hard-coded cookie scheme in their document default. Setting
+  that variable to `bearer` stopped the process from booting: no cookie scheme is declared in that
+  mode, and `assertSchemesDeclared` refuses a default naming one rather than serving a dangling
+  reference. Reachable by configuration alone, with no code change and no warning.
+
+  What it does **not** answer is what you mounted — the dashboard schemes are declared only where
+  a dashboard controller is registered, and an OAuth-only or platform-only deployment declares
+  neither. That row of the README's table is still yours, and the JSDoc says so rather than
+  implying the call is sufficient.
+
+  A conformance test now asserts that every scheme this function names is one the contributor
+  declares for the same delivery mode. The two derive independently — the requirement from the
+  guard family and the mode, the definitions from the resolved options and the registration — so
+  nothing but that assertion makes them agree.
+
 ### Fixed
 
 - **The sink's own documentation routed consumers into the wiring that drops

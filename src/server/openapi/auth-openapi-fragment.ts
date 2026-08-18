@@ -16,6 +16,7 @@
  * @layer OpenAPI
  */
 import type { ResolvedOptions } from '../config/resolved-options'
+import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 /**
  * The contract revision this library writes fragments against.
@@ -58,6 +59,39 @@ export const AUTH_SECURITY_SCHEMES = {
   refreshCookie: 'bymaxAuthRefreshCookie',
   platformBearer: 'bymaxPlatformAccessBearer'
 } as const
+
+/**
+ * The delivery setting, as `BymaxAuthModule.forRoot` accepts it.
+ *
+ * Aliased from the option rather than restated as a literal union, so a mode added there reaches
+ * every derivation below it without anyone remembering to widen a second copy.
+ */
+export type TokenDeliverySetting = NonNullable<BymaxAuthModuleOptions['tokenDelivery']>
+
+/**
+ * Whether this delivery mode puts credentials in cookies.
+ *
+ * Shared with the consumer-facing derivation in `document-security`, deliberately. Both need the
+ * same answer, and a second copy of `=== 'cookie' || === 'both'` is a place for the two to drift
+ * — a drift that shows up as a document naming a scheme the deployment does not declare, which
+ * fails a consumer's boot rather than their tests.
+ *
+ * @param tokenDelivery - The configured mode.
+ * @returns `true` under `'cookie'` and `'both'`.
+ */
+export function deliversCookie(tokenDelivery: TokenDeliverySetting): boolean {
+  return tokenDelivery === 'cookie' || tokenDelivery === 'both'
+}
+
+/**
+ * Whether this delivery mode puts credentials in the Authorization header.
+ *
+ * @param tokenDelivery - The configured mode.
+ * @returns `true` under `'bearer'` and `'both'`.
+ */
+export function deliversBearer(tokenDelivery: TokenDeliverySetting): boolean {
+  return tokenDelivery === 'bearer' || tokenDelivery === 'both'
+}
 
 /** Which of this library's controllers a deployment actually mounted. */
 export interface RegisteredControllers {
@@ -368,8 +402,8 @@ export function buildAuthOpenApiFragment(
   options: ResolvedOptions,
   registered: RegisteredControllers
 ): AuthOpenApiFragment {
-  const cookieDelivery = options.tokenDelivery === 'cookie' || options.tokenDelivery === 'both'
-  const bearerDelivery = options.tokenDelivery === 'bearer' || options.tokenDelivery === 'both'
+  const cookieDelivery = deliversCookie(options.tokenDelivery)
+  const bearerDelivery = deliversBearer(options.tokenDelivery)
 
   const operations: Record<string, FragmentObject> = {}
 

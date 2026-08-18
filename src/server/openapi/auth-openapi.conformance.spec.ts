@@ -30,6 +30,7 @@ import {
 } from './auth-openapi-fragment'
 import type { RegisteredControllers } from './auth-openapi-fragment'
 import { AuthOpenApiContributor } from './auth-openapi.contributor'
+import { authDocumentSecurity } from './document-security'
 import { AuthController } from '../controllers/auth.controller'
 import { EmailChangeController } from '../controllers/email-change.controller'
 import { InvitationController } from '../controllers/invitation.controller'
@@ -256,4 +257,58 @@ describe('OpenAPI contributor — conformance', () => {
       }
     }
   )
+
+  // The invariant that decides whether `authDocumentSecurity` is safe to publish: every scheme it
+  // tells a consumer to name at the document root must be one this library actually DECLARES for
+  // the same delivery mode. The two are derived independently — the requirement from the guard
+  // family and the mode, the definitions from the resolved options and the registration — so
+  // nothing but this assertion makes them agree.
+  //
+  // The failure it guards is not a wrong document. nest-core refuses a default naming an
+  // undeclared scheme, so the consumer's process does not start: measured in the field as
+  // `assertSchemesDeclared` aborting a boot after a `tokenDelivery` change, with a hand-written
+  // literal in the place this function now fills.
+  describe('the document-level default it derives', () => {
+    it.each(['cookie', 'bearer', 'both'] as const)(
+      'names only schemes the dashboard surface declares — %s',
+      (tokenDelivery) => {
+        const declared = new Set(
+          Object.keys(
+            buildAuthOpenApiFragment(optionsFor(tokenDelivery), EVERYTHING).components
+              .securitySchemes
+          )
+        )
+
+        const named = authDocumentSecurity({ guard: 'dashboard', tokenDelivery }).flatMap(
+          (requirement) => Object.keys(requirement)
+        )
+
+        expect(named.length).toBeGreaterThan(0)
+        for (const scheme of named) {
+          expect(declared).toContain(scheme)
+        }
+      }
+    )
+
+    it.each(['cookie', 'bearer', 'both'] as const)(
+      'names only schemes the platform surface declares — %s',
+      (tokenDelivery) => {
+        const declared = new Set(
+          Object.keys(
+            buildAuthOpenApiFragment(optionsFor(tokenDelivery), EVERYTHING).components
+              .securitySchemes
+          )
+        )
+
+        const named = authDocumentSecurity({ guard: 'platform', tokenDelivery }).flatMap(
+          (requirement) => Object.keys(requirement)
+        )
+
+        expect(named.length).toBeGreaterThan(0)
+        for (const scheme of named) {
+          expect(declared).toContain(scheme)
+        }
+      }
+    )
+  })
 })
