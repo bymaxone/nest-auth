@@ -65,6 +65,22 @@ export { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './erro
  * exporting and the definitions are not.
  */
 export { AUTH_SECURITY_SCHEMES } from './openapi/auth-openapi-fragment'
+
+/**
+ * The derivation itself, because exporting the names only narrows the problem above.
+ *
+ * A consumer reading a correct spelling off a constant still has to decide WHICH of the four
+ * applies to their deployment, and that answer is not spelled anywhere they can reach — it takes
+ * the guard family and `tokenDelivery` together, which is why every consumer setting a document
+ * default was re-deriving it by reading this package's source. One of them derived it wrong and
+ * their backend stopped booting when an environment variable changed.
+ */
+export { authDocumentSecurity } from './openapi/document-security'
+export type {
+  AuthDocumentSecurityParams,
+  AuthGuardFamily,
+  OpenApiSecurityRequirement
+} from './openapi/document-security'
 export type { AuthErrorCode } from './errors'
 export { AuthException } from './errors'
 

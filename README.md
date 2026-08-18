@@ -1373,9 +1373,26 @@ it, including cookie names you have since changed.
 > none. It names the operations and never throws. That makes the failure visible, not impossible —
 > a warning in a build log is still something a person has to read.
 >
-> Keep the default, and **derive it rather than writing a literal**. What to derive it from takes
-> two questions, not one — a recipe phrased on `tokenDelivery` alone is wrong for two real
-> deployments, so answer both:
+> Keep the default, and **derive it rather than writing a literal**. Since 1.4.4 the derivation
+> ships, so the common case is one call rather than a rule you apply by hand:
+>
+> ```ts
+> import { authDocumentSecurity } from '@bymax-one/nest-auth'
+>
+> BymaxCoreModule.forRoot({
+>   openapi: {
+>     // `tokenDelivery` here is the SAME value you pass to BymaxAuthModule.forRoot — read it from
+>     // one place. A default derived from a second copy drifts exactly like a literal does.
+>     security: authDocumentSecurity({ guard: 'dashboard', tokenDelivery })
+>   }
+> })
+> ```
+>
+> It answers the delivery axis of both questions below — the scheme name for your guard family,
+> and the two-entry alternation under `'both'` that a hand-written default usually collapses into
+> a single AND entry. **It does not know what you mounted**, which is the third row of the table
+> in question 2 and the one case you still have to answer yourself. Read on for that, and for why
+> the recipe takes two questions rather than one:
 >
 > **1. Which guard protects your own routes?** That decides the credential family, and
 > `tokenDelivery` does not enter into it for one of them.
