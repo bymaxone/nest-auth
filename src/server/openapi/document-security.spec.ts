@@ -12,6 +12,7 @@
  * twice. That is the mistake this function exists to make unavailable.
  */
 import { authDocumentSecurity } from './document-security'
+import type { OpenApiSecurityRequirement } from './document-security'
 import { AUTH_SECURITY_SCHEMES } from './auth-openapi-fragment'
 
 describe('authDocumentSecurity', () => {
@@ -106,12 +107,48 @@ describe('authDocumentSecurity', () => {
   // Verifies the result cannot be mutated into a different document posture by its caller. The
   // value goes straight into a consumer's options object and is read at boot; a shared mutable
   // array handed to two modules is a defect that only appears in the second one.
-  it('returns a frozen structure', () => {
+  it('returns a frozen structure, scope arrays included', () => {
     const security = authDocumentSecurity({ guard: 'dashboard', tokenDelivery: 'both' })
 
     expect(Object.isFrozen(security)).toBe(true)
     for (const requirement of security) {
       expect(Object.isFrozen(requirement)).toBe(true)
+      // The scope arrays are the third level, and the one with the widest blast radius: every
+      // requirement this module ever returns shares ONE array instance. Unfrozen, a caller
+      // pushing a scope onto the result of one call changes the posture of every other call's
+      // result too, including values already handed to a module that booted minutes ago.
+      //
+      // Asserted explicitly because nothing else reaches it. Freezing the outer array and the
+      // requirement objects leaves this level untouched, and mutation testing does not cover it
+      // either — Stryker generates no mutant that strips an `Object.freeze` call.
+      for (const scopes of Object.values(requirement)) {
+        expect(Object.isFrozen(scopes)).toBe(true)
+      }
     }
+  })
+
+  // Verifies the sharing itself is safe rather than merely frozen: two independent calls hand out
+  // the same scope array instance, so a defect at that level is not contained to one caller. This
+  // is the fact that makes the assertion above load-bearing instead of decorative — without the
+  // sharing, an unfrozen scope array would be one caller's problem.
+  it('shares one scope array across calls, which is why it must stay frozen', () => {
+    // Written to yield `undefined` rather than assert non-null, so an empty result fails on the
+    // explicit expectation below instead of throwing somewhere less informative.
+    const firstScopesOf = (
+      security: readonly OpenApiSecurityRequirement[]
+    ): readonly string[] | undefined => {
+      const [requirement] = security
+      return requirement === undefined ? undefined : Object.values(requirement)[0]
+    }
+
+    const first = firstScopesOf(
+      authDocumentSecurity({ guard: 'dashboard', tokenDelivery: 'cookie' })
+    )
+    const second = firstScopesOf(
+      authDocumentSecurity({ guard: 'platform', tokenDelivery: 'bearer' })
+    )
+
+    expect(first).toBeDefined()
+    expect(first).toBe(second)
   })
 })
