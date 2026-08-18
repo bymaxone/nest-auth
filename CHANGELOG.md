@@ -102,6 +102,28 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   of failing in production. `TenantScopedUserRef` and the eight params types are exported from the
   package entry, because a consumer implements this port and needs to name what it receives.
 
+  **Apply to a derived backend.** Every `IUserRepository` method that names an account takes ONE
+  object now — `findById`, `findByEmail`, `updatePassword`, `updateMfa`, `updateLastLogin`,
+  `updateStatus`, `updateEmailVerified`, `updateEmail`, `findByOAuthId` and `linkOAuth`. Destructure
+  it and keep filtering on both halves; on Prisma that is still `updateMany({ where: { id, tenantId } })`
+  rather than `update({ where: { id } })`, because `update` takes a unique clause and cannot carry
+  the pair.
+
+  ```ts
+  // before                                  // after
+  findById(id, tenantId)                     findById({ id, tenantId })
+  updatePassword(id, tenantId, passwordHash) updatePassword({ id, tenantId, passwordHash })
+  linkOAuth(userId, tenantId, p, providerId) linkOAuth({ id, tenantId, provider, providerId })
+  ```
+
+  **This supersedes the note in the tenant-scoping entry below**, which told you to take `tenantId`
+  as the _second argument_. That instruction is now wrong, and it was wrong in a way worth naming:
+  a positional implementation written exactly as that note described still compiles against this
+  port today — TypeScript accepts fewer parameters — so following it produced a repository that
+  looked migrated and silently was not. The `AuthService` guidance in that note is unaffected:
+  `getMe(userId, tenantId)` and `issueTokensForUserId(userId, tenantId, ip, userAgent)` are
+  unchanged. The README's example implementation shows the whole shape.
+
   ```ts
   // before
   await repo.updatePassword(userId, tenantId, hash)
@@ -416,7 +438,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   is what a consumer pastes in, and it had drifted to `update({ where: { id } })` on six mutators,
   a query that crosses tenants by construction. Prose does not close by grep.
 
-  **Apply to a derived backend.** Your `IUserRepository` implementation must take `tenantId` as
+  **Apply to a derived backend.** **Superseded — see the object-parameter entry above.** The
+  positional shape described here no longer compiles against the port, and an implementation
+  written to it compiles while ignoring the tenant. Kept as written because this entry describes
+  the release it shipped in; the note above is the one to follow.
+
+  Your `IUserRepository` implementation must take `tenantId` as
   the second argument of `findById`, `updatePassword`, `updateMfa`, `updateLastLogin`,
   `updateStatus`, `updateEmailVerified`, `updateEmail` and `linkOAuth`, and must filter on it. On
   Prisma that means `updateMany({ where: { id, tenantId } })` rather than
