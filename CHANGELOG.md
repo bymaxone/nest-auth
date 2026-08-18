@@ -100,12 +100,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
     ambiguous in principle and no input can exercise it.
   - **Composite host-assigned ids** (`dept:1234`, a stored `tenant:user` subject): reachable by
     accident. Two unrelated accounts can collide with nobody trying.
-  - **Ids derived from caller-supplied input** (the address, a slug of the display name):
-    reachable **on purpose**. The attacker picks the tenant, then picks a name or address that
-    splits it where they want, and both halves are theirs.
+  - **Ids derived from caller-supplied input in a way that PRESERVES the delimiter** (the address
+    stored verbatim; a `{name}:{n}` disambiguator): reachable **on purpose**. The attacker picks
+    the tenant, then picks a value that splits the preimage where they want, and both halves are
+    theirs.
+
+    The qualifier carries the tier. A derivation that hashes its input, or slugs it to
+    `[a-z0-9-]` as most slug helpers do, produces no colon and lands in the first tier however
+    caller-controlled the source was. Read the derivation, not the provenance.
 
   That third tier is the reason the previous wording mattered: it read as though the user id were
-  always the host's to control, which would have left this the mildest of the three.
+  always the host's to control, which would have left this the mildest of the three. The tier is
+  narrow on purpose — a note that over-warns gets discounted the same way one that under-warns
+  gets ignored, and only one of those failures is visible to whoever wrote it.
 
   That does not make the fix conditional. A library may not assume the shape of ids its consumers
   assign — it is the same assumption `findById` taking a tenant already refuses to make — and a
