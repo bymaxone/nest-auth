@@ -335,18 +335,24 @@ describe('tenant-scoped port', () => {
     //
     // Written with the real `tsc` rather than a string match on the error, so it measures what a
     // consumer's build measures.
-    it('refuses a pre-upgrade implementation', () => {
-      // The signatures a consumer had BEFORE the tenant was added — one parameter on `findById`,
-      // two on `updatePassword`. Not the intermediate positional shape: that one is refused for
-      // the trivial reason that an object is not a string, and pinning it would leave the actual
-      // defect — fewer-parameter assignability — undemonstrated.
+    // The signatures a consumer had BEFORE the tenant was added — one parameter on `findById`,
+    // two on `updatePassword`. Not the intermediate positional shape: that one is refused for the
+    // trivial reason that an object is not a string, and pinning it would leave the actual defect
+    // — fewer-parameter assignability — undemonstrated.
+    //
+    // ONE PROBE PER METHOD, and that is the load-bearing part. Compiling both in one file and
+    // asserting `length > 0` lets either method mask the other: revert `findById` alone and its
+    // stale form becomes assignable, but `updatePassword` is still an object, still produces a
+    // diagnostic, and the assertion stays green over a reverted method. Measured — the combined
+    // probe passed with `findById` positional while the rest of the suite went red around it.
+    it.each([
+      ['findById', 'findById(id: string): Promise<never>'],
+      ['updatePassword', 'updatePassword(id: string, passwordHash: string): Promise<void>']
+    ])('refuses a pre-upgrade %s', (method, signature) => {
       const probe = `
         import type { IUserRepository } from '${USER_PORT.replace(/\\/g, '/').replace(/\.ts$/, '')}'
-        declare const stale: {
-          findById(id: string): Promise<never>
-          updatePassword(id: string, passwordHash: string): Promise<void>
-        }
-        const port: Pick<IUserRepository, 'findById' | 'updatePassword'> = stale
+        declare const stale: { ${signature} }
+        const port: Pick<IUserRepository, '${method}'> = stale
         void port
       `
       expect(compileErrors(probe).length).toBeGreaterThan(0)

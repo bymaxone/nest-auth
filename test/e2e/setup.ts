@@ -50,7 +50,6 @@ import type {
   TenantScopedUserRef,
   UpdateEmailParams,
   UpdateEmailVerifiedParams,
-  UpdateMfaData,
   UpdateMfaParams,
   UpdatePasswordParams,
   UpdateStatusParams
