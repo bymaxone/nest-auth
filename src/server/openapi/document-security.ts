@@ -20,8 +20,8 @@
  * questions the README poses in prose: which guard protects your routes, and how does this
  * deployment deliver tokens.
  */
-import { AUTH_SECURITY_SCHEMES } from './auth-openapi-fragment'
-import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
+import { AUTH_SECURITY_SCHEMES, deliversBearer, deliversCookie } from './auth-openapi-fragment'
+import type { TokenDeliverySetting } from './auth-openapi-fragment'
 
 /**
  * Which of this library's guards protects the consumer's own routes.
@@ -30,6 +30,14 @@ import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.i
  * is why a recipe phrased on `tokenDelivery` alone is wrong for half the deployments that use it.
  */
 export type AuthGuardFamily = 'dashboard' | 'platform'
+
+/**
+ * One of the four names this library may define.
+ *
+ * Typed as the closed vocabulary rather than `string`, so the helper below cannot be handed a
+ * name the library never declares — which is the whole failure this module exists to prevent.
+ */
+type AuthSecuritySchemeName = (typeof AUTH_SECURITY_SCHEMES)[keyof typeof AUTH_SECURITY_SCHEMES]
 
 /** One OpenAPI Security Requirement Object: scheme name to the scopes it takes. */
 export type OpenApiSecurityRequirement = Readonly<Record<string, readonly string[]>>
@@ -42,7 +50,7 @@ export interface AuthDocumentSecurityParams {
    */
   readonly guard: AuthGuardFamily
   /** The value passed to `BymaxAuthModule.forRoot({ tokenDelivery })`. */
-  readonly tokenDelivery: NonNullable<BymaxAuthModuleOptions['tokenDelivery']>
+  readonly tokenDelivery: TokenDeliverySetting
 }
 
 /**
@@ -60,7 +68,7 @@ const NO_SCOPES: readonly string[] = Object.freeze([])
  * @param scheme - A name from {@link AUTH_SECURITY_SCHEMES}.
  * @returns The requirement object, frozen.
  */
-function requirementFor(scheme: string): OpenApiSecurityRequirement {
+function requirementFor(scheme: AuthSecuritySchemeName): OpenApiSecurityRequirement {
   return Object.freeze({ [scheme]: NO_SCOPES })
 }
 
@@ -103,13 +111,13 @@ export function authDocumentSecurity({
     return Object.freeze([requirementFor(AUTH_SECURITY_SCHEMES.platformBearer)])
   }
 
+  // The same two predicates the fragment builder uses to decide which schemes it DECLARES.
+  // Shared rather than restated: a document default naming a scheme the fragment does not declare
+  // is the boot failure this function exists to remove, and two copies of the condition is where
+  // that divergence would come from.
   const schemes = [
-    ...(tokenDelivery === 'cookie' || tokenDelivery === 'both'
-      ? [AUTH_SECURITY_SCHEMES.accessCookie]
-      : []),
-    ...(tokenDelivery === 'bearer' || tokenDelivery === 'both'
-      ? [AUTH_SECURITY_SCHEMES.accessBearer]
-      : [])
+    ...(deliversCookie(tokenDelivery) ? [AUTH_SECURITY_SCHEMES.accessCookie] : []),
+    ...(deliversBearer(tokenDelivery) ? [AUTH_SECURITY_SCHEMES.accessBearer] : [])
   ]
 
   return Object.freeze(schemes.map(requirementFor))
