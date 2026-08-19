@@ -43,6 +43,11 @@ function makeDetailJson(
   })
 }
 
+/** Calls `rotateSession` with the two hashes under test and fixed transport values. */
+function rotate(service: SessionService, oldHash: string, newHash: string): Promise<void> {
+  return service.rotateSession(oldHash, newHash, '1.2.3.4', 'Browser')
+}
+
 /** Extracts the error code from a thrown AuthException. */
 function getErrorCode(err: unknown): string {
   if (!(err instanceof AuthException)) throw new Error('Not an AuthException')
@@ -2323,6 +2328,29 @@ describe('SessionService', () => {
   // =========================================================================
 
   describe('rotateSession', () => {
+    // The two field-name literals on this method, which nothing asserted.
+    //
+    // The `details` test added alongside the per-call-site field names covered `revokeSession` and
+    // `revokeAllExceptCurrent` and stopped there, so `'oldHash'` and `'newHash'` survived as
+    // string-literal mutants on the release run — the one method that validates TWO hashes was
+    // the one where naming the right field matters most, and it was the one left unpinned.
+    //
+    // A caller told "sessionHash was malformed" by a method that takes no such parameter is worse
+    // off than one told nothing: the message points somewhere specific and wrong.
+    it.each([
+      ['oldHash', 'not-a-hash', 'b'.repeat(64)],
+      ['newHash', 'a'.repeat(64), 'not-a-hash']
+    ])('names %s when that hash is the malformed one', async (field, oldHash, newHash) => {
+      await expect(rotate(service, oldHash, newHash)).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [{ field, message: `${field} must be 64 lowercase hexadecimal characters` }]
+          }
+        }
+      })
+    })
+
     const userId = 'user-rotate'
     const ip = '10.10.10.10'
     const userAgent = 'Mozilla/5.0 Firefox/120.0'
