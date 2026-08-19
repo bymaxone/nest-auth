@@ -32,6 +32,7 @@ import { readTokenState } from '../internal/tokenState'
 import { REASON_EXPIRED, REASON_PARAM } from '../internal/constants'
 import { redirectToLogin } from '../internal/proxyHandlers'
 import {
+  buildRefreshDestination,
   buildSanitizedRequestHeaders,
   sanitizeHeaderValue,
   setOrDeleteHeader
@@ -419,6 +420,74 @@ describe('proxyUtils — buildSanitizedRequestHeaders', () => {
     })
     const sanitized = buildSanitizedRequestHeaders(request as never, RESOLVED)
     expect(sanitized.has('x-user-role')).toBe(false)
+  })
+
+  // The four `headers.delete(config.userHeaders.*)` calls, pinned one by one.
+  //
+  // The two tests above do NOT reach them. The first forges a BASELINE name, so the baseline loop
+  // removes it and the configured deletes are redundant; the second uses the DEFAULT config, whose
+  // names are themselves in the baseline. Under Stryker v10's empty-expression mutator each of
+  // those four calls can be deleted and both tests still pass — which is exactly what the upgrade
+  // reported, four survivors on consecutive lines.
+  //
+  // What makes them load-bearing is the case neither test builds: a consumer who configured
+  // NON-DEFAULT names. There the baseline knows nothing about `x-corp-uid`, so the configured
+  // delete is the only thing standing between a client-forged header and a server component
+  // reading it as identity. Each slot is asserted separately so a single deleted call fails on its
+  // own assertion and names itself.
+  it.each([
+    ['userId', 'x-corp-uid'],
+    ['role', 'x-corp-role'],
+    ['tenantId', 'x-corp-tid'],
+    ['tenantDomain', 'x-corp-td']
+  ] as const)('strips a forged %s header under a non-default configured name', (_slot, header) => {
+    const config: ResolvedAuthProxyConfig = {
+      ...RESOLVED,
+      userHeaders: {
+        userId: 'x-corp-uid',
+        role: 'x-corp-role',
+        tenantId: 'x-corp-tid',
+        tenantDomain: 'x-corp-td'
+      }
+    }
+    const request = makeMockRequest({
+      url: 'https://app.example.com/dashboard',
+      headers: { [header]: 'spoofed-by-client', 'x-keep-me': 'yes' }
+    })
+
+    const sanitized = buildSanitizedRequestHeaders(request as never, config)
+
+    expect(sanitized.has(header)).toBe(false)
+    // The sanitiser must remove identity, not everything: a test that passed because the whole
+    // header set was dropped would be worse than no test.
+    expect(sanitized.get('x-keep-me')).toBe('yes')
+  })
+})
+
+describe('proxyUtils — buildRefreshDestination', () => {
+  // Pins `cleaned.delete(REFRESH_ATTEMPT_PARAM)`, which reads as redundant beside the `set()` two
+  // lines below it and is not: `set` REPLACES an existing key in place, so without the delete the
+  // counter keeps the position it arrived in. Deleting first and setting after moves it to the end,
+  // which is the destination this function actually promises. Asserted on the exact string, since
+  // that ordering is the only observable difference.
+  it('re-attaches the attempt counter at the end rather than in place', () => {
+    const params = new URLSearchParams('a=1&_r=9&b=2')
+
+    expect(buildRefreshDestination('/dashboard', params, 3)).toBe('/dashboard?a=1&b=2&_r=3')
+  })
+
+  // A URL carrying `_r` twice, kept as a guard rather than as the mutant's killer. Measured:
+  // `set()` alone already collapses duplicates — `new URLSearchParams('_r=1&_r=2').set('_r','4')`
+  // yields `_r=4` — so this case does NOT depend on the delete, and the ordering test above is
+  // what makes the explicit deletion observable. Stated plainly because an earlier version of this
+  // comment credited the delete with the de-duplication, which is not what it does.
+  it('drops every inbound copy of the counter', () => {
+    const params = new URLSearchParams('_r=1&_r=2&keep=yes')
+
+    const destination = buildRefreshDestination('/dashboard', params, 4)
+
+    expect([...new URLSearchParams(destination.split('?')[1]).getAll('_r')]).toEqual(['4'])
+    expect(destination).toContain('keep=yes')
   })
 })
 

@@ -524,7 +524,7 @@ function asciiBytes(input: string): Uint8Array {
     /* istanbul ignore if -- only called with base64url strings whose chars are all <= 0x7f; the guard is a defensive assert against future misuse */
     // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: non-ASCII guard is unreachable: this is only called with base64url segments whose chars are all <= 0x7f
     if (code > 0x7f) {
-      // Stryker disable next-line StringLiteral: unreachable — see the guard above
+      // Stryker disable next-line StringLiteral,CallExpression: unreachable — see the guard above. CallExpression covers Stryker v10 empty-expression mutator, which deletes the throw statement itself; the guard it sits behind can never be entered.
       throw new TypeError(`asciiBytes: non-ASCII character at index ${i}`)
     }
     // eslint-disable-next-line security/detect-object-injection -- i is a bounded numeric loop index over a typed array we just allocated.

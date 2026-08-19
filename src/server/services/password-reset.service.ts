@@ -284,6 +284,7 @@ export class PasswordResetService {
     // Stryker disable next-line ConditionalExpression,BlockStatement: the only input that reaches here (token present, proofCount <= 1) falls through to the identical throw at the end of the function
     if (dto.token) {
       // Token-based proof submitted for an OTP-configured module — explicit method mismatch.
+      // Stryker disable next-line CallExpression: equivalent — same reason the ConditionalExpression disable above gives; the only input reaching here falls through to the identical throw at the end of this function, so deleting this one changes the frame, not the answer.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 
@@ -930,6 +931,7 @@ export class PasswordResetService {
       // Corrupted storage, not an expired or replayed token: indistinguishable to the caller
       // by design, and distinguishable to an operator only here.
       this.logger.warn('reset: stored reset context is not parseable JSON')
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the shape check immediately below refuses the record with the identical code. Same log, same error, same order.
       throw new AuthException(AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_INVALID)
     }
 

@@ -74,7 +74,7 @@ If anything in this snapshot is below 100%, **do not start Stryker**. Fix the ga
 | -------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Package type         | Public npm lib, NOT an app                                                                                         | Stryker goes in `devDependencies` only. Never in `dependencies` / `peerDependencies`.                                                                                                                                                                          |
 | Package manager      | `pnpm@11.20.0`                                                                                                     | Use `pnpm add -D`, set `"packageManager": "pnpm"` in stryker config.                                                                                                                                                                                           |
-| Node version         | `>=24.0.0`                                                                                                         | Stryker 8.x supports Node 24 natively.                                                                                                                                                                                                                         |
+| Node version         | `>=24.0.0`                                                                                                         | Stryker 10 requires Node `>=22`; our floor is higher. Do not raise it to satisfy Babel 8's `>=24.11.0` — that is a devDependency constraint and `engines.node` is a promise to consumers.                                                                      |
 | Module system        | `"type": "module"` (ESM)                                                                                           | Confirmed compatible with Stryker 8 + `@stryker-mutator/jest-runner`.                                                                                                                                                                                          |
 | Test runner          | Jest 29 + ts-jest                                                                                                  | Use `@stryker-mutator/jest-runner` with `projectType: "custom"` pointing at `jest.config.ts`.                                                                                                                                                                  |
 | TS strictness        | `strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess + noImplicitOverride + noFallthroughCasesInSwitch` | `disableTypeChecks: "src/**/*.{ts,tsx}"` is **mandatory** — Stryker injects mutated code that intentionally violates types.                                                                                                                                    |
@@ -95,14 +95,26 @@ Run **exactly once**, from repo root:
 
 ```bash
 pnpm add -D \
-  @stryker-mutator/core@^9 \
-  @stryker-mutator/jest-runner@^9 \
-  @stryker-mutator/typescript-checker@^9
+  @stryker-mutator/core@^10 \
+  @stryker-mutator/jest-runner@^10 \
+  @stryker-mutator/typescript-checker@^10
 ```
 
-> **Installed version:** `9.6.1` (current stable major; Node `>=20` engine, satisfied by our `>=24`). Stryker releases all three packages in lockstep with **exact** peer deps (`jest-runner`/`typescript-checker` require `@stryker-mutator/core` at the same patch), so always install/upgrade the three together.
+> **Installed version:** `10.0.0` (current stable major; Node `>=22` engine, satisfied by our `>=24`). Stryker releases all three packages in lockstep with **exact** peer deps (`jest-runner`/`typescript-checker` require `@stryker-mutator/core` at the same patch), so always install/upgrade the three together.
 >
-> **Supply-chain guard note:** this machine's `~/.zshrc` wraps `pnpm add` / `npm install` with `_pkg_age_guard`, which blocks any package whose **latest** published version is < 7 days old. The guard is not loaded in non-interactive shells. Before installing, replicate its check (`npm view <pkg> time --json`) and confirm the version is ≥ 7 days old; all three Stryker packages were 39 days old at install time. Honour this guard — do not blindly bypass it.
+> **Supply-chain guard note:** the policy is that a package whose **latest** published version is
+> < 7 days old does not get installed. Replicate the check before installing —
+> `npm view <pkg> time --json` — because the guard cannot be relied on to stop you: it was a
+> `_pkg_age_guard` wrapper in `~/.zshrc`, it is **no longer present in any shell file on this
+> machine**, and it never loaded in non-interactive shells (which is how an agent installs).
+>
+> **The v10 upgrade was taken inside that window and this is recorded rather than hidden.**
+> `@stryker-mutator/core@10.0.0` published `2026-08-14T16:51Z` and was installed on `2026-08-19`,
+> at **4 days old**. What made it an acceptable exception, and the reasoning to reuse rather than
+> the precedent to copy: all three packages are `devDependencies`, `files` publishes only
+> `["dist", "LICENSE", "README.md", "CHANGELOG.md"]`, so none of this code reaches a consumer of
+> the published package. The exposure is this machine and CI, not the artifact. A package that
+> would ship inside `dist` does not get the same latitude.
 
 **Why each one:**
 

@@ -1,6 +1,7 @@
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
+import type { TestingModule } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
@@ -78,6 +79,7 @@ function makeContext(
 describe('JwtAuthGuard', () => {
   let guard: JwtAuthGuard
   let reflector: Reflector
+  let testModule: TestingModule
 
   beforeEach(async () => {
     jest.clearAllMocks()
@@ -98,6 +100,7 @@ describe('JwtAuthGuard', () => {
     }).compile()
 
     guard = module.get(JwtAuthGuard)
+    testModule = module
     reflector = module.get(Reflector)
   })
 
@@ -357,6 +360,26 @@ describe('JwtAuthGuard', () => {
 
       const ctx = makeContext('some.jwt.token')
       await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+    })
+
+    // The test above asserts only that SOME AuthException came out, which stays true when
+    // `assertValidTenantId(payload.tenantId)` is deleted outright — the unvalidated tenant simply
+    // travels further and is refused later under the same code. Stryker v10 reported that call as
+    // deletable for exactly that reason.
+    //
+    // The property that separates the two worlds is WHERE the refusal happens. Everything below
+    // this line — the revocation lookup, and the binding compare that reads `payload.tenantId`
+    // directly — runs against a tenant this guard has not checked. Asserting that the revocation
+    // lookup is never reached pins the ordering rather than the error code.
+    it('refuses a non-string tenantId before the revocation lookup', async () => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      const lookup = jest.spyOn(testModule.get(AuthRevocationService), 'isAccessTokenRevoked')
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, tenantId: 12_345 })
+
+      const ctx = makeContext('some.jwt.token')
+
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+      expect(lookup).not.toHaveBeenCalled()
     })
   })
 

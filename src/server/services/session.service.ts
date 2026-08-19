@@ -569,7 +569,11 @@ export class SessionService {
    * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session is not owned by the user.
    */
   async revokeOtherSession({ userId, tenantId, sessionHash }: RevokeSessionParams): Promise<void> {
-    this.assertTenant(tenantId)
+    // No `assertTenant` here: `revokeSession` on the next line performs the identical check
+    // before touching anything, so a guard at this level is unreachable code that reads as
+    // defence. Measured — deleting it left all 133 tests in this suite green, which is what an
+    // equivalent mutant looks like. Removed rather than suppressed: a `Stryker disable` would
+    // have preserved the duplication and added a comment defending it.
     await this.revokeSession({ userId, tenantId, sessionHash })
     // After the revoke, not before: a failure above leaves the epoch untouched and the
     // operation visibly incomplete, rather than the reverse — every device losing its access

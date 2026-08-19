@@ -533,6 +533,7 @@ export class MfaService {
       this.logger.warn(
         `parseSetupData: pending-setup payload is not valid JSON userId=${logSafe(userId)}`
       )
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so `!isMfaSetupData(parsed)` on the next statement refuses the record with the identical MFA_SETUP_REQUIRED.
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
@@ -565,6 +566,7 @@ export class MfaService {
       this.logger.warn(
         `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${logSafe(userId)}`
       )
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the `!Array.isArray(parsed)` check on the next statement refuses it with the identical MFA_SETUP_REQUIRED.
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     if (!Array.isArray(parsed) || parsed.some((code) => typeof code !== 'string')) {
@@ -1760,7 +1762,17 @@ export class MfaService {
    */
   private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
     if (context === 'dashboard') {
+      // Stryker disable CallExpression: equivalent on every reachable path. All five callers of
+      // this helper follow it with `fetchUserForContext`, which repeats `assertDashboardTenant`
+      // before its read, and nothing observable happens in between (the only statement there is a
+      // platform-arm guard). Deleting this call refuses the same dashboard flows with the same
+      // code, one frame later. Kept rather than removed because the alternative is a helper named
+      // `assertPlaneTenant` whose dashboard arm asserts nothing; the duplicate in
+      // `fetchUserForContext` cannot go instead, since its `asserts tenantId is string` narrowing
+      // is what lets the repository read typecheck. Block form because the reason does not fit on
+      // one line, and a wrapped `next-line` binds to its own continuation.
       this.assertDashboardTenant(tenantId)
+      // Stryker restore CallExpression
       return
     }
     if (tenantId !== undefined) {
