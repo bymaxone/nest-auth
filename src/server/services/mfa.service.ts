@@ -533,6 +533,7 @@ export class MfaService {
       this.logger.warn(
         `parseSetupData: pending-setup payload is not valid JSON userId=${logSafe(userId)}`
       )
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so `!isMfaSetupData(parsed)` on the next statement refuses the record with the identical MFA_SETUP_REQUIRED.
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     // The shape is checked, not asserted. `hashedCodes` missing would enable MFA on an
@@ -565,6 +566,7 @@ export class MfaService {
       this.logger.warn(
         `parsePlainRecoveryCodes: decrypted payload is not valid JSON userId=${logSafe(userId)}`
       )
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone `parsed` stays undefined, so the `!Array.isArray(parsed)` check on the next statement refuses it with the identical MFA_SETUP_REQUIRED.
       throw new AuthException(AUTH_ERROR_CODES.MFA_SETUP_REQUIRED)
     }
     if (!Array.isArray(parsed) || parsed.some((code) => typeof code !== 'string')) {
