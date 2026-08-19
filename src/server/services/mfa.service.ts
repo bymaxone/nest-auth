@@ -1760,7 +1760,17 @@ export class MfaService {
    */
   private assertPlaneTenant(context: 'dashboard' | 'platform', tenantId?: string): void {
     if (context === 'dashboard') {
+      // Stryker disable CallExpression: equivalent on every reachable path. All five callers of
+      // this helper follow it with `fetchUserForContext`, which repeats `assertDashboardTenant`
+      // before its read, and nothing observable happens in between (the only statement there is a
+      // platform-arm guard). Deleting this call refuses the same dashboard flows with the same
+      // code, one frame later. Kept rather than removed because the alternative is a helper named
+      // `assertPlaneTenant` whose dashboard arm asserts nothing; the duplicate in
+      // `fetchUserForContext` cannot go instead, since its `asserts tenantId is string` narrowing
+      // is what lets the repository read typecheck. Block form because the reason does not fit on
+      // one line, and a wrapped `next-line` binds to its own continuation.
       this.assertDashboardTenant(tenantId)
+      // Stryker restore CallExpression
       return
     }
     if (tenantId !== undefined) {

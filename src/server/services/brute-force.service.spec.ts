@@ -135,6 +135,21 @@ describe('BruteForceService', () => {
   // ---------------------------------------------------------------------------
 
   describe('getRemainingLockoutSeconds', () => {
+    // `this.validateIdentifier(identifier)` on this method had no test — the guard is covered on
+    // the other three entry points and Stryker v10 reported this one as deletable.
+    //
+    // Asserted on the Redis call rather than on the error, because the error is the point only
+    // halfway. A forbidden identifier reaching `redis.ttl` builds `lockout:{value}` from a value
+    // carrying `:` — the key separator — which is how a caller passing a raw email instead of an
+    // HMAC silently reads a DIFFERENT account's lockout window.
+    it('refuses a forbidden identifier before touching Redis', async () => {
+      await expect(service.getRemainingLockoutSeconds('user@example.com:1')).rejects.toMatchObject({
+        response: { error: { code: 'auth.forbidden' } }
+      })
+
+      expect(mockRedis.ttl).not.toHaveBeenCalled()
+    })
+
     // Verifies that the remaining TTL is returned as-is when the key exists and is locked.
     it('should return the TTL when the key is locked', async () => {
       mockRedis.ttl.mockResolvedValue(543)

@@ -313,6 +313,7 @@ export class OAuthService {
       // forged callback — the two are indistinguishable to the caller (both answer
       // OAUTH_FAILED) and only this line tells them apart in an operator's logs.
       this.logger.warn(`handleCallback: unparseable OAuth state provider=${provider}`)
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed state fails `isStoredOAuthState` on the next line and raises the identical OAUTH_FAILED.
       throw new AuthException(AUTH_ERROR_CODES.OAUTH_FAILED)
     }
 

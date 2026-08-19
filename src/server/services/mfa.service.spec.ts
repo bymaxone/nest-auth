@@ -869,6 +869,31 @@ describe('MfaService', () => {
   // ---------------------------------------------------------------------------
 
   describe('verifyAndEnable', () => {
+    // `assertPlaneTenant` at the top of this method, pinned on the entry point rather than on the
+    // helper. Stryker v10 reported the call as deletable on all four MFA entry points: the helper
+    // itself stays tested, so removing any single call site changed nothing any test looked at.
+    //
+    // Exercised on the PLATFORM plane, and that choice is the whole test. A blank DASHBOARD
+    // tenant does not distinguish anything: `fetchUserForContext` repeats `assertDashboardTenant`
+    // before its read, so deleting the entry-point call still refuses, with the same code. Only
+    // the platform arm is unique to this helper — a platform admin is scoped to no tenant, so a
+    // supplied one means the caller is on the wrong plane, and nothing downstream checks that.
+    //
+    // Written as a plain `it` inside the method's own describe rather than as a shared table,
+    // because a table at module scope is the shape whose coverage attribution let one of these
+    // survive in the first place.
+    it('refuses a tenant supplied on the platform plane, before reading the account', async () => {
+      await expect(
+        (async () => {
+          await service.verifyAndEnable('user-1', '123456', '1.2.3.4', 'UA', 'platform', 'tenant-1')
+        })()
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
+      })
+
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
     beforeEach(() => {
       jest.useFakeTimers()
       jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
@@ -2673,6 +2698,31 @@ describe('MfaService', () => {
   // ---------------------------------------------------------------------------
 
   describe('resetMfa', () => {
+    // `assertPlaneTenant` at the top of this method, pinned on the entry point rather than on the
+    // helper. Stryker v10 reported the call as deletable on all four MFA entry points: the helper
+    // itself stays tested, so removing any single call site changed nothing any test looked at.
+    //
+    // Exercised on the PLATFORM plane, and that choice is the whole test. A blank DASHBOARD
+    // tenant does not distinguish anything: `fetchUserForContext` repeats `assertDashboardTenant`
+    // before its read, so deleting the entry-point call still refuses, with the same code. Only
+    // the platform arm is unique to this helper — a platform admin is scoped to no tenant, so a
+    // supplied one means the caller is on the wrong plane, and nothing downstream checks that.
+    //
+    // Written as a plain `it` inside the method's own describe rather than as a shared table,
+    // because a table at module scope is the shape whose coverage attribution let one of these
+    // survive in the first place.
+    it('refuses a tenant supplied on the platform plane, before reading the account', async () => {
+      await expect(
+        (async () => {
+          await service.resetMfa('user-1', 'platform', 'tenant-1')
+        })()
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
+      })
+
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
     // Scenario: the account has no second factor. Expected: nothing happens, and no error.
     // Why: a support desk retrying a job already done should not be told it failed — the same
     // idempotence `unlockAccount` promises. Asserting the writes did NOT happen is what
@@ -2902,6 +2952,31 @@ describe('MfaService', () => {
   })
 
   describe('disable', () => {
+    // `assertPlaneTenant` at the top of this method, pinned on the entry point rather than on the
+    // helper. Stryker v10 reported the call as deletable on all four MFA entry points: the helper
+    // itself stays tested, so removing any single call site changed nothing any test looked at.
+    //
+    // Exercised on the PLATFORM plane, and that choice is the whole test. A blank DASHBOARD
+    // tenant does not distinguish anything: `fetchUserForContext` repeats `assertDashboardTenant`
+    // before its read, so deleting the entry-point call still refuses, with the same code. Only
+    // the platform arm is unique to this helper — a platform admin is scoped to no tenant, so a
+    // supplied one means the caller is on the wrong plane, and nothing downstream checks that.
+    //
+    // Written as a plain `it` inside the method's own describe rather than as a shared table,
+    // because a table at module scope is the shape whose coverage attribution let one of these
+    // survive in the first place.
+    it('refuses a tenant supplied on the platform plane, before reading the account', async () => {
+      await expect(
+        (async () => {
+          await service.disable('user-1', '123456', '1.2.3.4', 'UA', 'platform', 'tenant-1')
+        })()
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
+      })
+
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
     beforeEach(() => {
       jest.useFakeTimers()
       jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
@@ -3510,6 +3585,38 @@ describe('MfaService', () => {
   // ---------------------------------------------------------------------------
 
   describe('regenerateRecoveryCodes', () => {
+    // `assertPlaneTenant` at the top of this method, pinned on the entry point rather than on the
+    // helper. Stryker v10 reported the call as deletable on all four MFA entry points: the helper
+    // itself stays tested, so removing any single call site changed nothing any test looked at.
+    //
+    // Exercised on the PLATFORM plane, and that choice is the whole test. A blank DASHBOARD
+    // tenant does not distinguish anything: `fetchUserForContext` repeats `assertDashboardTenant`
+    // before its read, so deleting the entry-point call still refuses, with the same code. Only
+    // the platform arm is unique to this helper — a platform admin is scoped to no tenant, so a
+    // supplied one means the caller is on the wrong plane, and nothing downstream checks that.
+    //
+    // Written as a plain `it` inside the method's own describe rather than as a shared table,
+    // because a table at module scope is the shape whose coverage attribution let one of these
+    // survive in the first place.
+    it('refuses a tenant supplied on the platform plane, before reading the account', async () => {
+      await expect(
+        (async () => {
+          await service.regenerateRecoveryCodes(
+            'user-1',
+            '123456',
+            '1.2.3.4',
+            'UA',
+            'platform',
+            'tenant-1'
+          )
+        })()
+      ).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
+      })
+
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+    })
+
     beforeEach(() => {
       jest.useFakeTimers()
       jest.setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
