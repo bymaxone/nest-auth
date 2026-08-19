@@ -87,6 +87,29 @@ pnpm mutation:full        # cold run — deletes that baseline first. The one th
 pnpm mutation:dry-run     # fast sandbox/config smoke test (no mutants); use to verify config health
 ```
 
+**Only a `mutation:full` verdict may be reported or acted on.** An incremental run — which is what
+`pnpm mutation` and ANY `--mutate <file>` invocation do — reuses the recorded verdicts and prints a
+score covering the whole project in seconds. Measured here: a scoped run over a **brand-new file**
+answered `Final mutation score of 100.00` in 18 seconds having tested nothing in it, because
+`--mutate` narrows what is RE-TESTED, not what is reported, and merges the baseline for the rest.
+The three signals that separate a real run from a replayed one, in order of reliability:
+
+1. `Instrumented N source file(s) with M mutant(s)` — a legitimate scoped run names a real count.
+2. The file appears as a row in the final table. Absent means it was not measured.
+3. Wall-clock. The cold run here is close to an hour; 18 seconds is not a measurement.
+
+To measure one file without destroying the project baseline, point the run at a throwaway one:
+
+```bash
+npx stryker run --mutate 'src/path/file.ts' --incrementalFile /tmp/scratch/stryker-scoped.json
+```
+
+Stryker's own reuse rule, from `incremental-differ.js`, explains the second half of the trap: a
+mutant is identified by file, mutator name, location and replacement; a killed mutant is reused
+unless **its culprit test** changed, and a survivor is reused unless a test was **added**. So
+rewriting an assertion inside an existing `it()` leaves the prior verdict standing. After touching
+only spec files, an incremental run can hand back a stale verdict.
+
 **The sandbox must not survive the run.** `cleanTempDir` is `"always"`, not `true`. `true` deletes
 `.stryker-tmp` only after a run that PASSED — and a run that fails the 100 threshold is the normal
 state while iterating, so it left a 45 MB copy of `src/` on disk after every failed run.
@@ -111,15 +134,43 @@ then 8 consecutive clean. Any batch of 5 proves nothing, and a batch of 15 taken
 which is how `main` was measured — is not comparable to a branch measured across a different hour.
 Comparing batches from different times is how three wrong causes each looked established.
 
-**Config invariants (Node 24 + pnpm — do not regress).** Stryker loads `jest.stryker.config.ts`
-via native ESM `import()` in a child process, so relative imports MUST carry an explicit
-extension (`import base from './jest.config.ts'`) — Node's ESM resolver does not guess extensions
-and an extensionless specifier throws `ERR_MODULE_NOT_FOUND` in the sandbox. The jest test
-environments (`jest-environment-node`, `jest-environment-jsdom`) MUST stay **direct
-devDependencies**: the `@stryker-mutator/jest-runner` env wrapper does `require('jest-environment-*')`
-from its own package, which pnpm's strict layout only resolves when the project declares them
-directly. After touching Stryker/Jest config or bumping either major, run `pnpm mutation:dry-run`
-to confirm the sandbox still boots before the full run.
+**Config invariants (Node 24 + pnpm — do not regress).** Both re-verified on Stryker **10.0.0**,
+by breaking them rather than by reading the changelog.
+
+Stryker loads `jest.stryker.config.ts` via native ESM `import()` in a child process, so relative
+imports MUST carry an explicit extension (`import base from './jest.config.ts'`) — Node's ESM
+resolver does not guess extensions and an extensionless specifier throws `ERR_MODULE_NOT_FOUND` in
+the sandbox. Still true on v10: removing the extension fails the dry run with that exact error. A
+sibling project could not reproduce this, and the difference is that their config is loaded through
+ts-node, where extensionless resolves — so the constraint is Node's, and it applies to any repo
+whose config Stryker imports natively.
+
+The jest test environments (`jest-environment-node`, `jest-environment-jsdom`) MUST stay **direct
+devDependencies**. The mechanism is not what an earlier version of this note said: the
+`@stryker-mutator/jest-runner` env wrapper resolves them from the **project root**
+(`require.resolve(name, { paths: [resolveFromDirectory] })`), and no Stryker major declares them
+itself — so pnpm's strict layout finds them only when this project declares them. Both are needed
+here; the four React specs under `src/react/__tests__/` run on jsdom.
+
+After touching Stryker/Jest config or bumping either major, run `pnpm mutation:dry-run` to confirm
+the sandbox still boots before the full run.
+
+**What the v9 → v10 upgrade actually changed.** One breaking change (Node 20 dropped, 22+ required;
+this project already requires 24). The config surface did not move — the shipped JSON schema
+carries the same 53 options in both majors, `cleanTempDir: "always"` included. What moved is the
+mutant population: v10 adds one mutator, `empty-expression-mutator`, which **reports itself as
+`CallExpression`** — that is the name to grep for in a report. It deletes call expressions
+(`f(x)` → `void 0`), expression statements (`f(x);` → `;`) and, the one that matters for this
+library, `throw new SomeError(...)` in a guard clause. A test that asserts a rejection without
+pinning which error will not kill that mutant. The population grew about 4% here
+(`auth.service.ts`: 387 → 403 mutants).
+
+**Do not raise `engines.node` to satisfy a devDependency.** Stryker v10 pulls Babel 8, and 145
+`@babel/*` packages in the tree declare `engines.node: "^22.18.0 || >=24.11.0"`. That is a
+contributor-side constraint and it is a warning, not an error (`engine-strict` is not enabled).
+`engines.node` in `package.json` is a promise to CONSUMERS, who never install Stryker or Babel —
+raising it to `>=24.11.0` would lock out consumers on Node 24.0–24.10 for a package they do not
+receive.
 
 Equivalent mutants are documented inline with `// Stryker disable next-line <Mutator>: <reason>`
 — acceptable **only** for genuinely equivalent mutants (no test can kill them), each carrying a
