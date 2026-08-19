@@ -20,6 +20,33 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AuthService.isAccountLockedOut()` and `getAccountLockoutSeconds()` — read the lockout, not
+  just clear it.** (#157)
+
+  `unlockAccount` was already public, so a host could **clear** a dashboard lockout. There was no
+  public way to **read** one, so a console could offer an Unlock button and could not tell anyone
+  whether it had anything to do. The write side was exposed and the read side was not.
+
+  The primitives existed — `BruteForceService.isLockedOut` and `getRemainingLockoutSeconds` are
+  both public — but the identifier was out of reach. It is an HMAC of
+  `dashboard:{tenantId}:{email}` under the library's own derived `hmacKey`, which a consumer does
+  not have, and reproducing that preimage is exactly what keeping the derivation in one place
+  prevents: a third copy in a consumer repository is a third chance to drift, and a drifted key
+  reads a record that never exists. That reports **"not locked out" for every account, including
+  locked ones** — a false negative on a security indicator, delivered confidently and silently.
+
+  The second method matters more than it looks. A bare flag with no horizon is the interface that
+  invites the support call the indicator was meant to prevent: it can say an account is locked and
+  cannot say for how long, so the only honest advice left is "try again later".
+
+  **Cheap enough for every row of a directory listing.** Measured against a local Redis over
+  ioredis: twenty of these reads issued concurrently cost `0.39 ms` against `0.33 ms` for a single
+  one — they pipeline into a single round trip. Twenty awaited in a loop cost `6.25 ms`, sixteen
+  times as much, and is the only way to get this wrong.
+
+  Argument order mirrors `unlockAccount(email, tenantId)` so the three read as a set, and a test
+  asserts all three address the SAME record rather than pinning three copies of the preimage.
+
 - **`authDocumentSecurity()` — the document-level default, derived instead of copied.** An OpenAPI
   contributor carries operations and components, never the document root, so the top-level
   `security` that covers a consumer's OWN routes stays theirs to set. But the scheme it has to

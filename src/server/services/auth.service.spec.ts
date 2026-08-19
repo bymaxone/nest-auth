@@ -3298,6 +3298,75 @@ describe('AuthService', () => {
       logSpy.mockRestore()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // isAccountLockedOut() / getAccountLockoutSeconds()
+  // ---------------------------------------------------------------------------
+
+  describe('lockout reads', () => {
+    // The write side was public and the read side was not, so a console could offer an Unlock
+    // button and could not tell anyone whether it had anything to do.
+    it('reports a locked account under the same key login derives', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(true)
+
+      await expect(service.isAccountLockedOut('user@example.com', 'tenant-1')).resolves.toBe(true)
+      expect(mockBruteForce.isLockedOut).toHaveBeenCalledWith(
+        hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
+      )
+    })
+
+    // The value is returned, not merely truthy. A read that answered `true` for both states would
+    // satisfy a `toBeDefined` assertion and mislabel every account in a directory.
+    it('reports an unlocked account as not locked out', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+
+      await expect(service.isAccountLockedOut('user@example.com', 'tenant-1')).resolves.toBe(false)
+    })
+
+    // The TTL is what lets a console say WHEN the lockout clears rather than only that it exists.
+    // A bare flag with no horizon invites the support call the indicator was meant to prevent.
+    it('returns the remaining seconds under the same key', async () => {
+      mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(543)
+
+      await expect(service.getAccountLockoutSeconds('user@example.com', 'tenant-1')).resolves.toBe(
+        543
+      )
+      expect(mockBruteForce.getRemainingLockoutSeconds).toHaveBeenCalledWith(
+        hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
+      )
+    })
+
+    // Both reads normalize exactly as login and unlockAccount do. This is the failure the issue
+    // named: a consumer deriving the key themselves would read a record that never exists and
+    // report "not locked out" for every account, including locked ones — a false negative on a
+    // security indicator, and a silent one. The same drift inside the library reads the same way.
+    it.each([
+      ['isAccountLockedOut', (): jest.Mock => mockBruteForce.isLockedOut],
+      ['getAccountLockoutSeconds', (): jest.Mock => mockBruteForce.getRemainingLockoutSeconds]
+    ] as const)('normalizes the address before deriving the key — %s', async (method, spyOf) => {
+      await service[method]('  USER@Example.com  ', 'tenant-1')
+
+      expect(spyOf()).toHaveBeenCalledWith(
+        hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
+      )
+    })
+
+    // The three read and write the SAME record. Asserted as one identity rather than three
+    // separate string literals, because three copies of the preimage is three chances to drift —
+    // and a drifted read is invisible: it reports "not locked out" and nothing fails.
+    it('reads the identifier unlockAccount clears', async () => {
+      await service.isAccountLockedOut('user@example.com', 'tenant-1')
+      await service.getAccountLockoutSeconds('user@example.com', 'tenant-1')
+      await service.unlockAccount('user@example.com', 'tenant-1')
+
+      const read = mockBruteForce.isLockedOut.mock.calls.at(-1)?.[0]
+      const ttl = mockBruteForce.getRemainingLockoutSeconds.mock.calls.at(-1)?.[0]
+      const cleared = mockBruteForce.resetFailures.mock.calls.at(-1)?.[0]
+
+      expect(read).toBe(cleared)
+      expect(ttl).toBe(cleared)
+    })
+  })
   describe('revokeAllSessions', () => {
     // A blank tenant derives `dashboard:0::{userId}` — an index and an epoch nobody writes. Both
     // Redis calls would succeed against them and this method would return normally: a

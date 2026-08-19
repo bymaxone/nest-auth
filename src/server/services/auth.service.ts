@@ -1064,6 +1064,59 @@ export class AuthService {
     )
   }
 
+  /**
+   * Reports whether an account is currently locked out by brute-force protection.
+   *
+   * The counterpart to {@link unlockAccount}, and the reason it exists: the write side was
+   * public while the read side was not, so a host could offer an Unlock control and could not
+   * tell anyone whether it had anything to do.
+   *
+   * A consumer cannot derive this themselves even with the source in hand. The counter is keyed
+   * by an HMAC of `dashboard:{tenantId}:{email}` under the library's own `hmacKey`, which is
+   * derived rather than supplied — and reproducing the preimage is precisely what keeping the
+   * derivation in one place prevents. A third copy in a consumer repository is a third chance to
+   * drift, and the failure is silent: a key that never exists reads as "not locked out" for every
+   * account, including locked ones. A false negative on a security indicator, reported
+   * confidently.
+   *
+   * **Cheap enough to put on every row of a list.** These reads pipeline: twenty issued
+   * concurrently cost what one costs, because they land in a single round trip. Twenty awaited in
+   * a loop cost sixteen times that, which is the only way to get this wrong.
+   *
+   * Like {@link unlockAccount}, this ships **no route**. Whether a caller may ask about an account
+   * they do not own is a decision only the host can make, and a lockout flag reachable without
+   * authorisation is an oracle about other people's accounts.
+   *
+   * @param email - The account's address. Normalized here exactly as login normalizes it, or the
+   *   derived key misses the counter the lockout actually wrote.
+   * @param tenantId - The tenant the account belongs to.
+   * @returns `true` while the account is locked out.
+   */
+  async isAccountLockedOut(email: string, tenantId: string): Promise<boolean> {
+    return await this.bruteForce.isLockedOut(
+      this.lockoutIdentifier(tenantId, normalizeEmail(email))
+    )
+  }
+
+  /**
+   * Reports how many seconds remain on an account's lockout.
+   *
+   * Separate from {@link isAccountLockedOut} because a bare flag with no horizon is the interface
+   * that invites the support call the indicator was meant to prevent: it says an account is
+   * locked and cannot say for how long, so the only honest advice is "try again later".
+   *
+   * Ships no route, for the reason given on {@link isAccountLockedOut}.
+   *
+   * @param email - The account's address, normalized here as login normalizes it.
+   * @param tenantId - The tenant the account belongs to.
+   * @returns Seconds until the lockout expires, or `0` when the account is not locked out.
+   */
+  async getAccountLockoutSeconds(email: string, tenantId: string): Promise<number> {
+    return await this.bruteForce.getRemainingLockoutSeconds(
+      this.lockoutIdentifier(tenantId, normalizeEmail(email))
+    )
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
