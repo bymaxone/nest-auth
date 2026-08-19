@@ -71,6 +71,42 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AuthService.isAccountLockedOut()` and `getAccountLockoutSeconds()` — read the lockout, not
+  just clear it.** (#157)
+
+  `unlockAccount` was already public, so a host could **clear** a dashboard lockout. There was no
+  public way to **read** one, so a console could offer an Unlock button and could not tell anyone
+  whether it had anything to do. The write side was exposed and the read side was not.
+
+  The primitives existed — `BruteForceService.isLockedOut` and `getRemainingLockoutSeconds` are
+  both public — but the identifier was out of reach. It is an HMAC of
+  `dashboard:{tenantId}:{email}` under the library's own derived `hmacKey`, which a consumer does
+  not have, and reproducing that preimage is exactly what keeping the derivation in one place
+  prevents: a third copy in a consumer repository is a third chance to drift, and a drifted key
+  reads a record that never exists. That reports **"not locked out" for every account, including
+  locked ones** — a false negative on a security indicator, delivered confidently and silently.
+
+  The second method matters more than it looks. A bare flag with no horizon is the interface that
+  invites the support call the indicator was meant to prevent: it can say an account is locked and
+  cannot say for how long, so the only honest advice left is "try again later".
+
+  **Cheap enough for every row of a directory listing — issue them concurrently.** The reporter
+  measured twenty of these against a local Redis over ioredis: `0.39 ms` issued concurrently
+  against `0.33 ms` for a single one, and `6.25 ms` awaited one at a time in a loop. Concurrency is
+  what buys that, by overlapping the round trips; use `Promise.all` and not `await` inside a loop.
+
+  Those numbers are one environment's, not a guarantee this library makes. Each call is its own
+  Redis command, the ioredis client is the host's, and whether the commands are also **batched**
+  into a single write depends on `enableAutoPipelining`, which ioredis leaves off by default.
+
+  `getAccountLockoutSeconds` reads the threshold before the TTL. The underlying counter is created
+  on the FIRST failed attempt, so its raw TTL is positive long before the lockout exists —
+  returned unchecked it would show "locked for 14 minutes" beside an account whose next attempt
+  would succeed, with the two reads contradicting each other on the same account.
+
+  Argument order mirrors `unlockAccount(email, tenantId)` so the three read as a set, and a test
+  asserts all three address the SAME record rather than pinning three copies of the preimage.
+
 - **`authDocumentSecurity()` — the document-level default, derived instead of copied.** An OpenAPI
   contributor carries operations and components, never the document root, so the top-level
   `security` that covers a consumer's OWN routes stays theirs to set. But the scheme it has to
