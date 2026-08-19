@@ -17,6 +17,7 @@
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { Test } from '@nestjs/testing'
+import type { TestingModule } from '@nestjs/testing'
 
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
@@ -92,6 +93,7 @@ function makeContext(token: string | undefined): {
 describe('JwtPlatformGuard', () => {
   let guard: JwtPlatformGuard
   let reflector: Reflector
+  let testModule: TestingModule
 
   beforeEach(async () => {
     jest.clearAllMocks()
@@ -112,6 +114,7 @@ describe('JwtPlatformGuard', () => {
 
     guard = module.get(JwtPlatformGuard)
     reflector = module.get(Reflector)
+    testModule = module
   })
 
   // ---------------------------------------------------------------------------
@@ -251,6 +254,37 @@ describe('JwtPlatformGuard', () => {
       const ctx = makeContext('some.jwt.token')
 
       await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+    })
+
+    // The four tests above name TOKEN_INVALID and never assert it, and that is enough to survive
+    // deleting `assertValidJti(payload.jti)` entirely: a malformed jti flows past the guard and
+    // something further down refuses it for its own reason, which the generic assertion accepts.
+    //
+    // Asserting the CODE does not fix it either — measured, the later refusal carries the SAME
+    // code. What separates the two worlds is where the refusal lands, which is why the assertion
+    // below is on the revocation lookup rather than on the error.
+    it.each([
+      ['jti', { jti: 'not-a-uuid' }],
+      ['sub', { sub: '' }]
+    ])('refuses a malformed %s BEFORE the revocation lookup', async (_claim, override) => {
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
+      const revocation = testModule.get(AuthRevocationService)
+      const lookup = jest.spyOn(revocation, 'isAccessTokenRevoked')
+      mockJwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, ...override })
+      const ctx = makeContext('some.jwt.token')
+
+      await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
+
+      // The assertion that carries the weight. Every test above checks only that SOME
+      // AuthException came out, which stays true when the claim validation is deleted entirely —
+      // the malformed value simply travels further and is refused later, under the same code.
+      // Stryker v10 reported both `assertValidJti` and `assertValidSub` as deletable for exactly
+      // that reason.
+      //
+      // What must not happen is the value reaching this call, because `isAccessTokenRevoked`
+      // builds a Redis key from `jti` and `sub`. Rejecting afterwards is not the same as
+      // rejecting before: the key has already been shaped by the token.
+      expect(lookup).not.toHaveBeenCalled()
     })
 
     // A UUID v1 or UUID v3 string looks similar to v4 but has a different version nibble.

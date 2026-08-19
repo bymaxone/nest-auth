@@ -655,6 +655,7 @@ export class InvitationService {
       // forged invitation — the caller cannot tell the two apart (both answer the same code)
       // and only this line does.
       this.logger.warn('acceptInvitation: stored invitation is not parseable JSON')
+      // Stryker disable next-line CallExpression: equivalent — the warn above is already emitted, and with this throw gone the unparsed record fails `isStoredInvitation` on the next line and raises the identical INVALID_INVITATION_TOKEN.
       throw new AuthException(AUTH_ERROR_CODES.INVALID_INVITATION_TOKEN)
     }
 
