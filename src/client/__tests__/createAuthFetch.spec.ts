@@ -66,13 +66,22 @@ function deferred<T>(): {
 }
 
 /**
- * Read the merged headers off a captured fetch init. The wrapper
- * always emits `Record<string, string>` so we cast accordingly.
+ * Read the merged headers off a captured fetch init, as the wire sees them.
+ *
+ * Normalised through a real `Headers` because that is what `fetch` does with the value, so an
+ * assertion here describes what the server receives rather than the shape this wrapper happens
+ * to build. Names come back LOWERCASE, per the spec: asserting on a capitalised key would only
+ * pass while the implementation leaked one, and a leaked capitalised key beside its lowercase
+ * twin is exactly how a duplicated header reached production unnoticed.
  */
 function getHeaders(init: RequestInit | undefined): Record<string, string> {
   const headers = init?.headers
   if (headers === undefined) return {}
-  return headers as Record<string, string>
+  const entries: [string, string][] = []
+  new Headers(headers).forEach((value, name) => {
+    entries.push([name, value])
+  })
+  return Object.fromEntries(entries)
 }
 
 // Capture the original `globalThis.fetch` so the `afterAll` hook can
@@ -104,7 +113,7 @@ describe('createAuthFetch — defaults', () => {
     await authFetch('/api/users')
 
     const init = spy.mock.calls[0]?.[1]
-    expect(getHeaders(init)['Content-Type']).toBe('application/json')
+    expect(getHeaders(init)['content-type']).toBe('application/json')
   })
 
   // A2: HttpOnly auth cookies cannot be attached to cross-origin
@@ -154,8 +163,8 @@ describe('createAuthFetch — header merging', () => {
     await authFetch('/api/users')
 
     const headers = getHeaders(spy.mock.calls[0]?.[1])
-    expect(headers['Content-Type']).toBe('application/json')
-    expect(headers['X-App']).toBe('tests')
+    expect(headers['content-type']).toBe('application/json')
+    expect(headers['x-app']).toBe('tests')
   })
 
   // A4: per-request headers must win over defaults — required so
@@ -166,7 +175,7 @@ describe('createAuthFetch — header merging', () => {
     await authFetch('/api/upload', { headers: { 'Content-Type': 'multipart/form-data' } })
 
     const headers = getHeaders(spy.mock.calls[0]?.[1])
-    expect(headers['Content-Type']).toBe('multipart/form-data')
+    expect(headers['content-type']).toBe('multipart/form-data')
   })
 
   // A5: array form `[[k, v], ...]` is one of the legal HeadersInit
@@ -182,8 +191,8 @@ describe('createAuthFetch — header merging', () => {
     })
 
     const headers = getHeaders(spy.mock.calls[0]?.[1])
-    expect(headers['X-Foo']).toBe('bar')
-    expect(headers['X-Baz']).toBe('qux')
+    expect(headers['x-foo']).toBe('bar')
+    expect(headers['x-baz']).toBe('qux')
   })
 
   // A6: callers in browser code typically build `Headers` instances —
@@ -199,6 +208,92 @@ describe('createAuthFetch — header merging', () => {
     // Headers normalises keys to lowercase — assert against the
     // lowercase form so the test does not depend on insertion case.
     expect(headers['x-custom']).toBe('value')
+  })
+
+  // Reported by a consumer on 1.4.3 against a running backend, and the reason this block exists:
+  // header names are case-insensitive, plain object keys are not. `Headers.forEach` yields
+  // LOWERCASE names while the built-in default key is capitalised, so both survived into the
+  // merged record and `fetch` joined them on the wire as
+  // `content-type: application/json, application/json`.
+  //
+  // Legal HTTP, so nothing rejects it — the backend simply stops parsing the body, and answers
+  // `400 "role is required"` naming a field that is present. The caller is correct and the header
+  // is the last place anyone looks.
+  //
+  // Asserted through a real `Headers` because that is what the wire does with the value. The old
+  // assertions never observed the join at all: they read ONE case-sensitive key off the raw
+  // record — `headers['Content-Type']`, holding the default's value — while the caller's
+  // lowercase twin sat beside it untouched. An equality assertion against the wire value would
+  // have failed loudly; the defect survived because nothing asserted against the wire.
+  it.each([
+    [
+      'a Headers instance, which lowercases for you',
+      (): HeadersInit => {
+        const headers = new Headers()
+        headers.set('content-type', 'application/vnd.api+json')
+        return headers
+      }
+    ],
+    [
+      'a record written in the lowercase form the platform uses',
+      (): HeadersInit => ({ 'content-type': 'application/vnd.api+json' })
+    ],
+    [
+      'an array of pairs written lowercase',
+      (): HeadersInit => [['content-type', 'application/vnd.api+json']]
+    ],
+    [
+      'a record written in the exact case of the default',
+      (): HeadersInit => ({ 'Content-Type': 'application/vnd.api+json' })
+    ]
+  ])('sends one content-type when the caller passes %s', async (_shape, build) => {
+    const authFetch = createAuthFetch()
+    await authFetch('/api/users', { method: 'PATCH', headers: build() })
+
+    const sent = new Headers(spy.mock.calls[0]?.[1]?.headers)
+
+    expect(sent.get('content-type')).toBe('application/vnd.api+json')
+  })
+
+  // Raised in review of the first fix, and it is the same defect one layer in. `new Headers(x)`
+  // APPENDS, so feeding a record or tuple array to the constructor before merging collapses two
+  // casings of one name into `a, b` before any of this code runs — reproducing on a single source
+  // exactly the joined value the merge exists to prevent. Both shapes are legal JavaScript with
+  // two distinct keys, so this is reachable, not theoretical.
+  it.each([
+    [
+      'a record',
+      (): HeadersInit => ({ 'Content-Type': 'first/one', 'content-type': 'second/two' })
+    ],
+    [
+      'an array of pairs',
+      (): HeadersInit => [
+        ['Content-Type', 'first/one'],
+        ['content-type', 'second/two']
+      ]
+    ]
+  ])('lets the later value win when %s carries two casings of one name', async (_shape, build) => {
+    const authFetch = createAuthFetch()
+    await authFetch('/api/users', { method: 'PATCH', headers: build() })
+
+    const sent = new Headers(spy.mock.calls[0]?.[1]?.headers)
+
+    expect(sent.get('content-type')).toBe('second/two')
+  })
+
+  // The second site, which neither consumer report reached: the FACTORY merge builds its defaults
+  // with the same case-sensitive spread. So the documented way to customise the content type is
+  // also a way to duplicate it — and unlike the per-request path this one is set up once and
+  // poisons every request, far from the call anyone is debugging.
+  it('sends one content-type when defaultHeaders overrides it in another case', async () => {
+    const authFetch = createAuthFetch({
+      defaultHeaders: { 'content-type': 'application/vnd.api+json' }
+    })
+    await authFetch('/api/users', { method: 'POST' })
+
+    const sent = new Headers(spy.mock.calls[0]?.[1]?.headers)
+
+    expect(sent.get('content-type')).toBe('application/vnd.api+json')
   })
 
   // A7: prototype-pollution guard. An attacker-controlled HeadersInit
@@ -223,7 +318,7 @@ describe('createAuthFetch — header merging', () => {
     expect(Object.prototype.hasOwnProperty.call(headers, '__proto__')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(headers, 'constructor')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(headers, 'prototype')).toBe(false)
-    expect(headers['X-Safe']).toBe('ok')
+    expect(headers['x-safe']).toBe('ok')
   })
 
   // Covers the prototype-pollution guard inside the array branch of
@@ -243,7 +338,7 @@ describe('createAuthFetch — header merging', () => {
     const headers = getHeaders(spy.mock.calls[0]?.[1])
     expect(Object.prototype.hasOwnProperty.call(headers, '__proto__')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(headers, 'constructor')).toBe(false)
-    expect(headers['X-Safe']).toBe('ok')
+    expect(headers['x-safe']).toBe('ok')
   })
 
   // The `__proto__` clause of the unsafe-name guard specifically
@@ -265,7 +360,7 @@ describe('createAuthFetch — header merging', () => {
     const headers = getHeaders(spy.mock.calls[0]?.[1])
     expect(Object.getPrototypeOf(headers)).toBe(Object.prototype)
     expect((headers as Record<string, unknown>)['injected']).toBeUndefined()
-    expect(headers['X-Safe']).toBe('ok')
+    expect(headers['x-safe']).toBe('ok')
   })
 
   // Covers the prototype-pollution guard inside the `Headers`
@@ -399,7 +494,7 @@ describe('createAuthFetch — refresh on 401', () => {
     await authFetch('/api/users')
 
     const refreshHeaders = getHeaders(spy.mock.calls[1]?.[1])
-    expect(refreshHeaders['Content-Type']).toBe('application/json')
+    expect(refreshHeaders['content-type']).toBe('application/json')
   })
 
   // A11: when the refresh fails the wrapper still returns the
