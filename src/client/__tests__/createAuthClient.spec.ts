@@ -1183,9 +1183,11 @@ describe('createAuthClient — built-in authFetch fallback', () => {
 
     const init = fetchSpy.mock.calls[0]?.[1] as RequestInit
     expect(init.credentials).toBe('same-origin')
-    const headers = init.headers as Record<string, string>
-    expect(headers['X-Test']).toBe('true')
-    expect(headers['Content-Type']).toBe('application/json')
+    // Read through a real `Headers`: the wrapper now hands `fetch` a `Headers` instance so the
+    // case rules survive the merge, and names come back lowercase exactly as the wire sees them.
+    const headers = new Headers(init.headers)
+    expect(headers.get('x-test')).toBe('true')
+    expect(headers.get('content-type')).toBe('application/json')
   })
 
   // The `refreshEndpoint` knob must actually reach the built-in

@@ -18,6 +18,57 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mergeHeaders` sent every header twice when the caller's key case differed from the default,
+  which broke every authenticated call carrying a body.** (#156)
+
+  Header names are case-insensitive; plain object keys are not. `DEFAULT_HEADERS` keys
+  `Content-Type`, `Headers.prototype.forEach` yields lowercase names, and both survived into the
+  merged record — so `fetch` joined them on the wire:
+
+  ```
+  content-type: application/json, application/json
+  ```
+
+  Legal HTTP, so nothing rejects it. The backend simply stops parsing the body and answers
+  `400 "role is required"` naming a field that IS present, which reads as a caller bug while the
+  caller is correct. The header is the last place anyone looks.
+
+  **Both reports put arrays in the safe column, and that is one notch too narrow.** Measured
+  against the shipped function, the rule is only _"the key case differs from the default"_ — the
+  `HeadersInit` shape does not enter into it. A record written `content-type`, the spelling the
+  platform itself uses, duplicates just as surely as a `Headers` instance does, and so does an
+  array of pairs written lowercase. `Headers` merely makes it unavoidable, because `forEach`
+  lowercases for you. "We do not pass `Headers`" was not the reassurance it looked like.
+
+  **A second site neither report reached:** the factory built its defaults with the same
+  case-sensitive spread, so overriding the content type through the documented
+  `defaultHeaders` option also duplicated it — set up once, poisoning every request, far from
+  the call anyone is debugging.
+
+  Fixed by letting `Headers` own the semantics on both paths: names normalise per the spec, and
+  `set` replaces rather than appends, which is the intent the old code expressed and did not
+  achieve. `mergeHeaders` now returns a `Headers` rather than a record, because handing back a
+  record hands back a structure in which `Content-Type` and `content-type` are two different
+  things — the shape the defect grew in.
+
+  Three `eslint-disable security/detect-object-injection` comments and one Stryker disable went
+  with it: a `Headers` has no prototype to pollute, so the guard is no longer working against the
+  type it is written on. The unsafe-name drop is kept as observable behaviour, and now also
+  covers the factory defaults, which the previous spread never guarded.
+
+  **The class, for anyone auditing the rest of the client surface:** case-insensitive header
+  semantics implemented with case-sensitive object keys. Anywhere this library keys a header by
+  string, the same latent duplicate exists.
+
+  The regression test asserts what the wire carries rather than what the record contains, and the
+  distinction is the whole reason this survived: the previous tests read ONE case-sensitive key
+  off the raw record, which held the default's value, while the caller's lowercase twin sat beside
+  it unread. Nothing ever asserted against the joined value, so nothing failed. A mock server does
+  not help either — it accepts the duplicate without complaint, because the request is well-formed
+  and wrong.
+
 ### Added
 
 - **`AuthService.isAccountLockedOut()` and `getAccountLockoutSeconds()` — read the lockout, not
