@@ -3303,7 +3303,7 @@ describe('AuthService', () => {
   // isAccountLockedOut() / getAccountLockoutSeconds()
   // ---------------------------------------------------------------------------
 
-  describe('lockout reads', () => {
+  describe('isAccountLockedOut', () => {
     // The write side was public and the read side was not, so a console could offer an Unlock
     // button and could not tell anyone whether it had anything to do.
     it('reports a locked account under the same key login derives', async () => {
@@ -3322,10 +3322,13 @@ describe('AuthService', () => {
 
       await expect(service.isAccountLockedOut('user@example.com', 'tenant-1')).resolves.toBe(false)
     })
+  })
 
+  describe('getAccountLockoutSeconds', () => {
     // The TTL is what lets a console say WHEN the lockout clears rather than only that it exists.
     // A bare flag with no horizon invites the support call the indicator was meant to prevent.
     it('returns the remaining seconds under the same key', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(true)
       mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(543)
 
       await expect(service.getAccountLockoutSeconds('user@example.com', 'tenant-1')).resolves.toBe(
@@ -3334,6 +3337,43 @@ describe('AuthService', () => {
       expect(mockBruteForce.getRemainingLockoutSeconds).toHaveBeenCalledWith(
         hmacSha256('dashboard:tenant-1:user@example.com', HMAC_KEY)
       )
+    })
+
+    // Raised in review, and a real contract break. The underlying TTL belongs to the FAILURE
+    // COUNTER, which `recordFailure` creates on the first failed attempt — so the raw value is
+    // positive from one failure onward, long before the threshold. Returned unchecked, a console
+    // would show "locked for 14 minutes" beside an account whose next attempt would succeed, and
+    // the two reads would contradict each other on the same account.
+    it('returns 0 for an account with failures below the threshold', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+      mockBruteForce.getRemainingLockoutSeconds.mockResolvedValue(870)
+
+      await expect(service.getAccountLockoutSeconds('user@example.com', 'tenant-1')).resolves.toBe(
+        0
+      )
+    })
+
+    // The TTL read must not even be issued when the account is not locked: it is a second Redis
+    // command, and paying it per row of a directory listing to compute a value that is discarded
+    // is the cost this gate exists to avoid.
+    it('does not read the TTL when the account is not locked out', async () => {
+      mockBruteForce.isLockedOut.mockResolvedValue(false)
+
+      await service.getAccountLockoutSeconds('user@example.com', 'tenant-1')
+
+      expect(mockBruteForce.getRemainingLockoutSeconds).not.toHaveBeenCalled()
+    })
+  })
+
+  // The property that spans the three methods rather than belonging to any one of them: they all
+  // address the SAME record. Kept in its own block because asserting it inside one method's suite
+  // would suggest it is that method's behaviour, when the value is precisely that no method may
+  // drift from the others.
+  describe('the lockout identifier the three methods share', () => {
+    beforeEach(() => {
+      // The TTL read is gated on the lockout, so the account has to be locked for
+      // `getAccountLockoutSeconds` to reach the derivation under test at all.
+      mockBruteForce.isLockedOut.mockResolvedValue(true)
     })
 
     // Both reads normalize exactly as login and unlockAccount do. This is the failure the issue
@@ -3351,9 +3391,9 @@ describe('AuthService', () => {
       )
     })
 
-    // The three read and write the SAME record. Asserted as one identity rather than three
-    // separate string literals, because three copies of the preimage is three chances to drift —
-    // and a drifted read is invisible: it reports "not locked out" and nothing fails.
+    // Asserted as one identity rather than as three separate string literals, because three copies
+    // of the preimage is three chances to drift — and a drifted read is invisible: it reports
+    // "not locked out" and nothing fails.
     it('reads the identifier unlockAccount clears', async () => {
       await service.isAccountLockedOut('user@example.com', 'tenant-1')
       await service.getAccountLockoutSeconds('user@example.com', 'tenant-1')

@@ -39,10 +39,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   invites the support call the indicator was meant to prevent: it can say an account is locked and
   cannot say for how long, so the only honest advice left is "try again later".
 
-  **Cheap enough for every row of a directory listing.** Measured against a local Redis over
-  ioredis: twenty of these reads issued concurrently cost `0.39 ms` against `0.33 ms` for a single
-  one — they pipeline into a single round trip. Twenty awaited in a loop cost `6.25 ms`, sixteen
-  times as much, and is the only way to get this wrong.
+  **Cheap enough for every row of a directory listing — issue them concurrently.** The reporter
+  measured twenty of these against a local Redis over ioredis: `0.39 ms` issued concurrently
+  against `0.33 ms` for a single one, and `6.25 ms` awaited one at a time in a loop. Concurrency is
+  what buys that, by overlapping the round trips; use `Promise.all` and not `await` inside a loop.
+
+  Those numbers are one environment's, not a guarantee this library makes. Each call is its own
+  Redis command, the ioredis client is the host's, and whether the commands are also **batched**
+  into a single write depends on `enableAutoPipelining`, which ioredis leaves off by default.
+
+  `getAccountLockoutSeconds` reads the threshold before the TTL. The underlying counter is created
+  on the FIRST failed attempt, so its raw TTL is positive long before the lockout exists —
+  returned unchecked it would show "locked for 14 minutes" beside an account whose next attempt
+  would succeed, with the two reads contradicting each other on the same account.
 
   Argument order mirrors `unlockAccount(email, tenantId)` so the three read as a set, and a test
   asserts all three address the SAME record rather than pinning three copies of the preimage.
