@@ -891,7 +891,10 @@ describe('MfaService', () => {
         response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
       })
 
-      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      // The PLATFORM repository, because that is the one this plane reads
+      // (`fetchUserForContext` → `platformUserRepo.findById`). Asserting the dashboard mock here
+      // was vacuous: it is never called on this path with or without the guard.
+      expect(mockPlatformUserRepo.findById).not.toHaveBeenCalled()
     })
 
     beforeEach(() => {
@@ -2720,7 +2723,10 @@ describe('MfaService', () => {
         response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
       })
 
-      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      // The PLATFORM repository, because that is the one this plane reads
+      // (`fetchUserForContext` → `platformUserRepo.findById`). Asserting the dashboard mock here
+      // was vacuous: it is never called on this path with or without the guard.
+      expect(mockPlatformUserRepo.findById).not.toHaveBeenCalled()
     })
 
     // Scenario: the account has no second factor. Expected: nothing happens, and no error.
@@ -2974,7 +2980,10 @@ describe('MfaService', () => {
         response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
       })
 
-      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      // The PLATFORM repository, because that is the one this plane reads
+      // (`fetchUserForContext` → `platformUserRepo.findById`). Asserting the dashboard mock here
+      // was vacuous: it is never called on this path with or without the guard.
+      expect(mockPlatformUserRepo.findById).not.toHaveBeenCalled()
     })
 
     beforeEach(() => {
@@ -3614,7 +3623,10 @@ describe('MfaService', () => {
         response: { error: { code: AUTH_ERROR_CODES.VALIDATION } }
       })
 
-      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      // The PLATFORM repository, because that is the one this plane reads
+      // (`fetchUserForContext` → `platformUserRepo.findById`). Asserting the dashboard mock here
+      // was vacuous: it is never called on this path with or without the guard.
+      expect(mockPlatformUserRepo.findById).not.toHaveBeenCalled()
     })
 
     beforeEach(() => {

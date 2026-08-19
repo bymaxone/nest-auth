@@ -476,9 +476,11 @@ describe('proxyUtils — buildRefreshDestination', () => {
     expect(buildRefreshDestination('/dashboard', params, 3)).toBe('/dashboard?a=1&b=2&_r=3')
   })
 
-  // The inbound counter must not survive alongside the new one. A URL carrying `_r` twice is the
-  // shape the loop-break guard has to read unambiguously, and `set` alone collapses duplicates
-  // only after the delete has removed them.
+  // A URL carrying `_r` twice, kept as a guard rather than as the mutant's killer. Measured:
+  // `set()` alone already collapses duplicates — `new URLSearchParams('_r=1&_r=2').set('_r','4')`
+  // yields `_r=4` — so this case does NOT depend on the delete, and the ordering test above is
+  // what makes the explicit deletion observable. Stated plainly because an earlier version of this
+  // comment credited the delete with the de-duplication, which is not what it does.
   it('drops every inbound copy of the counter', () => {
     const params = new URLSearchParams('_r=1&_r=2&keep=yes')
 

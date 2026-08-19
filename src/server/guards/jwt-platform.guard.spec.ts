@@ -256,14 +256,13 @@ describe('JwtPlatformGuard', () => {
       await expect(guard.canActivate(ctx as never)).rejects.toThrow(AuthException)
     })
 
-    // The four tests above name TOKEN_INVALID and never assert it — they check only that SOME
-    // AuthException came out. That is enough to survive deleting `assertValidJti(payload.jti)`
-    // entirely: a malformed jti then flows past the guard and something further down the pipeline
-    // refuses it for its own reason, which the generic assertion accepts. Stryker v10 reported
-    // exactly that, and this is the test that closes it.
+    // The four tests above name TOKEN_INVALID and never assert it, and that is enough to survive
+    // deleting `assertValidJti(payload.jti)` entirely: a malformed jti flows past the guard and
+    // something further down refuses it for its own reason, which the generic assertion accepts.
     //
-    // Same for `assertValidSub`. Both are asserted on the CODE, so a rejection arriving from a
-    // later check under a different code fails here instead of passing as equivalent.
+    // Asserting the CODE does not fix it either — measured, the later refusal carries the SAME
+    // code. What separates the two worlds is where the refusal lands, which is why the assertion
+    // below is on the revocation lookup rather than on the error.
     it.each([
       ['jti', { jti: 'not-a-uuid' }],
       ['sub', { sub: '' }]

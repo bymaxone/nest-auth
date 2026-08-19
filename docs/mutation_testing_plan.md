@@ -95,9 +95,9 @@ Run **exactly once**, from repo root:
 
 ```bash
 pnpm add -D \
-  @stryker-mutator/core@^9 \
-  @stryker-mutator/jest-runner@^9 \
-  @stryker-mutator/typescript-checker@^9
+  @stryker-mutator/core@^10 \
+  @stryker-mutator/jest-runner@^10 \
+  @stryker-mutator/typescript-checker@^10
 ```
 
 > **Installed version:** `10.0.0` (current stable major; Node `>=22` engine, satisfied by our `>=24`). Stryker releases all three packages in lockstep with **exact** peer deps (`jest-runner`/`typescript-checker` require `@stryker-mutator/core` at the same patch), so always install/upgrade the three together.
