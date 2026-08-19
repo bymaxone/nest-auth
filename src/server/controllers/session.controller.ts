@@ -44,8 +44,11 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  *
  * - `GET  /sessions`                — list all sessions, with the caller's session marked
  * - `POST /sessions/revoke-all`     — revoke all sessions except the caller's current session
- * - `DELETE /sessions/:id`          — revoke a single session by its hash prefix (display id)
- *   or full 64-character SHA-256 session hash
+ * - `DELETE /sessions/:id`          — revoke a single session by its FULL 64-character SHA-256
+ *   session hash. The 8-character `id` on a listed session is a DISPLAY value and is refused
+ *   here: a prefix is not unique by construction, so resolving one on a revocation could revoke
+ *   a different session than the one the user clicked. This docblock promised the prefix worked
+ *   until 1.4.4; it never did, and the refusal was indistinguishable from "already revoked".
  *
  * All endpoints require a valid JWT access token enforced by {@link JwtAuthGuard}.
  * Route prefix (`/sessions`) is relative — the consuming application applies
@@ -177,8 +180,11 @@ export class SessionController {
    *
    * @param user - Verified JWT payload from the access token.
    * @param id - Full SHA-256 session hash from the `sessionHash` field of `SessionInfo`.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session does not belong
-   *   to the user or the hash format is invalid.
+   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters
+   *   — which is what the 8-character display `id` is, so passing that is a caller error rather
+   *   than a missing session.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is well formed but names no
+   *   session belonging to this user.
    * @returns 204 No Content on success.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeSession)

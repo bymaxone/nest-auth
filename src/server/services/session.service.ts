@@ -11,7 +11,7 @@ import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
-import type { SessionInfo as EmailSessionInfo } from '../interfaces/email-provider.interface'
+import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type {
   AuthUser,
   IUserRepository,
@@ -356,7 +356,7 @@ export class SessionService {
     // Fire onNewSession hook — fire-and-forget; errors must not propagate.
     if (this.hooks?.onNewSession) {
       const { onNewSession } = this.hooks
-      const minimalSessionInfo: EmailSessionInfo = {
+      const minimalSessionInfo: SessionAlertInfo = {
         device,
         ip,
         sessionHash: hash.slice(0, 8)
@@ -614,7 +614,7 @@ export class SessionService {
     currentSessionHash
   }: RevokeAllExceptCurrentParams): Promise<void> {
     this.assertTenant(tenantId)
-    this.assertValidSessionHash(currentSessionHash)
+    this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
@@ -684,8 +684,9 @@ export class SessionService {
    * @param newHash - SHA-256 hex hash of the newly issued refresh token.
    * @param ip - Client IP address from the current request.
    * @param userAgent - Raw `User-Agent` header value from the current request.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when either hash is not a valid
-   *   64-character lowercase hex string.
+   * @throws {@link AuthException} `VALIDATION` when either hash is not a valid 64-character
+   *   lowercase hex string. The `details` name which one — `oldHash` or `newHash` — because a
+   *   caller told only that "a hash" was malformed cannot act on it.
    */
   async rotateSession(
     oldHash: string,
@@ -693,8 +694,8 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<void> {
-    this.assertValidSessionHash(oldHash)
-    this.assertValidSessionHash(newHash)
+    this.assertValidSessionHash(oldHash, 'oldHash')
+    this.assertValidSessionHash(newHash, 'newHash')
 
     // Guard against a programming error where the same hash is supplied for both
     // arguments. timingSafeCompare is used because session hashes are derived from
@@ -764,16 +765,30 @@ export class SessionService {
    * attacker-controlled key names.
    *
    * @remarks
-   * `SESSION_NOT_FOUND` is thrown intentionally (instead of HTTP 400) to prevent
-   * callers from enumerating valid hash formats. Callers cannot distinguish between
-   * "bad format" and "session does not exist", which is the desired behavior.
+   * **This used to answer `SESSION_NOT_FOUND`, and that was wrong.** The stated reason was to stop
+   * callers enumerating valid hash formats — but the format is not a secret. It is 64 hex
+   * characters, `SessionInfo.sessionHash` publishes it on every listed session, and the route's
+   * own documentation describes it. Nothing is protected by hiding it, and the pairing had a real
+   * cost: a consumer sending a malformed hash got the same answer as one sending a hash that had
+   * already been revoked, so a UI bug read as a race between the session list and the click. That
+   * is measured, not hypothetical — it cost a consumer session twenty minutes chasing a race that
+   * cannot happen.
+   *
+   * A malformed hash is a caller error and now says so. A well-formed hash that names nothing
+   * still answers `SESSION_NOT_FOUND`, which is where the no-enumeration argument does apply:
+   * that one really would tell the caller whether a session exists.
    *
    * @param sessionHash - The session hash to validate.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the format is invalid.
+   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters.
    */
-  private assertValidSessionHash(sessionHash: string): void {
+  private assertValidSessionHash(sessionHash: string, field = 'sessionHash'): void {
     if (!SESSION_HASH_RE.test(sessionHash)) {
-      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        {
+          field,
+          message: `${field} must be 64 lowercase hexadecimal characters`
+        }
+      ])
     }
   }
 

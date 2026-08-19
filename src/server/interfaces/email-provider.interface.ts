@@ -10,9 +10,18 @@
  */
 
 /**
- * Contextual information about a new user session sent in security alerts.
+ * Contextual information about a new user session, as sent in security alert emails.
+ *
+ * Named for the alert rather than for the session, deliberately. It was `SessionInfo` until
+ * 1.4.4 and collided with the session-listing type of the same name in `SessionService` — the
+ * barrel exported THIS one under the plain name, so a consumer importing the obvious `SessionInfo`
+ * to type a `GET /sessions` response got a shape with no `id` — and, worse, a `sessionHash` that
+ * means something else. Here it is the TRUNCATED display value; on the listing it is the full
+ * 64-hex hash. Same field name, same type, different value, and the truncated one is exactly what
+ * `DELETE /sessions/:id` refuses. Two careful consumer sessions disagreed for a day over whether
+ * the route returned an `id`: one read the wire and saw it, one read the type and did not.
  */
-export interface SessionInfo {
+export interface SessionAlertInfo {
   /** Human-readable description of the device or browser (e.g. "Chrome on macOS"). */
   device: string
 
@@ -248,7 +257,7 @@ export interface IEmailProvider {
    *
    * **This library never calls it.** The method is optional, and it is here as a typed
    * signature for you to call from the {@link IAuthHooks.onNewSession} hook — which the
-   * library does fire, on every session it creates, with the same {@link SessionInfo} this
+   * library does fire, on every session it creates, with the same {@link SessionAlertInfo} this
    * takes.
    *
    * The alert deliberately does not live inside the library, because the library cannot send
@@ -272,7 +281,7 @@ export interface IEmailProvider {
   sendNewSessionAlert?(
     tenantId: string,
     email: string,
-    sessionInfo: SessionInfo,
+    sessionInfo: SessionAlertInfo,
     locale?: string
   ): Promise<void>
 

@@ -18,7 +18,53 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Changed
+
+- **`SessionInfo` now names the shape `GET /sessions` returns.** (#156) Two interfaces answered to
+  that name — the session listing in `SessionService`, and the contextual payload sent in
+  new-login alert emails — and the barrel exported the **email** one under the plain name, with
+  the listing type exported as `ActiveSessionInfo`. That is backwards: a consumer typing a session
+  listing imports `SessionInfo`, receives `device` and `ip` with no `id` — and a `sessionHash` that
+  means something different. On the alert type it is the TRUNCATED display value; on the listing it
+  is the full 64-hex hash. Same field name, same type, different value, and the truncated one is
+  precisely what `DELETE /sessions/:id` refuses.
+
+  It does. Two consumer sessions disagreed for a day over exactly that — one read the wire and saw
+  an `id`, the other read the published type and did not. Neither was careless; the name resolved
+  to the wrong shape.
+
+  **Apply to a derived backend.** The email-alert type is now `SessionAlertInfo`, named for what
+  it is. If you implement `IEmailProvider`, rename the parameter type on `sendNewSessionAlert` —
+  the fields are unchanged. If you imported `ActiveSessionInfo` to type a session listing, import
+  `SessionInfo` instead: same shape, correct name. No runtime behaviour moves.
+
+- **A malformed `sessionHash` answers `VALIDATION`, not `SESSION_NOT_FOUND`.** (#156) The two were
+  deliberately indistinguishable, on the argument that telling them apart would let a caller
+  enumerate valid hash formats. The format is not a secret: it is 64 hex characters,
+  `SessionInfo.sessionHash` publishes it on every listed session, and the route documents it. So
+  the pairing protected nothing and cost something real — a consumer sending a malformed hash got
+  the same answer as one sending an already-revoked session, and read a UI bug as a race between
+  the session list and the click. Twenty minutes chasing a race that cannot happen.
+
+  A well-formed hash that names nothing still answers `SESSION_NOT_FOUND`. That is where the
+  no-enumeration argument does apply, because that answer really would say whether a session
+  exists.
+
+  **Apply to a derived backend.** If you branch on `auth.session_not_found` to mean "bad input",
+  branch on `auth.validation` for that case; the payload names `sessionHash` in `details`.
+
 ### Fixed
+
+- **`DELETE /sessions/:id` documented a prefix it has always refused.** (#156) The controller
+  described the parameter as accepting "its hash prefix (display id) **or** full 64-character
+  SHA-256 session hash". The handler has only ever accepted the full hash — and until the change
+  above, a prefix was refused with the same error as a session that no longer exists, which is
+  what made it read as a race rather than as a rejected input.
+
+  The prefix will **not** be made to work: `SessionInfo.id` is the first 8 characters of the hash
+  and is not unique by construction, so resolving one on a revocation could revoke a different
+  session than the one the user clicked. The documentation now says so and names the display value
+  as display-only.
 
 - **`mergeHeaders` sent every header twice when the caller's key case differed from the default,
   which broke every authenticated call carrying a body.** (#156)

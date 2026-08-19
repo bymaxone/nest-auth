@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { Logger } from '@nestjs/common'
 
-import type { InviteData, SessionInfo } from '../interfaces/email-provider.interface'
+import type { InviteData, SessionAlertInfo } from '../interfaces/email-provider.interface'
 import {
   AUTH_EMAIL_KINDS,
   DefaultAuthEmailProvider,
@@ -58,7 +58,7 @@ const INVITE: InviteData = {
   expiresAt: new Date('2026-12-31T23:59:59.000Z')
 }
 
-const SESSION: SessionInfo = {
+const SESSION: SessionAlertInfo = {
   device: 'Chrome on macOS',
   ip: '203.0.113.7',
   sessionHash: 'deadbeef'
