@@ -11,7 +11,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import type {
   IEmailProvider,
   InviteData,
-  SessionInfo
+  SessionAlertInfo
 } from '../interfaces/email-provider.interface'
 import { maskEmail } from '../utils/mask-email'
 
@@ -91,7 +91,7 @@ export class NoOpEmailProvider implements IEmailProvider {
   async sendNewSessionAlert(
     _tenantId: string,
     email: string,
-    _sessionInfo: SessionInfo,
+    _sessionInfo: SessionAlertInfo,
     _locale?: string
   ): Promise<void> {
     this.logger.log(`sendNewSessionAlert → ${maskEmail(email)} (no-op)`)

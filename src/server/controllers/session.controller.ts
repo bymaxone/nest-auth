@@ -44,8 +44,11 @@ import { TokenDeliveryService } from '../services/token-delivery.service'
  *
  * - `GET  /sessions`                — list all sessions, with the caller's session marked
  * - `POST /sessions/revoke-all`     — revoke all sessions except the caller's current session
- * - `DELETE /sessions/:id`          — revoke a single session by its hash prefix (display id)
- *   or full 64-character SHA-256 session hash
+ * - `DELETE /sessions/:id`          — revoke a single session by its FULL 64-character SHA-256
+ *   session hash. The 8-character `id` on a listed session is a DISPLAY value and is refused
+ *   here: a prefix is not unique by construction, so resolving one on a revocation could revoke
+ *   a different session than the one the user clicked. This docblock promised the prefix worked
+ *   until 1.4.4; it never did, and the refusal was indistinguishable from "already revoked".
  *
  * All endpoints require a valid JWT access token enforced by {@link JwtAuthGuard}.
  * Route prefix (`/sessions`) is relative — the consuming application applies

@@ -117,7 +117,11 @@ export type {
   PlatformAuthResult,
   RotatedTokenResult
 } from './interfaces/auth-result.interface'
-export type { IEmailProvider, InviteData, SessionInfo } from './interfaces/email-provider.interface'
+export type {
+  IEmailProvider,
+  InviteData,
+  SessionAlertInfo
+} from './interfaces/email-provider.interface'
 export type {
   DashboardJwtPayload,
   MfaTempPayload,
@@ -292,9 +296,15 @@ export { PasswordResetService } from './services/password-reset.service'
 // route that issues an operator session without going through the bundled controller.
 export { PlatformAuthService } from './services/platform-auth.service'
 export { SessionService } from './services/session.service'
-// Aliased to avoid collision with SessionInfo from email-provider.interface (which
-// represents an email send session, not an auth session).
-export type { SessionInfo as ActiveSessionInfo } from './services/session.service'
+/**
+ * The shape `GET /sessions` returns, exported under the name a consumer reaches for first.
+ *
+ * Until 1.4.4 this name belonged to the email-alert type and THIS shape was exported as
+ * `ActiveSessionInfo`, which is backwards: a consumer typing a session-listing response imports
+ * `SessionInfo`, gets `device` and `ip` with no `id` and no `sessionHash`, and concludes the route
+ * does not return them. It does. The alert type is now `SessionAlertInfo`, named for what it is.
+ */
+export type { SessionInfo } from './services/session.service'
 
 /**
  * The parameter objects of {@link SessionService}'s five entry points.

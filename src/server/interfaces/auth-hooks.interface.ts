@@ -18,7 +18,7 @@
  * @layer Interface
  */
 
-import type { SessionInfo } from './email-provider.interface'
+import type { SessionAlertInfo } from './email-provider.interface'
 import type { OAuthProfile } from './oauth-provider.interface'
 import type { SafeAuthUser } from './user-repository.interface'
 
@@ -325,7 +325,7 @@ export interface IAuthHooks {
    */
   onNewSession?(
     user: SafeAuthUser,
-    sessionInfo: SessionInfo,
+    sessionInfo: SessionAlertInfo,
     context: HookContext
   ): Promise<void> | void
 

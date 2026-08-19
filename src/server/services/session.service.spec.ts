@@ -1705,19 +1705,19 @@ describe('SessionService', () => {
   describe('revokeSession', () => {
     const userId = 'user-revoke'
 
-    // Verifies that throws SESSION_NOT_FOUND for a hash shorter than 64 chars.
-    it('throws SESSION_NOT_FOUND for a hash shorter than 64 chars', async () => {
+    // Verifies that throws VALIDATION for a hash shorter than 64 chars.
+    it('throws VALIDATION for a hash shorter than 64 chars', async () => {
       let thrownShort: unknown
       try {
         await service.revokeSession({ userId: userId, tenantId: 'tenant-1', sessionHash: 'abc123' })
       } catch (e) {
         thrownShort = e
       }
-      expect(getErrorCode(thrownShort)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrownShort)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
-    // Verifies that throws SESSION_NOT_FOUND for a hash longer than 64 chars.
-    it('throws SESSION_NOT_FOUND for a hash longer than 64 chars', async () => {
+    // Verifies that throws VALIDATION for a hash longer than 64 chars.
+    it('throws VALIDATION for a hash longer than 64 chars', async () => {
       const longHash = 'a'.repeat(65)
       let thrownLong: unknown
       try {
@@ -1725,14 +1725,14 @@ describe('SessionService', () => {
       } catch (e) {
         thrownLong = e
       }
-      expect(getErrorCode(thrownLong)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrownLong)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
     // Scenario: a valid 64-hex hash with a junk character PREPENDED (length 65, valid tail).
     // Expected: throws SESSION_NOT_FOUND. Why: kills the `^`-anchor removal on line 29
     // (`/^[a-f0-9]{64}$/` → `/[a-f0-9]{64}$/`); without the start anchor the regex matches the valid
     // 64-hex suffix and would wrongly accept this input.
-    it('throws SESSION_NOT_FOUND for a valid hash with an invalid leading character', async () => {
+    it('throws VALIDATION for a valid hash with an invalid leading character', async () => {
       const prefixed = `z${sha256('anchor-prefix-token')}`
       let thrown: unknown
       try {
@@ -1740,7 +1740,7 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.VALIDATION)
       // The format guard must reject BEFORE any Redis round-trip. Without this
       // assertion the `^`-anchor mutant survives: it passes the (loosened) regex,
       // reaches eval, finds no session, and throws the same SESSION_NOT_FOUND.
@@ -1751,7 +1751,7 @@ describe('SessionService', () => {
     // Expected: throws SESSION_NOT_FOUND. Why: kills the `$`-anchor removal on line 29
     // (`/^[a-f0-9]{64}$/` → `/^[a-f0-9]{64}/`); without the end anchor the regex matches the valid
     // 64-hex prefix and would wrongly accept this input.
-    it('throws SESSION_NOT_FOUND for a valid hash with an invalid trailing character', async () => {
+    it('throws VALIDATION for a valid hash with an invalid trailing character', async () => {
       const suffixed = `${sha256('anchor-suffix-token')}z`
       let thrown: unknown
       try {
@@ -1759,15 +1759,15 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.VALIDATION)
       // The format guard must reject BEFORE any Redis round-trip. Without this
       // assertion the `$`-anchor mutant survives: it passes the (loosened) regex,
       // reaches eval, finds no session, and throws the same SESSION_NOT_FOUND.
       expect(mockRedis.eval).not.toHaveBeenCalled()
     })
 
-    // Verifies that throws SESSION_NOT_FOUND for a hash containing uppercase hex characters.
-    it('throws SESSION_NOT_FOUND for a hash containing uppercase hex characters', async () => {
+    // Verifies that throws VALIDATION for a hash containing uppercase hex characters.
+    it('throws VALIDATION for a hash containing uppercase hex characters', async () => {
       const upperHash = 'A'.repeat(64)
       let thrownUpper: unknown
       try {
@@ -1779,11 +1779,11 @@ describe('SessionService', () => {
       } catch (e) {
         thrownUpper = e
       }
-      expect(getErrorCode(thrownUpper)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrownUpper)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
-    // Verifies that throws SESSION_NOT_FOUND for a hash containing non-hex characters.
-    it('throws SESSION_NOT_FOUND for a hash containing non-hex characters', async () => {
+    // Verifies that throws VALIDATION for a hash containing non-hex characters.
+    it('throws VALIDATION for a hash containing non-hex characters', async () => {
       const invalidHash = 'g'.repeat(64)
       let thrownInvalid: unknown
       try {
@@ -1795,7 +1795,7 @@ describe('SessionService', () => {
       } catch (e) {
         thrownInvalid = e
       }
-      expect(getErrorCode(thrownInvalid)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrownInvalid)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
     // Verifies that calls redis.eval with correct KEYS and ARGV.
@@ -1942,8 +1942,8 @@ describe('SessionService', () => {
   describe('revokeAllExceptCurrent', () => {
     const userId = 'user-revoke-all'
 
-    // Verifies that throws SESSION_NOT_FOUND for invalid currentSessionHash format.
-    it('throws SESSION_NOT_FOUND for invalid currentSessionHash format', async () => {
+    // Verifies that throws VALIDATION for invalid currentSessionHash format.
+    it('throws VALIDATION for invalid currentSessionHash format', async () => {
       let thrown: unknown
       try {
         await service.revokeAllExceptCurrent({
@@ -1954,7 +1954,7 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
     // Scenario: the index holds the caller's own live session beside a grace pointer.
@@ -2226,8 +2226,8 @@ describe('SessionService', () => {
     const ip = '10.10.10.10'
     const userAgent = 'Mozilla/5.0 Firefox/120.0'
 
-    // Verifies that throws SESSION_NOT_FOUND for invalid oldHash format.
-    it('throws SESSION_NOT_FOUND for invalid oldHash format', async () => {
+    // Verifies that throws VALIDATION for invalid oldHash format.
+    it('throws VALIDATION for invalid oldHash format', async () => {
       const newHash = sha256('new-token')
       let thrown: unknown
       try {
@@ -2235,11 +2235,11 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
-    // Verifies that throws SESSION_NOT_FOUND for invalid newHash format.
-    it('throws SESSION_NOT_FOUND for invalid newHash format', async () => {
+    // Verifies that throws VALIDATION for invalid newHash format.
+    it('throws VALIDATION for invalid newHash format', async () => {
       const oldHash = sha256('old-token')
       let thrown: unknown
       try {
@@ -2247,7 +2247,7 @@ describe('SessionService', () => {
       } catch (e) {
         thrown = e
       }
-      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      expect(getErrorCode(thrown)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
     // Verifies that returns immediately (no Redis call) when oldHash === newHash.

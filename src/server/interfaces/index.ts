@@ -23,7 +23,7 @@ export type {
   PlatformAuthenticatedRequest
 } from './authenticated-request.interface'
 export type { OAuthProfile, OAuthProviderPlugin } from './oauth-provider.interface'
-export type { SessionInfo, InviteData, IEmailProvider } from './email-provider.interface'
+export type { SessionAlertInfo, InviteData, IEmailProvider } from './email-provider.interface'
 export type {
   HookContext,
   BeforeRegisterResult,

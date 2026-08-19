@@ -11,7 +11,7 @@ import { sha256, timingSafeCompare } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
-import type { SessionInfo as EmailSessionInfo } from '../interfaces/email-provider.interface'
+import type { SessionAlertInfo } from '../interfaces/email-provider.interface'
 import type {
   AuthUser,
   IUserRepository,
@@ -356,7 +356,7 @@ export class SessionService {
     // Fire onNewSession hook — fire-and-forget; errors must not propagate.
     if (this.hooks?.onNewSession) {
       const { onNewSession } = this.hooks
-      const minimalSessionInfo: EmailSessionInfo = {
+      const minimalSessionInfo: SessionAlertInfo = {
         device,
         ip,
         sessionHash: hash.slice(0, 8)
@@ -760,16 +760,30 @@ export class SessionService {
    * attacker-controlled key names.
    *
    * @remarks
-   * `SESSION_NOT_FOUND` is thrown intentionally (instead of HTTP 400) to prevent
-   * callers from enumerating valid hash formats. Callers cannot distinguish between
-   * "bad format" and "session does not exist", which is the desired behavior.
+   * **This used to answer `SESSION_NOT_FOUND`, and that was wrong.** The stated reason was to stop
+   * callers enumerating valid hash formats — but the format is not a secret. It is 64 hex
+   * characters, `SessionInfo.sessionHash` publishes it on every listed session, and the route's
+   * own documentation describes it. Nothing is protected by hiding it, and the pairing had a real
+   * cost: a consumer sending a malformed hash got the same answer as one sending a hash that had
+   * already been revoked, so a UI bug read as a race between the session list and the click. That
+   * is measured, not hypothetical — it cost a consumer session twenty minutes chasing a race that
+   * cannot happen.
+   *
+   * A malformed hash is a caller error and now says so. A well-formed hash that names nothing
+   * still answers `SESSION_NOT_FOUND`, which is where the no-enumeration argument does apply:
+   * that one really would tell the caller whether a session exists.
    *
    * @param sessionHash - The session hash to validate.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the format is invalid.
+   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters.
    */
   private assertValidSessionHash(sessionHash: string): void {
     if (!SESSION_HASH_RE.test(sessionHash)) {
-      throw new AuthException(AUTH_ERROR_CODES.SESSION_NOT_FOUND)
+      throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
+        {
+          field: 'sessionHash',
+          message: 'sessionHash must be 64 lowercase hexadecimal characters'
+        }
+      ])
     }
   }
 

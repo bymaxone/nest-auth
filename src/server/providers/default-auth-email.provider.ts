@@ -42,7 +42,7 @@ import { Logger } from '@nestjs/common'
 import type {
   IEmailProvider,
   InviteData,
-  SessionInfo
+  SessionAlertInfo
 } from '../interfaces/email-provider.interface'
 import { describeChannelStatus } from '../utils/describe-error'
 
@@ -199,7 +199,7 @@ export interface AuthEmailCatalogue {
   mfaDisabled(input: { locale?: string | undefined }): AuthEmailMessage
   /** Security alert about a newly established session. */
   newSessionAlert(input: {
-    sessionInfo: SessionInfo
+    sessionInfo: SessionAlertInfo
     locale?: string | undefined
   }): AuthEmailMessage
   /** Invitation to join a tenant. */
@@ -673,7 +673,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
   public async sendNewSessionAlert(
     tenantId: string,
     email: string,
-    sessionInfo: SessionInfo,
+    sessionInfo: SessionAlertInfo,
     locale?: string
   ): Promise<void> {
     // Device, IP and session hash are rendered into this body, so a quoted rejection carries all
