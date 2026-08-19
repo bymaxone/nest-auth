@@ -725,6 +725,11 @@ export class TokenManagerService {
       parsed = JSON.parse(json)
     } catch {
       this.logger.warn('parseSession: malformed session JSON in Redis')
+      // Stryker disable next-line CallExpression: equivalent — the warn above has already been
+      // emitted, and with this throw deleted `parsed` stays undefined, so the shape check
+      // immediately below refuses the record with the identical AuthException and code. No test
+      // can separate the two: same log line, same error, same ordering. Verified by deleting it
+      // and running the suite — all 120 cases stay green.
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     const rec = parsed as Record<string, unknown>

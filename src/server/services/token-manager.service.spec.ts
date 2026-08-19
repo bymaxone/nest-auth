@@ -921,6 +921,33 @@ describe('TokenManagerService', () => {
     // outlet: a token that was already exchanged has been presented again, so one of its two
     // holders is not the owner. A consumer wanting to force a password reset, page an on-call,
     // or raise the account's risk score had only an English log line to key on.
+    // The `throw` on the reuse branch, pinned by what it PREVENTS rather than by what it raises.
+    //
+    // Stryker v10 reported it as deletable, and every existing test agrees: delete it and control
+    // falls through to the generic "no valid session or grace window found" tail, which raises the
+    // same REFRESH_TOKEN_INVALID. Asserting the code cannot tell the two apart.
+    //
+    // The tail also LOGS, and that is the difference an operator sees. A replayed token is the
+    // strongest compromise signal this library produces; filing it under "no valid session" turns
+    // a takeover indicator into the same line an expired token writes. The reuse path must not
+    // reach that log.
+    it.each([
+      ['reissueTokens', (s: TokenManagerService) => s.reissueTokens('replayed', '1.2.3.4', 'UA')],
+      [
+        'reissuePlatformTokens',
+        (s: TokenManagerService) => s.reissuePlatformTokens('replayed', '1.2.3.4', 'UA')
+      ]
+    ])('%s does not fall through to the no-session log after detecting reuse', async (_l, call) => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
+
+      await expect(call(service)).rejects.toThrow(AuthException)
+
+      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' | ')
+      expect(logged).not.toContain('no valid session or grace window found')
+      warnSpy.mockRestore()
+    })
+
     it('emits onRefreshTokenReuseDetected with the owner and the revoked family', async () => {
       mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'reused', familyId: FAMILY })
 
@@ -1992,6 +2019,58 @@ describe('TokenManagerService', () => {
   })
 
   describe('reissuePlatformTokens', () => {
+    // The absolute-lifetime cap on the PLATFORM path. The dashboard equivalent is covered above;
+    // this one was not, and Stryker v10 reported `this.assertWithinAbsoluteLifetime(seed)` as
+    // deletable with all 119 tests green.
+    //
+    // Asserted the same way as the dashboard case, and for the same reason: what matters is that
+    // the refusal lands BEFORE the rotation script runs. A cap enforced after the rotation would
+    // consume the presented token on the holder's behalf while still refusing them — the operator
+    // sees a session ended by policy, the admin sees a token that stopped working mid-request.
+    it('refuses a seed past the absolute lifetime before running the rotation', async () => {
+      const capped = await Test.createTestingModule({
+        providers: [
+          TokenManagerService,
+          { provide: JwtService, useValue: mockJwtService },
+          {
+            provide: BYMAX_AUTH_OPTIONS,
+            useValue: {
+              ...mockOptions,
+              jwt: { ...mockOptions.jwt, absoluteSessionLifetimeDays: 30 }
+            }
+          },
+          { provide: AuthRedisService, useValue: mockRedis },
+          { provide: BYMAX_AUTH_HOOKS, useValue: mockHooks }
+        ]
+      }).compile()
+      const bornAt = new Date(Date.now() - 31 * 86_400_000).toISOString()
+      mockRedis.get.mockResolvedValue(
+        JSON.stringify({
+          userId: 'platform-admin-1',
+          role: 'super_admin',
+          device: 'Browser',
+          ip: '1.2.3.4',
+          mfaEnabled: false,
+          createdAt: new Date().toISOString(),
+          familyId: PLATFORM_FAMILY,
+          familyCreatedAt: bornAt
+        })
+      )
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+      await expect(
+        capped
+          .get(TokenManagerService)
+          .reissuePlatformTokens('old-platform-refresh', '1.2.3.4', 'Browser')
+      ).rejects.toThrow(AuthException)
+
+      expect(mockRedis.rotateRefreshSession).not.toHaveBeenCalled()
+      expect(warnSpy.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        'outlived the absolute lifetime cap'
+      )
+      warnSpy.mockRestore()
+    })
+
     const PLATFORM_FAMILY = 'pfam-old-1'
     /** Minimal valid platform session JSON — matches the RefreshSession shape used for platform admins. */
     const OLD_PLATFORM_SESSION = JSON.stringify({

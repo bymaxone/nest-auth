@@ -1321,6 +1321,44 @@ describe('SessionService', () => {
       expect(mockRedis.get).not.toHaveBeenCalled()
     })
 
+    // The two `staleKeys.push(member)` calls, pinned by their only observable effect.
+    //
+    // Stryker v10 reported both as deletable. Nothing noticed, because a member whose detail
+    // record is unreadable is dropped from the RESULT either way — the difference is invisible in
+    // the returned array and shows up only in what gets pruned. Deleted, the dead member stays in
+    // the index forever: `listSessions` keeps paying a Redis read for it on every call, and the
+    // index grows without bound for an account that rotates tokens.
+    //
+    // Two shapes reach it, and they are separate branches: a record that parses but does not carry
+    // the expected fields, and one that does not parse at all.
+    it.each([
+      ['a detail record with the wrong shape', JSON.stringify({ device: 'Chrome' })],
+      ['a detail record that is not valid JSON', 'not-json-at-all']
+    ])('prunes the index member behind %s', async (_why, stored) => {
+      const hash = sha256('dead-session')
+      mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
+      mockRedis.get.mockResolvedValue(stored)
+
+      const result = await service.listSessions({ userId, tenantId: 'tenant-1' })
+
+      expect(result).toEqual([])
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(expect.any(String), [`rt:${hash}`])
+    })
+
+    // The mirror, so the assertion above cannot be satisfied by pruning indiscriminately: a
+    // readable session must reach the pruner as an EMPTY list. Not "must not be called" — the
+    // prune runs unconditionally on every listing, and asserting absence here reported a failure
+    // that was mine rather than the code's.
+    it('hands the pruner nothing when the detail record is readable', async () => {
+      const hash = sha256('live-session')
+      mockRedis.smembers.mockResolvedValue([`rt:${hash}`])
+      mockRedis.get.mockResolvedValue(makeDetailJson(1000))
+
+      await service.listSessions({ userId, tenantId: 'tenant-1' })
+
+      expect(mockRedis.pruneDeadMembers).toHaveBeenCalledWith(expect.any(String), [])
+    })
+
     // Verifies that fetches sd: detail records for each rt: member.
     it('fetches sd: detail records for each rt: member', async () => {
       const hash = sha256('real-token')
@@ -1941,6 +1979,41 @@ describe('SessionService', () => {
 
   describe('revokeAllExceptCurrent', () => {
     const userId = 'user-revoke-all'
+
+    // A blank tenant is refused here, in this method's own suite, rather than only through the
+    // shared table below.
+    //
+    // The table asserts the same thing and Stryker still reported `this.assertTenant(tenantId)`
+    // as deletable: under `coverageAnalysis: "perTest"` the mutant is only re-tested against the
+    // cases the dry run attributed to it, and the table's cases — arrow functions built once at
+    // module scope — were not among them. Deleting the call and running the suite by hand DOES
+    // fail the table case, so the gap is in the attribution, not in the assertion.
+    //
+    // A direct call inside the method's own describe attributes cleanly. Keeping both is the
+    // point: the table states the rule across the boundary, this states it where the mutant lives.
+    it('refuses a blank tenant before reading the session index', async () => {
+      await expect(
+        service.revokeAllExceptCurrent({
+          userId,
+          tenantId: '',
+          currentSessionHash: 'a'.repeat(64)
+        })
+      ).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [
+              { field: 'tenantId', message: 'tenantId is required to name a session index' }
+            ]
+          }
+        }
+      })
+
+      // The index read must not have happened: a blank tenant derives a key nobody writes, so
+      // reaching Redis at all means the method would have reported "revoked everything" against
+      // an index that never existed.
+      expect(mockRedis.smembers).not.toHaveBeenCalled()
+    })
 
     // Verifies that throws SESSION_NOT_FOUND for invalid currentSessionHash format.
     it('throws SESSION_NOT_FOUND for invalid currentSessionHash format', async () => {
