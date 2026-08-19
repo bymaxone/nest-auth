@@ -610,7 +610,7 @@ export class SessionService {
     currentSessionHash
   }: RevokeAllExceptCurrentParams): Promise<void> {
     this.assertTenant(tenantId)
-    this.assertValidSessionHash(currentSessionHash)
+    this.assertValidSessionHash(currentSessionHash, 'currentSessionHash')
 
     const members = await this.redis.smembers(this.indexKey(userId, tenantId))
     const rtMembers = members.filter((m) => m.startsWith('rt:'))
@@ -680,8 +680,9 @@ export class SessionService {
    * @param newHash - SHA-256 hex hash of the newly issued refresh token.
    * @param ip - Client IP address from the current request.
    * @param userAgent - Raw `User-Agent` header value from the current request.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when either hash is not a valid
-   *   64-character lowercase hex string.
+   * @throws {@link AuthException} `VALIDATION` when either hash is not a valid 64-character
+   *   lowercase hex string. The `details` name which one — `oldHash` or `newHash` — because a
+   *   caller told only that "a hash" was malformed cannot act on it.
    */
   async rotateSession(
     oldHash: string,
@@ -689,8 +690,8 @@ export class SessionService {
     ip: string,
     userAgent: string
   ): Promise<void> {
-    this.assertValidSessionHash(oldHash)
-    this.assertValidSessionHash(newHash)
+    this.assertValidSessionHash(oldHash, 'oldHash')
+    this.assertValidSessionHash(newHash, 'newHash')
 
     // Guard against a programming error where the same hash is supplied for both
     // arguments. timingSafeCompare is used because session hashes are derived from
@@ -776,12 +777,12 @@ export class SessionService {
    * @param sessionHash - The session hash to validate.
    * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters.
    */
-  private assertValidSessionHash(sessionHash: string): void {
+  private assertValidSessionHash(sessionHash: string, field = 'sessionHash'): void {
     if (!SESSION_HASH_RE.test(sessionHash)) {
       throw new AuthException(AUTH_ERROR_CODES.VALIDATION, [
         {
-          field: 'sessionHash',
-          message: 'sessionHash must be 64 lowercase hexadecimal characters'
+          field,
+          message: `${field} must be 64 lowercase hexadecimal characters`
         }
       ])
     }

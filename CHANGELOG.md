@@ -24,16 +24,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   that name — the session listing in `SessionService`, and the contextual payload sent in
   new-login alert emails — and the barrel exported the **email** one under the plain name, with
   the listing type exported as `ActiveSessionInfo`. That is backwards: a consumer typing a session
-  listing imports `SessionInfo`, receives `device` and `ip` with no `id` and no `sessionHash`, and
-  concludes the route does not return them.
+  listing imports `SessionInfo`, receives `device` and `ip` with no `id` — and a `sessionHash` that
+  means something different. On the alert type it is the TRUNCATED display value; on the listing it
+  is the full 64-hex hash. Same field name, same type, different value, and the truncated one is
+  precisely what `DELETE /sessions/:id` refuses.
 
   It does. Two consumer sessions disagreed for a day over exactly that — one read the wire and saw
   an `id`, the other read the published type and did not. Neither was careless; the name resolved
   to the wrong shape.
 
   **Apply to a derived backend.** The email-alert type is now `SessionAlertInfo`, named for what
-  it is. If you implement `IEmailProvider`, rename the parameter type on `sendNewLoginAlert` — the
-  fields are unchanged. If you imported `ActiveSessionInfo` to type a session listing, import
+  it is. If you implement `IEmailProvider`, rename the parameter type on `sendNewSessionAlert` —
+  the fields are unchanged. If you imported `ActiveSessionInfo` to type a session listing, import
   `SessionInfo` instead: same shape, correct name. No runtime behaviour moves.
 
 - **A malformed `sessionHash` answers `VALIDATION`, not `SESSION_NOT_FOUND`.** (#156) The two were

@@ -370,7 +370,7 @@ Email delivery is fully delegated to the consumer — the library never imports 
 ```typescript
 // email.provider.ts
 import { Injectable } from '@nestjs/common'
-import type { IEmailProvider, InviteData, SessionInfo } from '@bymax-one/nest-auth'
+import type { IEmailProvider, InviteData, SessionAlertInfo } from '@bymax-one/nest-auth'
 import { Resend } from 'resend'
 
 const escapeHtml = (s: string): string =>
@@ -466,7 +466,7 @@ export class ResendEmailProvider implements IEmailProvider {
   async sendNewSessionAlert(
     _tenantId: string,
     email: string,
-    sessionInfo: SessionInfo,
+    sessionInfo: SessionAlertInfo,
     _locale?: string
   ): Promise<void> {
     await this.client.emails.send({

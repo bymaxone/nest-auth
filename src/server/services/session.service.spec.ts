@@ -1716,6 +1716,34 @@ describe('SessionService', () => {
       expect(getErrorCode(thrownShort)).toBe(AUTH_ERROR_CODES.VALIDATION)
     })
 
+    // The DETAILS, not merely the code. A validation error whose payload names no field tells the
+    // caller nothing about what to fix, and the field name is per-call-site — `rotateSession`
+    // validates two hashes, so "a hash was malformed" is not actionable. Asserted here because
+    // nothing else pins the contract this change introduced.
+    it.each([
+      [
+        'revokeSession',
+        (s: SessionService) =>
+          s.revokeSession({ userId, tenantId: 'tenant-1', sessionHash: 'abc123' }),
+        'sessionHash'
+      ],
+      [
+        'revokeAllExceptCurrent',
+        (s: SessionService) =>
+          s.revokeAllExceptCurrent({ userId, tenantId: 'tenant-1', currentSessionHash: 'abc123' }),
+        'currentSessionHash'
+      ]
+    ])('%s names the field that failed validation', async (_label, call, field) => {
+      await expect(call(service)).rejects.toMatchObject({
+        response: {
+          error: {
+            code: AUTH_ERROR_CODES.VALIDATION,
+            details: [{ field, message: `${field} must be 64 lowercase hexadecimal characters` }]
+          }
+        }
+      })
+    })
+
     // Verifies that throws VALIDATION for a hash longer than 64 chars.
     it('throws VALIDATION for a hash longer than 64 chars', async () => {
       const longHash = 'a'.repeat(65)
@@ -1729,7 +1757,7 @@ describe('SessionService', () => {
     })
 
     // Scenario: a valid 64-hex hash with a junk character PREPENDED (length 65, valid tail).
-    // Expected: throws SESSION_NOT_FOUND. Why: kills the `^`-anchor removal on line 29
+    // Expected: throws VALIDATION. Why: kills the `^`-anchor removal on line 29
     // (`/^[a-f0-9]{64}$/` → `/[a-f0-9]{64}$/`); without the start anchor the regex matches the valid
     // 64-hex suffix and would wrongly accept this input.
     it('throws VALIDATION for a valid hash with an invalid leading character', async () => {
@@ -1748,7 +1776,7 @@ describe('SessionService', () => {
     })
 
     // Scenario: a valid 64-hex hash with a junk character APPENDED (length 65, valid head).
-    // Expected: throws SESSION_NOT_FOUND. Why: kills the `$`-anchor removal on line 29
+    // Expected: throws VALIDATION. Why: kills the `$`-anchor removal on line 29
     // (`/^[a-f0-9]{64}$/` → `/^[a-f0-9]{64}/`); without the end anchor the regex matches the valid
     // 64-hex prefix and would wrongly accept this input.
     it('throws VALIDATION for a valid hash with an invalid trailing character', async () => {

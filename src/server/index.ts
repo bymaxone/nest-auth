@@ -301,8 +301,9 @@ export { SessionService } from './services/session.service'
  *
  * Until 1.4.4 this name belonged to the email-alert type and THIS shape was exported as
  * `ActiveSessionInfo`, which is backwards: a consumer typing a session-listing response imports
- * `SessionInfo`, gets `device` and `ip` with no `id` and no `sessionHash`, and concludes the route
- * does not return them. It does. The alert type is now `SessionAlertInfo`, named for what it is.
+ * `SessionInfo`, gets `device` and `ip` with no `id`, and a `sessionHash` that is the TRUNCATED
+ * display value rather than the full 64-hex one the route returns and `DELETE /sessions/:id`
+ * requires. Same name, different value. The alert type is now `SessionAlertInfo`.
  */
 export type { SessionInfo } from './services/session.service'
 

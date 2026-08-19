@@ -180,8 +180,11 @@ export class SessionController {
    *
    * @param user - Verified JWT payload from the access token.
    * @param id - Full SHA-256 session hash from the `sessionHash` field of `SessionInfo`.
-   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the session does not belong
-   *   to the user or the hash format is invalid.
+   * @throws {@link AuthException} `VALIDATION` when the value is not 64 lowercase hex characters
+   *   — which is what the 8-character display `id` is, so passing that is a caller error rather
+   *   than a missing session.
+   * @throws {@link AuthException} `SESSION_NOT_FOUND` when the hash is well formed but names no
+   *   session belonging to this user.
    * @returns 204 No Content on success.
    */
   @Throttle(AUTH_THROTTLE_CONFIGS.revokeSession)

@@ -15,9 +15,11 @@
  * Named for the alert rather than for the session, deliberately. It was `SessionInfo` until
  * 1.4.4 and collided with the session-listing type of the same name in `SessionService` — the
  * barrel exported THIS one under the plain name, so a consumer importing the obvious `SessionInfo`
- * to type a `GET /sessions` response got a shape with no `id` and no `sessionHash`. Two careful
- * consumer sessions disagreed for a day over whether the route returned an `id`: one read the
- * wire and saw it, one read the type and did not. Neither was wrong about what they looked at.
+ * to type a `GET /sessions` response got a shape with no `id` — and, worse, a `sessionHash` that
+ * means something else. Here it is the TRUNCATED display value; on the listing it is the full
+ * 64-hex hash. Same field name, same type, different value, and the truncated one is exactly what
+ * `DELETE /sessions/:id` refuses. Two careful consumer sessions disagreed for a day over whether
+ * the route returned an `id`: one read the wire and saw it, one read the type and did not.
  */
 export interface SessionAlertInfo {
   /** Human-readable description of the device or browser (e.g. "Chrome on macOS"). */
