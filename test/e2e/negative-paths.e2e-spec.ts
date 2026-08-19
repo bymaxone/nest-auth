@@ -371,16 +371,38 @@ describe('sessions negative paths (E2E)', () => {
       .get('/sessions')
       .set('Authorization', `Bearer ${userB.accessToken}`)
     expect(list.status).toBe(200)
-    const sessions = list.body as Array<{ id: string }>
+    const sessions = list.body as Array<{ id: string; sessionHash: string }>
     expect(sessions.length).toBeGreaterThan(0)
-    const targetId = sessions[0]!.id
+    // The FULL hash, not the 8-character display `id`. This test used the `id` and passed for the
+    // wrong reason: a short value never reached the ownership check at all — it was refused as a
+    // malformed hash, which answered the same `SESSION_NOT_FOUND` a foreign session does. The
+    // test's own name was the claim it did not verify. Since 1.4.4 a malformed hash answers
+    // VALIDATION, which is what surfaced this.
+    const targetHash = sessions[0]!.sessionHash
+    expect(targetHash).toMatch(/^[a-f0-9]{64}$/)
 
     // User A tries to revoke user B's session.
     const res = await request(boot.app.getHttpServer())
-      .delete(`/sessions/${targetId}`)
+      .delete(`/sessions/${targetHash}`)
       .set('Authorization', `Bearer ${userA.accessToken}`)
 
     expectAuthError(res, 'auth.session_not_found')
+  })
+
+  // The other half, and the one the case above could not state while it used the display id: a
+  // malformed hash is a caller error and is now distinguishable from a session that does not
+  // exist. Without this, nothing stops the two collapsing back together.
+  it('should return VALIDATION when the session id is not a full hash', async () => {
+    const user = await registerAndLogin(
+      boot,
+      `short-id-${Math.random().toString(36).slice(2)}@example.com`
+    )
+
+    const res = await request(boot.app.getHttpServer())
+      .delete('/sessions/abc123')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+
+    expectAuthError(res, 'auth.validation')
   })
 
   // Verifies that POST /sessions/revoke-all without a refresh token in the request

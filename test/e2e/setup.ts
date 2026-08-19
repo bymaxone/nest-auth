@@ -32,7 +32,7 @@ import type { BymaxAuthModuleOptions } from '../../src/server/interfaces/auth-mo
 import type {
   IEmailProvider,
   InviteData,
-  SessionInfo
+  SessionAlertInfo
 } from '../../src/server/interfaces/email-provider.interface'
 import type {
   AuthPlatformUser,
@@ -410,7 +410,7 @@ export function createMockEmailProvider(): MockEmailProvider {
     async sendNewSessionAlert(
       _tenantId: string,
       email: string,
-      _sessionInfo: SessionInfo
+      _sessionInfo: SessionAlertInfo
     ): Promise<void> {
       send({ to: email, subject: 'New session', html: '<p>session</p>' })
     },
