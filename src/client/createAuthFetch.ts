@@ -282,51 +282,72 @@ function resolveRequestUrl(input: RequestInfo | URL, baseUrl: string | undefined
 }
 
 /**
- * Merge the consumer's headers with the configured defaults.
+ * Names this wrapper refuses to forward as headers.
  *
- * Per-request headers always win over defaults so callers can opt out
- * of `Content-Type: application/json` when sending FormData or empty
- * bodies. We avoid `Headers` class here so the function works
- * identically across browser, Node, and edge runtimes (older Node
- * versions diverge in their `Headers` implementation).
+ * Written when the merge accumulated into a plain object, where these three keys are a
+ * prototype-pollution surface. A `Headers` has no prototype to pollute, so the guard no longer
+ * protects what it was written to protect — it is kept because DROPPING these names is observable
+ * behaviour a consumer may have built on, and because no real request needs to send one.
+ *
+ * @param name - A header name, already normalised to lowercase by `Headers`.
+ * @returns `true` when the name must not reach the wire.
  */
-function mergeHeaders(
-  defaults: Readonly<Record<string, string>>,
-  perRequest: HeadersInit | undefined
-): Record<string, string> {
-  const merged: Record<string, string> = { ...defaults }
-  if (perRequest === undefined) {
-    return merged
-  }
+function isUnsafeHeaderName(name: string): boolean {
+  return name === '__proto__' || name === 'constructor' || name === 'prototype'
+}
 
-  // Reject prototype-polluting names defensively. HTTP header names are
-  // ASCII-only by spec, so any of these reaching this code path indicates
-  // a tampered HeadersInit; silently skip rather than enabling pollution.
-  const isUnsafeName = (name: string): boolean =>
-    name === '__proto__' || name === 'constructor' || name === 'prototype'
+/**
+ * Copy every header from `source` onto `target`, replacing rather than appending.
+ *
+ * `set` rather than `append` is the whole point: the intent everywhere in this file is "the later
+ * value wins", and `append` would join them into `a, b` — which is exactly the defect this
+ * replaced. Going through a `Headers` first normalises the name, so a caller writing
+ * `content-type` and a default written `Content-Type` are recognised as the SAME header instead
+ * of as two entries that both reach the wire.
+ *
+ * @param target - The accumulating headers, mutated in place.
+ * @param source - Any legal `HeadersInit`: a record, an array of pairs, or a `Headers`.
+ */
+function applyHeaders(target: Headers, source: HeadersInit): void {
+  new Headers(source).forEach((value, name) => {
+    // Kept from the object-keyed implementation even though a `Headers` has no prototype to
+    // pollute, because dropping these names is observable behaviour a consumer may rely on. It
+    // now also covers the FACTORY defaults, which the previous object spread never guarded.
+    if (isUnsafeHeaderName(name)) return
+    target.set(name, value)
+  })
+}
 
-  if (Array.isArray(perRequest)) {
-    for (const [name, value] of perRequest) {
-      if (isUnsafeName(name)) continue
-      // eslint-disable-next-line security/detect-object-injection -- name is sanitized above against prototype pollution.
-      merged[name] = value
-    }
-    return merged
+/**
+ * Build the factory-level defaults: the built-ins, with the consumer's overriding them.
+ *
+ * @param configured - `config.defaultHeaders`, if the consumer supplied any.
+ * @returns The resolved defaults, with HTTP's case rules already applied.
+ */
+function buildDefaultHeaders(configured: Record<string, string> | undefined): Headers {
+  const defaults = new Headers()
+  applyHeaders(defaults, DEFAULT_HEADERS)
+  if (configured !== undefined) {
+    applyHeaders(defaults, configured)
   }
-  // Stryker disable next-line ConditionalExpression: `typeof Headers !== 'undefined'` is a cross-runtime safety check; Headers is always defined in supported runtimes (Node 18+, Edge, browsers), so `true` is equivalent
-  if (typeof Headers !== 'undefined' && perRequest instanceof Headers) {
-    perRequest.forEach((value, name) => {
-      if (isUnsafeName(name)) return
-      // eslint-disable-next-line security/detect-object-injection -- name is sanitized above against prototype pollution.
-      merged[name] = value
-    })
-    return merged
-  }
+  return defaults
+}
 
-  for (const [name, value] of Object.entries(perRequest as Record<string, unknown>)) {
-    if (isUnsafeName(name) || typeof value !== 'string') continue
-    // eslint-disable-next-line security/detect-object-injection -- name is sanitized above against prototype pollution.
-    merged[name] = value
+/**
+ * Merge the per-request headers over the factory defaults.
+ *
+ * Returns a `Headers` rather than a record so the case rules survive the return: a record hands
+ * the caller a structure in which `Content-Type` and `content-type` are two different things,
+ * which is how the duplicate arose in the first place.
+ *
+ * @param defaults - The factory defaults from {@link buildDefaultHeaders}.
+ * @param perRequest - The caller's `init.headers`, in any legal shape.
+ * @returns The merged headers, per-request values winning.
+ */
+function mergeHeaders(defaults: Headers, perRequest: HeadersInit | undefined): Headers {
+  const merged = new Headers(defaults)
+  if (perRequest !== undefined) {
+    applyHeaders(merged, perRequest)
   }
   return merged
 }
@@ -519,9 +540,7 @@ export function createAuthFetch(config: AuthFetchConfig = {}): AuthFetch {
   const baseUrl = config.baseUrl
   const refreshEndpoint = config.refreshEndpoint ?? AUTH_PROXY_ROUTES.clientRefresh
   const credentials: RequestCredentials = config.credentials ?? 'include'
-  const defaultHeaders: Readonly<Record<string, string>> = config.defaultHeaders
-    ? { ...DEFAULT_HEADERS, ...config.defaultHeaders }
-    : DEFAULT_HEADERS
+  const defaultHeaders = buildDefaultHeaders(config.defaultHeaders)
   const onSessionExpired = config.onSessionExpired
   const onRefreshFailed = config.onRefreshFailed
   const timeoutMs = config.timeout ?? 30_000
