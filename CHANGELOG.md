@@ -62,10 +62,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   semantics implemented with case-sensitive object keys. Anywhere this library keys a header by
   string, the same latent duplicate exists.
 
-  The regression test asserts what the wire carries rather than what the record contains. An
-  equality assertion passes against the defect, because `"application/json, application/json"`
-  still contains `application/json` — and a mock server accepts the duplicate without complaint,
-  since the request is well-formed and wrong.
+  The regression test asserts what the wire carries rather than what the record contains, and the
+  distinction is the whole reason this survived: the previous tests read ONE case-sensitive key
+  off the raw record, which held the default's value, while the caller's lowercase twin sat beside
+  it unread. Nothing ever asserted against the joined value, so nothing failed. A mock server does
+  not help either — it accepts the duplicate without complaint, because the request is well-formed
+  and wrong.
 
 ### Added
 

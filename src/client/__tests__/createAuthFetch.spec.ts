@@ -220,9 +220,11 @@ describe('createAuthFetch — header merging', () => {
   // `400 "role is required"` naming a field that is present. The caller is correct and the header
   // is the last place anyone looks.
   //
-  // Asserted through a real `Headers` because that is what the wire does with the value. An
-  // equality assertion on the raw record passes against the defect, since the joined string still
-  // contains `application/json`.
+  // Asserted through a real `Headers` because that is what the wire does with the value. The old
+  // assertions never observed the join at all: they read ONE case-sensitive key off the raw
+  // record — `headers['Content-Type']`, holding the default's value — while the caller's
+  // lowercase twin sat beside it untouched. An equality assertion against the wire value would
+  // have failed loudly; the defect survived because nothing asserted against the wire.
   it.each([
     [
       'a Headers instance, which lowercases for you',
@@ -251,6 +253,32 @@ describe('createAuthFetch — header merging', () => {
     const sent = new Headers(spy.mock.calls[0]?.[1]?.headers)
 
     expect(sent.get('content-type')).toBe('application/vnd.api+json')
+  })
+
+  // Raised in review of the first fix, and it is the same defect one layer in. `new Headers(x)`
+  // APPENDS, so feeding a record or tuple array to the constructor before merging collapses two
+  // casings of one name into `a, b` before any of this code runs — reproducing on a single source
+  // exactly the joined value the merge exists to prevent. Both shapes are legal JavaScript with
+  // two distinct keys, so this is reachable, not theoretical.
+  it.each([
+    [
+      'a record',
+      (): HeadersInit => ({ 'Content-Type': 'first/one', 'content-type': 'second/two' })
+    ],
+    [
+      'an array of pairs',
+      (): HeadersInit => [
+        ['Content-Type', 'first/one'],
+        ['content-type', 'second/two']
+      ]
+    ]
+  ])('lets the later value win when %s carries two casings of one name', async (_shape, build) => {
+    const authFetch = createAuthFetch()
+    await authFetch('/api/users', { method: 'PATCH', headers: build() })
+
+    const sent = new Headers(spy.mock.calls[0]?.[1]?.headers)
+
+    expect(sent.get('content-type')).toBe('second/two')
   })
 
   // The second site, which neither consumer report reached: the FACTORY merge builds its defaults

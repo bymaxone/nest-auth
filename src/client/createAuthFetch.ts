@@ -309,13 +309,31 @@ function isUnsafeHeaderName(name: string): boolean {
  * @param source - Any legal `HeadersInit`: a record, an array of pairs, or a `Headers`.
  */
 function applyHeaders(target: Headers, source: HeadersInit): void {
-  new Headers(source).forEach((value, name) => {
-    // Kept from the object-keyed implementation even though a `Headers` has no prototype to
-    // pollute, because dropping these names is observable behaviour a consumer may rely on. It
-    // now also covers the FACTORY defaults, which the previous object spread never guarded.
-    if (isUnsafeHeaderName(name)) return
+  // A `Headers` has already applied the case rules, and whatever joining it carries was the
+  // caller's own `append`. Copy it as it stands.
+  if (source instanceof Headers) {
+    source.forEach((value, name) => {
+      // Kept from the object-keyed implementation even though a `Headers` has no prototype to
+      // pollute, because dropping these names is observable behaviour a consumer may rely on. It
+      // now also covers the FACTORY defaults, which the previous object spread never guarded.
+      if (isUnsafeHeaderName(name)) return
+      target.set(name, value)
+    })
+    return
+  }
+
+  // Records and tuple arrays are walked ENTRY BY ENTRY rather than fed to `new Headers(source)`
+  // first. That constructor APPENDS, so a single source legally carrying two casings of one name
+  // — `{ 'Content-Type': a, 'content-type': b }` — is collapsed to `a, b` before anything here
+  // runs, reproducing the joined value this whole merge exists to prevent, one layer in.
+  // Setting each entry in order keeps the documented rule: the later value wins.
+  const entries = Array.isArray(source) ? source : Object.entries(source)
+  for (const [name, value] of entries) {
+    // Lowercased for the comparison only. `Headers.set` normalises the name itself, and a guard
+    // that matched `__proto__` while missing `__PROTO__` would be a guard in name only.
+    if (isUnsafeHeaderName(name.toLowerCase())) continue
     target.set(name, value)
-  })
+  }
 }
 
 /**
