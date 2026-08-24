@@ -185,7 +185,7 @@
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/jest-runner": "^10.0.0",
     "@stryker-mutator/typescript-checker": "^10.0.0",
-    "@swc/core": "1.16.0",
+    "@swc/core": "1.16.1",
     "@testing-library/react": "^16.3.2",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
