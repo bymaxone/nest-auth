@@ -1687,9 +1687,22 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   A stream held open that way outlives its credential indefinitely.
 >
 >   Do what the guards do — verify first, then ask about revocation. `JwtAuthGuard` and
->   `WsJwtGuard` run the token through verification, which enforces `exp`, and only then consult
->   this service. Your re-check must re-run that verification (or disconnect at `exp` on your own
->   timer); the revocation check is the second half of the pair, never the whole of it.
+>   `WsJwtGuard`'s **bearer** path run the token through verification, which enforces `exp`, and
+>   only then consult this service. Your re-check must re-run that verification (or disconnect at
+>   `exp` on your own timer); the revocation check is the second half of the pair, never the whole
+>   of it.
+>
+>   **None of this applies to a socket authenticated by an upgrade ticket, and that is the
+>   browser flow.** `WsJwtGuard` redeems the ticket and returns; it never reaches the revocation
+>   check, because there is nothing to check. A `WsTicketSnapshot` is a frozen copy of what the
+>   access token proved at mint time — `sub`, `tenantId`, `role`, `status`, `mfaEnabled`,
+>   `mfaVerified` — with no `jti`, no stamped epoch, no `exp` and no signature. It is deliberately
+>   not a token: there is nothing to re-verify and nothing `isAccessTokenRevoked` will accept, so
+>   a logout or an epoch bump cannot reach that socket at all. Its authority ends when the socket
+>   closes, which makes **bounding the connection your job**: cap the socket's lifetime and make
+>   the client reconnect with a fresh ticket, since minting one requires a live access token and
+>   so re-runs the whole check. The push side below is the only other lever that works here — the
+>   hooks hand you a `userId`, and a ticket socket knows its `sub`.
 >
 > - **Push, to cut the latency to nothing.** `afterLogout(userId, context)` fires once the session
 >   is invalidated, `afterPasswordReset` after the reset that bumps the epoch, and

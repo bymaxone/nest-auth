@@ -85,9 +85,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   never reads one; `rv:{jti}` is written with the token's own remaining TTL, so once the token
   expires that entry is gone too and a timer calling only this method answers "not revoked"
   forever. A stream held open on that guidance would outlive its credential indefinitely. The
-  section now says to do what the guards do — `JwtAuthGuard` and `WsJwtGuard` verify the token,
-  which enforces `exp`, and only then consult this service — so a re-check re-runs verification
-  rather than the revocation call alone.
+  section now says to do what the guards do — `JwtAuthGuard` and `WsJwtGuard`'s bearer path verify
+  the token, which enforces `exp`, and only then consult this service — so a re-check re-runs
+  verification rather than the revocation call alone.
+
+  Finally it carves out the case where none of that guidance can be followed, which is the browser
+  WebSocket flow. `WsJwtGuard` redeems an upgrade ticket and returns before the revocation check,
+  and a `WsTicketSnapshot` carries no `jti`, no stamped epoch, no `exp` and no signature — so
+  there is nothing to re-verify and nothing `isAccessTokenRevoked` accepts, and a logout or an
+  epoch bump cannot reach that socket at all. Its authority ends when the socket closes, so the
+  section states that bounding the connection is the consumer's job: cap the socket's lifetime and
+  reconnect with a fresh ticket, which requires a live access token and therefore re-runs the whole
+  check. The hooks are the only other lever there, and they work, because they hand back a `userId`
+  and a ticket socket knows its `sub`.
 
 ## [1.4.4] - 2026-08-19
 
