@@ -74,8 +74,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   nothing and emits nothing, so checking once at a handshake moves the refusal from "never" to "at
   connect" and not to "on revocation" — a stream authenticated before a logout stays open exactly
   as long as one never checked at all. The section now gives both halves of the fix: re-check on a
-  cadence (per inbound message on a WebSocket, a timer for SSE, which has no inbound channel), and
-  push through `afterLogout` / `afterPasswordReset` / `onSessionEvicted` to cut the latency. It is
+  cadence — a timer as the baseline for any connection whose inbound side may be idle, or a check
+  before each protected outbound delivery, with a per-inbound-message check only as a tightening on
+  top — and push through the hooks to cut the latency. It is
   explicit that the re-check is the guarantee and the push the optimisation, because a hook is an
   in-process callback on the node that served the request, and because the hook set does not
   enumerate every path that advances the epoch — signing out of all devices bumps it with none.
@@ -123,6 +124,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   transport instead: the re-check for a bearer socket or an SSE stream, the lifetime cap for a
   ticket socket. Where ids are globally unique, both hooks are usable as written, and the section
   says that too.
+
+  Two further limits are stated rather than implied. **Verification and this check are not the
+  whole pair**: the guards also assert `jti`, `sub`, `tenantId` and the token's `type` in between,
+  and the type assertion is the one that matters — an `mfa_challenge` token is signed with the same
+  secret and carries all four claims, so it verifies cleanly and reads as not revoked, and a stream
+  admitted on "verified and not revoked" would be authorized by the very credential that says the
+  second factor is unsatisfied. And **the two MFA hooks fire for platform admins**, where
+  `MfaService` renders the admin with the sentinel `tenantId: ''` while a platform token carries no
+  tenant claim — so `'' !== undefined`, and a registry comparing the two silently skips every
+  platform connection. The section says to branch on the plane before comparing tenants.
 
   The cadence itself is stated as a timer being the baseline for every long-lived connection, with
   a per-inbound-message check as a tightening on top rather than an alternative to it. Offering the

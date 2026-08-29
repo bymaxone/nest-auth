@@ -1693,11 +1693,18 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   and absent a later epoch bump a timer calling only this method answers "not revoked" forever.
 >   A stream held open that way outlives its credential indefinitely.
 >
->   Do what the guards do — verify first, then ask about revocation. `JwtAuthGuard` and
->   `WsJwtGuard`'s **bearer** path run the token through verification, which enforces `exp`, and
->   only then consult this service. Your re-check must re-run that verification (or disconnect at
->   `exp` on your own timer); the revocation check is the second half of the pair, never the whole
->   of it.
+>   Do what the guards do, and that is more than two steps. `JwtAuthGuard` and `WsJwtGuard`'s
+>   **bearer** path run: verify the signature and `exp` → assert `jti` is a usable string → assert
+>   `sub` is well formed → assert `tenantId` is present → **assert the token's `type`** → and only
+>   then consult this service. Your re-check owes the same sequence.
+>
+>   **The type check is not a formality, and skipping it authorizes a pre-MFA token.** This library
+>   signs an `mfa_challenge` token with the same secret; it carries `jti`, `sub`, `tenantId` and an
+>   epoch, so it verifies cleanly and `isAccessTokenRevoked` answers `false` for it. A stream
+>   admitted on "it verified and it is not revoked" would be authorized by a credential that
+>   exists precisely to say the second factor has **not** been satisfied yet. Check
+>   `payload.type === 'dashboard'` (or `'platform'`) yourself — the guards' assertion helpers are
+>   internal, so replicate the checks rather than import them.
 >
 >   **None of this applies to a socket authenticated by an upgrade ticket, and that is the
 >   browser flow.** `WsJwtGuard` redeems the ticket and returns; it never reaches the revocation
@@ -1719,10 +1726,20 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   | Hook                                      | Fires after                                                           | Names the tenant?                    |
 >   | ----------------------------------------- | --------------------------------------------------------------------- | ------------------------------------ |
 >   | `afterPasswordReset(user, context)`       | the reset, which bumps the epoch                                      | **Yes** — `user.tenantId`            |
->   | `afterMfaEnabled(user, context)`          | `verifyAndEnable`, which bumps the epoch                              | **Yes** — `user.tenantId`            |
->   | `afterMfaDisabled(user, context)`         | `disable` **and** the administrative `resetMfa` — both bump the epoch | **Yes** — `user.tenantId`            |
+>   | `afterMfaEnabled(user, context)`          | `verifyAndEnable`, which bumps the epoch                              | Dashboard only — see below           |
+>   | `afterMfaDisabled(user, context)`         | `disable` **and** the administrative `resetMfa` — both bump the epoch | Dashboard only — see below           |
 >   | `afterLogout(userId, context)`            | the session is invalidated                                            | **No** — the context is empty        |
 >   | `onSessionEvicted(userId, hash, context)` | the session cap kills one session                                     | Only if the caller's context has one |
+>
+>   **The two MFA hooks fire for platform admins too, and there the tenant is a sentinel.**
+>   `MfaService` renders a platform administrator as a `SafeAuthUser` with `tenantId: ''`, because
+>   the type demands the field and a platform admin belongs to no tenant. A platform access token
+>   carries no tenant claim at all, so it reads `undefined` on the socket — and `'' !== undefined`.
+>   A registry pairing `user.tenantId` against the socket's claim therefore matches nothing on the
+>   platform plane and silently skips those connections after an enable, a disable or an
+>   administrative reset. **Branch on the plane before comparing tenants**: treat `''` as "platform,
+>   no tenant" and match it against the platform sockets by `sub` alone, which is safe there
+>   because platform ids come from one repository.
 >
 >   **Match on the tenant as well as the id, and do not fan out on a bare id.** A repository id is
 >   unique only within a tenant — `findById` takes one precisely because ids may collide, and a host
