@@ -1674,10 +1674,23 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >
 > Close it from both ends:
 >
-> - **Re-check on a cadence.** On a WebSocket, call this per inbound message, or on a timer for a
->   connection that only receives. SSE has no inbound channel at all, so a timer is the only
->   option there. The interval is your latency budget for a revoked session — it is bounded by
->   the access-token lifetime whatever you choose, because the token dies on its own after that.
+> - **Re-check on a cadence, and re-verify the token while you are there.** On a WebSocket, do
+>   this per inbound message, or on a timer for a connection that only receives; SSE has no
+>   inbound channel at all, so a timer is the only option there. The interval is your latency
+>   budget for a revoked session.
+>
+>   **This method does not look at `exp`, and expiry is not something it can tell you.**
+>   `RevocableTokenPayload` carries no `exp` and the implementation never reads one — it answers
+>   the blacklist and the epoch, nothing else. Worse for a long-lived stream: `rv:{jti}` is
+>   written with the token's own remaining TTL, so once the token expires that entry is gone too,
+>   and absent a later epoch bump a timer calling only this method answers "not revoked" forever.
+>   A stream held open that way outlives its credential indefinitely.
+>
+>   Do what the guards do — verify first, then ask about revocation. `JwtAuthGuard` and
+>   `WsJwtGuard` run the token through verification, which enforces `exp`, and only then consult
+>   this service. Your re-check must re-run that verification (or disconnect at `exp` on your own
+>   timer); the revocation check is the second half of the pair, never the whole of it.
+>
 > - **Push, to cut the latency to nothing.** `afterLogout(userId, context)` fires once the session
 >   is invalidated, `afterPasswordReset` after the reset that bumps the epoch, and
 >   `onSessionEvicted` when the session cap kills one session. Wire them to disconnect that user's

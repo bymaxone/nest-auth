@@ -80,6 +80,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   in-process callback on the node that served the request, and because the hook set does not
   enumerate every path that advances the epoch — signing out of all devices bumps it with none.
 
+  And it says that the check **does not look at `exp`**, which is the trap in the cadence advice
+  rather than a footnote to it. `RevocableTokenPayload` carries no `exp` and the implementation
+  never reads one; `rv:{jti}` is written with the token's own remaining TTL, so once the token
+  expires that entry is gone too and a timer calling only this method answers "not revoked"
+  forever. A stream held open on that guidance would outlive its credential indefinitely. The
+  section now says to do what the guards do — `JwtAuthGuard` and `WsJwtGuard` verify the token,
+  which enforces `exp`, and only then consult this service — so a re-check re-runs verification
+  rather than the revocation call alone.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed
