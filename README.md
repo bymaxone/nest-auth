@@ -1733,11 +1733,19 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   token claims. The dashboard and platform planes need separating for the same reason — their ids
 >   come from different repositories.
 >
->   For `afterLogout` and `onSessionEvicted` you do not reliably get that second half, so key your
->   own connection registry by something the hook can actually name — correlate through the session
->   hash `onSessionEvicted` hands you, or record the tenant against the connection at handshake and
->   refuse to act on an id alone. Treating a bare id as sufficient is the failure this note exists
->   to prevent.
+>   **`afterLogout` and `onSessionEvicted` cannot target a socket in a multi-tenant deployment, and
+>   there is no correlation that rescues them.** `afterLogout` hands back a bare id under an empty
+>   context. `onSessionEvicted` adds the evicted refresh-session hash — but nothing on the socket
+>   side ever receives that value: it is absent from `WsTicketSnapshot` and from the access token's
+>   claims alike, so a connection registry has nothing to match it against, and its context omits
+>   the tenant too. Recording the tenant at handshake does not help when the hook never names one.
+>
+>   So do not build the push path on those two where ids can collide. Fall back to what does work
+>   for the connection at hand — the re-check above on a bearer socket or an SSE stream, and the
+>   lifetime cap on a ticket socket, which is why that cap is the guarantee there rather than a
+>   tidy-up. Where ids **are** globally unique — a single-tenant deployment, or a host issuing
+>   UUIDs — matching on the id alone is sound, and both hooks are usable as written. Know which of
+>   the two you are before relying on them.
 >
 >   Treat this as the optimisation and the re-check as the guarantee, not the other way round —
 >   except on a ticket socket, where there is no re-check to be the guarantee and the lifetime cap

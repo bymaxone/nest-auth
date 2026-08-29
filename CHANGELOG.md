@@ -114,9 +114,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `sub` matches a hook's `userId` drops another tenant's user, and repeated logouts in one tenant
   become a denial of service against another. `afterPasswordReset`, `afterMfaEnabled` and
   `afterMfaDisabled` carry a `SafeAuthUser` and therefore a `tenantId`; `afterLogout` does not, and
-  `onSessionEvicted` has one only if the caller's context happened to carry it. For those two the
-  section says to correlate through the session hash or a tenant recorded at handshake rather than
-  to act on an id alone.
+  `onSessionEvicted` does not either — `enforceSessionLimit` builds its context as
+  `{ ip, userAgent, sanitizedHeaders }` while holding both the user and the tenant as its own
+  parameters. So the section says plainly that those two cannot target a socket where ids collide,
+  rather than offering a correlation that does not exist: the evicted session hash they hand back
+  appears on no socket-side surface — not on `WsTicketSnapshot`, not among the access token's
+  claims — so a connection registry has nothing to match it against. The fallback is named per
+  transport instead: the re-check for a bearer socket or an SSE stream, the lifetime cap for a
+  ticket socket. Where ids are globally unique, both hooks are usable as written, and the section
+  says that too.
 
   The cadence itself is stated as a timer being the baseline for every long-lived connection, with
   a per-inbound-message check as a tightening on top rather than an alternative to it. Offering the
