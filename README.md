@@ -1693,34 +1693,40 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   and absent a later epoch bump a timer calling only this method answers "not revoked" forever.
 >   A stream held open that way outlives its credential indefinitely.
 >
->   **Revocation is one of seven things a guard establishes, and this service is only that one.**
->   Before it is ever consulted, `JwtAuthGuard` and `WsJwtGuard`'s **bearer** path establish all of
->   the following. A re-check that skips any of them is weaker than the HTTP surface it is meant to
->   match, and three of the seven are exploitable rather than merely sloppy:
+>   **Do not rebuild the guard chain in your transport. Reconnect through it.** Revocation is one
+>   check among many, and the HTTP surface is not one guard but a composition of them plus the
+>   options you configured — so there is no fixed list to copy, and every attempt to write one down
+>   here has been incomplete in a new way. Bound the connection and make the client re-authenticate
+>   through the guarded HTTP path, which runs the real chain instead of a copy that drifts from it
+>   as this library changes. The ticket flow is already built this way: minting one goes through
+>   `JwtAuthGuard` and `UserStatusGuard`, so a reconnect re-runs everything by construction.
 >
->   1. **The signature, under a pinned algorithm.** `verifyWithRotation` passes
->      `algorithms: [jwt.algorithm]`, which is what refuses `alg: none` and algorithm confusion.
->   2. **`issuer` and `audience`, when configured** — as requirements, not hints. Omit them and a
->      wrong-audience token minted by another service that shares the HS256 secret is accepted.
->   3. **`jwt.previousSecrets`.** Omit them and every legitimate connection breaks during a secret
->      rotation, which is the one moment the fallback exists for.
->   4. **`exp`** — see above; this service never reads it.
->   5. **The claims: `jti`, `sub`, `tenantId`** are each asserted well formed.
->   6. **The token's `type`.** This library signs an `mfa_challenge` token with the same secret,
->      carrying `jti`, `sub`, `tenantId` and an epoch, so it verifies cleanly and reads as not
->      revoked. Admitting a stream on "verified and not revoked" authorizes the very credential
->      that says the second factor is unsatisfied.
->   7. **The MFA policy, which the type check does not give you.** A genuine `type: 'dashboard'`
->      access token minted by a refresh carries `mfaEnabled: true, mfaVerified: false` — refresh
->      never restores `mfaVerified` — and `MfaRequiredGuard` refuses exactly that pair on a
->      protected route. Reproduce it: on an MFA-protected stream, reject `mfaEnabled && !mfaVerified`.
+>   If you must check in place, the floor is **whatever the equivalent HTTP route composes** — read
+>   your own `@UseGuards()` and the Server Guards table above, not the list below. These are the
+>   ones whose omission is exploitable rather than merely sloppy, and the list is deliberately **not
+>   exhaustive**:
 >
->   **None of these helpers is exported today, so all of it is yours to reproduce, and prose is a
->   poor place to keep a security chain in sync.** Where you can, do not reproduce it at all:
->   bound the connection and make the client reconnect through the guarded HTTP path, which runs
->   the real chain rather than a copy of it. That is what the ticket flow already does — minting a
->   ticket goes through `JwtAuthGuard` and `UserStatusGuard` — and it is the shape least likely to
->   drift from the guards as this library changes.
+>   - **The signature under a pinned algorithm**, plus `issuer`/`audience` as requirements and
+>     `jwt.previousSecrets`. `verifyWithRotation` does all three. Verifying the signature alone
+>     accepts a wrong-audience token minted by another service sharing the HS256 secret, and breaks
+>     every live connection during a secret rotation.
+>   - **`exp`** — this service never reads it.
+>   - **The token's `type`.** An `mfa_challenge` token is signed with the same secret and carries
+>     `jti`, `sub`, `tenantId` and an epoch, so it verifies cleanly and reads as not revoked.
+>   - **The MFA policy, which the type check does not give you.** A genuine `dashboard` token minted
+>     by a refresh carries `mfaEnabled: true, mfaVerified: false`, and `MfaRequiredGuard` refuses
+>     that pair on a protected route.
+>   - **The account's current state.** `UserStatusGuard` resolves the record with
+>     `findById({ id, tenantId })` behind a short Redis cache and refuses a banned, suspended or
+>     deleted account — and, where `requireVerified` applies, an unverified one. Nothing in a token
+>     tells you any of it: every check above passes for a user banned a second after the token was
+>     minted.
+>   - **`enforceTenantBinding`, if you set it.** `JwtAuthGuard` resolves the request's tenant
+>     through your `tenantIdResolver` and refuses a token whose claim disagrees. Skip it and a valid
+>     tenant-A token is accepted on tenant B's endpoint — the binding you enabled the option for.
+>
+>   None of the helpers behind these is exported today, which is the strongest argument for the
+>   reconnect above.
 >
 >   **None of this applies to a socket authenticated by an upgrade ticket, and that is the
 >   browser flow.** `WsJwtGuard` redeems the ticket and returns; it never reaches the revocation
