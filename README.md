@@ -1680,8 +1680,11 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   a bidirectional socket can fall silent inbound while the server keeps publishing, and then a
 >   per-message check never runs while protected data keeps flowing. Bind the check to what the
 >   connection actually does — if you would rather not run a timer, check before each protected
->   outbound delivery, which is the same idea keyed to the traffic that matters. SSE has no inbound
->   channel at all, so there the timer is not the baseline but the only option.
+>   outbound delivery, which is the same idea keyed to the traffic that matters. SSE is the case
+>   with no inbound channel at all, so the per-message option does not exist there: use a timer, or
+>   check before each protected event you emit. For a producer that sends discrete events the
+>   second is the tighter boundary and costs less — no verification runs on an idle stream, and
+>   nothing protected leaves without one.
 >
 >   **This method does not look at `exp`, and expiry is not something it can tell you.**
 >   `RevocableTokenPayload` carries no `exp` and the implementation never reads one — it answers

@@ -113,7 +113,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   two as equivalents was wrong for the shape that matters: a bidirectional socket can fall silent
   inbound while the server keeps publishing, and a per-message check then never runs while
   protected data keeps flowing. Checking before each protected outbound delivery is named as the
-  equivalent for a deployment that would rather not run a timer.
+  equivalent for a deployment that would rather not run a timer — including on SSE, which lacks the
+  per-message option but not that one, and where a producer emitting discrete events gets a tighter
+  boundary for less work, since an idle stream then verifies nothing and nothing protected leaves
+  without a check.
 
 ## [1.4.4] - 2026-08-19
 
