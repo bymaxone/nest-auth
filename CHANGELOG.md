@@ -125,12 +125,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   ticket socket. Where ids are globally unique, both hooks are usable as written, and the section
   says that too.
 
-  Two further limits are stated rather than implied. **Verification and this check are not the
-  whole pair**: the guards also assert `jti`, `sub`, `tenantId` and the token's `type` in between,
-  and the type assertion is the one that matters — an `mfa_challenge` token is signed with the same
-  secret and carries all four claims, so it verifies cleanly and reads as not revoked, and a stream
-  admitted on "verified and not revoked" would be authorized by the very credential that says the
-  second factor is unsatisfied. And **the two MFA hooks fire for platform admins**, where
+  **Revocation is named as one of seven things a guard establishes, rather than half of a pair.**
+  Successive drafts of this section each described the guard chain as a short recipe and each was
+  under-specified in a new way, so it now lists what a re-check owes in full: the signature under a
+  pinned algorithm, `issuer` and `audience` as requirements when configured, `jwt.previousSecrets`
+  so a rotation does not break every live connection, `exp`, the `jti`/`sub`/`tenantId` assertions,
+  the token `type`, and the MFA policy. Three of those are exploitable if skipped. The `type` check
+  is one: an `mfa_challenge` token is signed with the same secret and carries all four claims, so
+  it verifies cleanly and reads as not revoked. The MFA policy is another, and the type check does
+  not imply it — a genuine `dashboard` token minted by a refresh carries
+  `mfaEnabled: true, mfaVerified: false`, because refresh never restores `mfaVerified`, and
+  `MfaRequiredGuard` refuses exactly that pair on a protected route.
+
+  Since none of those helpers is exported, the section's standing advice is to avoid reproducing
+  the chain at all where possible — bound the connection and reconnect through the guarded HTTP
+  path, which runs the real chain instead of a copy that drifts from it. And **the two MFA hooks
+  fire for platform admins**, where
   `MfaService` renders the admin with the sentinel `tenantId: ''` while a platform token carries no
   tenant claim — so `'' !== undefined`, and a registry comparing the two silently skips every
   platform connection. The section says to branch on the plane before comparing tenants.
