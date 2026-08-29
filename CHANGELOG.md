@@ -108,6 +108,13 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   outright that it is what the hooks cover today and not a guarantee that every bump has one, which
   is the honest shape for a list that has already been wrong once.
 
+  The cadence itself is stated as a timer being the baseline for every long-lived connection, with
+  a per-inbound-message check as a tightening on top rather than an alternative to it. Offering the
+  two as equivalents was wrong for the shape that matters: a bidirectional socket can fall silent
+  inbound while the server keeps publishing, and a per-message check then never runs while
+  protected data keeps flowing. Checking before each protected outbound delivery is named as the
+  equivalent for a deployment that would rather not run a timer.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed

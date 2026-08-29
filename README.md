@@ -1674,10 +1674,14 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >
 > Close it from both ends:
 >
-> - **Re-check on a cadence, and re-verify the token while you are there.** On a WebSocket, do
->   this per inbound message, or on a timer for a connection that only receives; SSE has no
->   inbound channel at all, so a timer is the only option there. The interval is your latency
->   budget for a revoked session.
+> - **Re-check on a cadence, and re-verify the token while you are there.** **A timer is the
+>   baseline for every long-lived connection**, and the interval is your latency budget for a
+>   revoked session. Checking per inbound message is a tightening on top of it, never a substitute:
+>   a bidirectional socket can fall silent inbound while the server keeps publishing, and then a
+>   per-message check never runs while protected data keeps flowing. Bind the check to what the
+>   connection actually does — if you would rather not run a timer, check before each protected
+>   outbound delivery, which is the same idea keyed to the traffic that matters. SSE has no inbound
+>   channel at all, so there the timer is not the baseline but the only option.
 >
 >   **This method does not look at `exp`, and expiry is not something it can tell you.**
 >   `RevocableTokenPayload` carries no `exp` and the implementation never reads one — it answers
@@ -1718,7 +1722,9 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   | `onSessionEvicted`             | the session cap kills one session                                     |
 >
 >   Treat this as the optimisation and the re-check as the guarantee, not the other way round —
->   for two reasons. A hook is an in-process callback on the node that served the request, so on a
+>   except on a ticket socket, where there is no re-check to be the guarantee and the lifetime cap
+>   above takes that role. Two reasons. A hook is an in-process callback on the node that served
+>   the request, so on a
 >   multi-node deployment it fires where the connection may not live. And **this table is what the
 >   hooks cover today, not a guarantee that every epoch bump has one**: signing out of all devices
 >   bumps the epoch with no hook at all, so a deployment relying on push alone would miss the
