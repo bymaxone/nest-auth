@@ -131,14 +131,18 @@ describe('AuthRevocationService', () => {
     ['undefined', undefined],
     ['empty', '']
   ])('treats a dashboard token with a %s tenant as revoked', async (_label, tenantId) => {
-    const { service, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
+    const { service, get, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
 
     await expect(service.isAccessTokenRevoked({ ...PAYLOAD, tenantId }, 'dashboard')).resolves.toBe(
       true
     )
 
-    // And it never reaches the store: there is no key worth reading for a subject it cannot name.
+    // And it never reaches the store: there is no key worth reading for a subject it cannot name,
+    // and the check runs ahead of the blacklist read rather than behind it — which is what makes
+    // "without a store read" true of this path and the warn fire for every such call, blacklisted
+    // or not.
     expect(getUserTokenEpoch).not.toHaveBeenCalled()
+    expect(get).not.toHaveBeenCalled()
   })
 
   /**
@@ -173,6 +177,24 @@ describe('AuthRevocationService', () => {
       expect(message).not.toContain(PAYLOAD.jti)
     }
   )
+
+  /**
+   * The warn does not depend on the token's luck.
+   * Rule: the missing tenant is a caller bug whether or not that particular token happens to sit
+   * on the blacklist. Behind the blacklist read, a bridge calling this wrongly on every request
+   * would be heard only for the tokens nobody had logged out — the diagnostic would come and go
+   * with unrelated state.
+   */
+  it('warns for a tenantless dashboard token that is also blacklisted', async () => {
+    const { service, get } = buildService({ blacklist: '1' })
+
+    await expect(
+      service.isAccessTokenRevoked({ ...PAYLOAD, tenantId: undefined }, 'dashboard')
+    ).resolves.toBe(true)
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(get).not.toHaveBeenCalled()
+  })
 
   /**
    * The warn is scoped to the malformed input.

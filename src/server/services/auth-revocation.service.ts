@@ -69,11 +69,13 @@ export class AuthRevocationService {
     payload: RevocableTokenPayload,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<boolean> {
-    if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
-      return true
-    }
-
     // A dashboard payload without a tenant is treated as REVOKED, not as a lookup to attempt.
+    //
+    // Checked FIRST, before the blacklist read, because it validates the input rather than
+    // consulting a channel. Behind the blacklist read it answered the same `true` — the two
+    // orders are indistinguishable to a caller — but the warn below then fired only for a token
+    // that happened not to be blacklisted, so a bridge calling this wrongly on every request
+    // could go on doing so unheard. It also spares a round trip on a request already refused.
     //
     // The epoch key is derived from the tenant-scoped subject, and an absent tenant
     // interpolates as the literal text `undefined`, giving `dashboard:9:undefined:{userId}` — a
@@ -96,6 +98,10 @@ export class AuthRevocationService {
           `carries no tenantId, so its epoch key cannot be named. Forward the tenant from the ` +
           `verified token; a dashboard check missing it fails closed by design`
       )
+      return true
+    }
+
+    if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
       return true
     }
 

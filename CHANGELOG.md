@@ -38,6 +38,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   not filed as a library bug. No identifier is logged: `sub` names an account and `jti` a live
   token, and neither is needed to act on it.
 
+  **The tenant check also moved ahead of the per-token blacklist read**, which validates the input
+  before consulting a channel. The answer is unchanged — `true` either way, indistinguishable to a
+  caller — but behind the blacklist read the warn fired only for a token that happened not to be
+  blacklisted, so a bridge calling this wrongly on every request could go on doing so unheard, the
+  diagnostic coming and going with unrelated state. It also spares a Redis round trip on a request
+  that is already refused, and makes "without a store read" true of the path rather than nearly
+  true.
+
   **A distinct error code was considered and rejected.** `isAccessTokenRevoked` returns a boolean
   and the three guards turn it into a refusal, so giving this case its own `AuthErrorCode` means
   widening the return of an exported service and threading it through all three — and an `auth.*`
