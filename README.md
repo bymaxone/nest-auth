@@ -1699,7 +1699,18 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   here has been incomplete in a new way. Bound the connection and make the client re-authenticate
 >   through the guarded HTTP path, which runs the real chain instead of a copy that drifts from it
 >   as this library changes. The ticket flow is already built this way: minting one goes through
->   `JwtAuthGuard` and `UserStatusGuard`, so a reconnect re-runs everything by construction.
+>   `JwtAuthGuard` and `UserStatusGuard`.
+>
+>   **A reconnect refreshes authentication and account state. It does not carry your route's
+>   authorization.** `POST /auth/ws-ticket` composes those two guards and no more — no `RolesGuard`,
+>   no ownership check — and the ticket branch of `WsJwtGuard` only restores the snapshot. So a
+>   privileged stream rebuilt on "the reconnect re-runs everything" is open to any authenticated
+>   ticket holder. Enforce the stream's own authorization on every connection, exactly as the
+>   equivalent HTTP route does with its `@Roles()` or ownership guard, and re-evaluate it on your
+>   cadence if the policy can change under a live connection — a role revoked mid-stream is not an
+>   authentication event and nothing above will tell you about it. If you would rather not carry
+>   that yourself, mint through your own endpoint that composes the policy instead of the built-in
+>   route.
 >
 >   If you must check in place, the floor is **whatever the equivalent HTTP route composes** — read
 >   your own `@UseGuards()` and the Server Guards table above, not the list below. These are the
@@ -1737,7 +1748,8 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   a logout or an epoch bump cannot reach that socket at all. Its authority ends when the socket
 >   closes, which makes **bounding the connection your job**: cap the socket's lifetime and make
 >   the client reconnect with a fresh ticket, since minting one requires a live access token and
->   so re-runs the whole check. The push side below is the only other lever that works here — the
+>   so re-runs authentication and account state — though not your route's authorization, per the
+>   note above. The push side below is the only other lever that works here — the
 >   hooks hand you a `userId`, and a ticket socket knows its `sub`.
 >
 > - **Push, to cut the latency to nothing.** Wire these to disconnect that user's live

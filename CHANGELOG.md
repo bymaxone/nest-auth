@@ -96,8 +96,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   there is nothing to re-verify and nothing `isAccessTokenRevoked` accepts, and a logout or an
   epoch bump cannot reach that socket at all. Its authority ends when the socket closes, so the
   section states that bounding the connection is the consumer's job: cap the socket's lifetime and
-  reconnect with a fresh ticket, which requires a live access token and therefore re-runs the whole
-  check. The hooks are the only other lever there, and they work, because they hand back a `userId`
+  reconnect with a fresh ticket, which requires a live access token and therefore re-establishes
+  authentication and account state — though not the stream's own authorization, per the limit
+  recorded below. The hooks are the only other lever there, and they work, because they hand back a `userId`
   and a ticket socket knows its `sub`.
 
   The push list is a table now, and it states the rule rather than an enumeration that reads as
@@ -132,6 +133,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   copy. So the advice leads with bounding the connection and re-authenticating through the guarded
   HTTP path, which runs the real chain instead of a copy that drifts; the ticket flow already works
   that way, since minting goes through `JwtAuthGuard` and `UserStatusGuard`.
+
+  That advice carries its own limit, stated rather than left to be discovered: **a reconnect
+  refreshes authentication and account state, not the stream's authorization.** `POST
+/auth/ws-ticket` composes those two guards and no more — no `RolesGuard`, no ownership check —
+  and the ticket branch of `WsJwtGuard` only restores the snapshot, so a privileged stream rebuilt
+  on "the reconnect re-runs everything" is open to any authenticated ticket holder. The section
+  says to enforce the stream's own authorization on every connection and to re-evaluate it on the
+  cadence where the policy can change, since a role revoked mid-stream is not an authentication
+  event, or to mint through an endpoint that composes the policy instead of the built-in route.
 
   What remains of the list is explicitly a **floor, not an enumeration**, and points the reader at
   their own `@UseGuards()` first. It names the omissions that are exploitable: the pinned algorithm
