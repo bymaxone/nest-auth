@@ -1704,14 +1704,24 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   so re-runs the whole check. The push side below is the only other lever that works here — the
 >   hooks hand you a `userId`, and a ticket socket knows its `sub`.
 >
-> - **Push, to cut the latency to nothing.** `afterLogout(userId, context)` fires once the session
->   is invalidated, `afterPasswordReset` after the reset that bumps the epoch, and
->   `onSessionEvicted` when the session cap kills one session. Wire them to disconnect that user's
->   live connections. Treat this as the optimisation and the re-check as the guarantee, not the
->   other way round — for two reasons. A hook is an in-process callback on the node that served
->   the request, so on a multi-node deployment it fires where the connection may not live. And the
->   hook set does not enumerate every path that advances the epoch: a user signing out of all
->   devices bumps it with no hook at all, so a deployment relying on push alone would miss the
+> - **Push, to cut the latency to nothing.** Wire these to disconnect that user's live
+>   connections. The rule behind the list is the useful part — **anything that advances the token
+>   epoch or kills a session should drop the sockets riding on it** — because the epoch is exactly
+>   what a live connection cannot observe on its own.
+>
+>   | Hook                           | Fires after                                                           |
+>   | ------------------------------ | --------------------------------------------------------------------- |
+>   | `afterLogout(userId, context)` | the session is invalidated                                            |
+>   | `afterPasswordReset`           | the reset, which bumps the epoch                                      |
+>   | `afterMfaEnabled`              | `verifyAndEnable`, which bumps the epoch                              |
+>   | `afterMfaDisabled`             | `disable` **and** the administrative `resetMfa` — both bump the epoch |
+>   | `onSessionEvicted`             | the session cap kills one session                                     |
+>
+>   Treat this as the optimisation and the re-check as the guarantee, not the other way round —
+>   for two reasons. A hook is an in-process callback on the node that served the request, so on a
+>   multi-node deployment it fires where the connection may not live. And **this table is what the
+>   hooks cover today, not a guarantee that every epoch bump has one**: signing out of all devices
+>   bumps the epoch with no hook at all, so a deployment relying on push alone would miss the
 >   revocation a user most expects to be immediate.
 
 There are two channels and a check that reads only one is not a revocation check. A single logout

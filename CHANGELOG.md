@@ -99,6 +99,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   check. The hooks are the only other lever there, and they work, because they hand back a `userId`
   and a ticket socket knows its `sub`.
 
+  The push list is a table now, and it states the rule rather than an enumeration that reads as
+  complete and is not: **anything that advances the token epoch or kills a session should drop the
+  sockets riding on it.** The first draft named three hooks and missed the MFA pair —
+  `verifyAndEnable` bumps the epoch and fires `afterMfaEnabled`, while both `disable` and the
+  administrative `resetMfa` bump it and fire `afterMfaDisabled` — so a consumer following it would
+  have left a socket connected on a stale `mfaVerified` until its lifetime cap. The table also says
+  outright that it is what the hooks cover today and not a guarantee that every bump has one, which
+  is the honest shape for a list that has already been wrong once.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed
