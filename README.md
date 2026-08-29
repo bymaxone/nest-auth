@@ -1650,8 +1650,9 @@ disputable. Idempotent; throws for an id that resolves to nobody, so a typo cann
 
 The three JWT guards do not decide revocation themselves; they delegate to one service, and that
 service is exported so **you can consult the same two channels from a transport the guards never
-see** — a WebSocket, an SSE stream, a message consumer. Without it, a socket whose user logs out
-keeps its stream until the access token expires, while its HTTP requests are refused at once.
+see** — a WebSocket, an SSE stream, a message consumer. Without it there is no way to ask the
+question at all outside an HTTP request: a connection whose user logs out keeps its stream until
+the access token expires, while that user's HTTP calls are refused at once.
 
 ```ts
 import { AuthRevocationService } from '@bymax-one/nest-auth'
@@ -1664,6 +1665,28 @@ const revoked = await this.revocation.isAccessTokenRevoked(
 
 It is registered and exported unconditionally, so it is injectable wherever `BymaxAuthModule` is
 imported — no `extraProviders` entry and no controller flag to turn on.
+
+> [!WARNING]
+> **The answer is point-in-time, and a handshake check alone does not close the hole.** This
+> method reads two Redis keys when you call it. It subscribes to nothing and emits nothing, so a
+> stream authenticated before a logout stays open exactly as long as one that was never checked —
+> you have moved the refusal from "never" to "at connect", not to "on revocation".
+>
+> Close it from both ends:
+>
+> - **Re-check on a cadence.** On a WebSocket, call this per inbound message, or on a timer for a
+>   connection that only receives. SSE has no inbound channel at all, so a timer is the only
+>   option there. The interval is your latency budget for a revoked session — it is bounded by
+>   the access-token lifetime whatever you choose, because the token dies on its own after that.
+> - **Push, to cut the latency to nothing.** `afterLogout(userId, context)` fires once the session
+>   is invalidated, `afterPasswordReset` after the reset that bumps the epoch, and
+>   `onSessionEvicted` when the session cap kills one session. Wire them to disconnect that user's
+>   live connections. Treat this as the optimisation and the re-check as the guarantee, not the
+>   other way round — for two reasons. A hook is an in-process callback on the node that served
+>   the request, so on a multi-node deployment it fires where the connection may not live. And the
+>   hook set does not enumerate every path that advances the epoch: a user signing out of all
+>   devices bumps it with no hook at all, so a deployment relying on push alone would miss the
+>   revocation a user most expects to be immediate.
 
 There are two channels and a check that reads only one is not a revocation check. A single logout
 writes `rv:{jti}` — the per-token blacklist. A password reset, an MFA reset or a revoke-all

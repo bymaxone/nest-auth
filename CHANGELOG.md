@@ -69,6 +69,17 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   symptom to recognise — `true` with nothing thrown, a stream that registers nothing — because it
   does not read as an auth bug from the transport side.
 
+  It also says what the method is **not**, which the first draft of the section left implied and a
+  reviewer caught: the answer is point-in-time. It reads two keys when called, subscribes to
+  nothing and emits nothing, so checking once at a handshake moves the refusal from "never" to "at
+  connect" and not to "on revocation" — a stream authenticated before a logout stays open exactly
+  as long as one never checked at all. The section now gives both halves of the fix: re-check on a
+  cadence (per inbound message on a WebSocket, a timer for SSE, which has no inbound channel), and
+  push through `afterLogout` / `afterPasswordReset` / `onSessionEvicted` to cut the latency. It is
+  explicit that the re-check is the guarantee and the push the optimisation, because a hook is an
+  in-process callback on the node that served the request, and because the hook set does not
+  enumerate every path that advances the epoch — signing out of all devices bumps it with none.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed
