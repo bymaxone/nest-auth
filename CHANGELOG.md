@@ -58,6 +58,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   the service without the tenant from its verified token; fix the caller rather than the log, and
   consider typing the tenant as REQUIRED on your own port so the omission cannot recur.
 
+- **`AuthRevocationService` is documented in the README**, under the API reference. It has been a
+  public export since it was extracted from the three guards, and the README never mentioned it —
+  so the one thing a caller outside a guard has to know, that a dashboard check must forward
+  `tenantId` from the verified token, was reachable only from the JSDoc or from this changelog.
+  That is the omission the entry above was measured on. The new section names both revocation
+  channels, states the tenant obligation as a requirement rather than a note, and describes the
+  symptom to recognise — `true` with nothing thrown, a stream that registers nothing — because it
+  does not read as an auth bug from the transport side.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed

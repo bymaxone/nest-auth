@@ -1646,6 +1646,50 @@ disputable. Idempotent; throws for an id that resolves to nobody, so a typo cann
 > `MfaService` is only registered when `controllers.mfa` or `controllers.platform` is on —
 > otherwise add it to `extraProviders` to inject it.
 
+### Checking revocation outside a guard — `AuthRevocationService`
+
+The three JWT guards do not decide revocation themselves; they delegate to one service, and that
+service is exported so **you can consult the same two channels from a transport the guards never
+see** — a WebSocket, an SSE stream, a message consumer. Without it, a socket whose user logs out
+keeps its stream until the access token expires, while its HTTP requests are refused at once.
+
+```ts
+import { AuthRevocationService } from '@bymax-one/nest-auth'
+
+const revoked = await this.revocation.isAccessTokenRevoked(
+  { jti: payload.jti, sub: payload.sub, epoch: payload.epoch, tenantId: payload.tenantId },
+  'dashboard'
+)
+```
+
+It is registered and exported unconditionally, so it is injectable wherever `BymaxAuthModule` is
+imported — no `extraProviders` entry and no controller flag to turn on.
+
+There are two channels and a check that reads only one is not a revocation check. A single logout
+writes `rv:{jti}` — the per-token blacklist. A password reset, an MFA reset or a revoke-all
+advances the user's **token epoch**, invalidating every access token stamped below it in one
+write. Both gate access tokens only; a refresh token carries no epoch and dies through session
+invalidation instead.
+
+> [!IMPORTANT]
+> **On the dashboard plane you must forward `tenantId` from the verified token.** It is optional
+> on `RevocableTokenPayload` because the platform plane genuinely has none — its admins are
+> cross-tenant — so **`tsc` will not catch the omission**, and a dashboard payload without it is
+> treated as **revoked** without a store read, with a `warn` naming the missing field.
+>
+> Failing closed is deliberate. The epoch key derives from the tenant-scoped subject, so an absent
+> tenant names a keyspace belonging to no tenant, where nothing has ever been bumped: the read
+> would answer `0`, `stamped < 0` is false for every token, and a bulk-revoked token would be
+> reported **valid**. A revocation check that fails open on malformed input is worse than no check,
+> because the caller relies on it precisely when something is wrong.
+>
+> **Recognise the symptom, because it does not look like an auth bug.** The refusal answers the
+> same `true` a genuinely revoked token answers, throws nothing and emits no event — so a
+> transport that gates a stream on it simply registers nothing. Measured on a consumer's realtime
+> bridge: the SSE handshake answered `200` and the connection registry stayed at `count: 0`, with
+> every connection silently refused. Declaring the tenant **required** on your own port type is the
+> stronger fix, because it turns the next occurrence into a compile error rather than a log line.
+
 ### Server Guards
 
 | Guard                | Decorator                       | Purpose                                                     |
