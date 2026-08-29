@@ -1716,13 +1716,28 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   epoch or kills a session should drop the sockets riding on it** — because the epoch is exactly
 >   what a live connection cannot observe on its own.
 >
->   | Hook                           | Fires after                                                           |
->   | ------------------------------ | --------------------------------------------------------------------- |
->   | `afterLogout(userId, context)` | the session is invalidated                                            |
->   | `afterPasswordReset`           | the reset, which bumps the epoch                                      |
->   | `afterMfaEnabled`              | `verifyAndEnable`, which bumps the epoch                              |
->   | `afterMfaDisabled`             | `disable` **and** the administrative `resetMfa` — both bump the epoch |
->   | `onSessionEvicted`             | the session cap kills one session                                     |
+>   | Hook                                      | Fires after                                                           | Names the tenant?                    |
+>   | ----------------------------------------- | --------------------------------------------------------------------- | ------------------------------------ |
+>   | `afterPasswordReset(user, context)`       | the reset, which bumps the epoch                                      | **Yes** — `user.tenantId`            |
+>   | `afterMfaEnabled(user, context)`          | `verifyAndEnable`, which bumps the epoch                              | **Yes** — `user.tenantId`            |
+>   | `afterMfaDisabled(user, context)`         | `disable` **and** the administrative `resetMfa` — both bump the epoch | **Yes** — `user.tenantId`            |
+>   | `afterLogout(userId, context)`            | the session is invalidated                                            | **No** — the context is empty        |
+>   | `onSessionEvicted(userId, hash, context)` | the session cap kills one session                                     | Only if the caller's context has one |
+>
+>   **Match on the tenant as well as the id, and do not fan out on a bare id.** A repository id is
+>   unique only within a tenant — `findById` takes one precisely because ids may collide, and a host
+>   that numbers users per tenant gives every tenant a user `1`. Disconnecting every socket whose
+>   `sub` equals a hook's `userId` would drop another tenant's user, which repeated logouts in one
+>   tenant turn into a denial of service against another. The three hooks that carry a
+>   `SafeAuthUser` give you `tenantId`; pair it with the `tenantId` on the socket's own snapshot or
+>   token claims. The dashboard and platform planes need separating for the same reason — their ids
+>   come from different repositories.
+>
+>   For `afterLogout` and `onSessionEvicted` you do not reliably get that second half, so key your
+>   own connection registry by something the hook can actually name — correlate through the session
+>   hash `onSessionEvicted` hands you, or record the tenant against the connection at handshake and
+>   refuse to act on an id alone. Treating a bare id as sufficient is the failure this note exists
+>   to prevent.
 >
 >   Treat this as the optimisation and the re-check as the guarantee, not the other way round —
 >   except on a ticket socket, where there is no re-check to be the guarantee and the lifetime cap

@@ -108,6 +108,16 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   outright that it is what the hooks cover today and not a guarantee that every bump has one, which
   is the honest shape for a list that has already been wrong once.
 
+  The table also says, per hook, whether it names the **tenant** — and the guidance refuses to fan
+  out on a bare id, because that is the very defect this library spent 1.4.4 removing from the
+  keyspace. A repository id is unique only within a tenant, so disconnecting every socket whose
+  `sub` matches a hook's `userId` drops another tenant's user, and repeated logouts in one tenant
+  become a denial of service against another. `afterPasswordReset`, `afterMfaEnabled` and
+  `afterMfaDisabled` carry a `SafeAuthUser` and therefore a `tenantId`; `afterLogout` does not, and
+  `onSessionEvicted` has one only if the caller's context happened to carry it. For those two the
+  section says to correlate through the session hash or a tenant recorded at handshake rather than
+  to act on an id alone.
+
   The cadence itself is stated as a timer being the baseline for every long-lived connection, with
   a per-inbound-message check as a tightening on top rather than an alternative to it. Offering the
   two as equivalents was wrong for the shape that matters: a bidirectional socket can fall silent
