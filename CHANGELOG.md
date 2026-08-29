@@ -18,6 +18,38 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **`AuthRevocationService` now warns when it refuses a dashboard token for carrying no tenant.**
+  1.4.4 made that case fail closed, which was the right call and is unchanged. What it did not do
+  is say so: the refusal answers the same `true` a genuinely revoked token answers, reads nothing,
+  throws nothing and emits no event, so it is indistinguishable from a revocation that worked.
+
+  Measured on the caller the 1.4.4 entry names. A consumer's realtime bridge called
+  `isAccessTokenRevoked({ jti, sub, epoch }, 'dashboard')` without the tenant; the SSE handshake
+  answered `200` and then registered nothing, and the connection registry sat at `count: 0` while
+  every stream was silently refused. It reads as a realtime bug rather than an auth one, and every
+  gate agreed with that reading: `tsc` passes because `tenantId` is optional on
+  `RevocableTokenPayload`, and a unit suite passes at 100% mutation score while asserting the
+  forwarded payload is exactly `{ jti, sub, epoch }` — a faithful test of a contract that had moved
+  underneath it. Twenty minutes of bisecting, ended by a log line that costs two.
+
+  The message names the missing field and the remedy, and says the refusal is deliberate so it is
+  not filed as a library bug. No identifier is logged: `sub` names an account and `jti` a live
+  token, and neither is needed to act on it.
+
+  **A distinct error code was considered and rejected.** `isAccessTokenRevoked` returns a boolean
+  and the three guards turn it into a refusal, so giving this case its own `AuthErrorCode` means
+  widening the return of an exported service and threading it through all three — and an `auth.*`
+  code is wire vocabulary, so it would answer an unauthenticated client with a detail about the
+  deployment's own wiring that today's refusal does not leak. The operator's log is the one place
+  that can act on it.
+
+  **Apply to a derived backend.** Nothing to do — behaviour is unchanged, and the only new output
+  is a `warn` on a path that was already refusing. If it appears in your logs, a caller is reaching
+  the service without the tenant from its verified token; fix the caller rather than the log, and
+  consider typing the tenant as REQUIRED on your own port so the omission cannot recur.
+
 ## [1.4.4] - 2026-08-19
 
 ### Changed
