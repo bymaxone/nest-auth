@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { readStampedEpoch } from '../utils'
@@ -49,6 +49,8 @@ export interface RevocableTokenPayload {
  */
 @Injectable()
 export class AuthRevocationService {
+  private readonly logger = new Logger(AuthRevocationService.name)
+
   /**
    * @param redis - The auth module's Redis service, holding both revocation channels.
    */
@@ -60,17 +62,20 @@ export class AuthRevocationService {
    * @param payload - The verified token's `jti`, `sub` and stamped `epoch`.
    * @param kind - Which plane the token belongs to; selects the epoch namespace, defaulting to the
    *   dashboard plane an ordinary user token uses. The per-token blacklist is shared across planes.
-   * @returns `true` when the token is on the blacklist or predates the user's current epoch.
+   * @returns `true` when the token is on the blacklist, predates the user's current epoch, or is a
+   *   dashboard payload carrying no tenant — the last fails closed without a store read, and warns.
    */
   async isAccessTokenRevoked(
     payload: RevocableTokenPayload,
     kind: 'dashboard' | 'platform' = 'dashboard'
   ): Promise<boolean> {
-    if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
-      return true
-    }
-
     // A dashboard payload without a tenant is treated as REVOKED, not as a lookup to attempt.
+    //
+    // Checked FIRST, before the blacklist read, because it validates the input rather than
+    // consulting a channel. Behind the blacklist read it answered the same `true` — the two
+    // orders are indistinguishable to a caller — but the warn below then fired only for a token
+    // that happened not to be blacklisted, so a bridge calling this wrongly on every request
+    // could go on doing so unheard. It also spares a round trip on a request already refused.
     //
     // The epoch key is derived from the tenant-scoped subject, and an absent tenant
     // interpolates as the literal text `undefined`, giving `dashboard:9:undefined:{userId}` — a
@@ -80,6 +85,23 @@ export class AuthRevocationService {
     // revocation check that fails open on a malformed input is worse than no check, because the
     // caller is relying on it precisely when something is wrong.
     if (kind === 'dashboard' && (payload.tenantId === undefined || payload.tenantId === '')) {
+      // Warned, because failing closed is silent by construction and the caller has no other
+      // signal. The refusal is indistinguishable from a genuinely revoked token: the method
+      // answers the same `true`, nothing throws, and a transport that gates a stream on it
+      // simply registers nothing. Measured on a consumer's realtime bridge — the caller this
+      // branch was written for — it cost twenty minutes reading as a realtime bug rather than
+      // an auth one, past a green type-check and a green unit suite that pinned the old shape.
+      // No identifier is logged: `sub` and `jti` name an account and a live token, and this
+      // says everything the operator needs without either.
+      this.logger.warn(
+        `isAccessTokenRevoked: dashboard token refused without a store read — the payload ` +
+          `carries no tenantId, so its epoch key cannot be named. Forward the tenant from the ` +
+          `verified token; a dashboard check missing it fails closed by design`
+      )
+      return true
+    }
+
+    if ((await this.redis.get(`rv:${payload.jti}`)) !== null) {
       return true
     }
 

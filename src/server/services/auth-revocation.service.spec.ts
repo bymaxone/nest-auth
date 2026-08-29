@@ -5,9 +5,13 @@
  * Goal: prove the one revocation check the three JWT guards delegate to, and that a consumer can
  * inject — a token is revoked when it is on the per-token blacklist, or when its stamped epoch
  * predates the user's current one, across both the dashboard and platform planes. The two channels
- * are independent, so each is proven to revoke on its own.
- * Mocks: a hand-built AuthRedisService exposing only the two reads this service performs.
+ * are independent, so each is proven to revoke on its own. A dashboard payload with no tenant is
+ * a third path: it fails closed without reading the store, and says so in the log.
+ * Mocks: a hand-built AuthRedisService exposing only the two reads this service performs, and a
+ * spy over the Nest logger.
  */
+import { Logger } from '@nestjs/common'
+
 import { AuthRevocationService } from './auth-revocation.service'
 import type { RevocableTokenPayload } from './auth-revocation.service'
 import type { AuthRedisService } from '../redis/auth-redis.service'
@@ -33,6 +37,17 @@ function buildService(overrides?: { blacklist?: string | null; epoch?: number })
 }
 
 describe('AuthRevocationService', () => {
+  /** Silences the Nest logger and captures the one warn this service emits. */
+  let warn: jest.SpyInstance
+
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+  })
+
   /**
    * Not-revoked baseline.
    * Rule: an empty blacklist and a user epoch at or below the token's stamp is not revoked.
@@ -116,14 +131,85 @@ describe('AuthRevocationService', () => {
     ['undefined', undefined],
     ['empty', '']
   ])('treats a dashboard token with a %s tenant as revoked', async (_label, tenantId) => {
-    const { service, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
+    const { service, get, getUserTokenEpoch } = buildService({ blacklist: null, epoch: 0 })
 
     await expect(service.isAccessTokenRevoked({ ...PAYLOAD, tenantId }, 'dashboard')).resolves.toBe(
       true
     )
 
-    // And it never reaches the store: there is no key worth reading for a subject it cannot name.
+    // And it never reaches the store: there is no key worth reading for a subject it cannot name,
+    // and the check runs ahead of the blacklist read rather than behind it — which is what makes
+    // "without a store read" true of this path and the warn fire for every such call, blacklisted
+    // or not.
     expect(getUserTokenEpoch).not.toHaveBeenCalled()
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The fail-closed refusal is announced.
+   * Rule: this branch answers the same `true` a genuinely revoked token answers, throws nothing
+   * and reads nothing, so without a log it is indistinguishable from a working revocation — the
+   * shape that cost a consumer's realtime bridge twenty minutes of bisecting behind a green
+   * type-check and a green unit suite. Every part is asserted because a message carrying only
+   * some of them sends the reader back to the transport: what happened, which field is missing,
+   * what the caller must do, and that the refusal is deliberate rather than a library bug.
+   */
+  it.each([
+    ['undefined', undefined],
+    ['empty', '']
+  ])(
+    'warns naming the missing tenant when a dashboard token has a %s one',
+    async (_l, tenantId) => {
+      const { service } = buildService({ blacklist: null, epoch: 0 })
+
+      await service.isAccessTokenRevoked({ ...PAYLOAD, tenantId }, 'dashboard')
+
+      expect(warn).toHaveBeenCalledTimes(1)
+      const message = String(warn.mock.calls[0]?.[0])
+
+      expect(message).toContain('dashboard token refused')
+      expect(message).toContain('no tenantId')
+      expect(message).toContain('Forward the tenant')
+      expect(message).toContain('fails closed by design')
+
+      // No identifier reaches the log: `sub` names an account and `jti` a live token.
+      expect(message).not.toContain(PAYLOAD.sub)
+      expect(message).not.toContain(PAYLOAD.jti)
+    }
+  )
+
+  /**
+   * The warn does not depend on the token's luck.
+   * Rule: the missing tenant is a caller bug whether or not that particular token happens to sit
+   * on the blacklist. Behind the blacklist read, a bridge calling this wrongly on every request
+   * would be heard only for the tokens nobody had logged out — the diagnostic would come and go
+   * with unrelated state.
+   */
+  it('warns for a tenantless dashboard token that is also blacklisted', async () => {
+    const { service, get } = buildService({ blacklist: '1' })
+
+    await expect(
+      service.isAccessTokenRevoked({ ...PAYLOAD, tenantId: undefined }, 'dashboard')
+    ).resolves.toBe(true)
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The warn is scoped to the malformed input.
+   * Rule: a token revoked through either real channel is the mechanism working, not a caller bug.
+   * Warning there would put a line in the log on every logout and every bulk revocation, which
+   * is how a diagnostic becomes noise nobody reads.
+   */
+  it.each([
+    ['the blacklist', { blacklist: '1', epoch: 0 }],
+    ['the epoch channel', { blacklist: null, epoch: 9 }]
+  ])('stays silent for a token revoked through %s', async (_label, overrides) => {
+    const { service } = buildService(overrides)
+
+    await expect(service.isAccessTokenRevoked(PAYLOAD)).resolves.toBe(true)
+    expect(warn).not.toHaveBeenCalled()
   })
 
   /**
