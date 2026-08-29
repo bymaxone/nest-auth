@@ -126,6 +126,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   ticket socket. Where ids are globally unique, both hooks are usable as written, and the section
   says that too.
 
+  **It also records what a logout does and does not reach**, which changes what "not revoked"
+  means for a stream. `logout` blacklists the `jti` of the token presented to it and does not
+  advance the epoch — `revokeAllSessions` is what advances it — while every refresh mints a fresh
+  `jti` and revokes nothing. So a stream holding an access token the client has since rotated away
+  from will read **not revoked** however often it checks, until that token expires: the client
+  logged out with a newer token, and neither channel names the older one. That is the one case
+  where the re-check is not the guarantee and the push is not the optimisation, since `afterLogout`
+  is the only mechanism that sees it, and the access-token lifetime is the real bound.
+
   **The section's headline advice is now to reconnect through the guarded path rather than to
   rebuild it.** Successive drafts described the guard chain as a checklist — two steps, then six,
   then seven — and every one was incomplete in a new way, because the HTTP surface is not one guard

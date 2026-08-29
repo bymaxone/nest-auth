@@ -1675,8 +1675,9 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 > Close it from both ends:
 >
 > - **Re-check on a cadence, and re-verify the token while you are there.** **A timer is the
->   baseline for every long-lived connection**, and the interval is your latency budget for a
->   revoked session. Checking per inbound message is a tightening on top of it, never a substitute:
+>   baseline for every long-lived connection**, and the interval is your latency budget for the two
+>   channels this service reads — bounded by what those channels can see, which is less than
+>   "revoked" suggests (below). Checking per inbound message is a tightening on top of it, never a substitute:
 >   a bidirectional socket can fall silent inbound while the server keeps publishing, and then a
 >   per-message check never runs while protected data keeps flowing. Bind the check to what the
 >   connection actually does — if you would rather not run a timer, check before each protected
@@ -1685,6 +1686,18 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   check before each protected event you emit. For a producer that sends discrete events the
 >   second is the tighter boundary and costs less — no verification runs on an idle stream, and
 >   nothing protected leaves without one.
+>
+>   **A logout revokes the token it was handed, not the account — so a stream can miss it
+>   entirely.** `logout` blacklists the `jti` of the token presented to it and does not advance the
+>   epoch; `revokeAllSessions` is what advances it. Every refresh mints a fresh `jti` and revokes
+>   nothing, so if the client rotated to a newer token and logged out with that one, the older token
+>   your stream is holding is on no blacklist and predates no epoch: it reads as **not revoked**,
+>   however often you check, until it expires on its own.
+>
+>   That is the one case where the re-check is not the guarantee and the push is not the
+>   optimisation — `afterLogout` is the only mechanism that sees it. Either keep the connection's
+>   token current as the client rotates, or drive the disconnect from that hook, and size the
+>   access-token lifetime knowing it is the real bound on a rotated-away session.
 >
 >   **This method does not look at `exp`, and expiry is not something it can tell you.**
 >   `RevocableTokenPayload` carries no `exp` and the implementation never reads one — it answers
