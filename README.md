@@ -1774,11 +1774,23 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   **The ticket flow is dashboard-only.** `POST /auth/ws-ticket` is guarded by the dashboard
 >   `JwtAuthGuard`, `WsTicketService.issue` takes a `DashboardJwtPayload`, and `WsJwtGuard` runs
 >   `assertDashboardSnapshot` on redemption — a platform bearer token cannot mint a ticket and a
->   platform snapshot would be refused if one existed. So a browser-based **platform admin** has no
->   built-in upgrade path: either authenticate that socket with a bearer token and re-check it on
->   the cadence above, or build your own mint-and-redeem bridge behind your platform guards. Since
->   the platform plane also has no logout hook, that bridge is the only place a platform stream can
->   be cut before its token expires. The push side below is the only other lever that works here — the
+>   platform snapshot would be refused if one existed. **`WsJwtGuard`'s bearer branch is dashboard-
+>   only too** — it asserts `type === 'dashboard'` — and a browser `WebSocket` cannot send an
+>   `Authorization` header at all, so there is no built-in path of any kind for a browser platform
+>   admin. A consumer-built mint-and-redeem bridge is the only option, and since the platform plane
+>   also has no logout hook, that bridge is the only place such a stream can be cut before its
+>   token expires.
+>
+>   **A platform bridge must read the account itself; "behind your platform guards" is not enough.**
+>   `JwtPlatformGuard` verifies the token, its type and both revocation channels, and injects no
+>   repository — there is no `PlatformUserStatusGuard`, which this library documents as a known
+>   limitation on `PlatformAuthController`. So a suspended or deleted administrator holding an
+>   unexpired access token passes every platform guard, and a bridge that only composes them would
+>   mint that admin a fresh ticket and extend the access past the suspension. Have the bridge load
+>   the account through `IPlatformUserRepository` and refuse a non-active status, or have the host
+>   call `PlatformAuthService.revokeAllPlatformSessions(userId)` on every status change so the epoch
+>   bump reaches the token. The second is the mitigation the library already prescribes; the first
+>   is what makes the bridge safe on its own. The push side below is the only other lever that works here — the
 >   hooks hand you a `userId`, and a ticket socket knows its `sub`.
 >
 > - **Push, to cut the latency to nothing.** Wire these to disconnect that user's live

@@ -139,9 +139,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   platform stream holding a rotated-away token — which the section pairs with the other half of the
   same asymmetry: the upgrade-ticket flow is **dashboard-only**, since `POST /auth/ws-ticket` sits
   behind the dashboard guard, `WsTicketService.issue` takes a `DashboardJwtPayload` and redemption
-  asserts a dashboard snapshot. A browser-based platform admin therefore has no built-in upgrade
-  path and needs a consumer-built mint-and-redeem bridge, which is also the only place such a stream
-  can be cut before its token expires.
+  asserts a dashboard snapshot. `WsJwtGuard`'s bearer branch asserts `type === 'dashboard'` as well, and a
+  browser `WebSocket` cannot send an `Authorization` header, so a browser platform admin has no
+  built-in path of any kind and needs a consumer-built mint-and-redeem bridge — which is also the
+  only place such a stream can be cut before its token expires.
+
+  The entry states what that bridge owes, because composing the platform guards is not enough:
+  `JwtPlatformGuard` injects no repository and there is no `PlatformUserStatusGuard`, a limitation
+  this library already documents on `PlatformAuthController`. A suspended administrator holding an
+  unexpired token passes every platform guard, so a bridge built only from them would mint a fresh
+  ticket and extend access past the suspension. The bridge must read the account through
+  `IPlatformUserRepository`, or the host must call `revokeAllPlatformSessions` on every status
+  change so the epoch bump reaches the token.
 
   **The section's headline advice is now to reconnect through the guarded path rather than to
   rebuild it.** Successive drafts described the guard chain as a checklist — two steps, then six,
