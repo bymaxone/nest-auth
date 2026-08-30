@@ -20,10 +20,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
-- **`afterPlatformLogout`, the first hook the platform plane emits.** `PlatformAuthService` fired
-  none at all — the service did not even receive the hooks provider — so a consumer holding a live
-  platform stream had no way to learn that the administrator behind it had signed out. The access
-  token stayed presentable until it expired and nothing observed the session's removal.
+- **`afterPlatformLogout`, the first hook `PlatformAuthService` emits.** That service fired none at
+  all — it did not even receive the hooks provider — so a consumer holding a live platform stream
+  had no way to learn that the administrator behind it had signed out: the access token stayed
+  presentable until it expired and nothing observed the session's removal.
+
+  The platform **plane** was not silent, which is a narrower and more useful thing to know: it
+  already emits `afterLogin` from the platform branch of `MfaService.challenge`, and
+  `onRefreshTokenReuseDetected` from `TokenManagerService.reissuePlatformTokens`. What had no
+  signal was the logout, and only from this service.
 
   Separate from `afterLogout` rather than sharing it, deliberately: an existing `afterLogout`
   handler was written for dashboard users and may resolve a tenant, so routing platform events into

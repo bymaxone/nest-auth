@@ -215,10 +215,10 @@ export interface IAuthHooks {
    * a tenant, so routing platform events into it would change what that handler receives without
    * the handler asking. A distinct member is additive and unambiguous.
    *
-   * This is the only signal the platform plane emits on a logout. `PlatformAuthService` fires no
-   * other hook, so without it a consumer holding a live platform stream had no way to learn that
-   * the administrator behind it signed out — the access token remained presentable until it
-   * expired, and nothing observed the session's removal.
+   * **`PlatformAuthService` reports a completed logout only through this hook**, and emits no
+   * other. A consumer that does not implement it learns nothing when an administrator signs out:
+   * the access token stays presentable until it expires, and the session's removal is unobserved.
+   * That matters most for a live platform stream, which has no other signal to close on.
    *
    * @param userId - The internal ID of the administrator who logged out.
    * @param context - Request metadata; `plane` is `'platform'` and there is no tenant.
