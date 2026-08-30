@@ -1769,7 +1769,16 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   closes, which makes **bounding the connection your job**: cap the socket's lifetime and make
 >   the client reconnect with a fresh ticket, since minting one requires a live access token and
 >   so re-runs authentication and account state — though not your route's authorization, per the
->   note above. The push side below is the only other lever that works here — the
+>   note above.
+>
+>   **The ticket flow is dashboard-only.** `POST /auth/ws-ticket` is guarded by the dashboard
+>   `JwtAuthGuard`, `WsTicketService.issue` takes a `DashboardJwtPayload`, and `WsJwtGuard` runs
+>   `assertDashboardSnapshot` on redemption — a platform bearer token cannot mint a ticket and a
+>   platform snapshot would be refused if one existed. So a browser-based **platform admin** has no
+>   built-in upgrade path: either authenticate that socket with a bearer token and re-check it on
+>   the cadence above, or build your own mint-and-redeem bridge behind your platform guards. Since
+>   the platform plane also has no logout hook, that bridge is the only place a platform stream can
+>   be cut before its token expires. The push side below is the only other lever that works here — the
 >   hooks hand you a `userId`, and a ticket socket knows its `sub`.
 >
 > - **Push, to cut the latency to nothing.** Wire these to disconnect that user's live

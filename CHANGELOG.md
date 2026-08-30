@@ -136,7 +136,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   plane `afterLogout` is the only mechanism that sees it. **On the platform plane there is not even
   that** — `PlatformAuthService` fires no hooks at all, so its logout deletes the session records
   and returns with nothing to observe, and the access-token lifetime is the only bound on a
-  platform stream holding a rotated-away token.
+  platform stream holding a rotated-away token — which the section pairs with the other half of the
+  same asymmetry: the upgrade-ticket flow is **dashboard-only**, since `POST /auth/ws-ticket` sits
+  behind the dashboard guard, `WsTicketService.issue` takes a `DashboardJwtPayload` and redemption
+  asserts a dashboard snapshot. A browser-based platform admin therefore has no built-in upgrade
+  path and needs a consumer-built mint-and-redeem bridge, which is also the only place such a stream
+  can be cut before its token expires.
 
   **The section's headline advice is now to reconnect through the guarded path rather than to
   rebuild it.** Successive drafts described the guard chain as a checklist — two steps, then six,
