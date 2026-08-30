@@ -2868,7 +2868,7 @@ describe('MfaService', () => {
         // under either, so a reset that handed the hook a platform-shaped user for a dashboard
         // account — losing the tenant every consumer scopes on — would go unnoticed.
         expect.objectContaining({ id: 'user-1', tenantId: 'tenant-1' }),
-        { userId: 'user-1', ip: '', userAgent: '', sanitizedHeaders: {} }
+        { plane: 'dashboard', userId: 'user-1', ip: '', userAgent: '', sanitizedHeaders: {} }
       )
     })
 

@@ -18,6 +18,69 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Added
+
+- **`afterPlatformLogout`, the first hook the platform plane emits.** `PlatformAuthService` fired
+  none at all — the service did not even receive the hooks provider — so a consumer holding a live
+  platform stream had no way to learn that the administrator behind it had signed out. The access
+  token stayed presentable until it expired and nothing observed the session's removal.
+
+  Separate from `afterLogout` rather than sharing it, deliberately: an existing `afterLogout`
+  handler was written for dashboard users and may resolve a tenant, so routing platform events into
+  it would change what that handler receives without the handler asking. A new optional member is
+  additive and unambiguous.
+
+- **`HookContext.plane`** — `'dashboard'` or `'platform'`, set on every context this library
+  builds. It exists because the tenant cannot answer that question: `MfaService` renders a platform
+  administrator as a `SafeAuthUser` carrying the sentinel `tenantId: ''` because the type demands
+  the field, while a platform access token has no tenant claim and reads `undefined`. A consumer
+  correlating a hook against a live connection by comparing those two matched nothing on the
+  platform plane and silently skipped every platform admin after an MFA enable, disable or
+  administrative reset. Branch on `plane` instead of on the shape of `tenantId`.
+
+### Fixed
+
+- **Two hooks discarded the account scope they were holding.** `afterLogout` received an empty
+  `HookContext` and `onSessionEvicted` a context naming neither the user nor the tenant — in both
+  cases while the emitting method had both values in hand. `logout` reads `{ userId, tenantId }`
+  from `readSessionOwner` and keys its own session revoke on them; `enforceSessionLimit` takes
+  `userId` and `tenantId` as parameters. Neither value was ever unavailable.
+
+  **This is the same defect 1.4.4 fixed on `onRefreshTokenReuseDetected`**, whose entry noted that
+  the emit "built `createEmptyHookContext()` anyway". Two more sites had it and were missed then.
+
+  It costs more than tidiness, because of what these hooks are for. A consumer wiring them to
+  disconnect a user's live connections must match the **tenant as well as the id**: a repository id
+  is unique only within a tenant — `findById` takes one precisely because ids may collide — so
+  acting on a bare id drops another tenant's user, and repeated logouts in one tenant become a
+  denial of service against another. A hook that names only the id cannot be acted on safely, which
+  left the only correct response to it being to ignore it.
+
+  `ip` and `userAgent` stay empty on `afterLogout` deliberately: `logout` receives two tokens and no
+  request, so there is nothing to report and an invented value would be worse than an empty string
+  a consumer can see is empty. `tenantId` is omitted rather than set to `undefined` when the session
+  record predates the tenant-scoped write, so its absence reads as "the record did not say" rather
+  than as a tenant literally named `undefined`.
+
+  **Both specs asserted the context loosely, which is why this shipped.** One used
+  `expect.anything()` and the other `expect.objectContaining({ ip, userAgent })` — neither can
+  distinguish a populated context from an empty one, the exact weakness the 1.4.4 entry called out
+  on the hook it fixed. Both now pin the context exactly.
+
+  **The rest of the family was checked, and two sites are deliberately left alone.**
+  `afterEmailVerified` and `afterPasswordReset` also pass an empty context, but their first argument
+  is a `SafeAuthUser` carrying `id` and `tenantId`, so a consumer can already scope them and there
+  is no defect to fix. `onRefreshTokenReuseDetected` is the one real remainder: it names the account
+  in its `details` object but the tenant is genuinely not in scope at the emit — `emitReuseDetected`
+  receives `(userId, familyId, ip, userAgent)` and nothing more — so scoping it means threading the
+  tenant down from its callers. That is a larger change than this one and is tracked separately
+  rather than smuggled in here.
+
+  **Apply to a derived backend.** Nothing breaks: the fields are additions to a context whose type
+  already declared them as optional. If you consume either hook, you can now scope its effect —
+  and if you disconnect sockets or invalidate caches on them, you should, because doing it on the
+  bare `userId` reaches other tenants' accounts.
+
 ## [1.4.5] - 2026-08-29
 
 ### Added

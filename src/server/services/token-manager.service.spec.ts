@@ -964,7 +964,7 @@ describe('TokenManagerService', () => {
       // not tell the difference. Reported by a consumer running the hook against a real backend.
       expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
         { userId: 'user-1', familyId: FAMILY },
-        { ip: '1.2.3.4', userAgent: 'Browser', sanitizedHeaders: {} }
+        { plane: 'dashboard', ip: '1.2.3.4', userAgent: 'Browser', sanitizedHeaders: {} }
       )
       // Emitted AFTER the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
@@ -2268,7 +2268,7 @@ describe('TokenManagerService', () => {
       // the least useful form the report could take.
       expect(mockHooks.onRefreshTokenReuseDetected).toHaveBeenCalledWith(
         { userId: 'admin-1', familyId: PLATFORM_FAMILY },
-        { ip: '9.9.9.9', userAgent: 'Attacker', sanitizedHeaders: {} }
+        { plane: 'platform', ip: '9.9.9.9', userAgent: 'Attacker', sanitizedHeaders: {} }
       )
     })
 

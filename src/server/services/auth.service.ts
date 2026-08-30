@@ -582,11 +582,25 @@ export class AuthService {
     // The hook names the user who was signed out, so it only fires when the session told us
     // who that was. A logout for an already-gone session has nobody to name.
     if (this.hooks?.afterLogout && userId) {
-      void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
-        (err: unknown) => {
-          this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
-        }
-      )
+      // The context names the account, because this method already knows it. `readSessionOwner`
+      // returned both fields above and the session revoke below is keyed on them, so building an
+      // empty context here discarded a value that was in scope — the same shape 1.4.4 fixed on
+      // `onRefreshTokenReuseDetected`. It matters beyond tidiness: a consumer disconnecting live
+      // sockets on logout must match the tenant as well as the id, since a repository id is unique
+      // only within a tenant, and a hook that names only the id cannot be acted on safely.
+      //
+      // `ip` and `userAgent` stay empty deliberately. `logout` receives two tokens and no request,
+      // so there is nothing to report and an invented value would be worse than an empty string a
+      // consumer can see is empty. `tenantId` is omitted rather than set to `undefined` when the
+      // record predates the tenant-scoped write, so its absence reads as "the record did not say"
+      // instead of as a tenant literally named `undefined`.
+      const context: HookContext = { ...createEmptyHookContext(), plane: 'dashboard', userId }
+      if (tenantId !== undefined) {
+        context.tenantId = tenantId
+      }
+      void Promise.resolve(this.hooks.afterLogout(userId, context)).catch((err: unknown) => {
+        this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
+      })
     }
 
     return userId
@@ -985,7 +999,10 @@ export class AuthService {
 
     if (this.hooks?.afterEmailVerified) {
       void Promise.resolve(
-        this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
+        this.hooks.afterEmailVerified(toSafeUser(user), {
+          ...createEmptyHookContext(),
+          plane: 'dashboard'
+        })
       ).catch((err: unknown) => {
         this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
       })
@@ -1195,6 +1212,8 @@ export class AuthService {
       )
     )
     const ctx: HookContext = {
+      // Every flow this builder serves — register, login, email change — is a dashboard one.
+      plane: 'dashboard',
       ip: opts.ip,
       userAgent: opts.userAgent,
       sanitizedHeaders: sanitized

@@ -1525,7 +1525,18 @@ describe('AuthService', () => {
       mockRedis.del.mockResolvedValue(undefined)
 
       await expect(service.logout('access.jwt', 'raw-refresh')).resolves.toBe('real-owner')
-      expect(mockHooks.afterLogout).toHaveBeenCalledWith('real-owner', expect.anything())
+      // Pinned exactly, not `expect.anything()`. That matcher cannot distinguish a populated
+      // context from an empty one, which is how this hook shipped naming an account it could not
+      // scope: a consumer disconnecting sockets on a bare id reaches another tenant's user.
+      // `ip`/`userAgent` are empty because `logout` receives tokens and no request.
+      expect(mockHooks.afterLogout).toHaveBeenCalledWith('real-owner', {
+        plane: 'dashboard',
+        userId: 'real-owner',
+        tenantId: 'tenant-1',
+        ip: '',
+        userAgent: '',
+        sanitizedHeaders: {}
+      })
     })
 
     // Scenario: an access token that is absent, malformed, or signed by a secret nobody holds.

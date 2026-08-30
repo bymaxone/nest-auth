@@ -16,11 +16,16 @@ import { createHash } from 'node:crypto'
 import { Logger } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_PLATFORM_USER_REPOSITORY } from '../bymax-auth.constants'
+import {
+  BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+} from '../bymax-auth.constants'
 import { hmacSha256, sha256 } from '../crypto/secure-token'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import type { IAuthHooks } from '../interfaces/auth-hooks.interface'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { PlatformAuthService } from './platform-auth.service'
@@ -166,6 +171,18 @@ function platformIndexKey(userId: string): string {
   return 'psess:' + hmacSha256('platform:' + userId, HMAC_KEY)
 }
 
+/**
+ * Lets a fire-and-forget hook settle before the assertion reads it.
+ *
+ * The emit is deliberately not awaited by the service — a hook must not be able to delay or fail a
+ * completed logout — so the assertion has to yield the loop rather than run in the same tick.
+ */
+async function flushMicrotasks(ticks = 4): Promise<void> {
+  for (let i = 0; i < ticks; i += 1) {
+    await Promise.resolve()
+  }
+}
+
 describe('PlatformAuthService', () => {
   let service: PlatformAuthService
 
@@ -186,6 +203,28 @@ describe('PlatformAuthService', () => {
 
     service = module.get(PlatformAuthService)
   })
+
+  /**
+   * Builds a second instance with hooks attached.
+   *
+   * The module above deliberately provides none, so every other test exercises the `hooks === null`
+   * path that an unconfigured deployment takes. The hook tests need the other side.
+   */
+  async function buildServiceWithHooks(hooks: Partial<IAuthHooks>): Promise<PlatformAuthService> {
+    const withHooks = await Test.createTestingModule({
+      providers: [
+        PlatformAuthService,
+        { provide: BYMAX_AUTH_OPTIONS, useValue: mockOptions },
+        { provide: BYMAX_AUTH_PLATFORM_USER_REPOSITORY, useValue: mockPlatformUserRepo },
+        { provide: PasswordService, useValue: mockPasswordService },
+        { provide: TokenManagerService, useValue: mockTokenManager },
+        { provide: BruteForceService, useValue: mockBruteForce },
+        { provide: AuthRedisService, useValue: mockRedis },
+        { provide: BYMAX_AUTH_HOOKS, useValue: hooks }
+      ]
+    }).compile()
+    return withHooks.get(PlatformAuthService)
+  }
 
   // ---------------------------------------------------------------------------
   // login
@@ -492,6 +531,67 @@ describe('PlatformAuthService', () => {
         jti,
         exp: Math.floor(Date.now() / 1000) + 3600
       })
+    })
+
+    /**
+     * The only hook this plane emits.
+     * Rule: `PlatformAuthService` fired no hook at all, so a consumer holding a live platform
+     * stream could not learn that the administrator behind it signed out — the access token
+     * stayed presentable until it expired and nothing observed the session's removal. The context
+     * names the plane rather than a tenant, because a platform admin belongs to none.
+     */
+    it('fires afterPlatformLogout with a platform-planed context', async () => {
+      const hooks = { afterPlatformLogout: jest.fn().mockResolvedValue(undefined) }
+      const withHooks = await buildServiceWithHooks(hooks)
+
+      await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
+      await flushMicrotasks()
+
+      // Pinned exactly. `expect.anything()` here would not distinguish a context naming the
+      // plane from an empty one, which is the weakness that let two dashboard hooks ship
+      // unscopeable.
+      expect(hooks.afterPlatformLogout).toHaveBeenCalledWith(userId, {
+        plane: 'platform',
+        userId,
+        ip: '',
+        userAgent: '',
+        sanitizedHeaders: {}
+      })
+    })
+
+    /**
+     * A logout for a session that is already gone.
+     * Rule: the hook names the administrator who signed out, so with no owner on the record there
+     * is nobody to name and it must not fire — the same condition the dashboard twin applies.
+     */
+    it('does not fire afterPlatformLogout when the record names no owner', async () => {
+      const hooks = { afterPlatformLogout: jest.fn() }
+      const withHooks = await buildServiceWithHooks(hooks)
+      mockRedis.readSessionOwner.mockResolvedValue({ userId: '', tenantId: undefined })
+
+      await withHooks.logout('access.jwt', rawRefreshToken)
+      await flushMicrotasks()
+
+      expect(hooks.afterPlatformLogout).not.toHaveBeenCalled()
+    })
+
+    /**
+     * A consumer hook that rejects.
+     * Rule: the logout already completed and its Redis writes are done, so a failing hook must be
+     * logged and swallowed rather than turned into a failed logout the caller would retry.
+     */
+    it('logs and swallows a rejecting afterPlatformLogout', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const hooks = { afterPlatformLogout: jest.fn().mockRejectedValue(new Error('boom')) }
+      const withHooks = await buildServiceWithHooks(hooks)
+
+      await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
+      await flushMicrotasks()
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('afterPlatformLogout hook threw: ')
+      )
+      errorSpy.mockRestore()
     })
 
     // Verifies that when the access token still has remaining TTL, the JTI is

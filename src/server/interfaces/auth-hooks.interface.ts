@@ -36,6 +36,20 @@ export interface HookContext {
   /** Tenant identifier, available in multi-tenant flows. */
   tenantId?: string
   /**
+   * Which identity plane the event belongs to.
+   *
+   * Set on every context this library builds. It exists because the tenant alone cannot answer the
+   * question: a platform administrator belongs to no tenant, and `MfaService` renders one as a
+   * `SafeAuthUser` with the sentinel `tenantId: ''` because the type demands the field — while a
+   * platform access token carries no tenant claim at all and reads `undefined`. A consumer
+   * correlating a hook against a live connection by comparing those two values matches nothing on
+   * the platform plane and silently skips every platform admin.
+   *
+   * Branch on this rather than on the shape of `tenantId`. Absent only on a context a consumer
+   * built itself.
+   */
+  plane?: 'dashboard' | 'platform'
+  /**
    * IP address of the originating request.
    *
    * @remarks
@@ -192,6 +206,24 @@ export interface IAuthHooks {
    * @param context - Request metadata (IP, user agent, sanitized headers).
    */
   afterLogout?(userId: string, context: HookContext): Promise<void> | void
+
+  /**
+   * Called after a platform administrator's session has been invalidated.
+   *
+   * Separate from {@link IAuthHooks.afterLogout} rather than sharing it with a `plane` marker,
+   * deliberately: an existing `afterLogout` handler was written for dashboard users and may look up
+   * a tenant, so routing platform events into it would change what that handler receives without
+   * the handler asking. A distinct member is additive and unambiguous.
+   *
+   * This is the only signal the platform plane emits on a logout. `PlatformAuthService` fires no
+   * other hook, so without it a consumer holding a live platform stream had no way to learn that
+   * the administrator behind it signed out — the access token remained presentable until it
+   * expired, and nothing observed the session's removal.
+   *
+   * @param userId - The internal ID of the administrator who logged out.
+   * @param context - Request metadata; `plane` is `'platform'` and there is no tenant.
+   */
+  afterPlatformLogout?(userId: string, context: HookContext): Promise<void> | void
 
   /**
    * Called when a login attempt is refused.

@@ -740,7 +740,10 @@ export class PasswordResetService {
       await this.notifyPasswordChanged(user)
       if (this.hooks?.afterPasswordReset) {
         void Promise.resolve(
-          this.hooks.afterPasswordReset(toSafeUser(user), createEmptyHookContext())
+          this.hooks.afterPasswordReset(toSafeUser(user), {
+            ...createEmptyHookContext(),
+            plane: 'dashboard'
+          })
         ).catch((err: unknown) => {
           this.logger.error(`afterPasswordReset hook threw: ${describeChannelStatus(err)}`)
         })

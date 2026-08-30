@@ -1,6 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
-import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_PLATFORM_USER_REPOSITORY } from '../bymax-auth.constants'
+import {
+  BYMAX_AUTH_HOOKS,
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_PLATFORM_USER_REPOSITORY
+} from '../bymax-auth.constants'
 import { BruteForceService } from './brute-force.service'
 import { PasswordService } from './password.service'
 import { TokenManagerService } from './token-manager.service'
@@ -10,6 +14,7 @@ import { hmacSha256, sha256 } from '../crypto/secure-token'
 import type { PlatformLoginDto } from '../dto/platform-login.dto'
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
+import type { HookContext, IAuthHooks } from '../interfaces/auth-hooks.interface'
 import type {
   MfaChallengeResult,
   PlatformAuthResult,
@@ -25,6 +30,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { normalizeEmail } from '../utils/normalize-email'
+import { createEmptyHookContext } from '../utils/sanitize-headers'
 
 /**
  * Core authentication service for platform administrators.
@@ -55,7 +61,8 @@ export class PlatformAuthService {
     @Inject(TokenManagerService) private readonly tokenManager: TokenManagerService,
     @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
-    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions
+    @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
+    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -214,7 +221,35 @@ export class PlatformAuthService {
       await this.redis.srem(index, 'prp:' + tokenHash)
     }
     await this.redis.del('psd:' + tokenHash)
+
+    this.emitPlatformLogout(userId)
+
     return userId
+  }
+
+  /**
+   * Announces a completed platform logout, the only hook this plane emits.
+   *
+   * Extracted rather than inlined at the call site, mirroring `TokenManagerService`'s
+   * `emitReuseDetected`: the emit carries three concerns a reader of `logout` does not need — the
+   * `null` hooks case, the fire-and-forget discipline, and the rejection log — and inlining them
+   * pushed `logout` past the length this repository holds its methods to.
+   *
+   * Fired here rather than shared with `afterLogout`, because a consumer's existing dashboard
+   * handler may resolve a tenant and a platform administrator has none. Fire-and-forget: a hook
+   * that throws must not turn a completed logout into a failed one, so the rejection is logged
+   * rather than propagated — and logged rather than swallowed, so a broken consumer hook is
+   * visible.
+   *
+   * @param userId - The administrator who signed out; empty when the record named no owner, in
+   *   which case there is nobody to announce and nothing fires.
+   */
+  private emitPlatformLogout(userId: string): void {
+    if (!this.hooks?.afterPlatformLogout || !userId) return
+    const context: HookContext = { ...createEmptyHookContext(), plane: 'platform', userId }
+    void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch((err: unknown) => {
+      this.logger.error(`afterPlatformLogout hook threw: ${describeChannelStatus(err)}`)
+    })
   }
 
   // ---------------------------------------------------------------------------

@@ -735,6 +735,8 @@ export class InvitationService {
     if (this.hooks?.afterInvitationAccepted) {
       void Promise.resolve(
         this.hooks.afterInvitationAccepted(safeUser, {
+          // Invitations are a dashboard concept; the platform plane has no invite flow.
+          plane: 'dashboard',
           ip,
           userAgent,
           sanitizedHeaders: sanitizeHeaders(headers)
