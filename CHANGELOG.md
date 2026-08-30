@@ -160,8 +160,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   HTTP path, which runs the real chain instead of a copy that drifts; the ticket flow already works
   that way, since minting goes through `JwtAuthGuard` and `UserStatusGuard`.
 
-  That advice carries its own limit, stated rather than left to be discovered: **a reconnect
-  refreshes authentication and account state, not the stream's authorization.** `POST
+  That advice carries its own limits, stated rather than left to be discovered: **a reconnect is not
+  the HTTP chain.** It re-establishes identity and account state on the dashboard plane, and carries
+  neither `enforceTenantBinding` — the mint runs the resolver, redemption does not, so a ticket
+  minted on tenant A's host is redeemed on tenant B's socket endpoint — nor the stream's own
+  authorization. `POST
 /auth/ws-ticket` composes those two guards and no more — no `RolesGuard`, no ownership check —
   and the ticket branch of `WsJwtGuard` only restores the snapshot, so a privileged stream rebuilt
   on "the reconnect re-runs everything" is open to any authenticated ticket holder. The section

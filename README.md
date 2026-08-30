@@ -1717,12 +1717,26 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   check among many, and the HTTP surface is not one guard but a composition of them plus the
 >   options you configured — so there is no fixed list to copy, and every attempt to write one down
 >   here has been incomplete in a new way. Bound the connection and make the client re-authenticate
->   through the guarded HTTP path, which runs the real chain instead of a copy that drifts from it
->   as this library changes. The ticket flow is already built this way: minting one goes through
+>   through the guarded HTTP path, so the checks that do run are the library's own rather than a copy
+>   that drifts from them — subject to the limits immediately below, which are real and not small. The ticket flow is already built this way: minting one goes through
 >   `JwtAuthGuard` and `UserStatusGuard`.
 >
->   **A reconnect refreshes authentication and account state. It does not carry your route's
->   authorization.** `POST /auth/ws-ticket` composes those two guards and no more — no `RolesGuard`,
+>   **A reconnect is not the HTTP chain, and the gap is wider than authorization.** What it does
+>   re-establish is identity and account state, on the dashboard plane. What it does **not** carry,
+>   because the socket path never runs it:
+>
+>   - **`enforceTenantBinding`.** The mint runs your `tenantIdResolver` on its own host; redemption
+>     does not. `WsJwtGuard` references neither the option nor the resolver, and its snapshot check
+>     only asserts that `tenantId` is a non-empty string. So a ticket minted on tenant A's host is
+>     redeemed happily on tenant B's socket endpoint — the exact crossing the option exists to
+>     prevent. Compare the snapshot's tenant against the endpoint yourself.
+>   - **Your route's authorization**, below.
+>   - **Anything on the platform plane**, since none of this flow accepts a platform identity.
+>
+>   The rule behind all three: the mint is a request in one context and the redemption is a request
+>   in another, and only the first passes through your guards.
+>
+>   **On authorization specifically.** `POST /auth/ws-ticket` composes those two guards and no more — no `RolesGuard`,
 >   no ownership check — and the ticket branch of `WsJwtGuard` only restores the snapshot. So a
 >   privileged stream rebuilt on "the reconnect re-runs everything" is open to any authenticated
 >   ticket holder. Enforce the stream's own authorization on every connection, exactly as the
