@@ -1695,9 +1695,16 @@ imported — no `extraProviders` entry and no controller flag to turn on.
 >   however often you check, until it expires on its own.
 >
 >   That is the one case where the re-check is not the guarantee and the push is not the
->   optimisation — `afterLogout` is the only mechanism that sees it. Either keep the connection's
->   token current as the client rotates, or drive the disconnect from that hook, and size the
->   access-token lifetime knowing it is the real bound on a rotated-away session.
+>   optimisation — on the **dashboard** plane `afterLogout` is the only mechanism that sees it, so
+>   either keep the connection's token current as the client rotates, or drive the disconnect from
+>   that hook.
+>
+>   **On the platform plane there is no mechanism at all.** `PlatformAuthService` fires no hooks —
+>   not one, anywhere in the service — so its `logout` deletes the session records and returns with
+>   nothing to observe. An older platform access token held by a stream is on no blacklist, predates
+>   no epoch and raises no callback: **its lifetime is the only bound.** Size
+>   `jwt.accessExpiresIn` for what a platform stream may outlive a logout by, and cap the connection
+>   accordingly, because nothing else will end it.
 >
 >   **This method does not look at `exp`, and expiry is not something it can tell you.**
 >   `RevocableTokenPayload` carries no `exp` and the implementation never reads one — it answers

@@ -132,8 +132,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `jti` and revokes nothing. So a stream holding an access token the client has since rotated away
   from will read **not revoked** however often it checks, until that token expires: the client
   logged out with a newer token, and neither channel names the older one. That is the one case
-  where the re-check is not the guarantee and the push is not the optimisation, since `afterLogout`
-  is the only mechanism that sees it, and the access-token lifetime is the real bound.
+  where the re-check is not the guarantee and the push is not the optimisation: on the dashboard
+  plane `afterLogout` is the only mechanism that sees it. **On the platform plane there is not even
+  that** — `PlatformAuthService` fires no hooks at all, so its logout deletes the session records
+  and returns with nothing to observe, and the access-token lifetime is the only bound on a
+  platform stream holding a rotated-away token.
 
   **The section's headline advice is now to reconnect through the guarded path rather than to
   rebuild it.** Successive drafts described the guard chain as a checklist — two steps, then six,
