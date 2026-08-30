@@ -61,141 +61,28 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   consider typing the tenant as REQUIRED on your own port so the omission cannot recur.
 
 - **`AuthRevocationService` is documented in the README**, under the API reference. It has been a
-  public export since it was extracted from the three guards, and the README never mentioned it —
-  so the one thing a caller outside a guard has to know, that a dashboard check must forward
+  public export since it was extracted from the three JWT guards, and the README never mentioned it
+  — so the one thing a caller outside a guard has to know, that a dashboard check must forward
   `tenantId` from the verified token, was reachable only from the JSDoc or from this changelog.
   That is the omission the entry above was measured on. The new section names both revocation
   channels, states the tenant obligation as a requirement rather than a note, and describes the
   symptom to recognise — `true` with nothing thrown, a stream that registers nothing — because it
   does not read as an auth bug from the transport side.
 
-  It also says what the method is **not**, which the first draft of the section left implied and a
-  reviewer caught: the answer is point-in-time. It reads two keys when called, subscribes to
-  nothing and emits nothing, so checking once at a handshake moves the refusal from "never" to "at
-  connect" and not to "on revocation" — a stream authenticated before a logout stays open exactly
-  as long as one never checked at all. The section now gives both halves of the fix: re-check on a
-  cadence — a timer as the baseline for any connection whose inbound side may be idle, or a check
-  before each protected outbound delivery, with a per-inbound-message check only as a tightening on
-  top — and push through the hooks to cut the latency. It is
-  explicit that the re-check is the guarantee and the push the optimisation, because a hook is an
-  in-process callback on the node that served the request, and because the hook set does not
-  enumerate every path that advances the epoch — signing out of all devices bumps it with none.
+  It also says what the method is **not**: it answers two channels at the moment it is called, and
+  reads no `exp`, holds no subscription, emits no event, and knows nothing about account status,
+  roles, tenant binding or the identity plane. It is one check among the many a guarded route
+  performs, not a way to authorise a stream.
 
-  And it says that the check **does not look at `exp`**, which is the trap in the cadence advice
-  rather than a footnote to it. `RevocableTokenPayload` carries no `exp` and the implementation
-  never reads one; `rv:{jti}` is written with the token's own remaining TTL, so once the token
-  expires that entry is gone too and a timer calling only this method answers "not revoked"
-  forever. A stream held open on that guidance would outlive its credential indefinitely. The
-  section now says to do what the guards do — `JwtAuthGuard` and `WsJwtGuard`'s bearer path verify
-  the token, which enforces `exp`, and only then consult this service — so a re-check re-runs
-  verification rather than the revocation call alone.
-
-  Finally it carves out the case where none of that guidance can be followed, which is the browser
-  WebSocket flow. `WsJwtGuard` redeems an upgrade ticket and returns before the revocation check,
-  and a `WsTicketSnapshot` carries no `jti`, no stamped epoch, no `exp` and no signature — so
-  there is nothing to re-verify and nothing `isAccessTokenRevoked` accepts, and a logout or an
-  epoch bump cannot reach that socket at all. Its authority ends when the socket closes, so the
-  section states that bounding the connection is the consumer's job: cap the socket's lifetime and
-  reconnect with a fresh ticket, which requires a live access token and therefore re-establishes
-  authentication and account state — though not the stream's own authorization, per the limit
-  recorded below. The hooks are the only other lever there, and they work, because they hand back a `userId`
-  and a ticket socket knows its `sub`.
-
-  The push list is a table now, and it states the rule rather than an enumeration that reads as
-  complete and is not: **anything that advances the token epoch or kills a session should drop the
-  sockets riding on it.** The first draft named three hooks and missed the MFA pair —
-  `verifyAndEnable` bumps the epoch and fires `afterMfaEnabled`, while both `disable` and the
-  administrative `resetMfa` bump it and fire `afterMfaDisabled` — so a consumer following it would
-  have left a socket connected on a stale `mfaVerified` until its lifetime cap. The table also says
-  outright that it is what the hooks cover today and not a guarantee that every bump has one, which
-  is the honest shape for a list that has already been wrong once.
-
-  The table also says, per hook, whether it names the **tenant** — and the guidance refuses to fan
-  out on a bare id, because that is the very defect this library spent 1.4.4 removing from the
-  keyspace. A repository id is unique only within a tenant, so disconnecting every socket whose
-  `sub` matches a hook's `userId` drops another tenant's user, and repeated logouts in one tenant
-  become a denial of service against another. `afterPasswordReset`, `afterMfaEnabled` and
-  `afterMfaDisabled` carry a `SafeAuthUser` and therefore a `tenantId`; `afterLogout` does not, and
-  `onSessionEvicted` does not either — `enforceSessionLimit` builds its context as
-  `{ ip, userAgent, sanitizedHeaders }` while holding both the user and the tenant as its own
-  parameters. So the section says plainly that those two cannot target a socket where ids collide,
-  rather than offering a correlation that does not exist: the evicted session hash they hand back
-  appears on no socket-side surface — not on `WsTicketSnapshot`, not among the access token's
-  claims — so a connection registry has nothing to match it against. The fallback is named per
-  transport instead: the re-check for a bearer socket or an SSE stream, the lifetime cap for a
-  ticket socket. Where ids are globally unique, both hooks are usable as written, and the section
-  says that too.
-
-  **It also records what a logout does and does not reach**, which changes what "not revoked"
-  means for a stream. `logout` blacklists the `jti` of the token presented to it and does not
-  advance the epoch — `revokeAllSessions` is what advances it — while every refresh mints a fresh
-  `jti` and revokes nothing. So a stream holding an access token the client has since rotated away
-  from will read **not revoked** however often it checks, until that token expires: the client
-  logged out with a newer token, and neither channel names the older one. That is the one case
-  where the re-check is not the guarantee and the push is not the optimisation: on the dashboard
-  plane `afterLogout` is the only mechanism that sees it. **On the platform plane there is not even
-  that** — `PlatformAuthService` fires no hooks at all, so its logout deletes the session records
-  and returns with nothing to observe, and the access-token lifetime is the only bound on a
-  platform stream holding a rotated-away token — which the section pairs with the other half of the
-  same asymmetry: the upgrade-ticket flow is **dashboard-only**, since `POST /auth/ws-ticket` sits
-  behind the dashboard guard, `WsTicketService.issue` takes a `DashboardJwtPayload` and redemption
-  asserts a dashboard snapshot. `WsJwtGuard`'s bearer branch asserts `type === 'dashboard'` as well, and a
-  browser `WebSocket` cannot send an `Authorization` header, so a browser platform admin has no
-  built-in path of any kind and needs a consumer-built mint-and-redeem bridge — which is also the
-  only place such a stream can be cut before its token expires.
-
-  The entry states what that bridge owes, because composing the platform guards is not enough:
-  `JwtPlatformGuard` injects no repository and there is no `PlatformUserStatusGuard`, a limitation
-  this library already documents on `PlatformAuthController`. A suspended administrator holding an
-  unexpired token passes every platform guard, so a bridge built only from them would mint a fresh
-  ticket and extend access past the suspension. The bridge must read the account through
-  `IPlatformUserRepository`, or the host must call `revokeAllPlatformSessions` on every status
-  change so the epoch bump reaches the token.
-
-  **The section's headline advice is now to reconnect through the guarded path rather than to
-  rebuild it.** Successive drafts described the guard chain as a checklist — two steps, then six,
-  then seven — and every one was incomplete in a new way, because the HTTP surface is not one guard
-  but a composition of them plus the options a deployment configured. There is no fixed list to
-  copy. So the advice leads with bounding the connection and re-authenticating through the guarded
-  HTTP path, which runs the real chain instead of a copy that drifts; the ticket flow already works
-  that way, since minting goes through `JwtAuthGuard` and `UserStatusGuard`.
-
-  That advice carries its own limits, stated rather than left to be discovered: **a reconnect is not
-  the HTTP chain.** It re-establishes identity and account state on the dashboard plane, and carries
-  neither `enforceTenantBinding` — the mint runs the resolver, redemption does not, so a ticket
-  minted on tenant A's host is redeemed on tenant B's socket endpoint — nor the stream's own
-  authorization. `POST
-/auth/ws-ticket` composes those two guards and no more — no `RolesGuard`, no ownership check —
-  and the ticket branch of `WsJwtGuard` only restores the snapshot, so a privileged stream rebuilt
-  on "the reconnect re-runs everything" is open to any authenticated ticket holder. The section
-  says to enforce the stream's own authorization on every connection and to re-evaluate it on the
-  cadence where the policy can change, since a role revoked mid-stream is not an authentication
-  event, or to mint through an endpoint that composes the policy instead of the built-in route.
-
-  What remains of the list is explicitly a **floor, not an enumeration**, and points the reader at
-  their own `@UseGuards()` first. It names the omissions that are exploitable: the pinned algorithm
-  with `issuer`/`audience` and `previousSecrets`; `exp`; the token `type`, since an `mfa_challenge`
-  token is signed with the same secret and reads as not revoked; the MFA policy, which the type
-  check does not imply, because a genuine `dashboard` token minted by a refresh carries
-  `mfaEnabled: true, mfaVerified: false` and `MfaRequiredGuard` refuses that pair; the account's
-  current state, which no token carries and `UserStatusGuard` resolves per request; and
-  `enforceTenantBinding`, without which a valid tenant-A token is accepted on tenant B's endpoint.
-  None of the helpers behind those is exported, which is the strongest argument for the reconnect.
-
-  And **the two MFA hooks fire for platform admins**, where
-  `MfaService` renders the admin with the sentinel `tenantId: ''` while a platform token carries no
-  tenant claim — so `'' !== undefined`, and a registry comparing the two silently skips every
-  platform connection. The section says to branch on the plane before comparing tenants.
-
-  The cadence itself is stated as a timer being the baseline for every long-lived connection, with
-  a per-inbound-message check as a tightening on top rather than an alternative to it. Offering the
-  two as equivalents was wrong for the shape that matters: a bidirectional socket can fall silent
-  inbound while the server keeps publishing, and a per-message check then never runs while
-  protected data keeps flowing. Checking before each protected outbound delivery is named as the
-  equivalent for a deployment that would rather not run a timer — including on SSE, which lacks the
-  per-message option but not that one, and where a producer emitting discrete events gets a tighter
-  boundary for less work, since an idle stream then verifies nothing and nothing protected leaves
-  without a check.
+  **Guidance on doing that safely was drafted and withdrawn**, and the reasoning is worth recording
+  because it is a statement about the library rather than about the prose. Seven successive drafts
+  were each found wrong by review — a recipe that would have admitted a pre-MFA token, a bare-id
+  fan-out reintroducing the cross-tenant defect 1.4.4 removed, a reconnect that carries neither
+  route authorization nor `enforceTenantBinding`, and mitigations that cannot reach a
+  ticket-authenticated platform socket at all. The through-line is that this library does not
+  export the pieces a consumer would need, so the documentation was describing a hand-rolled
+  reproduction of a security chain that has no supported form. That belongs in an issue with the
+  gaps named, not in a release: [#172](https://github.com/bymaxone/nest-auth/issues/172).
 
 ## [1.4.4] - 2026-08-19
 
