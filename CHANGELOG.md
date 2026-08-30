@@ -18,6 +18,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-08-29
+
 ### Added
 
 - **`AuthRevocationService` now warns when it refuses a dashboard token for carrying no tenant.**
@@ -57,6 +59,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   is a `warn` on a path that was already refusing. If it appears in your logs, a caller is reaching
   the service without the tenant from its verified token; fix the caller rather than the log, and
   consider typing the tenant as REQUIRED on your own port so the omission cannot recur.
+
+- **`AuthRevocationService` is documented in the README**, under the API reference. It has been a
+  public export since it was extracted from the three JWT guards, and the README never mentioned it
+  — so the one thing a caller outside a guard has to know, that a dashboard check must forward
+  `tenantId` from the verified token, was reachable only from the JSDoc or from this changelog.
+  That is the omission the entry above was measured on. The new section names both revocation
+  channels, states the tenant obligation as a requirement rather than a note, and describes the
+  symptom to recognise — `true` with nothing thrown, a stream that registers nothing — because it
+  does not read as an auth bug from the transport side.
+
+  It also says what the method is **not**: it answers two channels at the moment it is called, and
+  reads no `exp`, holds no subscription, emits no event, and knows nothing about account status,
+  roles, tenant binding or the identity plane. It is one check among the many a guarded route
+  performs, not a way to authorise a stream.
+
+  **Guidance on doing that safely was drafted and withdrawn**, and the reasoning is worth recording
+  because it is a statement about the library rather than about the prose. Seven successive drafts
+  were each found wrong by review — a recipe that would have admitted a pre-MFA token, a bare-id
+  fan-out reintroducing the cross-tenant defect 1.4.4 removed, a reconnect that carries neither
+  route authorization nor `enforceTenantBinding`, and mitigations that cannot reach a
+  ticket-authenticated platform socket at all. The through-line is that this library does not
+  export the pieces a consumer would need, so the documentation was describing a hand-rolled
+  reproduction of a security chain that has no supported form. That belongs in an issue with the
+  gaps named, not in a release: [#172](https://github.com/bymaxone/nest-auth/issues/172).
 
 ## [1.4.4] - 2026-08-19
 
@@ -3422,7 +3448,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.4...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.5...HEAD
+[1.4.5]: https://github.com/bymaxone/nest-auth/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/bymaxone/nest-auth/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/bymaxone/nest-auth/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/bymaxone/nest-auth/compare/v1.4.1...v1.4.2
