@@ -547,9 +547,9 @@ describe('PlatformAuthService', () => {
       await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
       await flushMicrotasks()
 
-      // Pinned exactly. `expect.anything()` here would not distinguish a context naming the
-      // plane from an empty one, which is the weakness that let two dashboard hooks ship
-      // unscopeable.
+      // Pinned exactly. `expect.anything()` would not distinguish a context naming the plane
+      // from an empty one, and the plane is the only thing that scopes a platform event: these
+      // admins belong to no tenant, so a consumer has nothing else to branch on.
       expect(hooks.afterPlatformLogout).toHaveBeenCalledWith(userId, {
         plane: 'platform',
         userId,
@@ -573,6 +573,30 @@ describe('PlatformAuthService', () => {
       await flushMicrotasks()
 
       expect(hooks.afterPlatformLogout).not.toHaveBeenCalled()
+    })
+
+    /**
+     * A consumer hook that throws synchronously.
+     * Rule: the hook may be declared `void`, so a synchronous throw is a legal implementation — and
+     * it happens before the promise wrapping it exists, so `.catch` cannot see it. Unguarded it
+     * escapes into `logout`, whose Redis writes are already done, and tells the caller a finished
+     * logout failed.
+     */
+    it('logs and swallows an afterPlatformLogout that throws synchronously', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const hooks = {
+        afterPlatformLogout: jest.fn(() => {
+          throw new Error('sync boom')
+        })
+      }
+      const withHooks = await buildServiceWithHooks(hooks)
+
+      await expect(withHooks.logout('access.jwt', rawRefreshToken)).resolves.toBe(userId)
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('afterPlatformLogout hook threw synchronously: ')
+      )
+      errorSpy.mockRestore()
     })
 
     /**

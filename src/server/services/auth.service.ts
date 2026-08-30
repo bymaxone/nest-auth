@@ -584,10 +584,10 @@ export class AuthService {
     if (this.hooks?.afterLogout && userId) {
       // The context names the account, because this method already knows it. `readSessionOwner`
       // returned both fields above and the session revoke below is keyed on them, so building an
-      // empty context here discarded a value that was in scope — the same shape 1.4.4 fixed on
-      // `onRefreshTokenReuseDetected`. It matters beyond tidiness: a consumer disconnecting live
-      // sockets on logout must match the tenant as well as the id, since a repository id is unique
-      // only within a tenant, and a hook that names only the id cannot be acted on safely.
+      // building an empty one here would discard a value that is in scope. It matters beyond
+      // tidiness: a consumer disconnecting live sockets on logout must match the tenant as well as
+      // the id, since a repository id is unique only within a tenant, so a hook naming only the id
+      // cannot be acted on safely — acting on it would reach another tenant's account.
       //
       // `ip` and `userAgent` stay empty deliberately. `logout` receives two tokens and no request,
       // so there is nothing to report and an invented value would be worse than an empty string a
@@ -925,6 +925,7 @@ export class AuthService {
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
         this.hooks.afterLogin(safeUser, {
+          plane: 'dashboard',
           userId: safeUser.id,
           ip,
           userAgent,

@@ -729,8 +729,9 @@ describe('SessionService', () => {
       })
       await flushMicrotasks()
 
-      // `objectContaining` passed while the context named neither the account nor its tenant,
-      // so the eviction was unscopeable by a consumer. Pinned exactly for that reason.
+      // Pinned exactly rather than with `objectContaining`, which passes on a context naming
+      // neither the account nor its tenant — and an eviction a consumer cannot scope by tenant
+      // cannot be acted on, since a bare id reaches another tenant's user.
       expect(mockHooks.onSessionEvicted).toHaveBeenCalledWith(userId, hashes[0], {
         plane: 'dashboard',
         userId,

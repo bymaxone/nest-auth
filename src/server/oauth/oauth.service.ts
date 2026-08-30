@@ -389,6 +389,7 @@ export class OAuthService {
     // come from the server-side state record and the verified profile, never from the callback
     // request.
     const hookContext: HookContext = {
+      plane: 'dashboard',
       tenantId,
       email: profile.email,
       ip,

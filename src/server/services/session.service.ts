@@ -362,6 +362,7 @@ export class SessionService {
         sessionHash: hash.slice(0, 8)
       }
       const context: HookContext = {
+        plane: 'dashboard',
         ip,
         userAgent,
         sanitizedHeaders: {}
@@ -889,10 +890,9 @@ export class SessionService {
 
     // Names the account as well as the request. `userId` and `tenantId` are parameters of this
     // method and were omitted from the context it built, which left `onSessionEvicted` reporting an
-    // eviction a consumer could not scope: a repository id is unique only within a tenant, so
-    // disconnecting sockets on a bare id reaches another tenant's user. The values were never
-    // unavailable, which is the same defect 1.4.4 fixed on `onRefreshTokenReuseDetected` and 1.4.6
-    // fixes on `afterLogout`.
+    // eviction a consumer cannot scope: a repository id is unique only within a tenant, so
+    // disconnecting sockets on a bare id reaches another tenant's user. Both values are parameters
+    // of this method, so the context must carry them.
     const context: HookContext = {
       plane: 'dashboard',
       userId,

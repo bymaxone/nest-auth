@@ -247,9 +247,24 @@ export class PlatformAuthService {
   private emitPlatformLogout(userId: string): void {
     if (!this.hooks?.afterPlatformLogout || !userId) return
     const context: HookContext = { ...createEmptyHookContext(), plane: 'platform', userId }
-    void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch((err: unknown) => {
-      this.logger.error(`afterPlatformLogout hook threw: ${describeChannelStatus(err)}`)
-    })
+
+    // The invocation sits INSIDE the try, not just the promise it returns. `afterPlatformLogout`
+    // may be declared `void`, so a consumer implementation is free to throw synchronously — and a
+    // synchronous throw happens before `Promise.resolve` exists to wrap it, so `.catch` never sees
+    // it and the exception escapes into `logout`, whose Redis writes have already completed. The
+    // caller would then be told a finished logout failed, and might retry it. Same shape and same
+    // remedy as `TokenManagerService.emitReuseDetected`.
+    try {
+      void Promise.resolve(this.hooks.afterPlatformLogout(userId, context)).catch(
+        (err: unknown) => {
+          this.logger.error(`afterPlatformLogout hook threw: ${describeChannelStatus(err)}`)
+        }
+      )
+    } catch (err: unknown) {
+      this.logger.error(
+        `afterPlatformLogout hook threw synchronously: ${describeChannelStatus(err)}`
+      )
+    }
   }
 
   // ---------------------------------------------------------------------------
