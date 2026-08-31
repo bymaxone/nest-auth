@@ -235,15 +235,14 @@ export class PlatformAuthService {
   /**
    * Announces a completed platform logout, the only hook `PlatformAuthService` emits.
    *
-   * Extracted rather than inlined at the call site, mirroring `TokenManagerService`'s
-   * `emitReuseDetected`: the emit carries three concerns a reader of `logout` does not need — the
-   * `null` hooks case, the fire-and-forget discipline, and the rejection log — and inlining them
-   * pushed `logout` past the length this repository holds its methods to.
+   * Owns three concerns a reader of `logout` does not need: whether a hook is registered, the
+   * fire-and-forget discipline, and the rejection log. It mirrors `TokenManagerService`'s
+   * `emitReuseDetected`, which carries the same three for the same reason.
    *
-   * Fired here rather than shared with `afterLogout`, because a consumer's existing dashboard
+   * The event is its own hook rather than a share of `afterLogout`, because a consumer's dashboard
    * handler may resolve a tenant and a platform administrator has none. Fire-and-forget: a hook
    * that throws must not turn a completed logout into a failed one, so the rejection is logged
-   * rather than propagated — and logged rather than swallowed, so a broken consumer hook is
+   * rather than propagated — and logged rather than swallowed, so a broken consumer hook stays
    * visible.
    *
    * @param userId - The administrator who signed out; empty when the record named no owner, in

@@ -589,10 +589,10 @@ export class AuthService {
   /**
    * Announces a completed logout, the only hook `AuthService.logout` emits.
    *
-   * Extracted so the session-revocation flow reads on its own, matching
-   * `PlatformAuthService.emitPlatformLogout` and `TokenManagerService.emitReuseDetected`. The emit
-   * carries three concerns a reader of `logout` does not need: whether a hook is registered, the
-   * fire-and-forget discipline, and the rejection log.
+   * Owns three concerns the session-revocation flow does not need: whether a hook is registered,
+   * the fire-and-forget discipline, and the rejection log. It mirrors
+   * `PlatformAuthService.emitPlatformLogout` and `TokenManagerService.emitReuseDetected`, which
+   * carry the same three.
    *
    * The context names the account, because `logout` knows it — `readSessionOwner` returns both
    * fields and the session revoke is keyed on them. A consumer disconnecting live sockets must
