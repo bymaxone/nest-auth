@@ -1616,6 +1616,40 @@ describe('AuthService', () => {
       expect(logged).not.toContain('user-1')
       loggerSpy.mockRestore()
     })
+
+    // Scenario: a consumer hook declared `void` that throws synchronously.
+    // Rule: the throw happens before the promise wrapping it exists, so `.catch` cannot see it.
+    // Unguarded it escapes into `logout`, whose Redis writes are already done, and tells the
+    // caller a finished logout failed.
+    it('logs and swallows an afterLogout that throws synchronously', async () => {
+      // `*Once` throughout: this suite shares its mocks across tests, and a persistent
+      // implementation here leaks into a later logout assertion.
+      mockRedis.readSessionOwner.mockResolvedValueOnce({
+        userId: 'real-owner',
+        tenantId: 'tenant-1'
+      })
+      mockTokenManager.verifyIgnoringExpiry.mockReturnValueOnce({
+        jti: 'j',
+        sub: 'real-owner',
+        exp: Math.floor(Date.now() / 1000) + 900
+      })
+      mockRedis.set.mockResolvedValueOnce(undefined)
+      mockRedis.del.mockResolvedValue(undefined)
+      const loggerSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      // The message carries the account id, so the assertion below pins the REDACTION as well as
+      // the log line: `describeError` is handed `[userId]` as the secret list, and a message that
+      // still spells the id would mean that list went missing.
+      mockHooks.afterLogout.mockImplementationOnce(() => {
+        throw new Error('audit sink refused real-owner')
+      })
+
+      await expect(service.logout('access.jwt', 'raw-refresh')).resolves.toBe('real-owner')
+
+      const logged = String(loggerSpy.mock.calls.at(-1)?.[0])
+      expect(logged).toContain('afterLogout hook threw synchronously: ')
+      expect(logged).not.toContain('real-owner')
+      loggerSpy.mockRestore()
+    })
   })
 
   // ---------------------------------------------------------------------------

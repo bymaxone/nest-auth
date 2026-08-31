@@ -534,7 +534,7 @@ describe('PlatformAuthService', () => {
     })
 
     /**
-     * The only hook this plane emits.
+     * The only hook `PlatformAuthService` emits.
      * Rule: `PlatformAuthService` fired no hook at all, so a consumer holding a live platform
      * stream could not learn that the administrator behind it signed out — the access token
      * stayed presentable until it expired and nothing observed the session's removal. The context

@@ -62,7 +62,12 @@ export class PlatformAuthService {
     @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null
+    // Defaulted, not merely `@Optional()`. This service is exported from the package entry for
+    // consumers driving their own platform routes, so the emitted constructor signature is public
+    // API: a parameter without a default is REQUIRED in the generated `.d.ts`, and every existing
+    // six-argument construction would stop compiling. The default keeps those callers source-
+    // compatible while Nest still injects the provider when one is registered.
+    @Inject(BYMAX_AUTH_HOOKS) @Optional() private readonly hooks: IAuthHooks | null = null
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -228,7 +233,7 @@ export class PlatformAuthService {
   }
 
   /**
-   * Announces a completed platform logout, the only hook this plane emits.
+   * Announces a completed platform logout, the only hook `PlatformAuthService` emits.
    *
    * Extracted rather than inlined at the call site, mirroring `TokenManagerService`'s
    * `emitReuseDetected`: the emit carries three concerns a reader of `logout` does not need — the
