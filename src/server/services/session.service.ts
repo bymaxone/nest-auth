@@ -888,11 +888,10 @@ export class SessionService {
       .filter((entry) => entry.memberHash !== newHash)
       .slice(0, evictCount)
 
-    // Names the account as well as the request. `userId` and `tenantId` are parameters of this
-    // method and were omitted from the context it built, which left `onSessionEvicted` reporting an
-    // eviction a consumer cannot scope: a repository id is unique only within a tenant, so
-    // disconnecting sockets on a bare id reaches another tenant's user. Both values are parameters
-    // of this method, so the context must carry them.
+    // Names the account as well as the request. An eviction context must carry tenant-qualified
+    // identity: a repository id is unique only within a tenant, so a consumer disconnecting sockets
+    // on a bare id reaches another tenant's user. Both values are parameters of this method, so
+    // there is nothing to look up.
     const context: HookContext = {
       plane: 'dashboard',
       userId,

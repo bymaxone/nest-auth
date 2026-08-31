@@ -535,10 +535,10 @@ describe('PlatformAuthService', () => {
 
     /**
      * The only hook `PlatformAuthService` emits.
-     * Rule: `PlatformAuthService` fired no hook at all, so a consumer holding a live platform
-     * stream could not learn that the administrator behind it signed out — the access token
-     * stayed presentable until it expired and nothing observed the session's removal. The context
-     * names the plane rather than a tenant, because a platform admin belongs to none.
+     * Rule: a platform logout context must identify the platform plane, because a platform
+     * administrator belongs to no tenant and the plane is the only thing a consumer can scope on.
+     * This is the sole signal `PlatformAuthService` emits, so a consumer holding a live platform
+     * stream has nothing else to close it on.
      */
     it('fires afterPlatformLogout with a platform-planed context', async () => {
       const hooks = { afterPlatformLogout: jest.fn().mockResolvedValue(undefined) }
