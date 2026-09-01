@@ -228,9 +228,11 @@ describe('AuthProvider — initial mount', () => {
 // ---------------------------------------------------------------------------
 
 describe('AuthProvider — login', () => {
-  // Successful login forwards the credentials to client.login with
-  // the default tenant id, then commits the returned user to context.
-  it('sets the authenticated user on successful login and uses default tenantId', async () => {
+  // An omitted tenant must reach the client as an ABSENT key rather than a
+  // defaulted one. A deployment configuring `tenantIdResolver` refuses any
+  // body that names a tenant (`400 auth.validation`), so any value this layer
+  // supplies on the caller's behalf makes login unanswerable there.
+  it('omits tenantId from the login payload when the caller supplies none', async () => {
     const client = createMockClient()
     client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
     client.login.mockResolvedValue(MOCK_AUTH_RESULT)
@@ -241,11 +243,12 @@ describe('AuthProvider — login', () => {
     await act(async () => {
       await result.current?.login('a@b.test', 'pw')
     })
-    expect(client.login).toHaveBeenCalledWith({
-      email: 'a@b.test',
-      password: 'pw',
-      tenantId: 'default'
-    })
+    const input = client.login.mock.calls[0]?.[0]
+    expect(input).toEqual({ email: 'a@b.test', password: 'pw' })
+    // `toEqual` treats an undefined-valued key as absent, so it cannot tell a
+    // pass-through from a `tenantId: undefined` assignment. Pin the key itself:
+    // only an absent key survives `JSON.stringify` as an absent wire field.
+    expect(input && 'tenantId' in input).toBe(false)
     expect(result.current?.status).toBe('authenticated')
     expect(result.current?.user).toEqual(MOCK_USER)
   })
@@ -511,9 +514,10 @@ describe('AuthProvider — imperative methods', () => {
     expect(result.current?.status).toBe('unauthenticated')
   })
 
-  // forgotPassword defaults the tenantId when the caller omits it,
-  // matching the provider's single-tenant ergonomic promise.
-  it('forgotPassword uses default tenantId when omitted', async () => {
+  // forgotPassword carries the same omission rule as login: an absent tenant
+  // stays absent, because `createAuthClient` only drops the wire field when the
+  // argument is `undefined`, and a resolver-configured server refuses a named one.
+  it('forgotPassword forwards no tenant when the caller omits it', async () => {
     const client = createMockClient()
     client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
     client.forgotPassword.mockResolvedValue(undefined)
@@ -524,7 +528,7 @@ describe('AuthProvider — imperative methods', () => {
     await act(async () => {
       await result.current?.forgotPassword('a@b.test')
     })
-    expect(client.forgotPassword).toHaveBeenCalledWith('a@b.test', 'default')
+    expect(client.forgotPassword).toHaveBeenCalledWith('a@b.test', undefined)
   })
 
   // forgotPassword forwards an explicit tenantId verbatim.
