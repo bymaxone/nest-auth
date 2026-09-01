@@ -4,12 +4,23 @@
 # this map. Without an entry, `pnpm install` exits with ERR_PNPM_IGNORED_BUILDS
 # rather than warning.
 allowBuilds:
-  # Optional native dependency of jest-haste-map, used only to speed up `jest --watch`.
-  # Jest falls back to its own polling watcher without it, and no pipeline job runs watch
-  # mode — `test:watch` is a developer convenience and nothing in CI calls it — so the
-  # native build buys this repo nothing and is denied like any other unreviewed build
-  # script. Listed explicitly rather than left out: an absent entry and a denied one behave
-  # the same at install time, but only the entry records that the question was asked.
+  # A direct dependency of jest-haste-map, whose native binding serves the file watcher —
+  # so it is reached only in watch mode, and nothing in CI runs that: `test:watch` is a
+  # developer convenience no workflow calls.
+  #
+  # Denying costs nothing even for a developer who does use watch mode, because the build
+  # script is a no-op under a normal install. `@parcel/watcher@2.6.0` runs
+  # `node scripts/build-from-source.js`, whose entire body is:
+  #
+  #     if (process.env.npm_config_build_from_source === 'true') { build() }
+  #
+  # Unset, it compiles nothing; the package ships prebuilt binaries per platform. So `true`
+  # would not buy a native build here — it would only grant the script permission to act if
+  # that gate ever moves. `false` is the entry with an effect, not the cautious half of two
+  # real options.
+  #
+  # Listed explicitly rather than left out: an absent entry and a denied one behave the same
+  # at install time, but only the entry records that the question was asked.
   '@parcel/watcher': false
   '@swc/core': true
   esbuild: true
