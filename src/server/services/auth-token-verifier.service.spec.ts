@@ -17,7 +17,6 @@ import { AuthException } from '../errors/auth-exception'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 import { AuthTokenVerifierService } from './auth-token-verifier.service'
-import type { VerifyAccessTokenOptions } from './auth-token-verifier.service'
 
 /** Extracts the canonical error code from a thrown AuthException response body. */
 function errorCodeOf(err: unknown): string {
@@ -223,7 +222,7 @@ describe('AuthTokenVerifierService', () => {
     'throws a TypeError for the plane %p rather than running the platform arm',
     async (plane) => {
       const thrown = await verifier
-        .verifyAccessToken('tok', { plane } as unknown as VerifyAccessTokenOptions)
+        .verifyAccessToken('tok', { plane } as never)
         .catch((e: unknown) => e)
       expect(thrown).toBeInstanceOf(TypeError)
       expect((thrown as TypeError).message).toBe(
