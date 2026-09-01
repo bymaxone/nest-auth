@@ -4,6 +4,22 @@
 # this map. Without an entry, `pnpm install` exits with ERR_PNPM_IGNORED_BUILDS
 # rather than warning.
 allowBuilds:
+  # Reached only in watch mode: the native binding serves jest-haste-map's file watcher, and
+  # nothing in CI runs watch mode — `test:watch` is a developer convenience no workflow calls.
+  #
+  # Denying costs nothing even for a developer who does use watch mode, because the install
+  # script is a no-op unless it is asked for. `@parcel/watcher@2.6.0` runs
+  # `node scripts/build-from-source.js`, whose entire body is:
+  #
+  #     if (process.env.npm_config_build_from_source === 'true') { build() }
+  #
+  # Unset, it compiles nothing and the package uses its prebuilt binaries. So `true` would not
+  # buy a native build — it would only grant the script permission to act if that gate moves.
+  #
+  # The entry is kept whether or not the resolved tree contains the package: pnpm 11
+  # EXITS on an unlisted build script, so the decision has to be on record BEFORE a dependency
+  # bump introduces one, or that bump cannot install.
+  '@parcel/watcher': false
   '@swc/core': true
   esbuild: true
   unrs-resolver: true
