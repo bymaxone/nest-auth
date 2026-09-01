@@ -53,6 +53,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   redeemed ticket no longer has; and the call holds no subscription, so a stream that asks once at
   connect is authorized for the lifetime of the token rather than of the session.
 
+  **Two limits are stated rather than left to be discovered.** On the dashboard plane the status
+  check reads the `us:`/`uev:` cache, and nothing in this library invalidates those keys when a
+  status changes — they expire. So its freshness is bounded by `userStatusCacheTtlSeconds`
+  (default 60 s) and not by how often you call: a stream re-verifying every five seconds still
+  serves a banned account for up to a minute. The platform plane is uncached and genuinely current.
+  And a `plane` that is neither value throws a `TypeError` instead of falling through — the
+  fall-through arm would be the cross-tenant platform one, so a `'Dashboard'` from an unnarrowed
+  config value would verify a real platform token for a connection meant to be tenant-scoped.
+
+  Refusals mirror the code the equivalent guard already answers, so a consumer moving a surface
+  onto this service keeps branching on what it branched on before. That includes the asymmetry:
+  a wrong token type is `PLATFORM_AUTH_REQUIRED` on the platform plane, as `JwtPlatformGuard`
+  answers, and `TOKEN_INVALID` on the dashboard one, as `JwtAuthGuard` does.
+
   Closes the first of the five candidate changes in [#172](https://github.com/bymaxone/nest-auth/issues/172),
   which is the one that removes the most from a consumer's plate — six of the eight obligations its
   table lists.
@@ -82,12 +96,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   **Apply to a derived backend.** Nothing to do in the ordinary case: `UserStatusGuard` behaves
   identically, `BymaxAuthModule` exports the new service, and `@UseGuards(UserStatusGuard)`
   resolves exactly as before. **One narrow break:** the guard's constructor now takes a single
-  `AccountStatusService` in place of `(AuthRedisService, BYMAX_AUTH_USER_REPOSITORY,
-BYMAX_AUTH_OPTIONS)`. If you register `UserStatusGuard` in your OWN module's `providers` rather
-  than relying on the auth module's export — or construct it directly in a test — add
-  `AccountStatusService` to that provider list and drop the three. A `useValue` double now needs
-  one method, `assertDashboardAccountUsable({ userId, tenantId })`, instead of a fake Redis and a
-  fake repository.
+  `AccountStatusService`, in place of the Redis service, the repository token and the options
+  token. If you register `UserStatusGuard` in your OWN module's `providers` rather than relying on
+  the auth module's export — or construct it directly in a test — list `AccountStatusService`
+  there and drop the three. A `useValue` double now needs one method,
+  `assertDashboardAccountUsable({ userId, tenantId })`, instead of a fake Redis and a fake
+  repository.
 
 - **`afterPlatformLogout`, the first hook `PlatformAuthService` emits.** That service fired none at
   all — it did not even receive the hooks provider — so a consumer holding a live platform stream

@@ -17,6 +17,7 @@ import { AuthException } from '../errors/auth-exception'
 import { AccountStatusService } from './account-status.service'
 import { AuthRevocationService } from './auth-revocation.service'
 import { AuthTokenVerifierService } from './auth-token-verifier.service'
+import type { VerifyAccessTokenOptions } from './auth-token-verifier.service'
 
 /** Extracts the canonical error code from a thrown AuthException response body. */
 function errorCodeOf(err: unknown): string {
@@ -197,13 +198,41 @@ describe('AuthTokenVerifierService', () => {
   })
 
   // The plane is the CALLER's claim, never the token's: a dashboard token must not open a platform
-  // stream by being handed to the platform arm.
-  it('refuses a dashboard token presented on the platform plane', async () => {
-    const thrown = await verifier
-      .verifyAccessToken('tok', { plane: 'platform' })
-      .catch((e: unknown) => e)
-    expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
-  })
+  // stream by being handed to the platform arm. The code is PLATFORM_AUTH_REQUIRED rather than
+  // TOKEN_INVALID, matching what JwtPlatformGuard already answers for the same condition, so a
+  // consumer moving a surface off that guard keeps branching on what it branched on before.
+  it.each(['dashboard', 'mfa_challenge'])(
+    'answers PLATFORM_AUTH_REQUIRED for a %s token on the platform plane',
+    async (type) => {
+      mockJwt.verify.mockReturnValue({ ...PLATFORM_PAYLOAD, type })
+      const thrown = await verifier
+        .verifyAccessToken('tok', { plane: 'platform' })
+        .catch((e: unknown) => e)
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+      expect(mockRevocation.isAccessTokenRevoked).not.toHaveBeenCalled()
+    }
+  )
+
+  // A plane that is neither must REFUSE, not fall through. TypeScript rules the value out; a
+  // JavaScript consumer, or one deriving the plane from a namespace segment or an unnarrowed
+  // config value, does not. The fall-through arm would be the PLATFORM one — the cross-tenant
+  // path — so `'Dashboard'` would verify a real platform token for a connection meant to be
+  // tenant-scoped. A TypeError rather than an AuthException: this is the caller's bug, not an
+  // authentication outcome, and it must not read as one.
+  it.each([['Dashboard'], ['dash'], [undefined]])(
+    'throws a TypeError for the plane %p rather than running the platform arm',
+    async (plane) => {
+      const thrown = await verifier
+        .verifyAccessToken('tok', { plane } as unknown as VerifyAccessTokenOptions)
+        .catch((e: unknown) => e)
+      expect(thrown).toBeInstanceOf(TypeError)
+      expect((thrown as TypeError).message).toBe(
+        "verifyAccessToken: plane must be 'dashboard' or 'platform'"
+      )
+      expect(mockRevocation.isAccessTokenRevoked).not.toHaveBeenCalled()
+      expect(mockAccountStatus.assertPlatformAccountUsable).not.toHaveBeenCalled()
+    }
+  )
 
   // A revoked token is refused on both planes, and as TOKEN_INVALID rather than a distinct code:
   // telling "valid but logged out" from "never valid" is an oracle for no benefit.

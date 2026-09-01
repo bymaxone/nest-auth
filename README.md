@@ -1721,12 +1721,23 @@ registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
 | MFA policy (`requireMfa`, default on)                                                  | A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed         |
 | Account status (`checkStatus`, default on)                                             | A suspension landing between two reconnects is seen — the token's own `status` claim is a snapshot taken at issuance          |
 
-The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
-attacker-chosen: a platform token would open a dashboard stream by saying it is one.
+On the dashboard plane that last row reads a cache, and **its freshness is bounded by
+`userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: no flow in this library
+invalidates the `us:`/`uev:` keys when a status changes — they expire. A stream re-verifying every
+five seconds therefore still serves a banned account for up to a minute, and lowering the TTL is
+what shortens the cut-off. The platform plane is uncached and genuinely current, at one repository
+read per call.
 
-Every refusal is an `AuthException`. The token-shaped ones all answer `auth.token_invalid` so a
-caller cannot tell "valid but revoked" from "never valid"; `auth.mfa_required` and the `ACCOUNT_*`
-codes name themselves, because a legitimate client acts on those differently.
+The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
+attacker-chosen: a platform token would open a dashboard stream by saying it is one. Passing a
+value that is neither throws a `TypeError` rather than refusing quietly — the fall-through would
+otherwise be the cross-tenant platform arm.
+
+Every refusal is an `AuthException`, and each mirrors the code the equivalent guard already
+answers. Most answer `auth.token_invalid` so a caller cannot tell "valid but revoked" from "never
+valid"; `auth.mfa_required`, the `ACCOUNT_*` codes and — on the platform plane only —
+`auth.platform_auth_required` name themselves, because a legitimate client acts on each
+differently.
 
 > [!IMPORTANT]
 > **Three things it still does not do.** Route **authorization** is yours — this answers who the

@@ -66,12 +66,19 @@ export interface VerifyAccessTokenOptions {
   readonly requireMfa?: boolean
 
   /**
-   * Consult the account's CURRENT lifecycle status rather than the snapshot the token carries,
+   * Re-resolve the account's lifecycle status instead of trusting the snapshot the token carries,
    * refusing a blocked, deleted or — on the dashboard plane, where verification gates API
    * access — unverified account.
    *
-   * The only check here that reads a store other than Redis, and the only one that can answer
-   * differently a second after the first call: a suspension lands between two reconnects.
+   * The only check that can answer differently between two calls: a suspension lands between two
+   * reconnects, and nothing in the token would say so.
+   *
+   * **Its freshness on the dashboard plane is bounded by `userStatusCacheTtlSeconds`, not by how
+   * often you call.** That plane reads the `us:`/`uev:` cache, and no flow in this library
+   * invalidates those keys when a status changes — they simply expire (default 60 s). So a stream
+   * re-verifying every five seconds still serves a banned account for up to a minute; lowering
+   * the TTL is what shortens the cut-off, not a tighter cadence. The platform plane is uncached
+   * and therefore genuinely current, at the cost of a repository read per call.
    *
    * @defaultValue true
    */
@@ -141,20 +148,29 @@ export class AuthTokenVerifierService {
   /**
    * Verifies an access token and returns its payload, or throws.
    *
-   * Every refusal is an {@link AuthException}. The token-shaped ones all answer `TOKEN_INVALID`
-   * rather than naming which check failed, matching the guards: telling a caller "valid but
-   * revoked" apart from "never valid" is an oracle for no benefit. The two that DO name
-   * themselves are the ones a legitimate client must act on differently — `MFA_REQUIRED` means
-   * complete the challenge, and the `ACCOUNT_*` codes mean the account itself is refused.
+   * Every refusal is an {@link AuthException}, and each mirrors the code the equivalent guard
+   * already answers, so a consumer moving a surface onto this service keeps branching on what it
+   * branched on before.
+   *
+   * Most token-shaped failures answer `TOKEN_INVALID` without naming which check refused: telling
+   * "valid but revoked" apart from "never valid" is an oracle for no benefit. Three name
+   * themselves, because a legitimate client acts on each differently — `MFA_REQUIRED` means
+   * complete the challenge, the `ACCOUNT_*` codes mean the account itself is refused, and
+   * `PLATFORM_AUTH_REQUIRED` means a token for the other context was presented. That last one is
+   * the platform plane only, and it is what {@link JwtPlatformGuard} answers there; the dashboard
+   * plane collapses a wrong type into `TOKEN_INVALID`, as {@link JwtAuthGuard} does.
    *
    * @param token - The compact JWT, exactly as presented. Never a decoded payload: a caller that
    *   already decoded it has skipped the signature, which is the check everything else rests on.
    * @param options - The plane, and which of the two optional checks to run.
    * @returns The verified payload, tagged with the plane it was checked against.
    * @throws {@link AuthException} with `TOKEN_INVALID` when the signature, expiry, claim shape,
-   *   type or revocation state refuses the token; `MFA_REQUIRED` when the account has MFA enabled
-   *   and this token predates its challenge; or the matching `ACCOUNT_*` / `EMAIL_NOT_VERIFIED`
-   *   code when the account is no longer usable.
+   *   dashboard token type or revocation state refuses the token; `PLATFORM_AUTH_REQUIRED` when a
+   *   non-platform token is presented on the platform plane; `MFA_REQUIRED` when the account has
+   *   MFA enabled and this token predates its challenge; or the matching `ACCOUNT_*` /
+   *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable.
+   * @throws {TypeError} When `options.plane` is neither `'dashboard'` nor `'platform'` — a caller
+   *   error rather than an authentication outcome, so it is deliberately not an `AuthException`.
    */
   async verifyAccessToken(
     token: string,
@@ -162,9 +178,16 @@ export class AuthTokenVerifierService {
   ): Promise<VerifiedAccessToken> {
     const { plane, requireMfa = true, checkStatus = true } = options
 
-    return plane === 'dashboard'
-      ? await this.verifyDashboard(token, requireMfa, checkStatus)
-      : await this.verifyPlatform(token, requireMfa, checkStatus)
+    if (plane === 'dashboard') return await this.verifyDashboard(token, requireMfa, checkStatus)
+    if (plane === 'platform') return await this.verifyPlatform(token, requireMfa, checkStatus)
+
+    // Neither, which TypeScript rules out and a runtime does not: a JavaScript consumer, or one
+    // deriving the plane from a namespace segment or a config value it never narrowed. Written as
+    // an exhaustive refusal rather than an `else`, because the `else` arm is the PLATFORM one —
+    // so `'Dashboard'` or an omitted key would silently run the cross-tenant path, verify a real
+    // platform token, and hand back a payload with no `tenantId` for a connection the caller meant
+    // to scope. That is the same "never infer the plane" rule this service argues for, one level up.
+    throw new TypeError(`verifyAccessToken: plane must be 'dashboard' or 'platform'`)
   }
 
   /**
@@ -224,7 +247,13 @@ export class AuthTokenVerifierService {
 
     assertValidJti(payload.jti)
     assertValidSub(payload.sub)
-    assertTokenType(payload, 'platform')
+    // Not `assertTokenType`, for the reason `JwtPlatformGuard` gives at the same step: this plane
+    // answers PLATFORM_AUTH_REQUIRED so a caller can tell "you presented a token for the other
+    // context" from "your token is malformed". A consumer moving a platform surface off the guard
+    // and onto this service must keep receiving the code it already branches on.
+    if (payload.type !== 'platform') {
+      throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+    }
 
     if (await this.revocation.isAccessTokenRevoked(payload, 'platform')) {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)

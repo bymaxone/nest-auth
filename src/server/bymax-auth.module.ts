@@ -178,8 +178,9 @@ export class BymaxAuthModule {
   static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
     const extraProviders = options.extraProviders ?? []
 
-    // BYMAX_AUTH_USER_REPOSITORY is required by AuthService, UserStatusGuard, SessionService,
-    // MfaService, OAuthService, InvitationService, and PasswordResetService. Without it every
+    // BYMAX_AUTH_USER_REPOSITORY is required by AuthService, AccountStatusService (and through
+    // it UserStatusGuard), SessionService, MfaService, OAuthService, InvitationService, and
+    // PasswordResetService. Without it every
     // request that touches user data fails with a NestJS injection error at runtime. Catching
     // the omission here — at synchronous module-build time — gives a clear startup error
     // instead of a cryptic "No provider for BYMAX_AUTH_USER_REPOSITORY" from NestJS internals.
@@ -578,12 +579,22 @@ export class BymaxAuthModule {
         // injector, a dep missing here fails the consumer's boot with
         // UnknownDependenciesException even though the guard itself is exported.
         //
-        //   UserStatusGuard -> BYMAX_AUTH_USER_REPOSITORY
+        //   UserStatusGuard -> AccountStatusService
         //   WsJwtGuard      -> WsTicketService
         //
-        // Re-exporting the token (rather than asking the consumer to register the repository
-        // again) is what keeps the guard bound to the SAME instance the auth module uses; a
-        // second registration would resolve the guard against a different object.
+        // Only the DIRECT dependency needs exporting. An exported provider arrives already
+        // instantiated, so the consumer's injector binds that instance and never re-resolves its
+        // own constructor — `AccountStatusService` reaches `BYMAX_AUTH_USER_REPOSITORY` through
+        // this module, not through the consumer's. Measured both ways on the `@UseGuards`
+        // consumer-module test: dropping the service fails it, dropping the repository token
+        // does not.
+        //
+        // The repository token, one row down, is exported for its own reason: a host may inject
+        // the very instance it supplied, and re-exporting it (rather than asking the consumer to
+        // register the repository again) is what keeps every injector bound to the SAME object —
+        // a second registration would resolve against a different one. Pinned by the `should
+        // export BYMAX_AUTH_USER_REPOSITORY as the instance supplied by the consumer` test, which
+        // is the one that fails without it.
         BYMAX_AUTH_USER_REPOSITORY,
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
