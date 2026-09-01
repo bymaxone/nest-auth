@@ -230,8 +230,8 @@ describe('AuthProvider — initial mount', () => {
 describe('AuthProvider — login', () => {
   // An omitted tenant must reach the client as an ABSENT key rather than a
   // defaulted one. A deployment configuring `tenantIdResolver` refuses any
-  // body that names a tenant (`400 auth.validation`), so a fallback here
-  // made every login through the hook unanswerable on that deployment.
+  // body that names a tenant (`400 auth.validation`), so any value this layer
+  // supplies on the caller's behalf makes login unanswerable there.
   it('omits tenantId from the login payload when the caller supplies none', async () => {
     const client = createMockClient()
     client.getMe.mockRejectedValue(new AuthClientError('unauthorized', 401))
