@@ -20,6 +20,89 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
+  guarded HTTP route establishes seven things before a handler runs. A long-lived transport has no
+  guard in front of it and must establish the same seven itself, on a cadence, for as long as the
+  connection lives. Until now this library exported the parts and not the chain, and the parts do
+  not compose into it by inspection: `AuthRevocationService` answers two revocation channels and
+  says so, but a bridge calling it alone has checked a signature and a blacklist while checking
+  neither the token's **type**, nor its **`exp`**, nor whether the **account** behind it still
+  exists. `verifyWithRotation`, `assertValidJti`, `assertValidSub`, `assertValidTenantId` and
+  `assertTokenType` — the pieces that close those — were all internal.
+
+  `verifyAccessToken(token, { plane })` performs, in the order the refusals fire: the signature
+  under the pinned algorithm, the configured `issuer`/`audience` and any secret retired by a
+  rotation; `exp`; the claim shapes that become Redis keys downstream; the token type; both
+  revocation channels; the MFA policy; and the account's **current** status. The last two are
+  opt-out (`requireMfa`, `checkStatus`), defaulting to on.
+
+  **The plane is the caller's to declare and is never inferred from the token's own `type` claim.**
+  Inferring it would make the plane attacker-chosen — a platform token would open a dashboard
+  stream by saying it is one. It is returned on the result for the reason `HookContext.plane`
+  exists: a tenant cannot answer the question, because a platform token carries no tenant claim.
+
+  Two of the seven are worth naming for what they catch that a signature does not. A refresh mints
+  `mfaEnabled: true, mfaVerified: false`, so a token that is otherwise entirely valid can represent
+  a session that never completed its second factor — the type does not imply it. And the `status`
+  claim a token carries is a snapshot taken at issuance, so a suspension landing between two
+  reconnects is invisible to anything that reads the token alone; this asks the account.
+
+  **What it still does not do is stated rather than implied**, in the JSDoc and in the README:
+  route authorization is the consumer's and belongs on every message a stream carries rather than
+  on the handshake alone; `enforceTenantBinding` needs the request its resolver reads, which a
+  redeemed ticket no longer has; and the call holds no subscription, so a stream that asks once at
+  connect is authorized for the lifetime of the token rather than of the session.
+
+  **Two limits are stated rather than left to be discovered.** On the dashboard plane the status
+  check reads the `us:`/`uev:` cache, and nothing in this library invalidates those keys when a
+  status changes — they expire. So its freshness is bounded by `userStatusCacheTtlSeconds`
+  (default 60 s) and not by how often you call: a stream re-verifying every five seconds still
+  serves a banned account for up to a minute. The platform plane is uncached and genuinely current.
+  And a `plane` that is neither value throws a `TypeError` instead of falling through — the
+  fall-through arm would be the cross-tenant platform one, so a `'Dashboard'` from an unnarrowed
+  config value would verify a real platform token for a connection meant to be tenant-scoped.
+
+  Refusals mirror the code the equivalent guard already answers, so a consumer moving a surface
+  onto this service keeps branching on what it branched on before. That includes the asymmetry:
+  a wrong token type is `PLATFORM_AUTH_REQUIRED` on the platform plane, as `JwtPlatformGuard`
+  answers, and `TOKEN_INVALID` on the dashboard one, as `JwtAuthGuard` does.
+
+  Closes the first of the five candidate changes in [#172](https://github.com/bymaxone/nest-auth/issues/172),
+  which is the one that removes the most from a consumer's plate — six of the eight obligations its
+  table lists.
+
+- **`AccountStatusService`**, exported alongside it. It is the account lifecycle gate
+  `UserStatusGuard` already applied, lifted out of that guard so the verifier could share it rather
+  than carry a second copy of the cache key shape, the miss path and the order of the two refusals
+  — a guarded route and a long-lived transport have to reach the same verdict about the same
+  account, and one rule with two implementations is how that stops being true. Exported for the
+  narrower case too: a consumer already holding a verified payload can re-ask the one question
+  whose answer changes while a stream is open.
+
+  It also answers on the **platform** plane, which nothing did before: there is no
+  `PlatformUserStatusGuard`, and #172 recorded the absence as "no platform equivalent exists". That
+  is true of the guard and not of the capability — `IPlatformUserRepository.findById` and
+  `AuthPlatformUser.status` were already in the contract, so a platform administrator's suspension
+  was checkable and simply never checked. The platform read is uncached, unlike the dashboard one:
+  there is no tenant to scope a cache key by, and the population is small enough that a read per
+  call beats a keyspace no flow invalidates. It has no email-verification arm —
+  `emailVerification.required` gates tenant registration, and an administrator is provisioned.
+
+  **It fails closed when the platform repository is absent.** A deployment without
+  `controllers.platform` registers no repository and also mints no platform token, so that branch
+  answers a token which cannot have been issued there — which is exactly the case that must not be
+  waved through. Skipping a gate because its collaborator is missing is how a gate stops gating.
+
+  **Apply to a derived backend.** Nothing to do in the ordinary case: `UserStatusGuard` behaves
+  identically, `BymaxAuthModule` exports the new service, and `@UseGuards(UserStatusGuard)`
+  resolves exactly as before. **One narrow break:** the guard's constructor now takes a single
+  `AccountStatusService`, in place of the Redis service, the repository token and the options
+  token. If you register `UserStatusGuard` in your OWN module's `providers` rather than relying on
+  the auth module's export — or construct it directly in a test — list `AccountStatusService`
+  there and drop the three. A `useValue` double now needs one method,
+  `assertDashboardAccountUsable({ userId, tenantId })`, instead of a fake Redis and a fake
+  repository.
+
 - **`afterPlatformLogout`, the first hook `PlatformAuthService` emits.** That service fired none at
   all — it did not even receive the hooks provider — so a consumer holding a live platform stream
   had no way to learn that the administrator behind it had signed out: the access token stayed

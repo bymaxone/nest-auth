@@ -728,15 +728,19 @@ describe('BymaxAuthModule', () => {
     // be unusable, and the boot failure names the missing dep rather than the guard:
     //
     //   UnknownDependenciesException: Nest can't resolve dependencies of the UserStatusGuard
-    //   (AuthRedisService, ?, Symbol(BYMAX_AUTH_OPTIONS))
+    //   (?)
     //
     // They use a real consumer @Module rather than putting the controller on the testing
     // module directly, because that is the shape the exception appears in.
 
     // Scenario: a consumer module declares a controller guarded by UserStatusGuard.
-    // Expected: the module compiles. Why: UserStatusGuard needs BYMAX_AUTH_USER_REPOSITORY,
-    // which the consumer supplies to registerAsync but cannot see itself unless the auth
-    // module re-exports the token. Dropping it from `exports` fails this test.
+    // Expected: the module compiles. Why: UserStatusGuard's constructor names
+    // AccountStatusService, so that service must be exported for the consumer's injector to bind
+    // it. Only the DIRECT dependency: an exported provider arrives already instantiated and its
+    // own constructor is never re-resolved here, so BYMAX_AUTH_USER_REPOSITORY is reached through
+    // the auth module. Dropping AccountStatusService from `exports` fails this test; dropping the
+    // repository token does not — that one is pinned by `should export BYMAX_AUTH_USER_REPOSITORY
+    // as the instance supplied by the consumer`.
     it('should let a consumer module apply UserStatusGuard via @UseGuards', async () => {
       @Controller('probe')
       @UseGuards(JwtAuthGuard, UserStatusGuard)

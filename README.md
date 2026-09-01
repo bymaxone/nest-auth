@@ -1690,11 +1690,66 @@ event, and knows nothing about account status, roles, tenant binding or the iden
 therefore **one check among the many a guarded HTTP route performs**, and not a substitute for
 them.
 
-Using it to authorise a long-lived transport — a WebSocket, an SSE stream — takes more than this
-method, and this library does not yet export the pieces that would make that safe. See
-[#172](https://github.com/bymaxone/nest-auth/issues/172), which records what a stream must
-establish beyond revocation, the gaps that make each one consumer-built today, and the library
-changes that would close them.
+Using it to authorise a long-lived transport takes more than this method. Use
+`AuthTokenVerifierService` for that, below.
+
+### Authorising a long-lived transport — `AuthTokenVerifierService`
+
+A guarded HTTP route establishes seven things before a handler runs. A WebSocket, an SSE stream or
+a message consumer has no guard in front of it, so it must establish the same seven itself — and on
+a cadence, because a connection outlives the request that opened it. Assembling that from the
+exported parts is where it goes wrong: a bridge that calls `isAccessTokenRevoked` alone has checked
+a signature and a blacklist while checking neither the token's **type**, nor its **`exp`**, nor
+whether the **account** behind it still exists.
+
+`AuthTokenVerifierService.verifyAccessToken` is all seven in one call:
+
+```ts
+import { AuthTokenVerifierService } from '@bymax-one/nest-auth'
+
+const { plane, payload } = await this.verifier.verifyAccessToken(token, { plane: 'dashboard' })
+registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
+```
+
+| It checks                                                                              | So that                                                                                                                       |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone        |
+| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all |
+| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                    |
+| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                          |
+| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                              |
+| MFA policy (`requireMfa`, default on)                                                  | A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed         |
+| Account status (`checkStatus`, default on)                                             | A suspension landing between two reconnects is seen — the token's own `status` claim is a snapshot taken at issuance          |
+
+On the dashboard plane that last row reads a cache, and **its freshness is bounded by
+`userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: no flow in this library
+invalidates the `us:`/`uev:` keys when a status changes — they expire. A stream re-verifying every
+five seconds therefore still serves a banned account for up to a minute, and lowering the TTL is
+what shortens the cut-off. The platform plane is uncached and genuinely current, at one repository
+read per call.
+
+The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
+attacker-chosen: a platform token would open a dashboard stream by saying it is one. Passing a
+value that is neither throws a `TypeError` rather than refusing quietly — the fall-through would
+otherwise be the cross-tenant platform arm.
+
+Every refusal is an `AuthException`, and each mirrors the code the equivalent guard already
+answers. Most answer `auth.token_invalid` so a caller cannot tell "valid but revoked" from "never
+valid"; `auth.mfa_required`, the `ACCOUNT_*` codes and — on the platform plane only —
+`auth.platform_auth_required` name themselves, because a legitimate client acts on each
+differently.
+
+> [!IMPORTANT]
+> **Three things it still does not do.** Route **authorization** is yours — this answers who the
+> caller is, never what they may do, so your `@Roles()` equivalent belongs on every message a
+> stream carries, not only on the handshake. **Tenant binding** (`enforceTenantBinding`) needs the
+> request its resolver reads, which a redeemed ticket no longer has. And it holds **no
+> subscription**: it answers at the moment you call it, so a stream that calls it once at connect
+> is authorized for the lifetime of the token rather than of the session. Call it again on a
+> cadence and treat a rejection as a disconnect.
+
+`AccountStatusService` is exported alongside it for the narrower case: you already hold a verified
+payload and want to re-ask only the one question whose answer changes while a stream is open.
 
 ### Server Guards
 
