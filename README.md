@@ -1722,11 +1722,11 @@ registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
 | Account status (`checkStatus`, default on)                                             | A suspension landing between two reconnects is seen — the token's own `status` claim is a snapshot taken at issuance          |
 
 On the dashboard plane that last row reads a cache, and **its freshness is bounded by
-`userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: no flow in this library
-invalidates the `us:`/`uev:` keys when a status changes — they expire. A stream re-verifying every
-five seconds therefore still serves a banned account for up to a minute, and lowering the TTL is
-what shortens the cut-off. The platform plane is uncached and genuinely current, at one repository
-read per call.
+`userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: a stream re-verifying every
+five seconds still serves a banned account until the entry expires. What shortens that is
+[`AccountStatusService.invalidate`](#invalidating-the-account-cache--accountstatusserviceinvalidate)
+— call it wherever you change a status and the next check re-reads immediately. Failing that, lower
+the TTL. The platform plane is uncached and genuinely current, at one repository read per call.
 
 The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
 attacker-chosen: a platform token would open a dashboard stream by saying it is one. Passing a
@@ -1767,6 +1767,14 @@ Call it whenever you change an account's status yourself. It drops both cached f
 and the email-verified flag — and is idempotent, so you need not know whether the account was
 cached. The tenant is required: a repository id is unique only within one, so a bare id would name
 another tenant's entry.
+
+**Persist the status change first, then invalidate.** The read path fills the cache in two steps —
+resolve from the repository, then write — so a request that resolved the old value just before your
+update lands will write it back afterwards, with a full TTL, however promptly you call this. The
+window is one repository read wide rather than one TTL, which is the improvement; it is not zero.
+Writing first means any request whose read starts after your write already sees the new value, and
+only genuinely concurrent ones can lose the race. Closing it entirely would need the fill to be
+conditional on nothing having invalidated in between, which this service does not do today.
 
 > [!IMPORTANT]
 > **Do not delete the cache keys yourself**, even though the `<namespace>:*` prefix is yours to

@@ -371,18 +371,21 @@ Format: `{namespace}:{prefix}:{identifier}`
 | `rl`   | Per-IP rate-limit counter, keyed by `HMAC(ip)`            | The route's window          |
 | `otp`  | OTP codes                                                 | `otpTtlSeconds`             |
 | `sess` | Session set per user                                      | Session lifetime            |
+| `sd`   | Session detail                                            | Session lifetime            |
 | `us`   | Cached account status (`us:{tenantId}:{userId}`)          | `userStatusCacheTtlSeconds` |
 | `uev`  | Cached email-verified flag (same scoping)                 | `userStatusCacheTtlSeconds` |
-| `sd`   | Session detail                                            | Session lifetime            |
 
 **Do not build these keys from the format, in library code or consumer code.** `us` and `uev` are
-derived in exactly one place, `AccountStatusService.cacheKeys`, and dropped through
-`AccountStatusService.invalidate` — a second statement of a key format drifts out of agreement
+derived in exactly one place — a module-private helper in `account-status.service.ts`, deliberately
+not exported — and dropped through `AccountStatusService.invalidate` — a second statement of a key format drifts out of agreement
 silently, because a delete that stops matching raises nothing and merely defers the change by a
 TTL. The same applies to a consumer: the prefix is readable, the format is not a contract, and the
 supported way to name one of these entries is the method.
 
-The platform plane mirrors these under its own prefixes (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
+`us` and `uev` have no platform counterpart: the platform status check is uncached, because there
+is no tenant to scope a cache key by and the population is small enough that a read per call beats
+a keyspace nothing invalidates. The other prefixes DO mirror onto the platform plane under their
+own names (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
 so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
 which of these are a contract with `rust-auth`, is in
 [`conformance/wire-contract.json`](./conformance/wire-contract.json).

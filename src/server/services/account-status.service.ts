@@ -20,6 +20,30 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 
 /**
+ * The two cache keys naming one dashboard account.
+ *
+ * The single statement of this format, and deliberately **not** exported. Anything that needs one
+ * of these entries gone — library code included — goes through
+ * {@link AccountStatusService.invalidate} rather than naming the key itself. A second statement of
+ * a key format drifts out of agreement silently: the delete stops matching, nothing raises, and
+ * the entry simply survives to its TTL.
+ *
+ * @param ref - The account to name. The tenant is required: a repository id is unique only WITHIN
+ *   a tenant, so a key built from a bare id can answer for a colliding id elsewhere.
+ * @returns The status key and the email-verified key for that account.
+ */
+function cacheKeysFor(ref: { readonly userId: string; readonly tenantId: string }): {
+  readonly statusKey: string
+  readonly verifiedKey: string
+} {
+  // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
+  // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
+  // `('a','b:c')` would otherwise both key `a:b:c`).
+  const scope = `${encodeURIComponent(ref.tenantId)}:${encodeURIComponent(ref.userId)}`
+  return { statusKey: `us:${scope}`, verifiedKey: `uev:${scope}` }
+}
+
+/**
  * Resolves an account's current lifecycle state and refuses the ones a deployment blocks.
  *
  * The answer a token carries is a snapshot taken at issuance: `DashboardJwtPayload.status` says
@@ -58,33 +82,6 @@ export class AccountStatusService {
   ) {}
 
   /**
-   * The two cache keys naming one dashboard account.
-   *
-   * The single statement of this format. Everything that reads, writes or drops these entries goes
-   * through here — including {@link AuthService}, which used to hand-build the `uev:` key inline
-   * and could therefore drift out of agreement with the code that wrote it, silently: the delete
-   * would simply stop matching and a just-verified account would keep a stale `0` until the entry
-   * expired. Nothing failed, on either side.
-   *
-   * Static because it is a pure derivation and callers occasionally want the names without an
-   * instance — a test asserting reader and writer agree, most usefully.
-   *
-   * @param ref - The account to name. The tenant is required: a repository id is unique only
-   *   WITHIN a tenant, so a key built from a bare id can answer for a colliding id elsewhere.
-   * @returns The status key and the email-verified key for that account.
-   */
-  static cacheKeys(ref: { readonly userId: string; readonly tenantId: string }): {
-    readonly statusKey: string
-    readonly verifiedKey: string
-  } {
-    // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
-    // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
-    // `('a','b:c')` would otherwise both key `a:b:c`).
-    const scope = `${encodeURIComponent(ref.tenantId)}:${encodeURIComponent(ref.userId)}`
-    return { statusKey: `us:${scope}`, verifiedKey: `uev:${scope}` }
-  }
-
-  /**
    * Drops the cached status and email-verified flag for one account, so the next check re-reads
    * them from the repository.
    *
@@ -101,12 +98,40 @@ export class AccountStatusService {
    * Idempotent: deleting an absent key is not an error, so a caller need not know whether the
    * account was ever cached.
    *
-   * @param ref - The account whose cached facts are now stale.
+   * **What it does not guarantee.** A request already in flight can repopulate the entry. The read
+   * path fills the cache in two steps — resolve from the repository, then write — so a request
+   * that resolved `active` just before your update lands will write `active` afterwards, with a
+   * full TTL, however promptly you call this. The window is one repository read wide, not one TTL,
+   * which is the whole improvement over letting the entry expire; it is not zero. **Order your own
+   * writes accordingly: persist the status change first, then invalidate** — that way any request
+   * whose repository read starts after your write already sees the new value, and only the
+   * genuinely concurrent ones can lose the race.
+   *
+   * Closing it entirely needs the fill to be conditional on nothing having invalidated in between —
+   * a per-account generation the write compares against — which is a mechanism this service does
+   * not have. Tracked rather than implied.
+   *
+   * @param ref - The account whose cached facts are now stale. Both fields must be non-empty.
+   * @throws {TypeError} When either id is empty or blank. Refused rather than attempted: an empty
+   *   tenant builds `us::{userId}`, which names no entry any read ever wrote, so the delete would
+   *   remove nothing and resolve normally — the caller's admin surface reports the suspension
+   *   applied while the cached `active` survives its full TTL. That is the exact silent failure
+   *   this method exists to eliminate, and an unset resolver value or a `undefined` coerced by a
+   *   JavaScript host is how it arrives. A caller error, so not an `AuthException`.
    */
   async invalidate(ref: { readonly userId: string; readonly tenantId: string }): Promise<void> {
-    const { statusKey, verifiedKey } = AccountStatusService.cacheKeys(ref)
-    await this.redis.del(statusKey)
+    if (ref.userId.trim() === '' || ref.tenantId.trim() === '') {
+      throw new TypeError('invalidate: userId and tenantId must both be non-empty')
+    }
+
+    const { statusKey, verifiedKey } = cacheKeysFor(ref)
+    // The verified flag goes FIRST. If the second delete fails — a blip, a failover — the caller
+    // sees the rejection either way, but the entry left behind should be the one whose staleness
+    // merely costs a repository read. A stale `uev` of `0` locks a just-verified account out of
+    // every protected route until it expires, and `verifyEmail` reaches here after the OTP is
+    // spent and the flag is committed, so there is nothing for the user to retry.
     await this.redis.del(verifiedKey)
+    await this.redis.del(statusKey)
   }
 
   /**
@@ -125,7 +150,7 @@ export class AccountStatusService {
     readonly tenantId: string
   }): Promise<void> {
     const { userId, tenantId } = ref
-    const { statusKey, verifiedKey } = AccountStatusService.cacheKeys(ref)
+    const { statusKey, verifiedKey } = cacheKeysFor(ref)
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 

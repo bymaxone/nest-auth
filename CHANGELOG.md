@@ -35,11 +35,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   `us` and `uev` were also absent from the key table in `AGENTS.md` and from
   `conformance/wire-contract.json`, so the prefix a consumer actually reached for was the one
-  nothing had ever stated. Both are now listed, with the rule that the format is not the interface.
+  nothing had ever stated. `AGENTS.md` now lists both, with the rule that the format is not the
+  interface. **The wire contract deliberately still does not**: it is the parity artefact shared
+  with `rust-auth`, and adding a prefix there asserts a cross-implementation claim this change has
+  not verified. Whether these caches are part of that contract at all is a question for the two
+  libraries, not something to settle by editing one side's file.
 
   The method drops both cached facts rather than only the one a caller has in mind — they are
   written together, and the extra delete costs one repository read against an API where the caller
   must know which of two entries their change invalidated. It is idempotent.
+
+  **What it does not promise, stated rather than left to be discovered.** The read path fills the
+  cache in two steps — resolve from the repository, then write — so a request that resolved the old
+  value just before your update lands will write it back afterwards with a full TTL, however
+  promptly you invalidate. The window shrinks from one TTL to one repository read; it does not
+  reach zero. Persist the status change **before** invalidating, so only genuinely concurrent
+  requests can lose the race. Closing it entirely needs the fill to be conditional on nothing
+  having invalidated in between — a per-account generation — which is a mechanism this service does
+  not have and which is tracked rather than implied here.
+
+  It refuses an empty or blank id with a `TypeError` rather than attempting the delete. An empty
+  tenant builds `us::{userId}`, a key no read ever wrote, so the delete would remove nothing and
+  resolve normally — the caller's admin surface reporting a suspension that never took effect,
+  which is the precise failure this method exists to eliminate. An unset resolver value, or an
+  `undefined` coerced by a JavaScript host, is how it arrives.
 
 ### Fixed
 
@@ -58,11 +77,15 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   routes they just earned.
 
   `verifyEmail` now calls `invalidate` and the derivation lives in one place
-  (`AccountStatusService.cacheKeys`). The specs assert the delegation rather than a key literal,
-  which removes the second statement instead of pinning it, and a new test reads both the write and
-  the delete path and asserts they name the same keys — so a future divergence fails the build
-  rather than a user. That test was verified by breaking it: dropping the percent-encoding from one
-  side turns it red.
+  (a module-private helper, deliberately not exported). The specs assert the delegation rather than
+  a key literal, which removes the second statement instead of pinning it, and a new test reads both
+  the write and the delete path and asserts they name the same keys.
+
+  **What that test guards, precisely.** With one derivation the two paths cannot disagree, so it
+  cannot fail on a format change — single-sourcing is what makes that unreachable, not the test.
+  What it catches is the reintroduction of a second statement: inline a key in either path, as
+  `verifyEmail` did, and it goes red. Verified that way rather than assumed — restoring an inline
+  derivation on one side turns it red, including on the delimiter and unicode cases.
 
   The comment that stood where the inline key was had described this exact hazard — "the key must
   be byte-identical to the guard's… or the delete misses" — and prevented none of it. It had also
