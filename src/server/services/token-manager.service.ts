@@ -477,7 +477,7 @@ export class TokenManagerService {
       // already exchanged has been presented again, so one of its two holders is not the owner.
       // Emitted after the revocation, so a consumer that reacts by paging someone is reacting
       // to a lineage that is already dead rather than one still being torn down.
-      this.emitReuseDetected(ownerId, outcome.familyId, ip, userAgent)
+      this.emitReuseDetected('dashboard', ownerId, outcome.familyId, ip, userAgent)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
     this.logger.warn(
@@ -509,13 +509,19 @@ export class TokenManagerService {
    * @param ip - Address the replayed token was presented from.
    * @param userAgent - Raw `User-Agent` of the presenting client.
    */
-  private emitReuseDetected(userId: string, familyId: string, ip: string, userAgent: string): void {
+  private emitReuseDetected(
+    plane: 'dashboard' | 'platform',
+    userId: string,
+    familyId: string,
+    ip: string,
+    userAgent: string
+  ): void {
     if (!this.hooks?.onRefreshTokenReuseDetected || userId === '') return
     try {
       void Promise.resolve(
         this.hooks.onRefreshTokenReuseDetected(
           { userId, familyId },
-          { ...createEmptyHookContext(), ip, userAgent }
+          { ...createEmptyHookContext(), plane, ip, userAgent }
         )
       ).catch((err: unknown) => {
         this.logger.error(`onRefreshTokenReuseDetected hook threw: ${describeChannelStatus(err)}`)
@@ -952,7 +958,7 @@ export class TokenManagerService {
       )
       // Both planes report reuse: an operator watching for account takeover cares about a
       // replayed platform token at least as much as a dashboard one.
-      this.emitReuseDetected(ownerId, outcome.familyId, ip, userAgent)
+      this.emitReuseDetected('platform', ownerId, outcome.familyId, ip, userAgent)
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
 

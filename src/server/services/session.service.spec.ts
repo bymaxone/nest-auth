@@ -729,11 +729,17 @@ describe('SessionService', () => {
       })
       await flushMicrotasks()
 
-      expect(mockHooks.onSessionEvicted).toHaveBeenCalledWith(
+      // Pinned exactly rather than with `objectContaining`, which passes on a context naming
+      // neither the account nor its tenant — and an eviction a consumer cannot scope by tenant
+      // cannot be acted on, since a bare id reaches another tenant's user.
+      expect(mockHooks.onSessionEvicted).toHaveBeenCalledWith(userId, hashes[0], {
+        plane: 'dashboard',
         userId,
-        hashes[0],
-        expect.objectContaining({ ip, userAgent })
-      )
+        tenantId: 'tenant-1',
+        ip,
+        userAgent,
+        sanitizedHeaders: {}
+      })
     })
 
     // Verifies that does not fire onSessionEvicted when hooks is null.

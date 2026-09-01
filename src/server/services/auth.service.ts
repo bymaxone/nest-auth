@@ -581,15 +581,53 @@ export class AuthService {
 
     // The hook names the user who was signed out, so it only fires when the session told us
     // who that was. A logout for an already-gone session has nobody to name.
-    if (this.hooks?.afterLogout && userId) {
-      void Promise.resolve(this.hooks.afterLogout(userId, createEmptyHookContext())).catch(
-        (err: unknown) => {
-          this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
-        }
-      )
-    }
+    this.emitLogout(userId, tenantId)
 
     return userId
+  }
+
+  /**
+   * Announces a completed logout, the only hook `AuthService.logout` emits.
+   *
+   * Owns three concerns the session-revocation flow does not need: whether a hook is registered,
+   * the fire-and-forget discipline, and the rejection log. It mirrors
+   * `PlatformAuthService.emitPlatformLogout` and `TokenManagerService.emitReuseDetected`, which
+   * carry the same three.
+   *
+   * The context names the account, because `logout` knows it — `readSessionOwner` returns both
+   * fields and the session revoke is keyed on them. A consumer disconnecting live sockets must
+   * match the tenant as well as the id, since a repository id is unique only within a tenant, so a
+   * hook naming only the id cannot be acted on safely: acting on it would reach another tenant's
+   * account.
+   *
+   * `ip` and `userAgent` stay empty because `logout` receives two tokens and no request, and an
+   * invented value would be worse than an empty string a consumer can see is empty. `tenantId` is
+   * omitted rather than set to `undefined` when the session record carries none, so its absence
+   * reads as "the record did not say" rather than as a tenant literally named `undefined`.
+   *
+   * @param userId - The account that signed out; empty when the record named no owner, in which
+   *   case there is nobody to announce and nothing fires.
+   * @param tenantId - The tenant from the session record, absent on a record that carries none.
+   */
+  private emitLogout(userId: string, tenantId: string | undefined): void {
+    if (!this.hooks?.afterLogout || !userId) return
+
+    const context: HookContext = { ...createEmptyHookContext(), plane: 'dashboard', userId }
+    if (tenantId !== undefined) {
+      context.tenantId = tenantId
+    }
+
+    // The invocation sits inside the try, not just the promise it returns: `afterLogout` may be
+    // declared `void`, and a synchronous throw happens before `Promise.resolve` exists to wrap it,
+    // so `.catch` never sees it and the exception escapes into a `logout` whose Redis writes have
+    // completed.
+    try {
+      void Promise.resolve(this.hooks.afterLogout(userId, context)).catch((err: unknown) => {
+        this.logger.error(`afterLogout hook threw: ${describeError(err, [userId])}`)
+      })
+    } catch (err: unknown) {
+      this.logger.error(`afterLogout hook threw synchronously: ${describeError(err, [userId])}`)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -911,6 +949,7 @@ export class AuthService {
     if (this.hooks?.afterLogin) {
       void Promise.resolve(
         this.hooks.afterLogin(safeUser, {
+          plane: 'dashboard',
           userId: safeUser.id,
           ip,
           userAgent,
@@ -985,7 +1024,10 @@ export class AuthService {
 
     if (this.hooks?.afterEmailVerified) {
       void Promise.resolve(
-        this.hooks.afterEmailVerified(toSafeUser(user), createEmptyHookContext())
+        this.hooks.afterEmailVerified(toSafeUser(user), {
+          ...createEmptyHookContext(),
+          plane: 'dashboard'
+        })
       ).catch((err: unknown) => {
         this.logger.error(`afterEmailVerified hook threw: ${describeChannelStatus(err)}`)
       })
@@ -1195,6 +1237,8 @@ export class AuthService {
       )
     )
     const ctx: HookContext = {
+      // Every flow this builder serves — register, login, email change — is a dashboard one.
+      plane: 'dashboard',
       ip: opts.ip,
       userAgent: opts.userAgent,
       sanitizedHeaders: sanitized

@@ -985,6 +985,9 @@ export class MfaService {
           : this.toSafeUser(user as AuthUser)
       void Promise.resolve(
         this.hooks.afterMfaEnabled(safeUser, {
+          // The plane, because the tenant cannot carry it: a platform admin is rendered with the
+          // sentinel `tenantId: ''` while a platform token has no tenant claim at all.
+          plane: context,
           userId,
           ip,
           userAgent,
@@ -1194,7 +1197,13 @@ export class MfaService {
 
       if (this.hooks.afterLogin) {
         void Promise.resolve(
-          this.hooks.afterLogin(safeUser, { userId, ip, userAgent, sanitizedHeaders: {} })
+          this.hooks.afterLogin(safeUser, {
+            plane: 'dashboard',
+            userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          })
         ).catch(() => undefined)
       }
 
@@ -1214,6 +1223,7 @@ export class MfaService {
     if (this.hooks.afterLogin) {
       void Promise.resolve(
         this.hooks.afterLogin(this.platformUserAsSafeUser(platformUser), {
+          plane: 'platform',
           userId,
           ip,
           userAgent,
@@ -1326,6 +1336,7 @@ export class MfaService {
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
         this.hooks.afterMfaDisabled(safeUser, {
+          plane: context,
           userId,
           ip,
           userAgent,
@@ -1418,6 +1429,7 @@ export class MfaService {
     if (this.hooks.afterMfaDisabled) {
       void Promise.resolve(
         this.hooks.afterMfaDisabled(safeUser, {
+          plane: context,
           userId,
           // No request context: this call does not come from one. Empty rather than invented,
           // so a consumer logging the hook cannot mistake a placeholder for a real address.
@@ -1578,6 +1590,7 @@ export class MfaService {
           : this.toSafeUser(user as AuthUser)
       void Promise.resolve(
         this.hooks.afterMfaRecoveryCodesRegenerated(safeUser, {
+          plane: context,
           userId,
           ip,
           userAgent,
