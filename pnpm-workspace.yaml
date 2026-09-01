@@ -4,8 +4,13 @@
 # this map. Without an entry, `pnpm install` exits with ERR_PNPM_IGNORED_BUILDS
 # rather than warning.
 allowBuilds:
-  # A direct dependency of jest-haste-map, whose native binding serves the file watcher —
-  # so it is reached only in watch mode, and nothing in CI runs that: `test:watch` is a
+  # Deliberately ahead of the lockfile: this tree resolves jest-haste-map@30.4.1, which does
+  # not depend on @parcel/watcher at all, so the entry is inert here. It exists because
+  # jest-haste-map@30.5.0 adds @parcel/watcher as a direct dependency, and pnpm 11 EXITS on
+  # an unlisted build script — without the entry, the next bump of jest cannot install.
+  #
+  # What the package does when it is present: its native binding serves the file watcher, so
+  # it is reached only in watch mode, and nothing in CI runs that — `test:watch` is a
   # developer convenience no workflow calls.
   #
   # Denying costs nothing even for a developer who does use watch mode, because the build
