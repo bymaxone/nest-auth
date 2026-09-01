@@ -51,8 +51,12 @@ export interface AuthContextValue {
    *
    * @param email    User's primary email address.
    * @param password Plaintext password — the server hashes on receipt.
-   * @param options  Optional metadata. `tenantId` defaults to `'default'`
-   *                 when omitted so single-tenant apps can skip it.
+   * @param options  Optional metadata. `tenantId` is forwarded exactly as
+   *                 given: omit it and the request body carries no tenant
+   *                 at all. Which of the two a deployment wants is the
+   *                 server's answer, not this signature's — one configuring
+   *                 `tenantIdResolver` refuses a body that names a tenant,
+   *                 and one without a resolver requires it.
    *
    * @returns The discriminated {@link LoginResult} — branch on
    *   `'mfaRequired' in result` to handle the MFA challenge case.
@@ -106,6 +110,10 @@ export interface AuthContextValue {
    * Initiate a password reset. The server returns 200 regardless of
    * whether the email is registered (anti-enumeration) — treat a
    * resolved Promise as "request accepted", not "email known".
+   *
+   * `tenantId` is forwarded exactly as given, under the same rule
+   * {@link AuthContextValue.login} documents: an omitted tenant reaches
+   * the server as an absent field rather than a default one.
    */
   forgotPassword: (email: string, tenantId?: string) => Promise<void>
 

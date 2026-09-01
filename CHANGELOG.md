@@ -86,6 +86,52 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and if you disconnect sockets or invalidate caches on them, you should, because doing it on the
   bare `userId` reaches other tenants' accounts.
 
+- **`AuthProvider` invented a tenant, so `useAuth().login` and `useAuth().forgotPassword` could not
+  reach a multi-tenant deployment at all.** Both applied the literal fallback `'default'` when the
+  caller omitted `tenantId`, and there was no way to suppress it — passing `undefined` produced the
+  fallback too. Since 1.4.2 the server refuses **any** body naming a tenant when the deployment
+  configures `tenantIdResolver`, so every login through the hook answered `400 auth.validation`
+  with `details[0].field === 'tenantId'` before the credentials were read.
+
+  The refusal is correct and stays: it is what stops a caller from choosing the tenant its own
+  request is scoped to. The defect was one layer up — this library naming a tenant on the caller's
+  behalf, then sending the invented name to a server that had already been told not to accept one.
+
+  **A cross-layer regression inside a single package.** The server changed in 1.4.2 and `/client`
+  followed in 1.4.3, where `LoginInput.tenantId` became optional and `forgotPassword` learned to
+  spread the field so an absent tenant is an absent KEY rather than a present-but-undefined one.
+  `/react` was the layer that never followed, and it sat directly on top of the one that had. The
+  lesson generalises past this fix: a change to what the server accepts is not finished at the
+  transport client while a higher layer still constructs the body.
+
+  Both call sites now forward the caller's value exactly — omitted stays omitted, given is given —
+  using the spread `/client` already documents. That form is not a style preference here:
+  `exactOptionalPropertyTypes` is on, so assigning `tenantId: options?.tenantId` against an
+  optional property does not compile, and only an absent key survives `JSON.stringify` as an absent
+  wire field.
+
+  **The specs pinned the defect rather than the contract.** Both asserted the outgoing `'default'`,
+  so they passed for as long as the bug existed and would have failed had it been fixed. They now
+  pin the absence of the key itself — `'tenantId' in input` — because `toEqual` treats an
+  undefined-valued key as absent and therefore cannot tell a pass-through from a reintroduced
+  assignment.
+
+  `register` and `resetPassword` were checked and are untouched: both forward the caller's input
+  object unchanged, so a consumer can already omit the field.
+
+  **Apply to a derived backend.** No server change, and nothing to do if your deployment configures
+  `tenantIdResolver` — that is the case this repairs. **The change is breaking for the other
+  cohort:** a resolver-**less** single-tenant frontend that relied on the implicit `'default'` now
+  sends no tenant at all, so it receives the other arm of the same validation error — the one
+  reading `tenantId is required`. Two ways out, both one line: pass `{ tenantId: 'default' }` at
+  the `login` call sites and `forgotPassword(email, 'default')`, or configure
+  `tenantIdResolver: () => 'default'` on the module and delete the argument everywhere. Prefer the
+  resolver — it puts the answer in the deployment that owns it instead of in every component that
+  asks.
+
+  The alternative fix — special-casing `'default'` server-side — was rejected. It would accept a
+  client-supplied tenant under a resolver, which is precisely the hole 1.4.2 closed.
+
 ## [1.4.5] - 2026-08-29
 
 ### Added

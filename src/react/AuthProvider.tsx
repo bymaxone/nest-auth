@@ -30,14 +30,6 @@ import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
 const DEFAULT_REVALIDATE_INTERVAL_MS = 300_000
 
 /**
- * Fallback tenant identifier applied when the consumer omits the
- * `tenantId` option on the {@link AuthContextValue.login} convenience
- * signature. Single-tenant apps can therefore call `login(email, pw)`
- * without threading a tenant constant through every component.
- */
-const DEFAULT_TENANT_ID = 'default'
-
-/**
  * Props accepted by {@link AuthProvider}.
  */
 export interface AuthProviderProps {
@@ -296,10 +288,19 @@ export function AuthProvider({
 
   const login = useCallback<AuthContextValue['login']>(
     async (email, password, options) => {
-      const tenantId = options?.tenantId ?? DEFAULT_TENANT_ID
       syncedDispatch({ type: 'SET_LOADING' })
       try {
-        const result: LoginResult = await clientRef.current.login({ email, password, tenantId })
+        // Spread rather than assign, so an omitted tenant is an absent KEY — the same rule
+        // `createAuthClient` applies on `forgotPassword` and `resetPassword`. It is not
+        // cosmetic: the server distinguishes "the caller named no tenant" from "the caller
+        // named one", and a deployment configuring `tenantIdResolver` REFUSES the second with
+        // `400 auth.validation`. A fallback here would name a tenant on the caller's behalf
+        // and make every login under a resolver unanswerable.
+        const result: LoginResult = await clientRef.current.login({
+          email,
+          password,
+          ...(options?.tenantId !== undefined ? { tenantId: options.tenantId } : {})
+        })
         if ('mfaRequired' in result) {
           // MFA gate — roll status back to `unauthenticated` so guards
           // checking `status === 'authenticated'` continue to deny
@@ -394,7 +395,10 @@ export function AuthProvider({
   // state or props, the dep array MUST be revisited.
   const forgotPassword = useCallback<AuthContextValue['forgotPassword']>(
     async (email, tenantId) => {
-      await clientRef.current.forgotPassword(email, tenantId ?? DEFAULT_TENANT_ID)
+      // Passed through as-is for the reason `login` spells out: `createAuthClient` already
+      // turns an absent tenant into an absent key, and defaulting one here would be refused
+      // by any deployment that configures `tenantIdResolver`.
+      await clientRef.current.forgotPassword(email, tenantId)
     },
     // Stryker disable next-line ArrayDeclaration: empty deps array with only stable references in scope; a constant-string array re-runs identically
     []

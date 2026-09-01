@@ -31,6 +31,11 @@ export type UseAuthResult = Pick<
  *   surfacing as an undefined-method runtime failure inside a
  *   component handler.
  *
+ * The example omits `tenantId`, which is correct for a deployment configuring
+ * `tenantIdResolver` — there the server decides the tenant and REFUSES a body that
+ * names one. Without a resolver the server requires it, so pass
+ * `{ tenantId }` as the third argument. See {@link AuthContextValue.login}.
+ *
  * @example
  * ```tsx
  * function LoginForm(): ReactNode {
