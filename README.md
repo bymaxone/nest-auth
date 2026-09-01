@@ -1751,6 +1751,31 @@ differently.
 `AccountStatusService` is exported alongside it for the narrower case: you already hold a verified
 payload and want to re-ask only the one question whose answer changes while a stream is open.
 
+### Invalidating the account cache — `AccountStatusService.invalidate`
+
+Account status is read through a Redis cache with a `userStatusCacheTtlSeconds` lifetime (60 s by
+default), so a change made **outside** this library is not seen until the entry expires. Suspend a
+user through your own admin surface and they keep reaching protected routes for up to a minute.
+
+```ts
+import { AccountStatusService } from '@bymax-one/nest-auth'
+
+await this.accountStatus.invalidate({ userId, tenantId })
+```
+
+Call it whenever you change an account's status yourself. It drops both cached facts — the status
+and the email-verified flag — and is idempotent, so you need not know whether the account was
+cached. The tenant is required: a repository id is unique only within one, so a bare id would name
+another tenant's entry.
+
+> [!IMPORTANT]
+> **Do not delete the cache keys yourself**, even though the `<namespace>:*` prefix is yours to
+> read. Their format is this library's to change — it already changed once, in v1.3.2, which added
+> the tenant segment — and a delete that stops matching **fails silently**: no error, no event, just
+> a status change that takes a full TTL to land. That is a security control degrading quietly. This
+> method is the supported way to ask, and it is the only thing that stays correct when the format
+> moves.
+
 ### Server Guards
 
 | Guard                | Decorator                       | Purpose                                                     |

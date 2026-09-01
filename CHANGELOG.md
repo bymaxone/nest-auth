@@ -20,6 +20,60 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`AccountStatusService.invalidate({ userId, tenantId })` — a supported way to drop an account's
+  cached status.** Status is read through a Redis cache with a `userStatusCacheTtlSeconds`
+  lifetime, and nothing invalidated it on a change made outside this library. A host suspending a
+  user through its own admin surface therefore had two options, and both were bad: accept up to a
+  full TTL of continued access for a suspended account, or reach into
+  `<namespace>:us:{tenantId}:{userId}` and delete the key itself.
+
+  The canonical consumer chose the second, correctly — the first is worse — and documented it as a
+  workaround. **The format it depends on was never a contract**, and the failure when a format
+  moves is silent: the delete stops matching, nothing raises, and a security control quietly
+  degrades to "takes effect within a TTL". The format has moved once already, in 1.3.2, which added
+  the tenant segment.
+
+  `us` and `uev` were also absent from the key table in `AGENTS.md` and from
+  `conformance/wire-contract.json`, so the prefix a consumer actually reached for was the one
+  nothing had ever stated. Both are now listed, with the rule that the format is not the interface.
+
+  The method drops both cached facts rather than only the one a caller has in mind — they are
+  written together, and the extra delete costs one repository read against an API where the caller
+  must know which of two entries their change invalidated. It is idempotent.
+
+### Fixed
+
+- **The `uev:` key format was stated twice inside this library, and no test could see them
+  disagree.** `AccountStatusService` derived it; `AuthService.verifyEmail` hand-built the same
+  string inline to drop the flag after a verification. They agreed, and nothing kept them
+  agreeing — the consumer-facing risk this release fixes already existed one level in, between two
+  files in this package.
+
+  **The suites would have stayed green through the drift**, which is the part worth recording.
+  Each side was pinned by its own literal — `'uev:tenant-1:user-1'` in one spec,
+  `` `uev:tenant-1:${USER.id}` `` in the other — so changing the derivation would have been
+  absorbed by updating the spec that owns it, while the other stayed green against its unchanged
+  inline copy. Both passing, the two keys naming different entries, and a just-verified account
+  keeping a stale `0` until the TTL expired. Nothing fails; a user is simply locked out of the
+  routes they just earned.
+
+  `verifyEmail` now calls `invalidate` and the derivation lives in one place
+  (`AccountStatusService.cacheKeys`). The specs assert the delegation rather than a key literal,
+  which removes the second statement instead of pinning it, and a new test reads both the write and
+  the delete path and asserts they name the same keys — so a future divergence fails the build
+  rather than a user. That test was verified by breaking it: dropping the percent-encoding from one
+  side turns it red.
+
+  The comment that stood where the inline key was had described this exact hazard — "the key must
+  be byte-identical to the guard's… or the delete misses" — and prevented none of it. It had also
+  gone stale within hours: it named the guard, which stopped building that key when
+  `AccountStatusService` was extracted.
+
+  **Apply to a derived backend.** Nothing breaks. If you delete these cache keys yourself, replace
+  that with `AccountStatusService.invalidate({ userId, tenantId })` — the service is exported and
+  registered unconditionally. Your delete works today and is not guaranteed to keep working, and
+  the day it stops there will be no error to notice.
+
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
   guarded HTTP route establishes seven things before a handler runs. A long-lived transport has no
   guard in front of it and must establish the same seven itself, on a cadence, for as long as the

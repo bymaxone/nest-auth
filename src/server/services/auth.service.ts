@@ -7,6 +7,7 @@ import {
   BYMAX_AUTH_OPTIONS,
   BYMAX_AUTH_USER_REPOSITORY
 } from '../bymax-auth.constants'
+import { AccountStatusService } from './account-status.service'
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
 import { PasswordService } from './password.service'
@@ -101,7 +102,8 @@ export class AuthService {
     @Inject(BruteForceService) private readonly bruteForce: BruteForceService,
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(OtpService) private readonly otpService: OtpService,
-    @Inject(SessionService) private readonly sessionService: SessionService
+    @Inject(SessionService) private readonly sessionService: SessionService,
+    @Inject(AccountStatusService) private readonly accountStatus: AccountStatusService
   ) {}
 
   /**
@@ -1011,12 +1013,12 @@ export class AuthService {
 
     await this.userRepo.updateEmailVerified({ id: user.id, tenantId, verified: true })
 
-    // Drop the verified-flag the UserStatusGuard caches under `uev:{tenantId}:{userId}`, so the
-    // account reaches its protected routes on the very next request rather than after the cache TTL.
-    // The key must be byte-identical to the guard's — same tenant, same percent-encoding of each
-    // half — or the delete misses and the stale `0` keeps the just-verified account locked out until
-    // the TTL expires. The guard refreshes the flag from the repository on the miss this creates.
-    await this.redis.del(`uev:${encodeURIComponent(tenantId)}:${encodeURIComponent(user.id)}`)
+    // Drop the cached account facts so the account reaches its protected routes on the very next
+    // request rather than after the cache TTL. Delegated rather than deleting a key built here:
+    // the key format belongs to the service that writes it, and a second statement of it drifts
+    // out of agreement silently — the delete stops matching and the stale `0` keeps a
+    // just-verified account locked out until the entry expires, with nothing failing.
+    await this.accountStatus.invalidate({ userId: user.id, tenantId })
 
     this.logger.log(
       `verifyEmail: email verified userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`

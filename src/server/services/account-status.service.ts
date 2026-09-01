@@ -58,6 +58,58 @@ export class AccountStatusService {
   ) {}
 
   /**
+   * The two cache keys naming one dashboard account.
+   *
+   * The single statement of this format. Everything that reads, writes or drops these entries goes
+   * through here — including {@link AuthService}, which used to hand-build the `uev:` key inline
+   * and could therefore drift out of agreement with the code that wrote it, silently: the delete
+   * would simply stop matching and a just-verified account would keep a stale `0` until the entry
+   * expired. Nothing failed, on either side.
+   *
+   * Static because it is a pure derivation and callers occasionally want the names without an
+   * instance — a test asserting reader and writer agree, most usefully.
+   *
+   * @param ref - The account to name. The tenant is required: a repository id is unique only
+   *   WITHIN a tenant, so a key built from a bare id can answer for a colliding id elsewhere.
+   * @returns The status key and the email-verified key for that account.
+   */
+  static cacheKeys(ref: { readonly userId: string; readonly tenantId: string }): {
+    readonly statusKey: string
+    readonly verifiedKey: string
+  } {
+    // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
+    // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
+    // `('a','b:c')` would otherwise both key `a:b:c`).
+    const scope = `${encodeURIComponent(ref.tenantId)}:${encodeURIComponent(ref.userId)}`
+    return { statusKey: `us:${scope}`, verifiedKey: `uev:${scope}` }
+  }
+
+  /**
+   * Drops the cached status and email-verified flag for one account, so the next check re-reads
+   * them from the repository.
+   *
+   * **Call this whenever you change an account's status outside this library.** A host suspending
+   * a user through its own admin surface leaves this cache holding `active` until it expires, and
+   * the suspended user keeps reaching protected routes for up to `userStatusCacheTtlSeconds`. This
+   * is the supported way to close that window; reaching into the key prefix is not, because the
+   * format is this library's to change and a delete that stops matching fails silently.
+   *
+   * Both keys go, not only the one a given caller cares about. They are written together and
+   * dropping the other costs one repository read on the next request — a smaller price than an API
+   * where the caller has to know which of two entries their change invalidated.
+   *
+   * Idempotent: deleting an absent key is not an error, so a caller need not know whether the
+   * account was ever cached.
+   *
+   * @param ref - The account whose cached facts are now stale.
+   */
+  async invalidate(ref: { readonly userId: string; readonly tenantId: string }): Promise<void> {
+    const { statusKey, verifiedKey } = AccountStatusService.cacheKeys(ref)
+    await this.redis.del(statusKey)
+    await this.redis.del(verifiedKey)
+  }
+
+  /**
    * Refuses a dashboard account that is blocked, deleted, or unverified where verification gates
    * API access.
    *
@@ -73,12 +125,7 @@ export class AccountStatusService {
     readonly tenantId: string
   }): Promise<void> {
     const { userId, tenantId } = ref
-    // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
-    // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
-    // `('a','b:c')` would otherwise both key `a:b:c`).
-    const scope = `${encodeURIComponent(tenantId)}:${encodeURIComponent(userId)}`
-    const statusKey = `us:${scope}`
-    const verifiedKey = `uev:${scope}`
+    const { statusKey, verifiedKey } = AccountStatusService.cacheKeys(ref)
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 

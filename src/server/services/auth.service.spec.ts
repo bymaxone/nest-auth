@@ -21,6 +21,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import { sleep } from '../utils/sleep'
+import { AccountStatusService } from './account-status.service'
 import { AuthService } from './auth.service'
 import { BruteForceService } from './brute-force.service'
 import { OtpService } from './otp.service'
@@ -137,6 +138,11 @@ const mockOtpService = {
   verify: jest.fn()
 }
 
+/** The shared account-lifecycle gate. `verifyEmail` delegates its cache invalidation here. */
+const mockAccountStatus = {
+  invalidate: jest.fn()
+}
+
 const mockSessionService = {
   createSession: jest.fn(),
   revokeSession: jest.fn(),
@@ -191,7 +197,8 @@ describe('AuthService', () => {
         { provide: BruteForceService, useValue: mockBruteForce },
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: OtpService, useValue: mockOtpService },
-        { provide: SessionService, useValue: mockSessionService }
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: AccountStatusService, useValue: mockAccountStatus }
       ]
     }).compile()
     return module.get(AuthService)
@@ -214,7 +221,8 @@ describe('AuthService', () => {
         { provide: BruteForceService, useValue: mockBruteForce },
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: OtpService, useValue: mockOtpService },
-        { provide: SessionService, useValue: mockSessionService }
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: AccountStatusService, useValue: mockAccountStatus }
       ]
     }).compile()
 
@@ -439,7 +447,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -487,7 +496,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -545,7 +555,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -585,7 +596,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -840,7 +852,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
       mockUserRepo.findByEmail.mockResolvedValue({ ...USER, emailVerified: false })
@@ -1217,7 +1230,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -1324,7 +1338,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       })
         .compile()
@@ -2065,7 +2080,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
       const svc = module.get(AuthService)
@@ -2135,7 +2151,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
       const svc = module.get(AuthService)
@@ -2261,7 +2278,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
       const svc = module.get(AuthService)
@@ -2299,7 +2317,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
       return module.get(AuthService)
@@ -2403,10 +2422,13 @@ describe('AuthService', () => {
         tenantId: USER.tenantId,
         verified: true
       })
-      // The UserStatusGuard verified-flag cache (`uev:{tenantId}:{userId}`) is invalidated under
-      // the SAME tenant-scoped key the guard binds it to, so the account reaches its protected
-      // routes on the next request rather than after the cache TTL. A bare-id delete would miss it.
-      expect(mockRedis.del).toHaveBeenCalledWith(`uev:tenant-1:${USER.id}`)
+      // The cached account facts are invalidated through the service that OWNS the key format,
+      // named by account rather than by key. Asserting a key literal here would restate that
+      // format a second time, and a spec pinned to its own copy stays green while the two drift.
+      expect(mockAccountStatus.invalidate).toHaveBeenCalledWith({
+        userId: USER.id,
+        tenantId: 'tenant-1'
+      })
       // Pin the success log template (line 408) so blanking it to '' is caught.
       expect(logSpy).toHaveBeenCalledWith(
         `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`
@@ -2414,10 +2436,10 @@ describe('AuthService', () => {
       logSpy.mockRestore()
     })
 
-    // The invalidation key must be percent-encoded exactly as the guard encodes it: a tenant or
-    // id containing the `:` delimiter must not shift the boundary, or the delete would target a
-    // different key than the guard wrote and leave the just-verified account locked out.
-    it('percent-encodes the tenant and id in the verified-flag invalidation key', async () => {
+    // The account is forwarded verbatim, delimiters and all. Encoding is the key owner's business
+    // now; what this pins is that nothing is mangled or defaulted on the way there — a tenant
+    // containing `:` must arrive as itself, not pre-encoded and not swapped for the request's.
+    it('forwards the resolved account to the invalidation, unmodified', async () => {
       mockOtpService.verify.mockResolvedValue(undefined)
       mockUserRepo.findByEmail.mockResolvedValue({ ...USER, id: 'us:er', tenantId: 'ten:ant' })
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
@@ -2425,7 +2447,10 @@ describe('AuthService', () => {
 
       await service.verifyEmail('ten:ant', 'user@example.com', '123456', mockReq)
 
-      expect(mockRedis.del).toHaveBeenCalledWith('uev:ten%3Aant:us%3Aer')
+      expect(mockAccountStatus.invalidate).toHaveBeenCalledWith({
+        userId: 'us:er',
+        tenantId: 'ten:ant'
+      })
     })
 
     // Verifies that OTP verification errors from otpService propagate to the caller.
@@ -2816,7 +2841,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 
@@ -3056,7 +3082,8 @@ describe('AuthService', () => {
           { provide: BruteForceService, useValue: mockBruteForce },
           { provide: AuthRedisService, useValue: mockRedis },
           { provide: OtpService, useValue: mockOtpService },
-          { provide: SessionService, useValue: mockSessionService }
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: AccountStatusService, useValue: mockAccountStatus }
         ]
       }).compile()
 

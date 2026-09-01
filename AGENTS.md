@@ -359,19 +359,28 @@ All codes from `AUTH_ERROR_CODES` (33 codes). Throw `AuthException(code, statusC
 
 Format: `{namespace}:{prefix}:{identifier}`
 
-| Prefix | Purpose                                                   | TTL                        |
-| ------ | --------------------------------------------------------- | -------------------------- |
-| `rt`   | Refresh token hash                                        | `refreshExpiresInDays`     |
-| `rp`   | Rotation grace pointer (old hash → new session)           | `refreshGraceWindow`       |
-| `cf`   | Consumed-token family marker (proves a replay is a reuse) | Refresh TTL                |
-| `fam`  | Family index — the live hashes of one login's lineage     | Refresh TTL                |
-| `ep`   | Per-user token epoch (bulk access-token revocation)       | 30 days                    |
-| `rv`   | Revoked JWT (blacklist)                                   | Remaining token lifetime   |
-| `lf`   | Login failures                                            | `bruteForce.windowSeconds` |
-| `rl`   | Per-IP rate-limit counter, keyed by `HMAC(ip)`            | The route's window         |
-| `otp`  | OTP codes                                                 | `otpTtlSeconds`            |
-| `sess` | Session set per user                                      | Session lifetime           |
-| `sd`   | Session detail                                            | Session lifetime           |
+| Prefix | Purpose                                                   | TTL                         |
+| ------ | --------------------------------------------------------- | --------------------------- |
+| `rt`   | Refresh token hash                                        | `refreshExpiresInDays`      |
+| `rp`   | Rotation grace pointer (old hash → new session)           | `refreshGraceWindow`        |
+| `cf`   | Consumed-token family marker (proves a replay is a reuse) | Refresh TTL                 |
+| `fam`  | Family index — the live hashes of one login's lineage     | Refresh TTL                 |
+| `ep`   | Per-user token epoch (bulk access-token revocation)       | 30 days                     |
+| `rv`   | Revoked JWT (blacklist)                                   | Remaining token lifetime    |
+| `lf`   | Login failures                                            | `bruteForce.windowSeconds`  |
+| `rl`   | Per-IP rate-limit counter, keyed by `HMAC(ip)`            | The route's window          |
+| `otp`  | OTP codes                                                 | `otpTtlSeconds`             |
+| `sess` | Session set per user                                      | Session lifetime            |
+| `us`   | Cached account status (`us:{tenantId}:{userId}`)          | `userStatusCacheTtlSeconds` |
+| `uev`  | Cached email-verified flag (same scoping)                 | `userStatusCacheTtlSeconds` |
+| `sd`   | Session detail                                            | Session lifetime            |
+
+**Do not build these keys from the format, in library code or consumer code.** `us` and `uev` are
+derived in exactly one place, `AccountStatusService.cacheKeys`, and dropped through
+`AccountStatusService.invalidate` — a second statement of a key format drifts out of agreement
+silently, because a delete that stops matching raises nothing and merely defers the change by a
+TTL. The same applies to a consumer: the prefix is readable, the format is not a contract, and the
+supported way to name one of these entries is the method.
 
 The platform plane mirrors these under its own prefixes (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
 so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
