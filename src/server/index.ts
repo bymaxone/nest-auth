@@ -332,6 +332,19 @@ export { TokenDeliveryService } from './services/token-delivery.service'
 export { WsTicketService } from './services/ws-ticket.service'
 export { AuthRevocationService } from './services/auth-revocation.service'
 export type { RevocableTokenPayload } from './services/auth-revocation.service'
+// The one call that establishes everything a guarded HTTP route establishes. Exported for a
+// transport the guards never see — a WebSocket, an SSE stream, a message consumer — which must
+// reach the same verdict without a guard in front of it. `AuthRevocationService` answers two
+// channels and is one check among these; this is the whole chain.
+export { AuthTokenVerifierService } from './services/auth-token-verifier.service'
+export type {
+  AuthPlane,
+  VerifiedAccessToken,
+  VerifyAccessTokenOptions
+} from './services/auth-token-verifier.service'
+// Exported because `UserStatusGuard` depends on it, and so a consumer that already holds a
+// verified payload can re-ask the one question whose answer changes while a stream is open.
+export { AccountStatusService } from './services/account-status.service'
 export { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 export type { WsTicketSnapshot } from './interfaces/ws-ticket.interface'
 export type {

@@ -48,7 +48,9 @@ import { AuthOpenApiContributor } from './openapi/auth-openapi.contributor'
 import { CommonPasswordChecker } from './providers/common-password-checker.provider'
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
+import { AccountStatusService } from './services/account-status.service'
 import { AuthRevocationService } from './services/auth-revocation.service'
+import { AuthTokenVerifierService } from './services/auth-token-verifier.service'
 import { AuthService } from './services/auth.service'
 import { BruteForceService } from './services/brute-force.service'
 import { EmailChangeService } from './services/email-change.service'
@@ -471,6 +473,8 @@ export class BymaxAuthModule {
         // are visible in the same module scope.
         AuthRedisService,
         AuthRevocationService,
+        AccountStatusService,
+        AuthTokenVerifierService,
         PasswordService,
         TokenManagerService,
         TokenDeliveryService,
@@ -560,6 +564,14 @@ export class BymaxAuthModule {
         // depend on it — and so a host bridging a realtime transport can inject it and consult
         // both revocation channels rather than granting a stream that outlives a logout.
         AuthRevocationService,
+        // AccountStatusService is UserStatusGuard's only constructor dependency, so it must be
+        // exported for the same @UseGuards() reason as the entries around it: the guard is
+        // re-instantiated in the consumer's injector, where an unexported dep fails their boot.
+        AccountStatusService,
+        // AuthTokenVerifierService is exported for the consumer rather than for a guard: it is
+        // the one call that establishes everything a guarded route establishes, which is what a
+        // long-lived transport needs and cannot assemble from the exported parts alone.
+        AuthTokenVerifierService,
         // Same reason, for the two exported guards whose remaining constructor deps are not
         // covered by the entries above. Exporting the guard class is necessary but not
         // sufficient: because @UseGuards() re-instantiates the guard in the *consumer's*
