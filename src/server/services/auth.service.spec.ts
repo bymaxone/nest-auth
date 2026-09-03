@@ -138,9 +138,14 @@ const mockOtpService = {
   verify: jest.fn()
 }
 
-/** The shared account-lifecycle gate. `verifyEmail` delegates its cache invalidation here. */
+/**
+ * The shared account-lifecycle gate. `verifyEmail` delegates its cache invalidation here.
+ *
+ * Resolves by default: the call is awaited, so a bare `jest.fn()` returning `undefined` would make
+ * every verifyEmail test fail on the absent promise rather than on anything it means to assert.
+ */
 const mockAccountStatus = {
-  invalidate: jest.fn()
+  invalidate: jest.fn().mockResolvedValue(undefined)
 }
 
 const mockSessionService = {
@@ -208,6 +213,9 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
+    // `clearAllMocks` drops mock implementations, and this one is awaited — restore the resolved
+    // promise or every verifyEmail test fails on an absent `.catch` rather than on its assertion.
+    mockAccountStatus.invalidate.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
       providers: [
@@ -2434,6 +2442,34 @@ describe('AuthService', () => {
         `verifyEmail: email verified userId=${USER.id} tenantId=tenant-1`
       )
       logSpy.mockRestore()
+    })
+
+    // A failed cache invalidation must NOT fail the verification. By this point the OTP is spent
+    // and the verified flag is committed, so throwing would report as unverified an account that
+    // IS verified, and the user cannot retry — the OTP is gone. The staleness a missed
+    // invalidation costs is bounded by the cache TTL; an unretryable failure is not. Logged, so a
+    // Redis problem is visible as itself rather than only as accounts briefly locked out.
+    it('completes the verification when the cache invalidation fails, and logs it', async () => {
+      const errSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      mockOtpService.verify.mockResolvedValue(undefined)
+      mockUserRepo.findByEmail.mockResolvedValue(USER)
+      mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
+      mockHooks.afterEmailVerified.mockResolvedValue(undefined)
+      mockAccountStatus.invalidate.mockRejectedValue(new Error('redis down'))
+
+      await expect(
+        service.verifyEmail('tenant-1', 'user@example.com', '123456', mockReq)
+      ).resolves.toBeUndefined()
+
+      expect(mockUserRepo.updateEmailVerified).toHaveBeenCalledWith({
+        id: USER.id,
+        tenantId: USER.tenantId,
+        verified: true
+      })
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('verifyEmail: cache invalidation failed')
+      )
+      errSpy.mockRestore()
     })
 
     // The account is forwarded verbatim, delimiters and all. Encoding is the key owner's business

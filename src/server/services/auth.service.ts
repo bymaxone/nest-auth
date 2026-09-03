@@ -1018,7 +1018,16 @@ export class AuthService {
     // the key format belongs to the service that writes it, and a second statement of it drifts
     // out of agreement silently — the delete stops matching and the stale `0` keeps a
     // just-verified account locked out until the entry expires, with nothing failing.
-    await this.accountStatus.invalidate({ userId: user.id, tenantId })
+    //
+    // A failure here must NOT fail the verification. By this point the OTP is spent and the
+    // verified flag is committed, so a thrown error reports as unverified something that is
+    // verified, and the user cannot retry — the OTP is gone. The worst a missed invalidation
+    // costs is the staleness this call exists to avoid, bounded by the cache TTL, which is
+    // strictly better than an unretryable failure. Logged rather than swallowed, so the operator
+    // sees a Redis problem that would otherwise only show as accounts briefly locked out.
+    await this.accountStatus.invalidate({ userId: user.id, tenantId }).catch((err: unknown) => {
+      this.logger.error(`verifyEmail: cache invalidation failed: ${describeError(err, [user.id])}`)
+    })
 
     this.logger.log(
       `verifyEmail: email verified userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
