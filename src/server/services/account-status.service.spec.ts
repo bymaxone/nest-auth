@@ -231,10 +231,28 @@ describe('AccountStatusService — invalidate', () => {
     ])
   })
 
-  // An empty or blank id builds a key no read ever wrote (`us::user-1`), so the delete would
-  // remove nothing and RESOLVE — the caller believes the suspension applied while the cached
-  // `active` survives its TTL. Refused instead, because that is the silent failure this whole
-  // method exists to eliminate, and an unset resolver value is how it arrives.
+  // A `:` in either half must not shift the boundary on the way out any more than on the way in,
+  // or the delete names a different entry than the write created and silently misses it.
+  it('percent-encodes each half of the key', async () => {
+    const service = await buildService()
+    mockRedis.del.mockResolvedValue(undefined)
+
+    await service.invalidate({ userId: 'a:b', tenantId: 'x:y' })
+
+    expect(mockRedis.del).toHaveBeenCalledWith('us:x%3Ay:a%3Ab')
+    expect(mockRedis.del).toHaveBeenCalledWith('uev:x%3Ay:a%3Ab')
+  })
+})
+
+describe('AccountStatusService — invalidate rejects an unusable account reference', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  // An empty or blank id builds a key no read ever wrote (`us::user-1`), so the delete removes
+  // nothing and RESOLVES — the caller believes the suspension applied while the cached `active`
+  // survives its TTL. Refused instead, because that is the silent failure this method exists to
+  // eliminate, and an unset resolver value is how it arrives.
   it.each([
     ['an empty tenant', { userId: 'user-1', tenantId: '' }],
     ['a blank tenant', { userId: 'user-1', tenantId: '   ' }],
@@ -251,18 +269,6 @@ describe('AccountStatusService — invalidate', () => {
     )
     expect(mockRedis.del).not.toHaveBeenCalled()
   })
-
-  // A `:` in either half must not shift the boundary on the way out any more than on the way in,
-  // or the delete names a different entry than the write created and silently misses it.
-  it('percent-encodes each half of the key', async () => {
-    const service = await buildService()
-    mockRedis.del.mockResolvedValue(undefined)
-
-    await service.invalidate({ userId: 'a:b', tenantId: 'x:y' })
-
-    expect(mockRedis.del).toHaveBeenCalledWith('us:x%3Ay:a%3Ab')
-    expect(mockRedis.del).toHaveBeenCalledWith('uev:x%3Ay:a%3Ab')
-  })
 })
 
 describe('AccountStatusService — the reader and the invalidator name the same keys', () => {
@@ -270,13 +276,12 @@ describe('AccountStatusService — the reader and the invalidator name the same 
     jest.clearAllMocks()
   })
 
-  // THE CROSS-CHECK, and what it does NOT prove. Both paths call one derivation today, so a format
+  // THE CROSS-CHECK, and what it does NOT prove. One derivation serves both paths, so a format
   // change moves them together and cannot make them disagree — this test cannot fail for that.
-  // What it catches is the reintroduction of a SECOND statement of the format: inline a key in
-  // either path, as `AuthService` once did, and the two stop agreeing and the build goes red here
-  // rather than a suspension silently taking a full TTL to land. That is the regression worth
-  // guarding, because it is how the duplication arose the first time; single-sourcing is what
-  // makes it currently unreachable, not this test.
+  // What it catches is a SECOND statement of the format: inline a key in either path and the two
+  // stop agreeing, and the build goes red here rather than a suspension silently taking a full TTL
+  // to land. Single-sourcing is what keeps that unreachable; this test is what notices if it stops
+  // being true.
   it.each([
     ['plain', { userId: 'user-1', tenantId: 'tenant-1' }],
     ['delimiters in both halves', { userId: 'a:b', tenantId: 'x:y' }],
