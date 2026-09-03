@@ -80,6 +80,28 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name)
 
   /**
+   * Drops an account's cached status facts after a change this service just committed.
+   *
+   * Delegated rather than deleting a key built here: the key format belongs to the service that
+   * writes it, and a second statement of it drifts out of agreement silently — the delete stops
+   * matching and the stale entry survives to its TTL, with nothing failing.
+   *
+   * **Best effort, deliberately.** Callers reach this after the irreversible part of their flow is
+   * committed, so a thrown error would report failure for work that succeeded — and where the flow
+   * consumed a single-use credential there is nothing left to retry. The worst a missed
+   * invalidation costs is the staleness the call exists to avoid, bounded by the cache TTL, which
+   * is strictly better than an unretryable failure. Logged rather than swallowed, so a Redis
+   * problem is visible as itself instead of only as accounts briefly refused.
+   *
+   * @param userId - The account whose cached facts are now stale.
+   * @param tenantId - Its tenant; a repository id is unique only within one.
+   */
+  private async dropCachedAccountFacts(userId: string, tenantId: string): Promise<void> {
+    await this.accountStatus.invalidate({ userId, tenantId }).catch((err: unknown) => {
+      this.logger.error(`verifyEmail: cache invalidation failed: ${describeError(err, [userId])}`)
+    })
+  }
+  /**
    * Whether the tenant-mismatch misconfiguration has already been reported.
    *
    * The warning describes a permanent property of the deployment — a repository whose
@@ -1013,21 +1035,7 @@ export class AuthService {
 
     await this.userRepo.updateEmailVerified({ id: user.id, tenantId, verified: true })
 
-    // Drop the cached account facts so the account reaches its protected routes on the very next
-    // request rather than after the cache TTL. Delegated rather than deleting a key built here:
-    // the key format belongs to the service that writes it, and a second statement of it drifts
-    // out of agreement silently — the delete stops matching and the stale `0` keeps a
-    // just-verified account locked out until the entry expires, with nothing failing.
-    //
-    // A failure here must NOT fail the verification. By this point the OTP is spent and the
-    // verified flag is committed, so a thrown error reports as unverified something that is
-    // verified, and the user cannot retry — the OTP is gone. The worst a missed invalidation
-    // costs is the staleness this call exists to avoid, bounded by the cache TTL, which is
-    // strictly better than an unretryable failure. Logged rather than swallowed, so the operator
-    // sees a Redis problem that would otherwise only show as accounts briefly locked out.
-    await this.accountStatus.invalidate({ userId: user.id, tenantId }).catch((err: unknown) => {
-      this.logger.error(`verifyEmail: cache invalidation failed: ${describeError(err, [user.id])}`)
-    })
+    await this.dropCachedAccountFacts(user.id, tenantId)
 
     this.logger.log(
       `verifyEmail: email verified userId=${logSafe(user.id)} tenantId=${logSafe(tenantId)}`
