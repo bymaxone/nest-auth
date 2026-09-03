@@ -2455,7 +2455,9 @@ describe('AuthService', () => {
       mockUserRepo.findByEmail.mockResolvedValue(USER)
       mockUserRepo.updateEmailVerified.mockResolvedValue(undefined)
       mockHooks.afterEmailVerified.mockResolvedValue(undefined)
-      mockAccountStatus.invalidate.mockRejectedValue(new Error('redis down'))
+      mockAccountStatus.invalidate.mockRejectedValue(
+        new Error(`DEL failed for us:tenant-1:${USER.id}`)
+      )
 
       await expect(
         service.verifyEmail('tenant-1', 'user@example.com', '123456', mockReq)
@@ -2466,9 +2468,13 @@ describe('AuthService', () => {
         tenantId: USER.tenantId,
         verified: true
       })
-      expect(errSpy).toHaveBeenCalledWith(
-        expect.stringContaining('verifyEmail: cache invalidation failed')
-      )
+      const logged = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')
+      expect(logged).toContain('verifyEmail: cache invalidation failed')
+      // The account id is passed to `describeError` as a value to redact, so a Redis client that
+      // echoes the key it failed on cannot put a real user id into a log line. Pinned by asserting
+      // the id is ABSENT: asserting only the prefix leaves the redaction list free to be emptied.
+      expect(logged).not.toContain(USER.id)
+      expect(logged).toContain('<redacted>')
       errSpy.mockRestore()
     })
 
