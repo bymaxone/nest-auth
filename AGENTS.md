@@ -419,6 +419,9 @@ bite without warning are repeated here:
 - **Next.js 16** — `cookies()` is async, `params`/`searchParams` are Promises, and the proxy
   runs on the **Node.js runtime, not Edge**. `proxy.ts` is the file middleware was renamed to.
 - **`./shared` and `./client`** carry zero dependencies, and must keep carrying zero.
+  `./client` is the one subpath with no guidelines file: `createAuthClient(config)` returns typed
+  methods for every endpoint, and `createAuthFetch(config)` wraps `fetch` with 401 interception and
+  single-flight refresh.
 
 ---
 
@@ -490,25 +493,26 @@ Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bund
 
 ## 8. Common Pitfalls
 
-Each pair is a mistake this repository has actually made, with what it should have been.
+Read every pair as **wrong → right**. The left side is the mistake; the right side is what the
+code must do instead.
 
-**Security** — `===` on a token, never `crypto.timingSafeEqual`; a token or secret in a log line,
-never the event type and user id alone; a JWT secret under 32 characters accepted rather than
-rejected at startup; an external crypto package rather than `node:crypto`; a raw refresh token
-stored rather than its SHA-256.
+**Security** — `===` on a token → `crypto.timingSafeEqual`; a token or secret in a log line → the
+event type and user id alone; a JWT secret under 32 characters accepted → rejected at startup; an
+external crypto package → `node:crypto`; a raw refresh token stored → its SHA-256 stored.
 
-**Architecture** — importing an ORM directly rather than through `IUserRepository`; a string
-injection token rather than a `Symbol()`; registering a feature the options disabled; `Scope.REQUEST`
-rather than the default singleton; a cross-subpath import (`react` reaching into `server`) where
-only `shared` may be imported.
+**Architecture** — importing an ORM directly → `IUserRepository`; a string injection token →
+`Symbol()`; registering a feature the options disabled → conditional registration; `Scope.REQUEST`
+→ the default singleton; a cross-subpath import (`react` reaching into `server`) → import from
+`shared` only.
 
-**TypeScript** — `any` rather than `unknown`, a generic or the real type; a missing `export type`
-for an interface; a barrel re-exporting internals rather than only the public API; a default export
-rather than a named one.
+**TypeScript** — `any` → `unknown`, a generic, or the real type; a missing `export type` for an
+interface → a separate `export type`; a barrel re-exporting internals → the public API only; a
+default export → a named export.
 
-**Testing** — asserting a call happened rather than what it was called with; a spec pinned to its
-own literal rather than to the value the code derives; mocking a whole module where a single
-function should be spied.
+**Testing** — asserting a call happened → asserting what it was called with; a spec pinned to its
+own literal → pinned to the value the code derives; mocking a whole module → spying the single
+function; real Redis in a unit test → a mocked `ioredis`; state shared across tests → fresh mocks
+in `beforeEach`.
 
 ---
 
