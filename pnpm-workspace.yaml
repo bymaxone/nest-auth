@@ -31,7 +31,17 @@ overrides:
   'brace-expansion@<5.0.6': '>=5.0.6'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
   'postcss@<8.5.10': '>=8.5.10'
-  'qs@>=6.11.1 <=6.15.1': '>=6.15.2'
+  # GHSA-4mjr-xmp4-gh2g / GHSA-x5fp-wj9c-mxmx (CVSS 6.3) — denial of service.
+  #
+  # A BLANKET floor, replacing a range-targeted entry (`qs@>=6.11.1 <=6.15.1`) that had stopped
+  # applying: the resolved version reached 6.15.3, left that window, and the override silently
+  # ceased to match. A range-targeted override deactivates itself the moment its target moves,
+  # while still reading in the config as protection. Floor the package, not a window of it.
+  'qs': '^6.16.0'
+  # GHSA-5jgf-p345-68v8 / f65p-4m7j-42xc / fph4-wmhf-6fwf / jqff-g426-hqxp (CVSS 7.5) — host
+  # confusion in URI parsing. Transitive through `@stryker-mutator/core`, so dev-time only; floored
+  # rather than ignored, because a scanner told to skip dev dependencies stays blind after this one.
+  'fast-uri': '^3.1.6'
   'sharp@<0.35.0': '>=0.35.0'
   'tmp@<0.2.6': '>=0.2.6'
   'ws@<8.20.1': '>=8.20.1'
