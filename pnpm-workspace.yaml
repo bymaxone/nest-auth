@@ -31,12 +31,15 @@ overrides:
   'brace-expansion@<5.0.6': '>=5.0.6'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
   'postcss@<8.5.10': '>=8.5.10'
-  # GHSA-4mjr-xmp4-gh2g / GHSA-x5fp-wj9c-mxmx (CVSS 6.3) — denial of service.
+  # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
+  # against the advisory it was written for: once the resolved version leaves that window the
+  # selector stops matching, the entry keeps reading as coverage, and nothing announces that it
+  # has stopped applying. A blanket floor cannot fall out of scope that way.
   #
-  # A BLANKET floor, replacing a range-targeted entry (`qs@>=6.11.1 <=6.15.1`) that had stopped
-  # applying: the resolved version reached 6.15.3, left that window, and the override silently
-  # ceased to match. A range-targeted override deactivates itself the moment its target moves,
-  # while still reading in the config as protection. Floor the package, not a window of it.
+  # Whether an entry here is doing anything is answered by the RESOLVED version in `pnpm-lock.yaml`,
+  # not by the range written here. The range is intent; the lockfile is outcome.
+  #
+  # GHSA-4mjr-xmp4-gh2g / GHSA-x5fp-wj9c-mxmx (CVSS 6.3) — denial of service.
   'qs': '^6.16.0'
   # GHSA-5jgf-p345-68v8 / f65p-4m7j-42xc / fph4-wmhf-6fwf / jqff-g426-hqxp (CVSS 7.5) — host
   # confusion in URI parsing. Transitive through `@stryker-mutator/core`, so dev-time only; floored
