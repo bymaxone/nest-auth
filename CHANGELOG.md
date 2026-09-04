@@ -92,10 +92,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   gone stale within hours: it named the guard, which stopped building that key when
   `AccountStatusService` was extracted.
 
-  **Apply to a derived backend.** Nothing breaks. If you delete these cache keys yourself, replace
-  that with `AccountStatusService.invalidate({ userId, tenantId })` — the service is exported and
-  registered unconditionally. Your delete works today and is not guaranteed to keep working, and
-  the day it stops there will be no error to notice.
+  **Apply to a derived backend.** Nothing changes for a consumer that uses `BymaxAuthModule` — the
+  service is registered and exported unconditionally, and every shipped flow resolves it through
+  the container.
+
+  **One narrow break:** `AuthService`'s constructor takes an additional `AccountStatusService` as
+  its last parameter, because `verifyEmail` now invalidates through it instead of naming the cache
+  key itself. That reaches you only if you construct `AuthService` yourself or provide it through a
+  custom factory rather than letting the module register it — add `AccountStatusService` to that
+  argument list, or to the `inject` array of your factory. A `useValue` double needs one method,
+  `invalidate({ userId, tenantId })`.
+
+  If you delete these cache keys yourself, replace that with
+  `AccountStatusService.invalidate({ userId, tenantId })`. Your delete works today and is not
+  guaranteed to keep working, and the day it stops there will be no error to notice.
 
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
   guarded HTTP route establishes seven things before a handler runs. A long-lived transport has no
