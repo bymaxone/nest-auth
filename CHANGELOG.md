@@ -25,9 +25,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   parsing) and `qs@6.15.3` (GHSA-4mjr-xmp4-gh2g, GHSA-x5fp-wj9c-mxmx, CVSS 6.3, denial of
   service). Now `fast-uri@3.1.7` and `qs@6.16.0`.
 
-  Both reach the tree only through `@stryker-mutator/core`, so the exposure is dev-time and no
-  consumer ever received either package. Floored rather than dismissed on that basis: a scanner
-  configured to skip dev dependencies stays blind after this one is gone.
+  **How they reach this tree**, read from the lockfile rather than assumed: `qs` through `express`,
+  `body-parser`, `superagent` and `typed-rest-client`; `fast-uri` through `ajv`. Neither arrives via
+  `@stryker-mutator/core`.
+
+  `package.json` declares **no runtime dependencies at all**, so nothing this package publishes
+  carries either one. The floor is on this repository's own tree.
+
+  **It does not cover a consumer, and the reason matters.** `express` is a _peer_ dependency here,
+  so a consumer installs its own and resolves its own `qs` through it. An override is not published
+  — it applies to this lockfile and no other. A consumer wanting the same floor sets it in their
+  own workspace; reading this entry as protection they inherit would be the same mistake the entry
+  below documents.
 
   **The `qs` entry is the finding worth keeping.** An override already existed —
   `'qs@>=6.11.1 <=6.15.1': '>=6.15.2'` — and had stopped protecting anything. It fired once, the
@@ -47,8 +56,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   a range above its bound. They are left as they are, recorded here so the next reader knows the
   entries are historical rather than active.
 
-  **Apply to a derived backend.** Nothing to do — these are `devDependencies` of this package and
-  are not part of any published surface.
+  **Apply to a derived backend.** Check your own resolved versions. This package publishes no
+  runtime dependencies, so nothing here reaches you through it — but `express` is a peer, and your
+  own `express` brings its own `qs`. Floor it in your workspace if your resolution is below
+  `6.16.0`; our override cannot do it for you.
 
 ### Added
 
