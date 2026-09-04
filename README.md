@@ -1725,8 +1725,9 @@ On the dashboard plane that last row reads a cache, and **its freshness is bound
 `userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: a stream re-verifying every
 five seconds still serves a banned account until the entry expires. What shortens that is
 [`AccountStatusService.invalidate`](#invalidating-the-account-cache--accountstatusserviceinvalidate)
-— call it wherever you change a status and the next check re-reads immediately. Failing that, lower
-the TTL. The platform plane is uncached and genuinely current, at one repository read per call.
+— call it wherever you change a status, and read the caveat under that method: a request already
+resolving when you invalidate can write the old value back, so the window narrows to one repository
+read rather than to zero. Failing that, lower the TTL. The platform plane is uncached and genuinely current, at one repository read per call.
 
 The plane is **yours to declare**, never inferred from the token. Inferring it would make the plane
 attacker-chosen: a platform token would open a dashboard stream by saying it is one. Passing a
