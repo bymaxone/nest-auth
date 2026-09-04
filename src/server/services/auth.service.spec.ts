@@ -213,9 +213,6 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks()
-    // `clearAllMocks` drops mock implementations, and this one is awaited — restore the resolved
-    // promise or every verifyEmail test fails on an absent `.catch` rather than on its assertion.
-    mockAccountStatus.invalidate.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
       providers: [
