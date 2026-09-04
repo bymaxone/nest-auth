@@ -31,7 +31,22 @@ overrides:
   'brace-expansion@<5.0.6': '>=5.0.6'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
   'postcss@<8.5.10': '>=8.5.10'
-  'qs@>=6.11.1 <=6.15.1': '>=6.15.2'
+  # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
+  # against the advisory it was written for: once the resolved version leaves that window the
+  # selector stops matching, the entry keeps reading as coverage, and nothing announces that it
+  # has stopped applying. A blanket floor cannot fall out of scope that way.
+  #
+  # Whether an entry here is doing anything is answered by the RESOLVED version in `pnpm-lock.yaml`,
+  # not by the range written here. The range is intent; the lockfile is outcome.
+  #
+  # GHSA-4mjr-xmp4-gh2g (5.3) denial of service via attacker-controlled `isBuffer`, and
+  # GHSA-x5fp-wj9c-mxmx (3.7) array-limit bypass via bracket-key comma parsing.
+  'qs': '^6.16.0'
+  # Four advisories, all 7.5: GHSA-5jgf-p345-68v8 and GHSA-jqff-g426-hqxp are host confusion,
+  # GHSA-f65p-4m7j-42xc and GHSA-fph4-wmhf-6fwf are SSRF. Reaches this tree through `ajv`. Floored rather than ignored: this
+  # package declares no runtime dependencies, so a scanner told to skip dev dependencies would
+  # report nothing here and stay blind after the entry is gone.
+  'fast-uri': '^3.1.6'
   'sharp@<0.35.0': '>=0.35.0'
   'tmp@<0.2.6': '>=0.2.6'
   'ws@<8.20.1': '>=8.20.1'
