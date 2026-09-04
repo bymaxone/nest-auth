@@ -510,9 +510,12 @@ interface → a separate `export type`; a barrel re-exporting internals → the 
 default export → a named export.
 
 **Testing** — asserting a call happened → asserting what it was called with; a spec pinned to its
-own literal → pinned to the value the code derives; mocking a whole module → spying the single
-function; real Redis in a unit test → a mocked `ioredis`; state shared across tests → fresh mocks
-in `beforeEach`.
+own literal → pinned to the value the code derives; replacing all of `node:crypto` → spreading
+`jest.requireActual` and overriding only the function under test; real Redis in a unit test → a
+mocked `ioredis`; state shared across tests → fresh mocks in `beforeEach`. (`jest.mock()` on a
+module is correct and used here for import-time replacement — see
+[JEST-TESTING-GUIDELINES](./docs/guidelines/JEST-TESTING-GUIDELINES.md) §6.3. The pitfall is
+discarding the real behaviour the test exists to check, not the call itself.)
 
 ---
 
