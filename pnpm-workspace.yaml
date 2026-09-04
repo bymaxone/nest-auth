@@ -39,10 +39,11 @@ overrides:
   # Whether an entry here is doing anything is answered by the RESOLVED version in `pnpm-lock.yaml`,
   # not by the range written here. The range is intent; the lockfile is outcome.
   #
-  # GHSA-4mjr-xmp4-gh2g / GHSA-x5fp-wj9c-mxmx (CVSS 6.3) — denial of service.
+  # GHSA-4mjr-xmp4-gh2g (5.3) denial of service via attacker-controlled `isBuffer`, and
+  # GHSA-x5fp-wj9c-mxmx (3.7) array-limit bypass via bracket-key comma parsing.
   'qs': '^6.16.0'
-  # GHSA-5jgf-p345-68v8 / f65p-4m7j-42xc / fph4-wmhf-6fwf / jqff-g426-hqxp (CVSS 7.5) — host
-  # confusion in URI parsing. Reaches this tree through `ajv`. Floored rather than ignored: this
+  # Four advisories, all 7.5: GHSA-5jgf-p345-68v8 and GHSA-jqff-g426-hqxp are host confusion,
+  # GHSA-f65p-4m7j-42xc and GHSA-fph4-wmhf-6fwf are SSRF. Reaches this tree through `ajv`. Floored rather than ignored: this
   # package declares no runtime dependencies, so a scanner told to skip dev dependencies would
   # report nothing here and stay blind after the entry is gone.
   'fast-uri': '^3.1.6'

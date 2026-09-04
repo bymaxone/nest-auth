@@ -21,9 +21,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 ### Security
 
 - **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
-  `fast-uri@3.1.5` (GHSA-5jgf-p345-68v8 and three siblings, CVSS 7.5, host confusion in URI
-  parsing) and `qs@6.15.3` (GHSA-4mjr-xmp4-gh2g, GHSA-x5fp-wj9c-mxmx, CVSS 6.3, denial of
-  service). Now `fast-uri@3.1.7` and `qs@6.16.0`.
+  `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.7` and `qs@6.16.0`. Severities and summaries
+  read per advisory rather than carried across as a group, because they are not one wave:
+
+  | advisory            | severity   | what it is                                                                            |
+  | ------------------- | ---------- | ------------------------------------------------------------------------------------- |
+  | GHSA-5jgf-p345-68v8 | 7.5 high   | `fast-uri` host confusion, skipped IDN canonicalization on scheme-relative references |
+  | GHSA-jqff-g426-hqxp | 7.5 high   | `fast-uri` host confusion, percent-encoded scheme normalization                       |
+  | GHSA-f65p-4m7j-42xc | 7.5 high   | `fast-uri` **SSRF**, malformed IPv6 normalization                                     |
+  | GHSA-fph4-wmhf-6fwf | 7.5 high   | `fast-uri` **SSRF**, repeated hostname percent-decoding                               |
+  | GHSA-4mjr-xmp4-gh2g | 5.3 medium | `qs` denial of service via attacker-controlled `isBuffer`                             |
+  | GHSA-x5fp-wj9c-mxmx | 3.7 medium | `qs` array-limit bypass via bracket-key comma parsing                                 |
+
+  Two of the four `fast-uri` advisories are SSRF rather than host confusion, and the `qs` pair is
+  5.3 and 3.7 rather than a single higher figure — both distinctions are lost by summarising a
+  batch, and a reader deciding urgency needs the per-ID numbers.
 
   **How they reach this tree**, read from the lockfile rather than assumed: `qs` through `express`,
   `body-parser`, `superagent` and `typed-rest-client`; `fast-uri` through `ajv`. Neither arrives via
