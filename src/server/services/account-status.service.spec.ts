@@ -29,7 +29,8 @@ function errorCodeOf(err: unknown): string {
 
 const mockRedis = {
   get: jest.fn(),
-  set: jest.fn()
+  set: jest.fn(),
+  del: jest.fn()
 }
 
 const mockUserRepo = {
@@ -178,6 +179,134 @@ describe('AccountStatusService — dashboard', () => {
       .assertDashboardAccountUsable({ userId: 'deleted', tenantId: 'tenant-1' })
       .catch((e: unknown) => e)
     expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Invalidation, and the single statement of the key format
+// ---------------------------------------------------------------------------
+
+describe('AccountStatusService — invalidate', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  // Drops BOTH cached facts. A caller changing a status should not have to know which of two
+  // entries their change invalidated; the cost of the extra delete is one repository read.
+  it('deletes both the status and the verified key for the account', async () => {
+    const service = await buildService()
+    mockRedis.del.mockResolvedValue(undefined)
+
+    await expect(service.invalidate(REF)).resolves.toBeUndefined()
+
+    expect(mockRedis.del).toHaveBeenCalledWith('us:tenant-1:user-1')
+    expect(mockRedis.del).toHaveBeenCalledWith('uev:tenant-1:user-1')
+    expect(mockRedis.del).toHaveBeenCalledTimes(2)
+  })
+
+  // The tenant scopes the delete, exactly as it scopes the write. Dropping it would clear a
+  // colliding id in another tenant instead — a repository id is unique only within one.
+  it('scopes the delete by tenant', async () => {
+    const service = await buildService()
+    mockRedis.del.mockResolvedValue(undefined)
+
+    await service.invalidate({ userId: 'user-1', tenantId: 'acme' })
+
+    expect(mockRedis.del).toHaveBeenCalledWith('us:acme:user-1')
+    expect(mockRedis.del).not.toHaveBeenCalledWith('us:tenant-1:user-1')
+  })
+
+  // The verified flag is dropped FIRST. If the second delete fails, the entry left behind should
+  // be the one whose staleness costs a repository read rather than the one that locks a
+  // just-verified account out of every protected route until it expires.
+  it('drops the verified flag before the status', async () => {
+    const service = await buildService()
+    mockRedis.del.mockResolvedValue(undefined)
+
+    await service.invalidate(REF)
+
+    expect(mockRedis.del.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      'uev:tenant-1:user-1',
+      'us:tenant-1:user-1'
+    ])
+  })
+
+  // A `:` in either half must not shift the boundary on the way out any more than on the way in,
+  // or the delete names a different entry than the write created and silently misses it.
+  it('percent-encodes each half of the key', async () => {
+    const service = await buildService()
+    mockRedis.del.mockResolvedValue(undefined)
+
+    await service.invalidate({ userId: 'a:b', tenantId: 'x:y' })
+
+    expect(mockRedis.del).toHaveBeenCalledWith('us:x%3Ay:a%3Ab')
+    expect(mockRedis.del).toHaveBeenCalledWith('uev:x%3Ay:a%3Ab')
+  })
+})
+
+describe('AccountStatusService — invalidate rejects an unusable account reference', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  // An empty or blank id builds a key no read ever wrote (`us::user-1`), so the delete removes
+  // nothing and RESOLVES — the caller believes the suspension applied while the cached `active`
+  // survives its TTL. Refused instead, because that is the silent failure this method exists to
+  // eliminate, and an unset resolver value is how it arrives.
+  it.each([
+    ['an empty tenant', { userId: 'user-1', tenantId: '' }],
+    ['a blank tenant', { userId: 'user-1', tenantId: '   ' }],
+    ['an empty userId', { userId: '', tenantId: 'tenant-1' }],
+    ['a blank userId', { userId: ' ', tenantId: 'tenant-1' }]
+  ])('refuses %s rather than deleting nothing', async (_label, ref) => {
+    const service = await buildService()
+
+    const thrown = await service.invalidate(ref).catch((e: unknown) => e)
+
+    expect(thrown).toBeInstanceOf(TypeError)
+    expect((thrown as TypeError).message).toBe(
+      'invalidate: userId and tenantId must both be non-empty'
+    )
+    expect(mockRedis.del).not.toHaveBeenCalled()
+  })
+})
+
+describe('AccountStatusService — the reader and the invalidator name the same keys', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  // THE CROSS-CHECK, and what it does NOT prove. One derivation serves both paths, so a format
+  // change moves them together and cannot make them disagree — this test cannot fail for that.
+  // What it catches is a SECOND statement of the format: inline a key in either path and the two
+  // stop agreeing, and the build goes red here rather than a suspension silently taking a full TTL
+  // to land. Single-sourcing is what keeps that unreachable; this test is what notices if it stops
+  // being true.
+  it.each([
+    ['plain', { userId: 'user-1', tenantId: 'tenant-1' }],
+    ['delimiters in both halves', { userId: 'a:b', tenantId: 'x:y' }],
+    ['unicode', { userId: 'ü/1', tenantId: 'té nant' }]
+  ])('writes and deletes the same keys for %s', async (_label, ref) => {
+    const service = await buildService({ emailVerification: { required: true } })
+
+    // The WRITE path: force a full miss so both keys are set from the repository.
+    mockRedis.get.mockResolvedValue(null)
+    mockUserRepo.findById.mockResolvedValue({
+      id: ref.userId,
+      status: 'active',
+      emailVerified: true
+    })
+    mockRedis.set.mockResolvedValue(undefined)
+    await service.assertDashboardAccountUsable(ref)
+    const written = mockRedis.set.mock.calls.map((c: unknown[]) => c[0]).sort()
+
+    // The DELETE path, over the same account.
+    mockRedis.del.mockResolvedValue(undefined)
+    await service.invalidate(ref)
+    const deleted = mockRedis.del.mock.calls.map((c: unknown[]) => c[0]).sort()
+
+    expect(written).toHaveLength(2)
+    expect(deleted).toEqual(written)
   })
 })
 

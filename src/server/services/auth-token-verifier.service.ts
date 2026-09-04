@@ -74,11 +74,14 @@ export interface VerifyAccessTokenOptions {
    * reconnects, and nothing in the token would say so.
    *
    * **Its freshness on the dashboard plane is bounded by `userStatusCacheTtlSeconds`, not by how
-   * often you call.** That plane reads the `us:`/`uev:` cache, and no flow in this library
-   * invalidates those keys when a status changes — they simply expire (default 60 s). So a stream
-   * re-verifying every five seconds still serves a banned account for up to a minute; lowering
-   * the TTL is what shortens the cut-off, not a tighter cadence. The platform plane is uncached
-   * and therefore genuinely current, at the cost of a repository read per call.
+   * often you call.** That plane reads the `us:`/`uev:` cache, so a stream re-verifying every five
+   * seconds still serves a banned account until the entry expires (default 60 s) — a tighter
+   * cadence does not shorten that. What does is
+   * {@link AccountStatusService.invalidate}: call it wherever you change an account's status, and
+   * read what that method does **not** promise — a request already resolving when you invalidate
+   * can write the old value back, so the window narrows to one repository read rather than to
+   * zero. Failing that, lower the TTL. The platform plane is uncached and therefore genuinely
+   * current, at the cost of a repository read per call.
    *
    * @defaultValue true
    */

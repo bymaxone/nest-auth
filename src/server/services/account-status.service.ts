@@ -20,6 +20,30 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 
 /**
+ * The two cache keys naming one dashboard account.
+ *
+ * The single statement of this format, and deliberately **not** exported. Anything that needs one
+ * of these entries gone — library code included — goes through
+ * {@link AccountStatusService.invalidate} rather than naming the key itself. A second statement of
+ * a key format drifts out of agreement silently: the delete stops matching, nothing raises, and
+ * the entry simply survives to its TTL.
+ *
+ * @param ref - The account to name. The tenant is required: a repository id is unique only WITHIN
+ *   a tenant, so a key built from a bare id can answer for a colliding id elsewhere.
+ * @returns The status key and the email-verified key for that account.
+ */
+function cacheKeysFor(ref: { readonly userId: string; readonly tenantId: string }): {
+  readonly statusKey: string
+  readonly verifiedKey: string
+} {
+  // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
+  // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
+  // `('a','b:c')` would otherwise both key `a:b:c`).
+  const scope = `${encodeURIComponent(ref.tenantId)}:${encodeURIComponent(ref.userId)}`
+  return { statusKey: `us:${scope}`, verifiedKey: `uev:${scope}` }
+}
+
+/**
  * Resolves an account's current lifecycle state and refuses the ones a deployment blocks.
  *
  * The answer a token carries is a snapshot taken at issuance: `DashboardJwtPayload.status` says
@@ -58,6 +82,59 @@ export class AccountStatusService {
   ) {}
 
   /**
+   * Drops the cached status and email-verified flag for one account, so the next check re-reads
+   * them from the repository.
+   *
+   * **Call this whenever you change an account's status outside this library.** A host suspending
+   * a user through its own admin surface leaves this cache holding `active` until it expires, and
+   * the suspended user keeps reaching protected routes for up to `userStatusCacheTtlSeconds`. This
+   * is the supported way to close that window; reaching into the key prefix is not, because the
+   * format is this library's to change and a delete that stops matching fails silently.
+   *
+   * Both keys go, not only the one a given caller cares about. They are written together and
+   * dropping the other costs one repository read on the next request — a smaller price than an API
+   * where the caller has to know which of two entries their change invalidated.
+   *
+   * Idempotent: deleting an absent key is not an error, so a caller need not know whether the
+   * account was ever cached.
+   *
+   * **What it does not guarantee.** A request already in flight can repopulate the entry. The read
+   * path fills the cache in two steps — resolve from the repository, then write — so a request
+   * that resolved `active` just before your update lands will write `active` afterwards, with a
+   * full TTL, however promptly you call this. The window is one repository read wide, not one TTL,
+   * which is the whole improvement over letting the entry expire; it is not zero. **Order your own
+   * writes accordingly: persist the status change first, then invalidate** — that way any request
+   * whose repository read starts after your write already sees the new value, and only the
+   * genuinely concurrent ones can lose the race.
+   *
+   * Closing it entirely needs the fill to be conditional on nothing having invalidated in between —
+   * a per-account generation the write compares against — which is a mechanism this service does
+   * not have. Tracked rather than implied.
+   *
+   * @param ref - The account whose cached facts are now stale. Both fields must be non-empty.
+   * @throws {TypeError} When either id is empty or blank. Refused rather than attempted: an empty
+   *   tenant builds `us::{userId}`, which names no entry any read ever wrote, so the delete would
+   *   remove nothing and resolve normally — the caller's admin surface reports the suspension
+   *   applied while the cached `active` survives its full TTL. That is the exact silent failure
+   *   this method exists to eliminate, and an unset resolver value or a `undefined` coerced by a
+   *   JavaScript host is how it arrives. A caller error, so not an `AuthException`.
+   */
+  async invalidate(ref: { readonly userId: string; readonly tenantId: string }): Promise<void> {
+    if (ref.userId.trim() === '' || ref.tenantId.trim() === '') {
+      throw new TypeError('invalidate: userId and tenantId must both be non-empty')
+    }
+
+    const { statusKey, verifiedKey } = cacheKeysFor(ref)
+    // The verified flag goes FIRST. If the second delete fails — a blip, a failover — the caller
+    // sees the rejection either way, but the entry left behind should be the one whose staleness
+    // merely costs a repository read. A stale `uev` of `0` locks a just-verified account out of
+    // every protected route until it expires, and `verifyEmail` reaches here after the OTP is
+    // spent and the flag is committed, so there is nothing for the user to retry.
+    await this.redis.del(verifiedKey)
+    await this.redis.del(statusKey)
+  }
+
+  /**
    * Refuses a dashboard account that is blocked, deleted, or unverified where verification gates
    * API access.
    *
@@ -73,12 +150,7 @@ export class AccountStatusService {
     readonly tenantId: string
   }): Promise<void> {
     const { userId, tenantId } = ref
-    // Each half is percent-encoded before it is joined by `:`, so a tenant or subject that itself
-    // contains a `:` cannot shift the boundary and collide with another pair (`('a:b','c')` and
-    // `('a','b:c')` would otherwise both key `a:b:c`).
-    const scope = `${encodeURIComponent(tenantId)}:${encodeURIComponent(userId)}`
-    const statusKey = `us:${scope}`
-    const verifiedKey = `uev:${scope}`
+    const { statusKey, verifiedKey } = cacheKeysFor(ref)
     const cacheTtl = this.options.userStatusCacheTtlSeconds
     const requireVerified = this.options.emailVerification.required
 
