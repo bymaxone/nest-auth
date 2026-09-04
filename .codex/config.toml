@@ -1,0 +1,16 @@
+# Codex reads one AGENTS.md per directory from the root down, and stops adding
+# files once their combined size reaches this cap -- dropping the tail with no
+# error and no failed check. So the default is not a limit that reports itself.
+#
+# This repository's AGENTS.md is its own guidance plus the shared review-rules
+# block that `bymaxone/.github` splices in, and that block grows as rules are
+# added org-wide. The two are charged against one budget and neither side can
+# see the other from where it sits: a rule added centrally cannot know which
+# repository it pushes over, and content trimmed here cannot know when the next
+# revision will consume the space it just freed.
+#
+# Raised rather than trimmed, because what sits below the block is this
+# repository's architecture, security specification and testing strategy, which
+# a reviewer needs. `agents-sync` reads this value in place of its own default,
+# so the budget gate measures this repository against the number it runs with.
+project_doc_max_bytes = 65536
