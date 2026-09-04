@@ -394,36 +394,16 @@ which of these are a contract with `rust-auth`, is in
 
 ## 4. Frontend Patterns
 
-### React (`./react`) — Hooks + AuthProvider
+The four subpaths and what each exports are documented in the README's
+[Frontend](./README.md) sections, and in depth in
+[REACT-GUIDELINES](./docs/guidelines/REACT-GUIDELINES.md) and
+[NEXTJS-GUIDELINES](./docs/guidelines/NEXTJS-GUIDELINES.md). Only the rules that
+bite without warning are repeated here:
 
-| Export            | Returns                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `AuthProvider`    | Context provider — wraps app, manages session, auto-refresh |
-| `useSession()`    | `{ user, status, refresh() }`                               |
-| `useAuth()`       | `{ login(), logout(), register() }`                         |
-| `useAuthStatus()` | `{ isAuthenticated, isLoading }`                            |
-
-Rules: Hooks only. Memoize context value. AbortController on unmount. Handle loading/error/success states.
-
-### Next.js (`./nextjs`) — Proxy + Route Handlers
-
-| Export                                  | Purpose                                                     |
-| --------------------------------------- | ----------------------------------------------------------- |
-| `createAuthProxy()`                     | Proxy config for `proxy.ts` (Next.js 16 renamed middleware) |
-| `createSilentRefreshHandler()`          | GET — iframe-based token refresh                            |
-| `createClientRefreshHandler()`          | POST — client-side refresh                                  |
-| `createLogoutHandler()`                 | POST — clear tokens and session                             |
-| `decodeJwtToken()` / `verifyJwtToken()` | JWT helpers without `@nestjs/jwt`                           |
-
-Rules: `cookies()` is async in Next.js 16. `params`/`searchParams` are Promises. Proxy uses Node.js runtime (not Edge).
-
-### Shared (`./shared`) — Types + constants synced between server and client
-
-Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
-
-### Client (`./client`) — Fetch-based, zero dependencies
-
-`createAuthClient(config)` → typed methods for all endpoints. `createAuthFetch(config)` → auto-refresh wrapper.
+- **React** — hooks only; memoize the context value; `AbortController` on unmount.
+- **Next.js 16** — `cookies()` is async, `params`/`searchParams` are Promises, and the proxy
+  runs on the **Node.js runtime, not Edge**. `proxy.ts` is the file middleware was renamed to.
+- **`./shared` and `./client`** carry zero dependencies, and must keep carrying zero.
 
 ---
 
@@ -460,28 +440,20 @@ Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
 
 ## 6. Testing Strategy
 
-### Coverage Gate
+**100% statements / branches / functions / lines, every layer, no exceptions** — enforced by
+`jest.config.ts` and `jest.coverage.config.ts`, both of which fail below it. A pre-publish gate,
+not a target.
 
-**100% statements / branches / functions / lines — every layer, no exceptions.**
-Enforced by `jest.config.ts` (`pnpm test:cov`) and `jest.coverage.config.ts`
-(`pnpm test:cov:all`); both fail below 100%. A hard pre-publish gate, not a
-target. Mutation testing (Stryker `break: 100`) is the deeper gate against weak
-tests.
+**Mutation testing is the deeper gate** (Stryker `break: 100`, currently holding 100%). Only a
+cold `pnpm mutation:full` verdict may be reported, for the reason given under the review rules
+above; `pnpm mutation` and any `--mutate` run reuse recorded verdicts. Survivors are a missing
+test or an equivalent mutant carrying its reason. Full methodology, config rationale and the
+per-file workflow: [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md); results:
+[docs/mutation_testing_results.md](./docs/mutation_testing_results.md).
 
-### Mocking Strategy
-
-| Dependency     | Approach                                            |
-| -------------- | --------------------------------------------------- |
-| Redis          | `jest.fn()` for GET/SET/DEL/PIPELINE                |
-| Repositories   | `jest.fn()` per method                              |
-| Email provider | `jest.fn()` — verify calls only                     |
-| JwtService     | `jest.fn()` for sign/verify                         |
-| `node:crypto`  | Spy on specific functions, never mock entire module |
-| `fetch`        | `jest.fn()` replacing `global.fetch`                |
-
-### Mutation Testing (Stryker)
-
-Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. The suite holds **100%**: no survivors, nothing uncovered (see [docs/mutation_testing_results.md](./docs/mutation_testing_results.md)). Run `pnpm mutation:full` (Node 24) before tagging a release — a cold run is the only verdict that may be reported, for the reason given under the review rules above. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>` — and note that the per-line directive does not bind when the mutant shares its line with a callback's closing brace or sits below a wrapped comment; use the block form there). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation runs automatically post-merge on `main` via the shared reusable CI (`bymaxone/.github` → node-lib-ci); it is not per-PR and not in `prepublishOnly`, and can also be run on demand with `pnpm mutation` for a fast incremental signal, which is not a release verdict.
+**Mock external dependencies, never the module.** Redis, repositories, the email provider,
+`JwtService` and `fetch` are `jest.fn()`; `node:crypto` is spied per function and never mocked
+whole. Detail: [JEST-TESTING-GUIDELINES](./docs/guidelines/JEST-TESTING-GUIDELINES.md).
 
 ---
 
