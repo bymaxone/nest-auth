@@ -18,6 +18,61 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Security
+
+- **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
+  `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.7` and `qs@6.16.0`. Severities and summaries
+  read per advisory rather than carried across as a group, because they are not one wave:
+
+  | advisory            | severity   | what it is                                                                            |
+  | ------------------- | ---------- | ------------------------------------------------------------------------------------- |
+  | GHSA-5jgf-p345-68v8 | 7.5 high   | `fast-uri` host confusion, skipped IDN canonicalization on scheme-relative references |
+  | GHSA-jqff-g426-hqxp | 7.5 high   | `fast-uri` host confusion, percent-encoded scheme normalization                       |
+  | GHSA-f65p-4m7j-42xc | 7.5 high   | `fast-uri` **SSRF**, malformed IPv6 normalization                                     |
+  | GHSA-fph4-wmhf-6fwf | 7.5 high   | `fast-uri` **SSRF**, repeated hostname percent-decoding                               |
+  | GHSA-4mjr-xmp4-gh2g | 5.3 medium | `qs` denial of service via attacker-controlled `isBuffer`                             |
+  | GHSA-x5fp-wj9c-mxmx | 3.7 medium | `qs` array-limit bypass via bracket-key comma parsing                                 |
+
+  Two of the four `fast-uri` advisories are SSRF rather than host confusion, and the `qs` pair is
+  5.3 and 3.7 rather than a single higher figure — both distinctions are lost by summarising a
+  batch, and a reader deciding urgency needs the per-ID numbers.
+
+  **How they reach this tree**, read from the lockfile rather than assumed: `qs` through `express`,
+  `body-parser`, `superagent` and `typed-rest-client`; `fast-uri` through `ajv`. Neither arrives via
+  `@stryker-mutator/core`.
+
+  `package.json` declares **no runtime dependencies at all**, so nothing this package publishes
+  carries either one. The floor is on this repository's own tree.
+
+  **It does not cover a consumer, and the reason matters.** `express` is a _peer_ dependency here,
+  so a consumer installs its own and resolves its own `qs` through it. An override is not published
+  — it applies to this lockfile and no other. A consumer wanting the same floor sets it in their
+  own workspace; reading this entry as protection they inherit would be the same mistake the entry
+  below documents.
+
+  **The `qs` entry is the finding worth keeping.** An override already existed —
+  `'qs@>=6.11.1 <=6.15.1': '>=6.15.2'` — and had stopped protecting anything. It fired once, the
+  resolved version moved to `6.15.3`, that left the selector's window, and the override silently
+  ceased to match. It still read in the config as coverage. **A selector-based override protects
+  against the advisory it was written for and nothing after it**, and nothing announces the moment
+  it stops applying. `fast-uri` had no override at all, so its appearance of coverage came from
+  nowhere in particular.
+
+  The only check that catches this is reading the **resolved** version in `pnpm-lock.yaml`. A
+  config range is a statement of intent, not of outcome.
+
+  **Swept the rest of the family rather than fixing only the two reported.** Every remaining
+  override — `brace-expansion`, `esbuild`, `postcss`, `sharp`, `tmp`, `ws` — resolves _above_ its
+  bound today, so all six are currently inert. That is harmless now and is the same shape that
+  made `qs` dangerous: each will read as protection and provide none the moment an advisory names
+  a range above its bound. They are left as they are, recorded here so the next reader knows the
+  entries are historical rather than active.
+
+  **Apply to a derived backend.** Check your own resolved versions. This package publishes no
+  runtime dependencies, so nothing here reaches you through it — but `express` is a peer, and your
+  own `express` brings its own `qs`. Floor it in your workspace if your resolution is below
+  `6.16.0`; our override cannot do it for you.
+
 ### Added
 
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
