@@ -352,33 +352,15 @@ Request → JwtAuthGuard → UserStatusGuard → RolesGuard → MfaRequiredGuard
 | `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                                    |
 | `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`AllowAllBreachChecker` default — the check reaches the network, so it is opt-in) |
 
-### Service Method Structure
+### Service and controller shape
 
-```typescript
-async login(dto: LoginDto, req: Request, res: Response): Promise<AuthResult | MfaChallengeResult> {
-  // 1. Validate — find user, check status, check brute-force
-  // 2. Execute — verify password, check MFA requirement
-  // 3. Generate — tokens, session
-  // 4. Deliver — set cookies or return in body
-  // 5. Hook — call afterLogin
-  // 6. Return
-}
-```
+A service method runs in one order: **validate** (find the user, check status, check brute-force),
+**execute** (verify the credential, apply the MFA rule), **generate** (tokens, session), **deliver**
+(cookies or body), **hook**, return. `AuthService.login` is the reference implementation.
 
-### Controller Pattern — Thin, delegate everything
-
-```typescript
-@Post('login')
-@Throttle(AUTH_THROTTLE_CONFIGS.login)
-@HttpCode(HttpStatus.OK)
-async login(
-  @Body() dto: LoginDto,
-  @Req() req: Request,
-  @Res({ passthrough: true }) res: Response,
-): Promise<AuthResult | MfaChallengeResult> {
-  return this.authService.login(dto, req, res);
-}
-```
+A controller does none of that. It carries the route decorator, the throttle config and the status
+code, and delegates in one line — validate, delegate, return, nothing else. Any logic in a
+controller belongs in the service it calls.
 
 ### Error Response Format
 
@@ -427,36 +409,19 @@ which of these are a contract with `rust-auth`, is in
 
 ## 4. Frontend Patterns
 
-### React (`./react`) — Hooks + AuthProvider
+The four subpaths and what each exports are documented in the README's
+[Frontend](./README.md) sections, and in depth in
+[REACT-GUIDELINES](./docs/guidelines/REACT-GUIDELINES.md) and
+[NEXTJS-GUIDELINES](./docs/guidelines/NEXTJS-GUIDELINES.md). Only the rules that
+bite without warning are repeated here:
 
-| Export            | Returns                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `AuthProvider`    | Context provider — wraps app, manages session, auto-refresh |
-| `useSession()`    | `{ user, status, refresh() }`                               |
-| `useAuth()`       | `{ login(), logout(), register() }`                         |
-| `useAuthStatus()` | `{ isAuthenticated, isLoading }`                            |
-
-Rules: Hooks only. Memoize context value. AbortController on unmount. Handle loading/error/success states.
-
-### Next.js (`./nextjs`) — Proxy + Route Handlers
-
-| Export                                  | Purpose                                                     |
-| --------------------------------------- | ----------------------------------------------------------- |
-| `createAuthProxy()`                     | Proxy config for `proxy.ts` (Next.js 16 renamed middleware) |
-| `createSilentRefreshHandler()`          | GET — iframe-based token refresh                            |
-| `createClientRefreshHandler()`          | POST — client-side refresh                                  |
-| `createLogoutHandler()`                 | POST — clear tokens and session                             |
-| `decodeJwtToken()` / `verifyJwtToken()` | JWT helpers without `@nestjs/jwt`                           |
-
-Rules: `cookies()` is async in Next.js 16. `params`/`searchParams` are Promises. Proxy uses Node.js runtime (not Edge).
-
-### Shared (`./shared`) — Types + constants synced between server and client
-
-Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
-
-### Client (`./client`) — Fetch-based, zero dependencies
-
-`createAuthClient(config)` → typed methods for all endpoints. `createAuthFetch(config)` → auto-refresh wrapper.
+- **React** — hooks only; memoize the context value; `AbortController` on unmount.
+- **Next.js 16** — `cookies()` is async, `params`/`searchParams` are Promises, and the proxy
+  runs on the **Node.js runtime, not Edge**. `proxy.ts` is the file middleware was renamed to.
+- **`./shared` and `./client`** carry zero dependencies, and must keep carrying zero.
+  `./client` is the one subpath with no guidelines file: `createAuthClient(config)` returns typed
+  methods for every endpoint, and `createAuthFetch(config)` wraps `fetch` with 401 interception and
+  single-flight refresh.
 
 ---
 
@@ -493,28 +458,20 @@ Cookie names, error codes, route paths, TypeScript types. Zero dependencies.
 
 ## 6. Testing Strategy
 
-### Coverage Gate
+**100% statements / branches / functions / lines, every layer, no exceptions** — enforced by
+`jest.config.ts` and `jest.coverage.config.ts`, both of which fail below it. A pre-publish gate,
+not a target.
 
-**100% statements / branches / functions / lines — every layer, no exceptions.**
-Enforced by `jest.config.ts` (`pnpm test:cov`) and `jest.coverage.config.ts`
-(`pnpm test:cov:all`); both fail below 100%. A hard pre-publish gate, not a
-target. Mutation testing (Stryker `break: 100`) is the deeper gate against weak
-tests.
+**Mutation testing is the deeper gate** (Stryker `break: 100`, currently holding 100%). Only a
+cold `pnpm mutation:full` verdict may be reported, for the reason given under the review rules
+above; `pnpm mutation` and any `--mutate` run reuse recorded verdicts. Survivors are a missing
+test or an equivalent mutant carrying its reason. Full methodology, config rationale and the
+per-file workflow: [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md); results:
+[docs/mutation_testing_results.md](./docs/mutation_testing_results.md).
 
-### Mocking Strategy
-
-| Dependency     | Approach                                            |
-| -------------- | --------------------------------------------------- |
-| Redis          | `jest.fn()` for GET/SET/DEL/PIPELINE                |
-| Repositories   | `jest.fn()` per method                              |
-| Email provider | `jest.fn()` — verify calls only                     |
-| JwtService     | `jest.fn()` for sign/verify                         |
-| `node:crypto`  | Spy on specific functions, never mock entire module |
-| `fetch`        | `jest.fn()` replacing `global.fetch`                |
-
-### Mutation Testing (Stryker)
-
-Line coverage proves code _executes_; mutation testing proves the tests would _fail_ if the code regressed — the stronger gate for a security library. The suite holds **100%**: no survivors, nothing uncovered (see [docs/mutation_testing_results.md](./docs/mutation_testing_results.md)). Run `pnpm mutation:full` (Node 24) before tagging a release — a cold run is the only verdict that may be reported, for the reason given under the review rules above. Survivors are either real gaps (add a test) or equivalent mutants (mark `// Stryker disable next-line <Mutator>: <reason>` — and note that the per-line directive does not bind when the mutant shares its line with a callback's closing brace or sits below a wrapped comment; use the block form there). The full methodology, config rationale, ESM/pnpm setup corrections, and the per-file iteration workflow are documented in [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Mutation runs automatically post-merge on `main` via the shared reusable CI (`bymaxone/.github` → node-lib-ci); it is not per-PR and not in `prepublishOnly`, and can also be run on demand with `pnpm mutation` for a fast incremental signal, which is not a release verdict.
+**Mock external dependencies, never the module.** Redis, repositories, the email provider,
+`JwtService` and `fetch` are `jest.fn()`; `node:crypto` is spied per function and never mocked
+whole. Detail: [JEST-TESTING-GUIDELINES](./docs/guidelines/JEST-TESTING-GUIDELINES.md).
 
 ---
 
@@ -536,42 +493,29 @@ Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bund
 
 ## 8. Common Pitfalls
 
-### Security
+Read every pair as **wrong → right**. The left side is the mistake; the right side is what the
+code must do instead.
 
-| Pitfall                    | Fix                              |
-| -------------------------- | -------------------------------- |
-| `===` for token comparison | `crypto.timingSafeEqual`         |
-| Logging tokens/secrets     | Log event type + user ID only    |
-| JWT secret < 32 chars      | Validate at startup, reject weak |
-| External crypto packages   | `node:crypto` only               |
-| Raw refresh token storage  | Store SHA-256 hash               |
+**Security** — `===` on a token → `crypto.timingSafeEqual`; a token or secret in a log line → the
+event type and user id alone; a JWT secret under 32 characters accepted → rejected at startup; an
+external crypto package → `node:crypto`; a raw refresh token stored → its SHA-256 stored.
 
-### Architecture
+**Architecture** — importing an ORM directly → `IUserRepository`; a string injection token →
+`Symbol()`; registering a feature the options disabled → conditional registration; `Scope.REQUEST`
+→ the default singleton; a cross-subpath import (`react` reaching into `server`) → import from
+`shared` only.
 
-| Pitfall                                | Fix                             |
-| -------------------------------------- | ------------------------------- |
-| Importing Prisma/ORM directly          | Use `IUserRepository` interface |
-| String injection tokens                | `Symbol()`                      |
-| Registering disabled features          | Conditional registration        |
-| `Scope.REQUEST`                        | Singleton (default)             |
-| Cross-subpath imports (react → server) | Only import from `shared`       |
+**TypeScript** — `any` → `unknown`, a generic, or the real type; a missing `export type` for an
+interface → a separate `export type`; a barrel re-exporting internals → the public API only; a
+default export → a named export.
 
-### TypeScript
-
-| Pitfall                       | Fix                                   |
-| ----------------------------- | ------------------------------------- |
-| Using `any`                   | `unknown`, generics, explicit types   |
-| Missing `export type`         | Separate `export type` for interfaces |
-| Barrel re-exporting internals | Export only public API                |
-| Default exports               | Named exports only                    |
-
-### Testing
-
-| Pitfall                        | Fix                          |
-| ------------------------------ | ---------------------------- |
-| Testing implementation details | Test behavior, not internals |
-| Real Redis in unit tests       | Mock ioredis                 |
-| Shared mutable state           | Fresh mocks in `beforeEach`  |
+**Testing** — asserting a call happened → asserting what it was called with; a spec pinned to its
+own literal → pinned to the value the code derives; replacing all of `node:crypto` → spreading
+`jest.requireActual` and overriding only the function under test; real Redis in a unit test → a
+mocked `ioredis`; state shared across tests → fresh mocks in `beforeEach`. (`jest.mock()` on a
+module is correct and used here for import-time replacement — see
+[JEST-TESTING-GUIDELINES](./docs/guidelines/JEST-TESTING-GUIDELINES.md) §6.3. The pitfall is
+discarding the real behaviour the test exists to check, not the call itself.)
 
 ---
 
