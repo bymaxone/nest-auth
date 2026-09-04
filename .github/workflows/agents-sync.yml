@@ -30,17 +30,29 @@ jobs:
       contents: write
       pull-requests: write
     secrets:
-      # Named rather than `inherit`, so the called workflow receives this one
-      # secret and not every secret this repository holds.
+      # A GitHub App rather than a long-lived token, which is what the called
+      # workflow prefers: it mints an installation token per run that expires
+      # within the hour, so there is no credential to rotate and none that can
+      # expire unnoticed and leave the sync quietly using the default token.
       #
-      # The mapping is present even while the secret is not, because a reusable
-      # workflow receives no secret it is not passed: adding AGENTS_SYNC_TOKEN
-      # later would otherwise change nothing, and the run would keep using the
-      # default token while looking configured. An unset secret evaluates to the
-      # empty string, which the called workflow already falls back from.
+      # This replaces a `sync-token: ${{ secrets.AGENTS_SYNC_TOKEN }}` mapping
+      # whose secret no longer exists. An absent secret evaluates to the empty
+      # string, the called workflow falls through to the default token, and the
+      # run then fails at the point it tries to open the pull request:
+      # `GitHub Actions is not permitted to create or approve pull requests`.
+      # Nothing about the mapping said it was dead, which is why this sat broken.
       #
-      # Why it is worth setting here: a pull request opened with the default
-      # GITHUB_TOKEN starts no workflow runs, and this repository's ruleset
-      # requires status checks — so an unattended sync pull request cannot merge
-      # until somebody pushes to it.
-      sync-token: ${{ secrets.AGENTS_SYNC_TOKEN }}
+      # Both are organisation secrets with `visibility: all`, so this repository
+      # already reads them and nothing has to be configured here. They are named
+      # rather than passed with `inherit`, so the called workflow receives these
+      # two and not every secret this repository holds.
+      #
+      # Why a non-default credential is needed at all: a pull request opened with
+      # the default GITHUB_TOKEN starts no workflow runs, and this repository's
+      # ruleset requires status checks — so an unattended sync pull request could
+      # never merge.
+      #
+      # The pair is read together; supplying one alone is a misconfiguration the
+      # called workflow reports before falling back.
+      app-id: ${{ secrets.AGENTS_SYNC_APP_ID }}
+      app-private-key: ${{ secrets.AGENTS_SYNC_PRIVATE_KEY }}
