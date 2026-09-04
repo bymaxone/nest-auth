@@ -70,7 +70,7 @@ a keyspace nothing invalidates. The other prefixes DO mirror onto the platform p
 own names (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
 so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
 which of these are a contract with `rust-auth`, is in
-[`conformance/wire-contract.json`](./conformance/wire-contract.json).
+[`conformance/wire-contract.json`](../../conformance/wire-contract.json).
 
 ---
 
