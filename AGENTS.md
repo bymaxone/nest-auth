@@ -352,33 +352,15 @@ Request → JwtAuthGuard → UserStatusGuard → RolesGuard → MfaRequiredGuard
 | `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                                    |
 | `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`AllowAllBreachChecker` default — the check reaches the network, so it is opt-in) |
 
-### Service Method Structure
+### Service and controller shape
 
-```typescript
-async login(dto: LoginDto, req: Request, res: Response): Promise<AuthResult | MfaChallengeResult> {
-  // 1. Validate — find user, check status, check brute-force
-  // 2. Execute — verify password, check MFA requirement
-  // 3. Generate — tokens, session
-  // 4. Deliver — set cookies or return in body
-  // 5. Hook — call afterLogin
-  // 6. Return
-}
-```
+A service method runs in one order: **validate** (find the user, check status, check brute-force),
+**execute** (verify the credential, apply the MFA rule), **generate** (tokens, session), **deliver**
+(cookies or body), **hook**, return. `AuthService.login` is the reference implementation.
 
-### Controller Pattern — Thin, delegate everything
-
-```typescript
-@Post('login')
-@Throttle(AUTH_THROTTLE_CONFIGS.login)
-@HttpCode(HttpStatus.OK)
-async login(
-  @Body() dto: LoginDto,
-  @Req() req: Request,
-  @Res({ passthrough: true }) res: Response,
-): Promise<AuthResult | MfaChallengeResult> {
-  return this.authService.login(dto, req, res);
-}
-```
+A controller does none of that. It carries the route decorator, the throttle config and the status
+code, and delegates in one line — validate, delegate, return, nothing else. Any logic in a
+controller belongs in the service it calls.
 
 ### Error Response Format
 
@@ -508,42 +490,25 @@ Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bund
 
 ## 8. Common Pitfalls
 
-### Security
+Each pair is a mistake this repository has actually made, with what it should have been.
 
-| Pitfall                    | Fix                              |
-| -------------------------- | -------------------------------- |
-| `===` for token comparison | `crypto.timingSafeEqual`         |
-| Logging tokens/secrets     | Log event type + user ID only    |
-| JWT secret < 32 chars      | Validate at startup, reject weak |
-| External crypto packages   | `node:crypto` only               |
-| Raw refresh token storage  | Store SHA-256 hash               |
+**Security** — `===` on a token, never `crypto.timingSafeEqual`; a token or secret in a log line,
+never the event type and user id alone; a JWT secret under 32 characters accepted rather than
+rejected at startup; an external crypto package rather than `node:crypto`; a raw refresh token
+stored rather than its SHA-256.
 
-### Architecture
+**Architecture** — importing an ORM directly rather than through `IUserRepository`; a string
+injection token rather than a `Symbol()`; registering a feature the options disabled; `Scope.REQUEST`
+rather than the default singleton; a cross-subpath import (`react` reaching into `server`) where
+only `shared` may be imported.
 
-| Pitfall                                | Fix                             |
-| -------------------------------------- | ------------------------------- |
-| Importing Prisma/ORM directly          | Use `IUserRepository` interface |
-| String injection tokens                | `Symbol()`                      |
-| Registering disabled features          | Conditional registration        |
-| `Scope.REQUEST`                        | Singleton (default)             |
-| Cross-subpath imports (react → server) | Only import from `shared`       |
+**TypeScript** — `any` rather than `unknown`, a generic or the real type; a missing `export type`
+for an interface; a barrel re-exporting internals rather than only the public API; a default export
+rather than a named one.
 
-### TypeScript
-
-| Pitfall                       | Fix                                   |
-| ----------------------------- | ------------------------------------- |
-| Using `any`                   | `unknown`, generics, explicit types   |
-| Missing `export type`         | Separate `export type` for interfaces |
-| Barrel re-exporting internals | Export only public API                |
-| Default exports               | Named exports only                    |
-
-### Testing
-
-| Pitfall                        | Fix                          |
-| ------------------------------ | ---------------------------- |
-| Testing implementation details | Test behavior, not internals |
-| Real Redis in unit tests       | Mock ioredis                 |
-| Shared mutable state           | Fresh mocks in `beforeEach`  |
+**Testing** — asserting a call happened rather than what it was called with; a spec pinned to its
+own literal rather than to the value the code derives; mocking a whole module where a single
+function should be spied.
 
 ---
 
