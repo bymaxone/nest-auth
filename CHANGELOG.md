@@ -18,6 +18,38 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Security
+
+- **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
+  `fast-uri@3.1.5` (GHSA-5jgf-p345-68v8 and three siblings, CVSS 7.5, host confusion in URI
+  parsing) and `qs@6.15.3` (GHSA-4mjr-xmp4-gh2g, GHSA-x5fp-wj9c-mxmx, CVSS 6.3, denial of
+  service). Now `fast-uri@3.1.7` and `qs@6.16.0`.
+
+  Both reach the tree only through `@stryker-mutator/core`, so the exposure is dev-time and no
+  consumer ever received either package. Floored rather than dismissed on that basis: a scanner
+  configured to skip dev dependencies stays blind after this one is gone.
+
+  **The `qs` entry is the finding worth keeping.** An override already existed —
+  `'qs@>=6.11.1 <=6.15.1': '>=6.15.2'` — and had stopped protecting anything. It fired once, the
+  resolved version moved to `6.15.3`, that left the selector's window, and the override silently
+  ceased to match. It still read in the config as coverage. **A selector-based override protects
+  against the advisory it was written for and nothing after it**, and nothing announces the moment
+  it stops applying. `fast-uri` had no override at all, so its appearance of coverage came from
+  nowhere in particular.
+
+  The only check that catches this is reading the **resolved** version in `pnpm-lock.yaml`. A
+  config range is a statement of intent, not of outcome.
+
+  **Swept the rest of the family rather than fixing only the two reported.** Every remaining
+  override — `brace-expansion`, `esbuild`, `postcss`, `sharp`, `tmp`, `ws` — resolves _above_ its
+  bound today, so all six are currently inert. That is harmless now and is the same shape that
+  made `qs` dangerous: each will read as protection and provide none the moment an advisory names
+  a range above its bound. They are left as they are, recorded here so the next reader knows the
+  entries are historical rather than active.
+
+  **Apply to a derived backend.** Nothing to do — these are `devDependencies` of this package and
+  are not part of any published surface.
+
 ### Added
 
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
