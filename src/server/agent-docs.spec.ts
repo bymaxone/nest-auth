@@ -50,9 +50,21 @@ const CODEX_DOC_BUDGET_BYTES = 32_768
  */
 const REQUIRED_HEADROOM_BYTES = 3_000
 
-/** Every relative markdown link in a file, as written. */
+/**
+ * Every relative markdown link target in a file, as written.
+ *
+ * Relative means "resolved against this file's directory", which is every target that is not an
+ * absolute URL and not a bare anchor — `docs/foo.md` as much as `./docs/foo.md`. Matching only the
+ * dot-prefixed forms would leave the plainest spelling of a broken link unguarded, and a checker
+ * that skips a case it claims to cover is worse than one that claims less.
+ *
+ * @param source - The markdown file's contents.
+ * @returns Each relative target, in source order, with anchors and query strings stripped.
+ */
 function relativeLinksIn(source: string): readonly string[] {
-  return [...source.matchAll(/\]\((\.{1,2}\/[^)#\s]+)/g)].map((match) => match[1] as string)
+  return [...source.matchAll(/\]\(([^)\s]+)/g)]
+    .map((match) => (match[1] as string).split('#')[0] as string)
+    .filter((target) => target !== '' && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(target))
 }
 
 describe('agent instruction files', () => {
