@@ -216,8 +216,13 @@ each one asked for was a force-push rewriting published history.
   headroom is not yours alone to spend. Check `wc -c AGENTS.md` before adding a section, and
   prefer `docs/guidelines/` for anything a reviewer does not need in the diff.
 
-  Never create a file named `AGENTS.md` anywhere below the root — a fixture or template under
-  that name becomes real guidance for every change in its directory, and spends the same cap.
+  A nested `AGENTS.md` is guidance for its directory, loaded automatically whenever Codex works
+  there or below, and it costs nothing on any other path. That makes it the right home for a rule
+  true only under one directory — and the reason a FIXTURE, TEMPLATE or consumer-facing example
+  must never carry that name: under it, sample content becomes real guidance for every change in
+  its directory and spends the cap of every chain that passes through. Add one deliberately or
+  not at all, and measure the worst CHAIN — root plus the nested files on one path — never the
+  sum of every such file, since siblings are never loaded together.
 -->
 
 Only the rules a reviewer of **this** repository gets wrong. Each one has cost something real here.
