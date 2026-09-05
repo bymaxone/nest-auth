@@ -11,6 +11,15 @@ read about in the changelog rather than one they discover.
 
 ## Code Review Rules
 
+## Scope of this file
+
+Only rules that change a review's outcome. Codex loads this on every turn before reading the diff,
+so anything that changes no finding is paid for on every review and used on none.
+`src/server/`-scoped rules are in [`src/server/AGENTS.md`](./src/server/AGENTS.md), loaded
+automatically when the diff is there. Narrative is in
+[`docs/repository-guide.md`](./docs/repository-guide.md) and is **not** loaded — Codex does not
+follow links, so nothing normative may live behind one.
+
 <!-- shared:begin -->
 <!--
   CANONICAL COPY: bymaxone/.github → agents/code-review-rules.md
@@ -207,8 +216,13 @@ each one asked for was a force-push rewriting published history.
   headroom is not yours alone to spend. Check `wc -c AGENTS.md` before adding a section, and
   prefer `docs/guidelines/` for anything a reviewer does not need in the diff.
 
-  Never create a file named `AGENTS.md` anywhere below the root — a fixture or template under
-  that name becomes real guidance for every change in its directory, and spends the same cap.
+  A nested `AGENTS.md` is guidance for its directory, loaded automatically whenever Codex works
+  there or below, and it costs nothing on any other path. That makes it the right home for a rule
+  true only under one directory — and the reason a FIXTURE, TEMPLATE or consumer-facing example
+  must never carry that name: under it, sample content becomes real guidance for every change in
+  its directory and spends the cap of every chain that passes through. Add one deliberately or
+  not at all, and measure the worst CHAIN — root plus the nested files on one path — never the
+  sum of every such file, since siblings are never loaded together.
 -->
 
 Only the rules a reviewer of **this** repository gets wrong. Each one has cost something real here.
@@ -279,135 +293,7 @@ there and say why in the reason.
 
 ---
 
-## Table of Contents
-
-- [Code Review Rules](#code-review-rules) — shared across every Bymax repository
-- [Where this repository narrows a shared rule](#where-this-repository-narrows-a-shared-rule)
-
-1. [Project Overview](#1-project-overview)
-2. [Architecture](#2-architecture)
-3. [Backend Patterns](#3-backend-patterns)
-4. [Frontend Patterns](#4-frontend-patterns)
-5. [Security Specification](#5-security-specification)
-6. [Testing Strategy](#6-testing-strategy)
-7. [Build and Publish](#7-build-and-publish)
-8. [Common Pitfalls](#8-common-pitfalls)
-9. [Pre-Task Checklist](#9-pre-task-checklist)
-10. [Guidelines Reference](#10-guidelines-reference)
-
----
-
-## 1. Project Overview
-
-`@bymax-one/nest-auth` is a **public npm library** — not an application. It provides full-stack authentication for the Bymax SaaS ecosystem.
-
-**Features:** Registration, login/logout, JWT access+refresh tokens, MFA (TOTP), sessions (FIFO eviction), password reset (token/OTP), email verification, OAuth (Google, plugin-extensible), platform admin auth, invitations, RBAC with hierarchy, brute-force protection, rate limiting, multi-tenant isolation.
-
-**What it does NOT do:** No database connections (defines `IUserRepository`), no email sending (defines `IEmailProvider`), no Redis connections (accepts injected client), no UI components, no Passport.
-
----
-
-## 2. Architecture
-
-### Dynamic Module — runs inside the host app
-
-```
-Host App (SaaS)
-├── BymaxAuthModule.registerAsync({ ... })
-│   ├── Controllers ←→ Services ←→ Redis
-│   ├── Guards ←→ Crypto (node:crypto)
-│   └── Decorators ←→ Token Manager (@nestjs/jwt)
-│
-├── Injected by host:
-│   ├── IUserRepository (e.g., Prisma)
-│   ├── IEmailProvider (e.g., Resend)
-│   ├── Redis client (ioredis)
-│   └── IAuthHooks (custom lifecycle)
-```
-
-### Initialization
-
-1. `BymaxAuthModule.registerAsync()` → resolve options (shallow merge with defaults)
-2. Validate injected providers → register controllers conditionally → ready
-
-### Request Flow
-
-```
-Request → JwtAuthGuard → UserStatusGuard → RolesGuard → MfaRequiredGuard → Controller → Service
-```
-
----
-
-## 3. Backend Patterns
-
-### Injection Tokens (7 Symbols)
-
-| Token                                 | Type                      | Required                                                                                  |
-| ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `BYMAX_AUTH_OPTIONS`                  | `ResolvedOptions`         | Always                                                                                    |
-| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Always                                                                                    |
-| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | If `platformAdmin.enabled`                                                                |
-| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Always (NoOp default)                                                                     |
-| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Always (NoOp default)                                                                     |
-| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                                    |
-| `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`AllowAllBreachChecker` default — the check reaches the network, so it is opt-in) |
-
-### Service and controller shape
-
-A service method runs in one order: **validate** (find the user, check status, check brute-force),
-**execute** (verify the credential, apply the MFA rule), **generate** (tokens, session), **deliver**
-(cookies or body), **hook**, return. `AuthService.login` is the reference implementation.
-
-A controller does none of that. It carries the route decorator, the throttle config and the status
-code, and delegates in one line — validate, delegate, return, nothing else. Any logic in a
-controller belongs in the service it calls.
-
-### Error Response Format
-
-```json
-{ "error": { "code": "INVALID_CREDENTIALS", "message": "...", "details": {} } }
-```
-
-All codes from `AUTH_ERROR_CODES` (33 codes). Throw `AuthException(code, statusCode?, details?)`.
-
-### Redis Key Patterns
-
-Format: `{namespace}:{prefix}:{identifier}`
-
-| Prefix | Purpose                                                   | TTL                         |
-| ------ | --------------------------------------------------------- | --------------------------- |
-| `rt`   | Refresh token hash                                        | `refreshExpiresInDays`      |
-| `rp`   | Rotation grace pointer (old hash → new session)           | `refreshGraceWindow`        |
-| `cf`   | Consumed-token family marker (proves a replay is a reuse) | Refresh TTL                 |
-| `fam`  | Family index — the live hashes of one login's lineage     | Refresh TTL                 |
-| `ep`   | Per-user token epoch (bulk access-token revocation)       | 30 days                     |
-| `rv`   | Revoked JWT (blacklist)                                   | Remaining token lifetime    |
-| `lf`   | Login failures                                            | `bruteForce.windowSeconds`  |
-| `rl`   | Per-IP rate-limit counter, keyed by `HMAC(ip)`            | The route's window          |
-| `otp`  | OTP codes                                                 | `otpTtlSeconds`             |
-| `sess` | Session set per user                                      | Session lifetime            |
-| `sd`   | Session detail                                            | Session lifetime            |
-| `us`   | Cached account status (`us:{tenantId}:{userId}`)          | `userStatusCacheTtlSeconds` |
-| `uev`  | Cached email-verified flag (same scoping)                 | `userStatusCacheTtlSeconds` |
-
-**Do not build these keys from the format, in library code or consumer code.** `us` and `uev` are
-derived in exactly one place — a module-private helper in `account-status.service.ts`, deliberately
-not exported — and dropped through `AccountStatusService.invalidate` — a second statement of a key format drifts out of agreement
-silently, because a delete that stops matching raises nothing and merely defers the change by a
-TTL. The same applies to a consumer: the prefix is readable, the format is not a contract, and the
-supported way to name one of these entries is the method.
-
-`us` and `uev` have no platform counterpart: the platform status check is uncached, because there
-is no tenant to scope a cache key by and the population is small enough that a read per call beats
-a keyspace nothing invalidates. The other prefixes DO mirror onto the platform plane under their
-own names (`prt`, `prp`, `pcf`, `pfam`, `pep`, …)
-so a "sign out everywhere" on one plane can never reach the other. The full keyspace, including
-which of these are a contract with `rust-auth`, is in
-[`conformance/wire-contract.json`](./conformance/wire-contract.json).
-
----
-
-## 4. Frontend Patterns
+## Frontend patterns
 
 The four subpaths and what each exports are documented in the README's
 [Frontend](./README.md) sections, and in depth in
@@ -425,38 +311,7 @@ bite without warning are repeated here:
 
 ---
 
-## 5. Security Specification
-
-### Cryptographic Operations
-
-| Operation        | Algorithm                            | File                     |
-| ---------------- | ------------------------------------ | ------------------------ |
-| Password hashing | scrypt (N=2^15, r=8, p=1, keyLen=64) | `crypto/scrypt.ts`       |
-| MFA encryption   | AES-256-GCM (12-byte IV)             | `crypto/aes-gcm.ts`      |
-| TOTP             | HMAC-SHA1 (RFC 4226/6238)            | `crypto/totp.ts`         |
-| Token generation | `crypto.randomBytes` → hex           | `crypto/secure-token.ts` |
-| Token storage    | SHA-256 hash                         | `crypto/secure-token.ts` |
-| OTP codes        | `crypto.randomInt` (max length 8)    | `crypto/secure-token.ts` |
-
-### JWT Token Types
-
-| Type             | Lifetime | Transport       | Key Claims                                    |
-| ---------------- | -------- | --------------- | --------------------------------------------- |
-| Dashboard access | 15min    | Cookie/Bearer   | jti, sub, tenantId, role, status, mfaVerified |
-| Platform access  | 15min    | Cookie/Bearer   | jti, sub, role, mfaVerified                   |
-| Refresh          | 7d       | HttpOnly cookie | Opaque UUID → SHA-256 in Redis                |
-| MFA temp         | 5min     | Cookie/Bearer   | sub, context (dashboard\|platform)            |
-
-### Key Validations at Startup
-
-- JWT secret: >= 32 chars, Shannon entropy >= 3.5 bits/char, reject repetitive patterns
-- MFA encryption key: must decode from base64 to exactly 32 bytes
-- Roles hierarchy: must not be empty
-- OTP length: must be <= 8 (randomInt MAX_SAFE_INTEGER limit)
-
----
-
-## 6. Testing Strategy
+## Testing strategy
 
 **100% statements / branches / functions / lines, every layer, no exceptions** — enforced by
 `jest.config.ts` and `jest.coverage.config.ts`, both of which fail below it. A pre-publish gate,
@@ -475,23 +330,7 @@ whole. Detail: [JEST-TESTING-GUIDELINES](./docs/guidelines/JEST-TESTING-GUIDELIN
 
 ---
 
-## 7. Build and Publish
-
-tsup builds 5 entry points → `dist/{subpath}/index.{mjs,cjs,d.ts}`
-
-```bash
-pnpm clean        # rm -rf dist coverage
-pnpm typecheck    # tsc --noEmit
-pnpm test         # jest
-pnpm build        # tsup
-pnpm release      # npm publish --access public
-```
-
-Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bundled peer deps.
-
----
-
-## 8. Common Pitfalls
+## Common pitfalls
 
 Read every pair as **wrong → right**. The left side is the mistake; the right side is what the
 code must do instead.
@@ -518,37 +357,3 @@ module is correct and used here for import-time replacement — see
 discarding the real behaviour the test exists to check, not the call itself.)
 
 ---
-
-## 9. Pre-Task Checklist
-
-**Before starting:**
-
-- [ ] Read CLAUDE.md critical rules
-- [ ] Identify 1-2 relevant guidelines → load only those
-- [ ] Check `docs/development_tasks.md` for dependencies and status
-
-**Before finishing:**
-
-- [ ] `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all pass
-- [ ] Barrel export updated if new public API added
-- [ ] JSDoc on new public exports
-- [ ] All text in English
-
----
-
-## 10. Guidelines Reference
-
-> Load **only** the 1-2 files relevant to your task. Never preload all.
-
-| Domain     | File                                            | Load when...                     |
-| ---------- | ----------------------------------------------- | -------------------------------- |
-| NestJS     | `docs/guidelines/NESTJS-GUIDELINES.md`          | Modifying `src/server/`          |
-| TypeScript | `docs/guidelines/TYPESCRIPT-GUIDELINES.md`      | Type design, barrel exports      |
-| Testing    | `docs/guidelines/JEST-TESTING-GUIDELINES.md`    | Writing or fixing tests          |
-| Redis      | `docs/guidelines/REDIS-IOREDIS-GUIDELINES.md`   | Redis ops, sessions, brute-force |
-| JWT        | `docs/guidelines/JWT-AUTH-GUIDELINES.md`        | Token management, auth guards    |
-| React      | `docs/guidelines/REACT-GUIDELINES.md`           | Working on `src/react/`          |
-| Next.js    | `docs/guidelines/NEXTJS-GUIDELINES.md`          | Working on `src/nextjs/`         |
-| Build      | `docs/guidelines/TSUP-BUILD-GUIDELINES.md`      | Build config, exports map        |
-| DTOs       | `docs/guidelines/CLASS-VALIDATOR-GUIDELINES.md` | Creating/modifying DTOs          |
-| Crypto     | `docs/guidelines/NODE-CRYPTO-GUIDELINES.md`     | Crypto operations                |
