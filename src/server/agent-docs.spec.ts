@@ -43,9 +43,10 @@ const CODEX_DOC_BUDGET_BYTES = 32_768
 /**
  * Headroom the chain must keep, in bytes.
  *
- * Sized against observed growth rather than an aesthetic: the shared canonical block grew five
- * times in one week, most recently by 930 bytes. A margin that survives one revision is a margin
- * that fails on the next, so this holds roughly three.
+ * The margin exists because the chain grows from a side this repository does not control: the
+ * shared block is centrally managed and arrives already grown, with no warning and no say. A
+ * margin sized to survive exactly one such revision fails on the next, so this holds several —
+ * enough that crossing it is a signal to restructure rather than an emergency.
  */
 const REQUIRED_HEADROOM_BYTES = 3_000
 
