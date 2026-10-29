@@ -14,19 +14,79 @@
  *    reviewer is this repository's own rules, from the end of the file backwards.
  */
 
-import { readFileSync, existsSync } from 'node:fs'
-import { dirname, join, normalize, resolve } from 'node:path'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, normalize, relative, resolve } from 'node:path'
 
 /** Repository root, from this file's location. */
 const ROOT = resolve(__dirname, '..', '..')
 
+/** Directories that never hold an instruction file this repository ships. */
+const SKIPPED_DIRECTORIES = new Set([
+  '.git',
+  '.stryker-tmp',
+  'coverage',
+  'dist',
+  'node_modules',
+  'reports'
+])
+
 /**
- * The instruction files, and the deepest working directory each one is loaded for.
+ * Every `AGENTS.md` under a root, as root-relative paths.
  *
- * Codex loads one `AGENTS.md` per directory along the root-to-cwd walk, so the cost that matters is
- * the worst CHAIN — root plus whichever nested files sit on one path — never the sum of every file.
+ * Discovered rather than listed: Codex loads whatever file sits on the walk from the root to the
+ * working directory, so a file added in a new directory is read by the reviewer whether or not
+ * anyone remembered to register it here. A fixed list leaves exactly that file unchecked.
+ *
+ * @param root - Directory to scan.
+ * @returns Root-relative paths, sorted so the order is stable across platforms.
  */
-const AGENT_FILES = ['AGENTS.md', 'src/server/AGENTS.md'] as const
+function findAgentFiles(root: string): readonly string[] {
+  const found: string[] = []
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry.name)) walk(join(directory, entry.name))
+      } else if (entry.name === 'AGENTS.md') {
+        found.push(relative(root, join(directory, entry.name)))
+      }
+    }
+  }
+  walk(root)
+  return found.sort()
+}
+
+/**
+ * Size in bytes of the heaviest instruction chain under a root.
+ *
+ * Codex loads at most one `AGENTS.md` per directory along the root-to-cwd walk, so what one session
+ * reads is a CHAIN: a file plus the files in its ancestor directories. Siblings are never loaded
+ * together, so summing every file would overstate the cost and, worse, hide which path is heaviest.
+ *
+ * @param root - Directory to scan.
+ * @returns The largest root-to-leaf total, or 0 when there is no instruction file.
+ */
+function worstChainBytes(root: string): number {
+  const files = findAgentFiles(root)
+  const bytes = (file: string): number => Buffer.byteLength(readFileSync(join(root, file), 'utf8'))
+  const ancestors = (file: string): readonly string[] =>
+    files.filter((other) => {
+      const scope = dirname(other)
+      return scope === '.' || dirname(file) === scope || dirname(file).startsWith(scope + '/')
+    })
+  return Math.max(0, ...files.map((file) => ancestors(file).reduce((sum, f) => sum + bytes(f), 0)))
+}
+
+/** The instruction files this repository ships. */
+const AGENT_FILES = findAgentFiles(ROOT)
 
 /** Documentation referenced by the instruction files but never loaded by Codex. */
 const LINKED_DOCS = ['docs/repository-guide.md'] as const
@@ -96,15 +156,86 @@ describe('agent instruction files', () => {
     })
   })
 
+  it('discovers the instruction files instead of trusting a list', () => {
+    expect(AGENT_FILES).toContain('AGENTS.md')
+    expect(AGENT_FILES).toContain('src/server/AGENTS.md')
+  })
+
   // Truncation is silent, so this assertion is the only thing in the repository that can report
   // the budget being crossed. Over the cap, CI stays green and part of the file is simply not
   // read — the failure has no other symptom.
   it('keeps the worst instruction chain under the Codex budget with room to grow', () => {
-    const chainBytes = AGENT_FILES.reduce(
-      (total, file) => total + Buffer.byteLength(readFileSync(join(ROOT, file), 'utf8')),
-      0
+    expect(worstChainBytes(ROOT)).toBeLessThanOrEqual(
+      CODEX_DOC_BUDGET_BYTES - REQUIRED_HEADROOM_BYTES
     )
+  })
+})
 
-    expect(chainBytes).toBeLessThanOrEqual(CODEX_DOC_BUDGET_BYTES - REQUIRED_HEADROOM_BYTES)
+describe('instruction chain discovery', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-docs-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /** Writes a file of the given size, creating its directory. */
+  function put(path: string, size: number): void {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), 'x'.repeat(size))
+  }
+
+  // A new nested file must be found without anyone registering it, or its links and bytes go
+  // unchecked while the reviewer still reads it.
+  it('finds a nested instruction file nobody registered', () => {
+    put('AGENTS.md', 10)
+    put('packages/api/AGENTS.md', 10)
+
+    expect(findAgentFiles(root)).toEqual(['AGENTS.md', 'packages/api/AGENTS.md'])
+  })
+
+  // Dependencies and build output carry their own AGENTS.md; counting them would fail the gate on
+  // files the repository does not ship.
+  it('ignores dependency and build directories', () => {
+    put('AGENTS.md', 10)
+    put('node_modules/pkg/AGENTS.md', 10)
+    put('dist/AGENTS.md', 10)
+
+    expect(findAgentFiles(root)).toEqual(['AGENTS.md'])
+  })
+
+  // Siblings are never loaded together, so the cost is the heavier path, not the sum of both.
+  it('measures the heaviest root-to-leaf chain, not the sum of siblings', () => {
+    put('AGENTS.md', 100)
+    put('a/AGENTS.md', 30)
+    put('b/AGENTS.md', 50)
+
+    expect(worstChainBytes(root)).toBe(150)
+  })
+
+  // A nested file extends every deeper path under it and nothing beside it.
+  it('adds each ancestor on the path and no file outside it', () => {
+    put('AGENTS.md', 100)
+    put('a/AGENTS.md', 20)
+    put('a/b/AGENTS.md', 5)
+    put('c/AGENTS.md', 60)
+
+    expect(worstChainBytes(root)).toBe(160)
+  })
+
+  // A directory whose name merely starts like another is not its descendant.
+  it('does not treat a prefix-named sibling directory as an ancestor', () => {
+    put('AGENTS.md', 1)
+    put('pkg/AGENTS.md', 40)
+    put('pkg-extra/AGENTS.md', 10)
+
+    expect(worstChainBytes(root)).toBe(41)
+  })
+
+  it('reports zero when there is no instruction file', () => {
+    expect(worstChainBytes(root)).toBe(0)
   })
 })
