@@ -209,4 +209,7 @@ mutation testing to `prepublishOnly` or the per-PR CI — it runs automatically 
 | DTOs       | `docs/guidelines/CLASS-VALIDATOR-GUIDELINES.md` | Creating/modifying DTOs          |
 | Crypto     | `docs/guidelines/NODE-CRYPTO-GUIDELINES.md`     | Crypto operations, security      |
 
-For full architecture and patterns, see **[AGENTS.md](./AGENTS.md)** (load on demand — not every session).
+For full architecture and patterns, see **[docs/repository-guide.md](./docs/repository-guide.md)**
+(load on demand — not every session). **[AGENTS.md](./AGENTS.md)** is the Codex review contract, not
+a manual: it carries only rules that change a finding, and `src/server/`-scoped ones live in
+[src/server/AGENTS.md](./src/server/AGENTS.md).
