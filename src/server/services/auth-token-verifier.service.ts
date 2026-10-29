@@ -112,9 +112,16 @@ export interface VerifyAccessTokenOptions {
  *    token — signed with the same secret, holding half a credential — reads as a valid session.
  * 5. **Revocation**, both channels: the per-token blacklist a logout writes and the per-user epoch
  *    a password reset or an administrative revoke-all advances.
- * 6. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
- * 7. **Account status**, unless the caller opted out. See
+ * 6. **Account status**, unless the caller opted out. See
  *    {@link VerifyAccessTokenOptions.checkStatus}.
+ * 7. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
+ *    Its claim-shape refusal (`mfaEnabled` missing or not a boolean, answered `TOKEN_INVALID`)
+ *    belongs to the token checks and fires before step 6; only the `MFA_REQUIRED` decision follows it.
+ *
+ * **Account status precedes the MFA policy.** A blocked account is refused with its own code even
+ * while a challenge is pending, which is the answer a route guarded by `UserStatusGuard` ahead of
+ * `MfaRequiredGuard` gives; a pending challenge is something the caller can act on only when the
+ * account is usable, and the definitive refusal is the one it must see first.
  *
  * **What it still does not do, and cannot.** Route authorization is the consumer's — this answers
  * who the caller is, never what they may do, so a `@Roles()` equivalent stays yours to apply on
@@ -169,9 +176,10 @@ export class AuthTokenVerifierService {
    * @returns The verified payload, tagged with the plane it was checked against.
    * @throws {@link AuthException} with `TOKEN_INVALID` when the signature, expiry, claim shape,
    *   dashboard token type or revocation state refuses the token; `PLATFORM_AUTH_REQUIRED` when a
-   *   non-platform token is presented on the platform plane; `MFA_REQUIRED` when the account has
-   *   MFA enabled and this token predates its challenge; or the matching `ACCOUNT_*` /
-   *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable.
+   *   non-platform token is presented on the platform plane; the matching `ACCOUNT_*` /
+   *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable, whether or not a challenge is
+   *   pending; or `MFA_REQUIRED` when the account is usable, has MFA enabled and this token
+   *   predates its challenge.
    * @throws {TypeError} When `options.plane` is neither `'dashboard'` nor `'platform'` — a caller
    *   error rather than an authentication outcome, so it is deliberately not an `AuthException`.
    */
@@ -219,7 +227,7 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
+    if (requireMfa) this.assertMfaClaimShape(payload)
 
     if (checkStatus) {
       await this.accountStatus.assertDashboardAccountUsable({
@@ -227,6 +235,8 @@ export class AuthTokenVerifierService {
         tenantId: payload.tenantId
       })
     }
+
+    if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'dashboard', payload }
   }
@@ -262,9 +272,11 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
+    if (requireMfa) this.assertMfaClaimShape(payload)
 
     if (checkStatus) await this.accountStatus.assertPlatformAccountUsable(payload.sub)
+
+    if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'platform', payload }
   }
@@ -287,20 +299,30 @@ export class AuthTokenVerifierService {
   }
 
   /**
-   * Applies the MFA policy to an already-verified payload.
+   * Refuses a token whose `mfaEnabled` claim is missing or not a boolean.
    *
    * The `typeof` arm is not defensive noise: the payload is cast from a token, so a signed token
    * that simply omits `mfaEnabled` would otherwise compare `undefined === true`, read as "MFA is
-   * off" and pass a gate it was never shown to.
+   * off" and pass a gate it was never shown to. It is a claim-shape refusal, so it runs with the
+   * other token checks and ahead of the account lookup.
    *
    * @param payload - The verified payload, either plane.
-   * @throws {@link AuthException} with `TOKEN_INVALID` when the claim is missing or not a
-   *   boolean, or `MFA_REQUIRED` when MFA is enabled and this token predates the challenge.
+   * @throws {@link AuthException} with `TOKEN_INVALID` when the claim is missing or not a boolean.
    */
-  private assertMfaSatisfied(payload: DashboardJwtPayload | PlatformJwtPayload): void {
+  private assertMfaClaimShape(payload: DashboardJwtPayload | PlatformJwtPayload): void {
     if (typeof payload.mfaEnabled !== 'boolean') {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
+  }
+
+  /**
+   * Applies the MFA policy to a payload whose claim shape was already checked.
+   *
+   * @param payload - The verified payload, either plane.
+   * @throws {@link AuthException} with `MFA_REQUIRED` when MFA is enabled and this token predates
+   *   the challenge.
+   */
+  private assertMfaVerified(payload: DashboardJwtPayload | PlatformJwtPayload): void {
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
