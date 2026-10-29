@@ -6,18 +6,16 @@
  * API (`globalThis.crypto.subtle`) for signature verification and
  * never import from `node:crypto` or `@nestjs/jwt`.
  *
- * Two modes are supported:
+ * Two functions, and a missing secret never selects between them:
  *
- *   - **Verify mode**: when a `JWT_SECRET` is provided we call
- *     {@link verifyJwtToken} which performs HS256 signature
- *     verification and expiry validation. This is the production path.
+ *   - {@link verifyJwtToken} performs HS256 signature verification and
+ *     expiry validation. It fails closed: a missing or empty secret
+ *     returns an empty, invalid result rather than a decoded payload.
+ *     This is the production path.
  *
- *   - **Decode-only mode**: when no secret is available (e.g., during
- *     local development or in a proxy that delegates signature
- *     verification to the upstream API) we fall back to
- *     {@link decodeJwtToken} which parses the payload without
- *     verifying the signature. Decode-only mode is explicit — the
- *     caller must pass `undefined`/`null` as the secret.
+ *   - {@link decodeJwtToken} parses the payload without verifying the
+ *     signature. It is called explicitly, for non-authoritative claims
+ *     such as UI hints, and never as a fallback for a missing secret.
  *
  * SECURITY — algorithm pinning:
  *

@@ -2555,8 +2555,10 @@ follows it. For a rolling upgrade this release dual-writes the anti-replay marke
 failure counters (every read consults both the old plane-only key and the new tenant-scoped key,
 every write touches both) and dual-acquires the transition lock, so old and new pods stay
 consistent while both are live. A later release drops the legacy arm; deploying it before this one
-has fully rolled out would split the anti-replay and lockout state across the two key shapes. No
-host code changes: the tenant is sourced from the authenticated account, never from the request.
+has fully rolled out would split the anti-replay and lockout state across the two key shapes. Host
+code changes in two places: every `IUserRepository.updateMfa` implementation takes the tenant and
+scopes its write by it, and any direct dashboard call into `MfaService` passes one. Nothing else
+moves: the tenant is sourced from the authenticated account, never from the request.
 
 ## [1.3.1] - 2026-08-08
 
