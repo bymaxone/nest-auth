@@ -720,10 +720,13 @@ describe('MFA challenge across the two surfaces (E2E)', () => {
   // this as a dashboard response would hand back a body with `user` for an account that has
   // none, and cookie delivery for a session cookies do not apply to.
   it('answers a platform temp token on the dashboard route with a platform session', async () => {
+    // Awaited before the request is built: a server that is not listening is started per request,
+    // and a second request issued mid-assembly would close it underneath the first.
+    const mfaTempToken = await tempTokenFor('platform')
     const res = await request(boot.app.getHttpServer())
       .post('/mfa/challenge')
       .send({
-        mfaTempToken: await tempTokenFor('platform'),
+        mfaTempToken,
         code: generateTotp(platformSecret, unspentStepTime(base))
       })
 
@@ -751,10 +754,11 @@ describe('MFA challenge across the two surfaces (E2E)', () => {
   // controller's, on the result's context, which is what stops a dashboard credential from
   // being upgraded into a platform session by posting it to a different URL.
   it('refuses a dashboard temp token on the platform route', async () => {
+    const mfaTempToken = await tempTokenFor('dashboard')
     const res = await request(boot.app.getHttpServer())
       .post('/platform/mfa/challenge')
       .send({
-        mfaTempToken: await tempTokenFor('dashboard'),
+        mfaTempToken,
         code: generateTotp(dashboardSecret, unspentStepTime(base))
       })
 

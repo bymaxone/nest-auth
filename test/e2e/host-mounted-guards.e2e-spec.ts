@@ -647,15 +647,20 @@ describe('host-mounted guards (E2E)', () => {
     // hierarchy is a separate map from the dashboard one, and a guard reading the wrong map
     // would pass every test that used only one of them.
     it('admits a platform role the hierarchy grants and refuses one it does not', async () => {
+      // The token is obtained BEFORE the request is built: `request()` on a server that is not
+      // listening starts one for that request, and a second request issued while the first is
+      // still being assembled would close it underneath.
+      const superToken = await platformLogin('super@platform.test', 'SUPER_ADMIN')
       const granted = await request(app.getHttpServer())
         .get('/host/platform/super')
-        .set('Authorization', `Bearer ${await platformLogin('super@platform.test', 'SUPER_ADMIN')}`)
+        .set('Authorization', `Bearer ${superToken}`)
 
       expect(granted.status).toBe(200)
 
+      const supportToken = await platformLogin('support@platform.test', 'SUPPORT')
       const refused = await request(app.getHttpServer())
         .get('/host/platform/super')
-        .set('Authorization', `Bearer ${await platformLogin('support@platform.test', 'SUPPORT')}`)
+        .set('Authorization', `Bearer ${supportToken}`)
 
       expectAuthError(refused, 'auth.insufficient_role')
     })
@@ -664,9 +669,10 @@ describe('host-mounted guards (E2E)', () => {
     // including the SUPPORT account the route above refuses, which is what shows the metadata
     // and not the account is what decided.
     it('admits any platform admin on a route with no role metadata', async () => {
+      const supportToken = await platformLogin('support@platform.test', 'SUPPORT')
       const res = await request(app.getHttpServer())
         .get('/host/platform/any')
-        .set('Authorization', `Bearer ${await platformLogin('support@platform.test', 'SUPPORT')}`)
+        .set('Authorization', `Bearer ${supportToken}`)
 
       expect(res.status).toBe(200)
     })
