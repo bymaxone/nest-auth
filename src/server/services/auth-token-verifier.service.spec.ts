@@ -372,19 +372,72 @@ describe('AuthTokenVerifierService', () => {
     expect(mockAccountStatus.assertDashboardAccountUsable).not.toHaveBeenCalled()
   })
 
-  // MFA is decided before the account is read: the challenge is answerable from the payload alone,
-  // so a token needing it costs no store round trip.
-  it('answers MFA_REQUIRED before consulting the account status', async () => {
+  // The account's current status is decided before the MFA policy, on both planes, so a blocked
+  // account gets the same refusal here as behind `UserStatusGuard` ahead of `MfaRequiredGuard`.
+  // A pending challenge on an account that is banned, suspended, inactive or unverified is not
+  // something the caller can act on: the definitive refusal comes first.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD, 'assertDashboardAccountUsable'],
+    ['platform', PLATFORM_PAYLOAD, 'assertPlatformAccountUsable']
+  ] as const)(
+    'answers the account refusal before MFA_REQUIRED on the %s plane',
+    async (plane, payload, gate) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: true, mfaVerified: false })
+      mockAccountStatus[gate].mockRejectedValue(new AuthException(AUTH_ERROR_CODES.ACCOUNT_BANNED))
+
+      const thrown = await verifier.verifyAccessToken('tok', { plane }).catch((e: unknown) => e)
+
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.ACCOUNT_BANNED)
+    }
+  )
+
+  // An account whose email is unverified is refused by the same gate and wins the same way.
+  it('answers EMAIL_NOT_VERIFIED before MFA_REQUIRED on the dashboard plane', async () => {
     mockJwt.verify.mockReturnValue({ ...DASHBOARD_PAYLOAD, mfaEnabled: true, mfaVerified: false })
     mockAccountStatus.assertDashboardAccountUsable.mockRejectedValue(
-      new AuthException(AUTH_ERROR_CODES.ACCOUNT_BANNED)
+      new AuthException(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
     )
 
     const thrown = await verifier
       .verifyAccessToken('tok', { plane: 'dashboard' })
       .catch((e: unknown) => e)
 
-    expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.MFA_REQUIRED)
-    expect(mockAccountStatus.assertDashboardAccountUsable).not.toHaveBeenCalled()
+    expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
   })
+
+  // The other half of the precedence: with a usable account the pending challenge is still what
+  // the caller is told, so only the blocked-account case changes its answer.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD],
+    ['platform', PLATFORM_PAYLOAD]
+  ] as const)(
+    'still answers MFA_REQUIRED on the %s plane when the account is usable',
+    async (plane, payload) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: true, mfaVerified: false })
+
+      const thrown = await verifier.verifyAccessToken('tok', { plane }).catch((e: unknown) => e)
+
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+  )
+
+  // With the status check switched off the refusal is the MFA one even for an account the gate
+  // would have blocked: the caller opted out of the status lookup, not out of the policy.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD, 'assertDashboardAccountUsable'],
+    ['platform', PLATFORM_PAYLOAD, 'assertPlatformAccountUsable']
+  ] as const)(
+    'answers MFA_REQUIRED on the %s plane without consulting status when checkStatus is false',
+    async (plane, payload, gate) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: true, mfaVerified: false })
+      mockAccountStatus[gate].mockRejectedValue(new AuthException(AUTH_ERROR_CODES.ACCOUNT_BANNED))
+
+      const thrown = await verifier
+        .verifyAccessToken('tok', { plane, checkStatus: false })
+        .catch((e: unknown) => e)
+
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.MFA_REQUIRED)
+      expect(mockAccountStatus[gate]).not.toHaveBeenCalled()
+    }
+  )
 })

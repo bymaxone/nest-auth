@@ -115,6 +115,19 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   which is the precise failure this method exists to eliminate. An unset resolver value, or an
   `undefined` coerced by a JavaScript host, is how it arrives.
 
+### Changed
+
+- **`AuthTokenVerifierService` checks the account status before the MFA policy.** Both planes now
+  consult `assertDashboardAccountUsable` / `assertPlatformAccountUsable` first and only then
+  `requireMfa`, the order a route guarded by `UserStatusGuard` ahead of `MfaRequiredGuard` already
+  has, so the service and the HTTP route give the same answer. Only the blocked-account-with-pending-MFA
+  case changes its error code: an account that is banned, suspended, inactive or (on the dashboard
+  plane) unverified, holding a token that predates its MFA challenge, now receives the matching
+  `ACCOUNT_*` / `EMAIL_NOT_VERIFIED` code instead of `MFA_REQUIRED`. Both are HTTP 403; a usable
+  account with a pending challenge still receives `MFA_REQUIRED`, and `checkStatus: false` still
+  skips the lookup. **Apply to a derived backend:** a client that branched on `MFA_REQUIRED` for a
+  blocked account must handle the `ACCOUNT_*` code there.
+
 ### Fixed
 
 - **The `uev:` key format was stated twice inside this library, and no test could see them

@@ -112,9 +112,14 @@ export interface VerifyAccessTokenOptions {
  *    token — signed with the same secret, holding half a credential — reads as a valid session.
  * 5. **Revocation**, both channels: the per-token blacklist a logout writes and the per-user epoch
  *    a password reset or an administrative revoke-all advances.
- * 6. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
- * 7. **Account status**, unless the caller opted out. See
+ * 6. **Account status**, unless the caller opted out. See
  *    {@link VerifyAccessTokenOptions.checkStatus}.
+ * 7. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
+ *
+ * **Account status precedes the MFA policy.** A blocked account is refused with its own code even
+ * while a challenge is pending, which is the answer a route guarded by `UserStatusGuard` ahead of
+ * `MfaRequiredGuard` gives; a pending challenge is something the caller can act on only when the
+ * account is usable, and the definitive refusal is the one it must see first.
  *
  * **What it still does not do, and cannot.** Route authorization is the consumer's — this answers
  * who the caller is, never what they may do, so a `@Roles()` equivalent stays yours to apply on
@@ -169,9 +174,10 @@ export class AuthTokenVerifierService {
    * @returns The verified payload, tagged with the plane it was checked against.
    * @throws {@link AuthException} with `TOKEN_INVALID` when the signature, expiry, claim shape,
    *   dashboard token type or revocation state refuses the token; `PLATFORM_AUTH_REQUIRED` when a
-   *   non-platform token is presented on the platform plane; `MFA_REQUIRED` when the account has
-   *   MFA enabled and this token predates its challenge; or the matching `ACCOUNT_*` /
-   *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable.
+   *   non-platform token is presented on the platform plane; the matching `ACCOUNT_*` /
+   *   `EMAIL_NOT_VERIFIED` code when the account is no longer usable, whether or not a challenge is
+   *   pending; or `MFA_REQUIRED` when the account is usable, has MFA enabled and this token
+   *   predates its challenge.
    * @throws {TypeError} When `options.plane` is neither `'dashboard'` nor `'platform'` — a caller
    *   error rather than an authentication outcome, so it is deliberately not an `AuthException`.
    */
@@ -219,14 +225,14 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
-
     if (checkStatus) {
       await this.accountStatus.assertDashboardAccountUsable({
         userId: payload.sub,
         tenantId: payload.tenantId
       })
     }
+
+    if (requireMfa) this.assertMfaSatisfied(payload)
 
     return { plane: 'dashboard', payload }
   }
@@ -262,9 +268,9 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
-
     if (checkStatus) await this.accountStatus.assertPlatformAccountUsable(payload.sub)
+
+    if (requireMfa) this.assertMfaSatisfied(payload)
 
     return { plane: 'platform', payload }
   }
