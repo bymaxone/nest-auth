@@ -1,0 +1,18 @@
+# Codex reads one AGENTS.md per directory from the root down and stops adding files once their
+# combined size reaches this cap, dropping the tail with no error and no failed check. The default
+# is therefore a limit that does not report itself.
+#
+# This repository's chain is its own guidance plus the shared review-rules block that
+# `bymaxone/.github` splices in, and that block grows as rules are added org-wide. The two are
+# charged against one budget and neither can see the other: a rule added centrally cannot know
+# which repository it pushes over, and space freed here cannot know when the next revision will
+# consume it. 64 KiB is headroom against that growth, and `agents-sync` reads this value in place
+# of its own default so the budget gate measures this repository against the number it runs with.
+#
+# This is a ceiling, not the mechanism that keeps the chain small, and it must not be relied on as
+# one: Codex ignores project config entirely for a project the reader has not TRUSTED, so a fresh
+# clone gets the 32 KiB default and the silent truncation with it. What holds under an untrusted
+# clone is directory scoping — a rule true only under one directory belongs in an `AGENTS.md`
+# there, loaded when the work is there and costing nothing when it is not. The two are
+# complementary, and scoping is the half that survives.
+project_doc_max_bytes = 65536
