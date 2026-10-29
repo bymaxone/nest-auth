@@ -104,12 +104,16 @@ export interface BymaxAuthModuleOptions {
    * zero, which accepts again the tokens a password reset or a revoke-all had refused.
    *
    * Setting `identifierKey` makes the identifiers derive from it instead, so `jwt.secret` can be
-   * rotated without moving a single name. Set it to the CURRENT `jwt.secret` before rotating and
-   * every derived name stays exactly where it is. It is validated like `jwt.secret` and is never
-   * used to sign or verify a token; it only names keys.
+   * rotated without moving a single name. Set it once, to the value `jwt.secret` has now, and leave
+   * it as it is through later rotations; every derived name stays exactly where it is. It is
+   * validated like `jwt.secret` and is never used to sign or verify a token. It names keys and it
+   * keys the stored MFA recovery-code digests, which are an HMAC under the same derived key.
    *
    * Choose a NEW value instead when the point of the rotation is to cut the link to the old
-   * secret: the identifiers then move, sessions end and epochs reset, as they do today.
+   * secret. The identifiers then move: sessions lose their index (they leave the session list and
+   * cannot be revoked through it, while their opaque refresh tokens keep working), epochs reset,
+   * and recovery-code digests stop verifying unless the old secret stays in
+   * `jwt.previousSecrets`. Revoke what has to be revoked before moving the key.
    *
    * @throws {Error} When the value fails validation at module initialisation.
    */
