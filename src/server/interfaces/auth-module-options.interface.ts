@@ -110,8 +110,8 @@ export interface BymaxAuthModuleOptions {
    * keys the stored MFA recovery-code digests, which are an HMAC under the same derived key.
    *
    * Choose a NEW value instead when the point of the rotation is to cut the link to the old
-   * secret. The identifiers then move: sessions lose their index (they leave the session list and
-   * cannot be revoked through it, while their opaque refresh tokens keep working), epochs reset,
+   * secret. The identifiers then move: sessions lose their index until they next refresh (they leave the session list and
+   * cannot be revoked through it meanwhile, while their opaque refresh tokens keep working), epochs reset,
    * and recovery-code digests stop verifying unless the old secret stays in
    * `jwt.previousSecrets`. Revoke what has to be revoked before moving the key.
    *
