@@ -27,6 +27,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **Rotating `jwt.secret` no longer has to reset the token epoch.** Without `identifierKey`, a
+  rotation renamed the epoch key, every epoch read zero, and an access token that a password reset
+  or a revoke-all had refused was accepted again until it expired. With `identifierKey` pinned
+  before the rotation the epoch survives it. Deployments that rotate should set it first; the
+  README guide says how, and what a rotation after a compromise should do instead.
+
 - **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
   `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.7` and `qs@6.16.0`. Severities and summaries
   read per advisory rather than carried across as a group, because they are not one wave:
@@ -81,6 +87,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `6.16.0`; our override cannot do it for you.
 
 ### Added
+
+- **`identifierKey` — rotate `jwt.secret` without moving the Redis identifiers.** Every name that
+  identifies an account (the session index, the token epoch, the MFA keys, the recent-authentication
+  marker, the OTP and rate-limit identifiers) derives from one key, which was always derived from
+  `jwt.secret`; rotating the secret therefore renamed all of them. The new optional top-level
+  `identifierKey` is the secret those names derive from instead, validated like `jwt.secret`, never
+  used to sign or verify a token, and defaulting to `jwt.secret`, so a deployment that does not set
+  it derives exactly the keys it derives today. Setting it to the current `jwt.secret` before a
+  rotation keeps sessions, token epochs and MFA state where they are; choosing a new value keeps
+  today's behaviour for a rotation that must cut the link. `jwt.previousSecrets` and the keys derived
+  from it are unchanged. The README gains a rotation guide with both paths, and
+  `conformance/wire-contract.json` states where the identifier secret comes from.
 
 - **`AccountStatusService.invalidate({ userId, tenantId })` — a supported way to drop an account's
   cached status.** Status is read through a Redis cache with a `userStatusCacheTtlSeconds`

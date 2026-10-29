@@ -203,6 +203,7 @@ function shannonEntropy(value: string): number {
  */
 export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOptions {
   validateJwt(userOptions.jwt)
+  validateIdentifierKey(userOptions.identifierKey)
   validateMfaEncryptionKey(userOptions.mfa)
   validateRolesHierarchy(userOptions.roles)
   validatePlatformAdmin(userOptions.platform, userOptions.roles)
@@ -231,7 +232,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
 
   // Destructure mfa out so the base spread does not inject the raw optional-field shape.
   // mfa is re-added below with defaults applied.
-  const { mfa: _mfa, ...userOptionsWithoutMfa } = userOptions
+  const { mfa: _mfa, identifierKey: _identifierKey, ...userOptionsWithoutMfa } = userOptions
 
   const resolved: ResolvedOptions = {
     ...userOptionsWithoutMfa,
@@ -330,7 +331,7 @@ export function resolveOptions(userOptions: BymaxAuthModuleOptions): ResolvedOpt
     environment: userOptions.environment ?? 'production',
     secureCookies: userOptions.secureCookies ?? isProductionDeployment(userOptions),
 
-    hmacKey: deriveHmacKey(userOptions.jwt.secret),
+    hmacKey: deriveHmacKey(userOptions.identifierKey ?? userOptions.jwt.secret),
     previousHmacKeys: (userOptions.jwt.previousSecrets ?? []).map(deriveHmacKey),
 
     ...(userOptions.mfa !== undefined && {
@@ -515,9 +516,28 @@ function validateJwt(jwt: BymaxAuthModuleOptions['jwt']): void {
       `[BymaxAuthModule] jwt configuration is required. ` + `Provide at least jwt.secret.`
     )
   }
-  validateJwtSecret(jwt.secret)
+  validateSecretStrength(jwt.secret, 'jwt.secret')
   validateJwtAlgorithm(jwt.algorithm)
   validatePreviousSecrets(jwt)
+}
+
+/**
+ * Validates `identifierKey` when it is set.
+ *
+ * It is held to the same bar as `jwt.secret` because it is key material for every identifier,
+ * and a weak one is as guessable as a weak signing secret. `undefined` means unconfigured, so the
+ * identifiers derive from `jwt.secret`; any other non-string value is a configuration mistake
+ * and is refused by name rather than failing later on a `.length` of something that has none.
+ *
+ * @param identifierKey - The configured value, or `undefined`.
+ * @throws {Error} When the value is set and is not a sufficiently strong string.
+ */
+function validateIdentifierKey(identifierKey: unknown): void {
+  if (identifierKey === undefined) return
+  if (typeof identifierKey !== 'string') {
+    throw new Error(`[BymaxAuthModule] identifierKey must be a string when set.`)
+  }
+  validateSecretStrength(identifierKey, 'identifierKey')
 }
 
 /**
@@ -547,7 +567,7 @@ function validatePreviousSecrets(jwt: BymaxAuthModuleOptions['jwt']): void {
           `Every entry still verifies tokens, so each is held to the same rules as jwt.secret.`
       )
     }
-    validateJwtSecret(secret)
+    validateSecretStrength(secret, 'jwt.secret')
     if (seen.has(secret)) {
       throw new Error(
         `[BymaxAuthModule] jwt.previousSecrets[${index}] repeats jwt.secret or an earlier entry. ` +
@@ -560,7 +580,7 @@ function validatePreviousSecrets(jwt: BymaxAuthModuleOptions['jwt']): void {
   }
 }
 
-function validateJwtSecret(secret: string): void {
+function validateSecretStrength(secret: string, name: string): void {
   // Guard against runtime-nullish values (e.g. ConfigService returning undefined for an
   // unset environment variable). The interface declares `secret: string` but callers
   // frequently use `config.get('JWT_SECRET')` which returns `string | undefined`.
@@ -568,13 +588,13 @@ function validateJwtSecret(secret: string): void {
   // instead of the descriptive [BymaxAuthModule] startup error.
   if (!secret) {
     throw new Error(
-      `[BymaxAuthModule] jwt.secret is required and must not be empty. ` +
+      `[BymaxAuthModule] ${name} is required and must not be empty. ` +
         `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
   }
   if (secret.length < 32) {
     throw new Error(
-      `[BymaxAuthModule] jwt.secret must be at least 32 characters long. ` +
+      `[BymaxAuthModule] ${name} must be at least 32 characters long. ` +
         `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
   }
@@ -582,7 +602,7 @@ function validateJwtSecret(secret: string): void {
   const entropy = shannonEntropy(secret)
   if (entropy < 3.5) {
     throw new Error(
-      `[BymaxAuthModule] jwt.secret has insufficient entropy (${entropy.toFixed(2)} bits/char, ` +
+      `[BymaxAuthModule] ${name} has insufficient entropy (${entropy.toFixed(2)} bits/char, ` +
         `minimum: 3.5 bits/char). The secret appears to contain repetitive or predictable patterns. ` +
         `Generate a secure secret with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`
     )
