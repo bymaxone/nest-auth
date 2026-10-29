@@ -24,7 +24,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, normalize, relative, resolve } from 'node:path'
+import { dirname, join, normalize, posix, relative, resolve, sep } from 'node:path'
 
 /** Repository root, from this file's location. */
 const ROOT = resolve(__dirname, '..', '..')
@@ -47,7 +47,7 @@ const SKIPPED_DIRECTORIES = new Set([
  * anyone remembered to register it here. A fixed list leaves exactly that file unchecked.
  *
  * @param root - Directory to scan.
- * @returns Root-relative paths, sorted so the order is stable across platforms.
+ * @returns Root-relative paths with '/' separators on every platform, sorted so the order is stable.
  */
 function findAgentFiles(root: string): readonly string[] {
   const found: string[] = []
@@ -56,7 +56,7 @@ function findAgentFiles(root: string): readonly string[] {
       if (entry.isDirectory()) {
         if (!SKIPPED_DIRECTORIES.has(entry.name)) walk(join(directory, entry.name))
       } else if (entry.name === 'AGENTS.md') {
-        found.push(relative(root, join(directory, entry.name)))
+        found.push(relative(root, join(directory, entry.name)).split(sep).join('/'))
       }
     }
   }
@@ -79,8 +79,10 @@ function worstChainBytes(root: string): number {
   const bytes = (file: string): number => Buffer.byteLength(readFileSync(join(root, file), 'utf8'))
   const ancestors = (file: string): readonly string[] =>
     files.filter((other) => {
-      const scope = dirname(other)
-      return scope === '.' || dirname(file) === scope || dirname(file).startsWith(scope + '/')
+      // Paths are root-relative with '/' separators on every platform, so ancestry is a posix test.
+      const scope = posix.dirname(other)
+      const own = posix.dirname(file)
+      return scope === '.' || own === scope || own.startsWith(scope + '/')
     })
   return Math.max(0, ...files.map((file) => ancestors(file).reduce((sum, f) => sum + bytes(f), 0)))
 }
@@ -221,9 +223,9 @@ describe('instruction chain discovery', () => {
     put('AGENTS.md', 100)
     put('a/AGENTS.md', 20)
     put('a/b/AGENTS.md', 5)
-    put('c/AGENTS.md', 60)
+    put('c/AGENTS.md', 10)
 
-    expect(worstChainBytes(root)).toBe(160)
+    expect(worstChainBytes(root)).toBe(125)
   })
 
   // A directory whose name merely starts like another is not its descendant.
