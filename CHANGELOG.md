@@ -18,6 +18,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Documentation
+
+- **`conformance/wire-contract.json` names the key the token epoch is stored under.**
+  `accessTokenClaims.epoch.storedUnder` now reads `{ep|pep}:{hmac_sha256(hmacKey, userSubject)}`,
+  the derived key the epoch is written to, instead of the bare `{ep|pep}:{userId}`. Text only: the
+  key the library derives is unchanged, and the contract digest pinned in `conformance.spec.ts`
+  moves with the file.
+
 ### Security
 
 - **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
