@@ -405,8 +405,8 @@ describe('AuthTokenVerifierService', () => {
     expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED)
   })
 
-  // The other half of the precedence: with a usable account the pending challenge is still what
-  // the caller is told, so only the blocked-account case changes its answer.
+  // A usable account with a pending challenge is told to complete it: MFA_REQUIRED is the answer
+  // exactly when the status gate has nothing to refuse.
   it.each([
     ['dashboard', DASHBOARD_PAYLOAD],
     ['platform', PLATFORM_PAYLOAD]
