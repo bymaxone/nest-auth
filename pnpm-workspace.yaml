@@ -30,7 +30,7 @@ allowBuilds:
 overrides:
   # GHSA-6j4f-fj2g-mc7p (7.5), GHSA-qhr7-859c-m2p7 (7.5), GHSA-q2hr-2g5m-vwhr (5.3). Reaches this tree
   # through `minimatch` (Stryker, ts-jest). Remove once the resolved minimatch brings 5.0.12 itself.
-  'brace-expansion@5': '^5.0.12'
+  'brace-expansion@<5.0.12': '>=5.0.12'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
   'postcss@<8.5.10': '>=8.5.10'
   # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
@@ -54,7 +54,7 @@ overrides:
   # GHSA-333x-w4r6-6crp and GHSA-xhq7-xmqj-769h (3.7). Remove once `ajv` requires >=3.1.9.
   'fast-uri@3': '^3.1.9'
   # GHSA-wq5f-xc86-pv6w (8.9): fixed in 0.35.5. Pulled by `next`; remove once next requires it.
-  'sharp@0.35': '^0.35.5'
+  'sharp@<0.35.5': '>=0.35.5'
   # GHSA-27r3-jxmh-p828 (7.5). Pulled by `express` 5. Remove once express requires >=2.4.0.
   'body-parser@2': '^2.4.0'
   # GHSA-2gc4-cqfq-p2gv (7.5). Pulled by `socket.io`. Remove once socket.io requires >=6.6.10.
