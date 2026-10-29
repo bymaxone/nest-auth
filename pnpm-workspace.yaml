@@ -28,7 +28,9 @@ allowBuilds:
 # NOT in package.json: pnpm 11 no longer reads the `pnpm` field of package.json, so
 # an override placed there does nothing — it warns, but it does nothing.
 overrides:
-  'brace-expansion@<5.0.6': '>=5.0.6'
+  # GHSA-6j4f-fj2g-mc7p (7.5), GHSA-qhr7-859c-m2p7 (7.5), GHSA-q2hr-2g5m-vwhr (5.3). Reaches this tree
+  # through `minimatch` (Stryker, ts-jest). Remove once the resolved minimatch brings 5.0.12 itself.
+  'brace-expansion@5': '^5.0.12'
   'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
   'postcss@<8.5.10': '>=8.5.10'
   # Floor the PACKAGE, never a window of it. A selector like `qs@>=6.11.1 <=6.15.1` protects only
@@ -41,12 +43,37 @@ overrides:
   #
   # GHSA-4mjr-xmp4-gh2g (5.3) denial of service via attacker-controlled `isBuffer`, and
   # GHSA-x5fp-wj9c-mxmx (3.7) array-limit bypass via bracket-key comma parsing.
-  'qs': '^6.16.0'
+  'qs': '^6.16.1'
+  # GHSA-6pq8-jhm2-2vcw (6.3): fixed in 6.16.1. Pulled by `body-parser`/`express`.
   # Four advisories, all 7.5: GHSA-5jgf-p345-68v8 and GHSA-jqff-g426-hqxp are host confusion,
   # GHSA-f65p-4m7j-42xc and GHSA-fph4-wmhf-6fwf are SSRF. Reaches this tree through `ajv`. Floored rather than ignored: this
   # package declares no runtime dependencies, so a scanner told to skip dev dependencies would
   # report nothing here and stay blind after the entry is gone.
-  'fast-uri': '^3.1.6'
-  'sharp@<0.35.0': '>=0.35.0'
+  #
+  # Raised to 3.1.9: GHSA-w74x-v6f9-j3xg (6.1), GHSA-hrr3-gc8f-f4qj and GHSA-wjr9-j795-jxcr (4.8),
+  # GHSA-333x-w4r6-6crp and GHSA-xhq7-xmqj-769h (3.7). Remove once `ajv` requires >=3.1.9.
+  'fast-uri@3': '^3.1.9'
+  # GHSA-wq5f-xc86-pv6w (8.9): fixed in 0.35.5. Pulled by `next`; remove once next requires it.
+  'sharp@0.35': '^0.35.5'
+  # GHSA-27r3-jxmh-p828 (7.5). Pulled by `express` 5. Remove once express requires >=2.4.0.
+  'body-parser@2': '^2.4.0'
+  # GHSA-2gc4-cqfq-p2gv (7.5). Pulled by `socket.io`. Remove once socket.io requires >=6.6.10.
+  'engine.io@6': '^6.6.10'
+  # GHSA-8r5x-fm3f-whwj (9.8), GHSA-p8wg-vrv2-v86f (9.2), GHSA-xw65-4hp5-5hc7 (4.7). Pulled by `ts-jest`.
+  # Remove once ts-jest requires >=4.7.10.
+  'handlebars@4': '^4.7.10'
+  # GHSA-2883-xcg3-v3hh (7.5), both majors. Pulled by `@istanbuljs/load-nyc-config` (3.x) and
+  # `@eslint/eslintrc` (4.x). Remove once they require the fixed versions.
+  'js-yaml@3': '^3.15.2'
+  'js-yaml@4': '^4.3.2'
+  # Seven advisories up to 7.5 (GHSA-q7qp-rjg7-q26m, -535w-7cp7-47q4, -wc9g-mqfw-jrwm, -qfvm-cv95-jqjf,
+  # -3pph-fpjx-jg34, -qvfw-j98x-7q72). Pulled by `@nestjs/platform-express`. Remove once it requires >=2.5.0.
+  'multer@2': '^2.5.0'
+  # GHSA-jqcg-44mw-7w3h (9.1). Pulled by `express` 5. Remove once express requires >=2.0.8.
+  'proxy-addr@2': '^2.0.8'
+  # GHSA-68fv-2mgg-jv7q (8.7). Pulled by `postcss`. Remove once postcss requires >=1.2.2.
+  'source-map-js@1': '^1.2.2'
+  # GHSA-mrhx-c7xc-m3w5 (8.2). Pulled by `mutation-server-protocol` (Stryker). Remove once it requires >=4.6.6.
+  'zod@4': '^4.6.6'
   'tmp@<0.2.6': '>=0.2.6'
   'ws@<8.20.1': '>=8.20.1'
