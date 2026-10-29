@@ -163,8 +163,9 @@ describe('jwt.secret rotation (E2E)', () => {
     expect(refreshed.status).toBe(200)
   })
 
-  // The WebSocket ticket family is part of the rotation too: a ticket issued before it redeems
-  // after it, and a new one issued after it redeems as well.
+  // A WebSocket ticket is stored under a hash of the ticket itself, not under the identifier key,
+  // so it survives a rotation either way: one issued before it redeems after it, and a new one
+  // issued after it redeems as well.
   it('redeems a WebSocket ticket issued before the rotation and one issued after it', async () => {
     const before = await bootBefore(OLD_SECRET)
     const { live, ticket } = await prepare(before)
