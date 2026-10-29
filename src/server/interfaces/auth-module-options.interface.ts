@@ -95,6 +95,27 @@ export type BymaxAuthRateLimitOptions =
 
 export interface BymaxAuthModuleOptions {
   /**
+   * Secret the Redis identifiers derive from. Optional; default: `jwt.secret`.
+   *
+   * Every name that identifies an account in Redis — the session index, the token epoch, the MFA
+   * keys, the recent-authentication marker, the OTP and rate-limit identifiers — is an HMAC under
+   * a key derived from one secret. By default that secret is `jwt.secret`, so rotating
+   * `jwt.secret` renames all of them: live sessions lose their index and every token epoch reads
+   * zero, which accepts again the tokens a password reset or a revoke-all had refused.
+   *
+   * Setting `identifierKey` makes the identifiers derive from it instead, so `jwt.secret` can be
+   * rotated without moving a single name. Set it to the CURRENT `jwt.secret` before rotating and
+   * every derived name stays exactly where it is. It is validated like `jwt.secret` and is never
+   * used to sign or verify a token; it only names keys.
+   *
+   * Choose a NEW value instead when the point of the rotation is to cut the link to the old
+   * secret: the identifiers then move, sessions end and epochs reset, as they do today.
+   *
+   * @throws {Error} When the value fails validation at module initialisation.
+   */
+  identifierKey?: string
+
+  /**
    * JWT signing configuration.
    * `secret` is required and must be at least 32 characters with sufficient entropy.
    */

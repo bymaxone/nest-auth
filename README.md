@@ -897,6 +897,29 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > rotation becomes a rollout. Remove the entry once the longest-lived token signed under it has
 > expired: every entry is a key that still opens the door. `mfa.encryptionKey` rotates the same
 > way, through its own list — see below.
+>
+> **Pin `identifierKey` before you rotate.** Every Redis name that identifies an account — the
+> session index, the token epoch, the MFA keys, the recent-authentication marker, and the OTP and
+> rate-limit identifiers — is an HMAC under a key derived from `jwt.secret` unless you set
+> `identifierKey`. Rotate `jwt.secret` alone and all of them are renamed: live sessions lose their
+> index, and every token epoch reads zero, so a token that a password reset or a revoke-all had
+> refused is accepted again until it expires. `identifierKey` is a secret of its own for those
+> names; it is validated like `jwt.secret` and never signs or verifies a token. The value is
+> simply the secret you want the names to keep deriving from — there is nothing to compute.
+>
+> |                 | Routine rotation — keep sessions and epochs                                                                 | Rotation after a compromise — cut the link                                                                                                                                          |
+> | --------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | Before rotating | Set `identifierKey` to the **current** `jwt.secret` and deploy. Nothing moves: the derivation is unchanged. | Do not list the compromised secret in `jwt.previousSecrets`, so a token signed with it stops verifying.                                                                             |
+> | Rotating        | Put the new secret in `jwt.secret` and the old one in `jwt.previousSecrets`; keep `identifierKey` as it is. | Put the new secret in `jwt.secret` **and** choose a new `identifierKey`.                                                                                                            |
+> | Names           | Unchanged.                                                                                                  | Moved: every session ends, every epoch reads zero, MFA set-up state and lockout counters start empty.                                                                               |
+> | Revoked tokens  | Stay revoked.                                                                                               | Tokens signed under the old secret no longer verify; for accounts that matter, run `POST /sessions/revoke-all` first or wait out the access-token lifetime (`jwt.accessExpiresIn`). |
+> | Afterwards      | Drop the old secret from `previousSecrets` once its last token has expired.                                 | Nothing further.                                                                                                                                                                    |
+>
+> Pinning to the old secret leaves the derived Redis names computable by anyone who knows that
+> secret. They are names, not signing material, and using one still needs access to your Redis;
+> if cutting that link matters more than keeping sessions, take the second column. Without
+> `identifierKey` a rotation behaves as the second column does, minus the choice: the names move
+> whether or not you wanted them to.
 
 > [!TIP]
 > **Rotating the MFA encryption key.** `mfa.previousEncryptionKeys` lists AES-256 keys retired by
@@ -1113,7 +1136,7 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 | Secret Comparison  | `crypto.timingSafeEqual` (constant-time)                                                               |
 | JWT                | HS256 via `@nestjs/jwt`, JTI blacklist via Redis                                                       |
 | Cookies            | HttpOnly, Secure, SameSite=Lax (override to `strict`), path-scoped                                     |
-| Brute-Force        | Redis atomic counters per HMAC(email, jwt.secret)                                                      |
+| Brute-Force        | Redis atomic counters per HMAC(email, identifier key)                                                  |
 | CSRF (OAuth)       | 64-char hex state nonce, single-use via `getdel()`                                                     |
 | Refresh Rotation   | Single-use tokens with a grace window; a replay past it revokes that login's whole family lineage      |
 | Cross-Site Writes  | `Origin` / `Sec-Fetch-Site` check on cookie-authenticated writes — the gap `SameSite=None` leaves open |
