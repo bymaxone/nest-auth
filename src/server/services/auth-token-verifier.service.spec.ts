@@ -440,4 +440,23 @@ describe('AuthTokenVerifierService', () => {
       expect(mockAccountStatus[gate]).not.toHaveBeenCalled()
     }
   )
+
+  // A token whose `mfaEnabled` claim is malformed is a bad token, whatever the account behind it
+  // looks like: the claim-shape refusal belongs to the token checks, so it answers TOKEN_INVALID
+  // ahead of the account lookup on both planes and the status store is never read.
+  it.each([
+    ['dashboard', DASHBOARD_PAYLOAD, 'assertDashboardAccountUsable'],
+    ['platform', PLATFORM_PAYLOAD, 'assertPlatformAccountUsable']
+  ] as const)(
+    'answers TOKEN_INVALID for a malformed mfaEnabled claim before the %s account lookup',
+    async (plane, payload, gate) => {
+      mockJwt.verify.mockReturnValue({ ...payload, mfaEnabled: undefined })
+      mockAccountStatus[gate].mockRejectedValue(new AuthException(AUTH_ERROR_CODES.ACCOUNT_BANNED))
+
+      const thrown = await verifier.verifyAccessToken('tok', { plane }).catch((e: unknown) => e)
+
+      expect(errorCodeOf(thrown)).toBe(AUTH_ERROR_CODES.TOKEN_INVALID)
+      expect(mockAccountStatus[gate]).not.toHaveBeenCalled()
+    }
+  )
 })

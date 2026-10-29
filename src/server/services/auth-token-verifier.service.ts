@@ -115,6 +115,8 @@ export interface VerifyAccessTokenOptions {
  * 6. **Account status**, unless the caller opted out. See
  *    {@link VerifyAccessTokenOptions.checkStatus}.
  * 7. **MFA policy**, unless the caller opted out. See {@link VerifyAccessTokenOptions.requireMfa}.
+ *    Its claim-shape refusal (`mfaEnabled` missing or not a boolean, answered `TOKEN_INVALID`)
+ *    belongs to the token checks and fires before step 6; only the `MFA_REQUIRED` decision follows it.
  *
  * **Account status precedes the MFA policy.** A blocked account is refused with its own code even
  * while a challenge is pending, which is the answer a route guarded by `UserStatusGuard` ahead of
@@ -225,6 +227,8 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    if (requireMfa) this.assertMfaClaimShape(payload)
+
     if (checkStatus) {
       await this.accountStatus.assertDashboardAccountUsable({
         userId: payload.sub,
@@ -232,7 +236,7 @@ export class AuthTokenVerifierService {
       })
     }
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
+    if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'dashboard', payload }
   }
@@ -268,9 +272,11 @@ export class AuthTokenVerifierService {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    if (requireMfa) this.assertMfaClaimShape(payload)
+
     if (checkStatus) await this.accountStatus.assertPlatformAccountUsable(payload.sub)
 
-    if (requireMfa) this.assertMfaSatisfied(payload)
+    if (requireMfa) this.assertMfaVerified(payload)
 
     return { plane: 'platform', payload }
   }
@@ -293,20 +299,30 @@ export class AuthTokenVerifierService {
   }
 
   /**
-   * Applies the MFA policy to an already-verified payload.
+   * Refuses a token whose `mfaEnabled` claim is missing or not a boolean.
    *
    * The `typeof` arm is not defensive noise: the payload is cast from a token, so a signed token
    * that simply omits `mfaEnabled` would otherwise compare `undefined === true`, read as "MFA is
-   * off" and pass a gate it was never shown to.
+   * off" and pass a gate it was never shown to. It is a claim-shape refusal, so it runs with the
+   * other token checks and ahead of the account lookup.
    *
    * @param payload - The verified payload, either plane.
-   * @throws {@link AuthException} with `TOKEN_INVALID` when the claim is missing or not a
-   *   boolean, or `MFA_REQUIRED` when MFA is enabled and this token predates the challenge.
+   * @throws {@link AuthException} with `TOKEN_INVALID` when the claim is missing or not a boolean.
    */
-  private assertMfaSatisfied(payload: DashboardJwtPayload | PlatformJwtPayload): void {
+  private assertMfaClaimShape(payload: DashboardJwtPayload | PlatformJwtPayload): void {
     if (typeof payload.mfaEnabled !== 'boolean') {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
+  }
+
+  /**
+   * Applies the MFA policy to a payload whose claim shape was already checked.
+   *
+   * @param payload - The verified payload, either plane.
+   * @throws {@link AuthException} with `MFA_REQUIRED` when MFA is enabled and this token predates
+   *   the challenge.
+   */
+  private assertMfaVerified(payload: DashboardJwtPayload | PlatformJwtPayload): void {
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
