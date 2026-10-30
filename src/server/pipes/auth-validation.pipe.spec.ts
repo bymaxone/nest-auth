@@ -8,7 +8,15 @@
  * shape rust-auth serializes for `auth.validation`.
  */
 
-import { IsInt, IsNotEmpty, IsString, Min, MinLength, ValidateNested } from 'class-validator'
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+  MinLength,
+  ValidateNested
+} from 'class-validator'
 import { Type } from 'class-transformer'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
@@ -122,5 +130,72 @@ describe('createAuthValidationPipe', () => {
     await expect(
       pipe.transform({ email: 'a@e.com', nested: { quantity: 2 } }, METADATA)
     ).resolves.toMatchObject({ email: 'a@e.com' })
+  })
+})
+
+describe('createAuthValidationPipe — a missing body', () => {
+  class OptionalDto {
+    @IsOptional()
+    @IsString()
+    password?: string
+  }
+
+  // Scenario: no body (undefined, then null) for a DTO whose fields are all optional.
+  // Expected: an empty instance of the DTO, never the nil. Why: the base pipe validates `{}` and
+  // returns the original nil, and a handler reading `dto.password` cannot run on `undefined`.
+  it.each([
+    ['undefined', undefined],
+    ['null', null]
+  ])('hands the handler an empty DTO for a %s body', async (_name, body) => {
+    const pipe = createAuthValidationPipe()
+
+    const out: unknown = await pipe.transform(body, { type: 'body', metatype: OptionalDto })
+
+    expect(out).toBeInstanceOf(OptionalDto)
+    expect(out).toEqual({})
+  })
+
+  // Scenario: no body for a DTO with a required field. Expected: the validation refusal. Why: normalising a nil body must not turn a required field into an accepted one.
+  it('still refuses a missing body when a field is required', async () => {
+    const pipe = createAuthValidationPipe()
+
+    const caught = await pipe.transform(undefined, METADATA).catch((err: unknown) => err)
+
+    expect(envelopeOf(caught).code).toBe(AUTH_ERROR_CODES.VALIDATION)
+  })
+
+  // Scenario: a missing value that is not a body (a query parameter). Expected: left missing.
+  // Why: only the body is a DTO this pipe stands in for; a query value has its own meaning of
+  // "absent" and is not the pipe's to invent.
+  it('leaves a missing non-body value as it is', async () => {
+    const pipe = createAuthValidationPipe()
+
+    const out: unknown = await pipe.transform(undefined, { type: 'query', metatype: OptionalDto })
+
+    expect(out).toBeUndefined()
+  })
+
+  // Scenario: a missing body on a parameter typed as a primitive, which the pipe does not
+  // validate. Expected: left missing. Why: there is no DTO to build, and inventing `{}` for a
+  // `string` parameter would be a wrong type.
+  it('leaves a missing body alone when its type is not a DTO', async () => {
+    const pipe = createAuthValidationPipe()
+
+    const out: unknown = await pipe.transform(undefined, { type: 'body', metatype: String })
+
+    expect(out).toBeUndefined()
+  })
+
+  // Scenario: a present body. Expected: unchanged by the normalisation. Why: only a nil body is
+  // replaced; an object a client sent must reach the handler as it was validated.
+  it('does not replace a body that was sent', async () => {
+    const pipe = createAuthValidationPipe()
+
+    const out: unknown = await pipe.transform(
+      { password: 'x' },
+      { type: 'body', metatype: OptionalDto }
+    )
+
+    expect(out).toMatchObject({ password: 'x' })
   })
 })

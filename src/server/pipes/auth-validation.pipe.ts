@@ -4,7 +4,8 @@
  * @layer Pipe
  */
 import { ValidationPipe } from '@nestjs/common'
-import type { ValidationError, ValidationPipeOptions } from '@nestjs/common'
+import type { ArgumentMetadata, ValidationError, ValidationPipeOptions } from '@nestjs/common'
+import { plainToInstance } from 'class-transformer'
 
 import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
@@ -54,6 +55,27 @@ function flattenValidationErrors(
 }
 
 /**
+ * A `ValidationPipe` that never hands a handler a missing body.
+ *
+ * With `transform` off, `ValidationPipe` validates an empty object in place of a nil body and then
+ * returns the original nil. A DTO with a required field refuses that empty object; one whose
+ * fields are all optional accepts it, and a handler reading `dto.field` then fails on `undefined`.
+ * A body that validated as empty is returned as an empty DTO instance, so a request without a body
+ * is the same request as `{}`.
+ */
+class AuthValidationPipe extends ValidationPipe {
+  override async transform(value: unknown, metadata: ArgumentMetadata): Promise<unknown> {
+    const validated: unknown = await super.transform(value, metadata)
+
+    const missing = validated === undefined || validated === null
+
+    if (!missing || metadata.type !== 'body' || !this.toValidate(metadata)) return validated
+
+    return plainToInstance(metadata.metatype as new () => object, {})
+  }
+}
+
+/**
  * Builds the `ValidationPipe` the auth controllers mount.
  *
  * The pipe exists for one reason beyond the usual whitelisting: its `exceptionFactory`. Nest's
@@ -69,7 +91,7 @@ function flattenValidationErrors(
  * @returns A configured pipe instance, ready for `@UsePipes()`.
  */
 export function createAuthValidationPipe(options: ValidationPipeOptions = {}): ValidationPipe {
-  return new ValidationPipe({
+  return new AuthValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: true,
     ...options,
