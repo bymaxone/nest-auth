@@ -73,6 +73,8 @@ interface WireContract {
       createdAt?: string
       familyId?: string
       familyCreatedAt?: string
+      optionalFields?: string[]
+      mfaVerified?: string
       tenantId?: string
     }
   >
@@ -130,7 +132,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '58164ba0a72b7ee3ca3e6e8c4f79f0092322438cc15130c1dc0ce74555ccea7d'
+const CONTRACT_SHA256 = '5063e9668d3ff0befd6b53ade554e8159d6345334db63609bf4f6335146b8558'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -852,6 +854,17 @@ describe('cross-implementation conformance', () => {
     // !mfaVerified`, one routine refresh silently disables the second factor.
     it('requires mfaEnabled on the refresh session record', () => {
       expect(contract.recordEncodings['refreshSession']?.fields).toContain('mfaEnabled')
+    })
+
+    // Verifies the second factor a session was established with is part of the record. The gate
+    // refuses `mfaEnabled && !mfaVerified` and nothing lets a session re-acquire the claim, so a
+    // record that cannot say it passed the challenge locks the user out at the first rotation.
+    it('carries mfaVerified as an optional, true-only, strictly read field', () => {
+      const record = contract.recordEncodings['refreshSession']
+      expect(record?.['optionalFields']).toEqual(['mfaVerified'])
+      expect(record?.fields).not.toContain('mfaVerified')
+      expect(record?.['mfaVerified']).toContain('written ONLY as `true`')
+      expect(record?.['mfaVerified']).toContain('Read strictly')
     })
 
     // Verifies the invitation record carries createdAt. Consumption is a single-use GETDEL, so

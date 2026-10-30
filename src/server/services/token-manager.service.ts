@@ -86,10 +86,19 @@ interface RefreshSession {
    * on every rotation, silently disabling `MfaRequiredGuard` for MFA-enabled users
    * after their first token refresh.
    *
-   * `mfaVerified` is intentionally NOT stored — it must always be `false` in
-   * rotated tokens to force re-authentication through the MFA challenge endpoint.
+   * Persisted so the session that was established WITH its second factor keeps it across rotation.
    */
   mfaEnabled: boolean
+  /**
+   * Whether this session was established by completing the MFA challenge.
+   *
+   * Written only when `true` and read back as `false` when absent, so a record without the field,
+   * or a session opened without the challenge, rotates without the factor. Rotation copies
+   * it forward: the lineage was authenticated with the second factor once, and `MfaRequiredGuard`
+   * must not demand it again every time the access token ages out. Enabling or disabling MFA ends
+   * every session, so a surviving session is one whose factor has not changed.
+   */
+  mfaVerified?: boolean
 }
 
 /**
@@ -244,7 +253,9 @@ export class TokenManagerService {
       ip,
       userAgent,
       user.mfaEnabled,
-      familyId
+      familyId,
+      undefined,
+      overrides?.mfaVerified === true
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
@@ -322,7 +333,9 @@ export class TokenManagerService {
       ip,
       userAgent,
       admin.mfaEnabled,
-      familyId
+      familyId,
+      undefined,
+      overrides?.mfaVerified === true
     )
     const ttl = this.options.jwt.refreshExpiresInDays * 86_400
 
@@ -431,7 +444,8 @@ export class TokenManagerService {
       userAgent,
       seed.mfaEnabled,
       seed.familyId,
-      seed.familyCreatedAt
+      seed.familyCreatedAt,
+      seed.mfaVerified === true
     )
 
     const outcome = await this.redis.rotateRefreshSession({
@@ -689,7 +703,8 @@ export class TokenManagerService {
       userAgent,
       graceSession.mfaEnabled,
       graceSession.familyId,
-      graceSession.familyCreatedAt
+      graceSession.familyCreatedAt,
+      graceSession.mfaVerified === true
     )
     // One atomic step, not four. Written loose, these landed several awaits after the script
     // returned, and a `revoke_all` arriving in that gap swept an index the recovered session
@@ -758,7 +773,22 @@ export class TokenManagerService {
     if (typeof rec['mfaEnabled'] !== 'boolean') {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    const mfaEnabled = rec['mfaEnabled']
+    return this.withOptionalFields(parsed as RefreshSession, rec, rec['mfaEnabled'])
+  }
+
+  /**
+   * Completes a validated session record with its optional fields, each read strictly.
+   *
+   * @param parsed - The stored record, already shape-checked by {@link parseSession}.
+   * @param rec - The same record as untyped keys, for the strict reads.
+   * @param mfaEnabled - The validated required flag.
+   * @returns The record with `familyId`, `familyCreatedAt` and `mfaVerified` normalized.
+   */
+  private withOptionalFields(
+    parsed: RefreshSession,
+    rec: Record<string, unknown>,
+    mfaEnabled: boolean
+  ): RefreshSession {
     // The family, by contrast, is genuinely optional: the placeholder record a replay produces
     // carries none, and the contract omits the key rather than writing an empty string. Absent
     // reads as "no family", which skips the family bookkeeping — a real state, not a missing
@@ -767,7 +797,15 @@ export class TokenManagerService {
     // Same for the birth time: no family means no cap to measure from, and the session still
     // ages out under the refresh lifetime like any other.
     const familyCreatedAt = typeof rec['familyCreatedAt'] === 'string' ? rec['familyCreatedAt'] : ''
-    return { ...(parsed as RefreshSession), mfaEnabled, familyId, familyCreatedAt }
+    // Read back strictly: only the literal `true` counts, so a corrupt value can never read as verified.
+    const { mfaVerified: _stored, ...record } = parsed
+    return {
+      ...record,
+      mfaEnabled,
+      familyId,
+      familyCreatedAt,
+      ...(rec['mfaVerified'] === true ? { mfaVerified: true } : {})
+    }
   }
 
   /**
@@ -796,6 +834,8 @@ export class TokenManagerService {
    * @param device - Human-readable device description (parsed from User-Agent).
    * @param mfaEnabled - Whether MFA is enabled on the account at session creation time.
    * @param familyId - Login lineage this session belongs to; `''` when it belongs to none.
+   * @param familyCreatedAt - Birth of the lineage, carried unchanged through every rotation.
+   * @param mfaVerified - Whether the session was established by completing the MFA challenge.
    */
   private buildSession(
     userId: string,
@@ -805,7 +845,8 @@ export class TokenManagerService {
     device: string,
     mfaEnabled: boolean,
     familyId: string,
-    familyCreatedAt: string = new Date().toISOString()
+    familyCreatedAt: string = new Date().toISOString(),
+    mfaVerified = false
   ): RefreshSession {
     return {
       userId,
@@ -816,7 +857,8 @@ export class TokenManagerService {
       createdAt: new Date().toISOString(),
       mfaEnabled,
       familyId,
-      familyCreatedAt
+      familyCreatedAt,
+      ...(mfaVerified ? { mfaVerified: true } : {})
     }
   }
 
@@ -843,18 +885,18 @@ export class TokenManagerService {
    * unexpired token. The claim cannot be authoritative, so it is not made to look like it — and
    * the empty string is the one state that cannot be mistaken for an answer.
    *
-   * `mfaVerified` is always `false` after rotation because the Redis session does not
-   * persist MFA verification state. A user who authenticated with MFA will lose the
-   * `mfaVerified: true` claim on the first token rotation. MFA guards should be aware
-   * of this behaviour and direct users through the MFA challenge flow to re-acquire it.
+   * `mfaVerified` is the stored session's: `true` only when the session was established by
+   * completing the MFA challenge, and `false` for a record without the field. Rotation copies it
+   * forward, because the library offers no route that lets an authenticated session re-acquire
+   * the claim, so dropping it would lock every MFA user out of the routes behind
+   * `MfaRequiredGuard` each time the access token ages out.
    */
   private async buildRotatedResult(
     session: RefreshSession,
     rawRefreshToken: string
   ): Promise<RotatedTokenResult> {
-    // mfaEnabled is propagated from the stored session so MfaRequiredGuard continues
-    // to enforce MFA after rotation. mfaVerified is always false — the user must
-    // re-complete the MFA challenge after rotation to re-acquire a verified token.
+    // mfaEnabled and mfaVerified are propagated from the stored session, so MfaRequiredGuard
+    // keeps enforcing MFA after rotation and keeps admitting a session that completed it.
     // The epoch is re-read at rotation time, so a reset that lands mid-session is picked up
     // by the very next rotation rather than being carried over from the old token.
     const epoch = await this.redis.getUserTokenEpoch(session.userId, session.tenantId, 'dashboard')
@@ -865,7 +907,7 @@ export class TokenManagerService {
       type: 'dashboard',
       status: '',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false,
+      mfaVerified: session.mfaVerified === true,
       epoch
     })
 
@@ -913,7 +955,8 @@ export class TokenManagerService {
       userAgent,
       seed.mfaEnabled,
       seed.familyId,
-      seed.familyCreatedAt
+      seed.familyCreatedAt,
+      seed.mfaVerified === true
     )
 
     const outcome = await this.redis.rotateRefreshSession({
@@ -1030,7 +1073,8 @@ export class TokenManagerService {
       userAgent,
       graceSession.mfaEnabled,
       graceSession.familyId,
-      graceSession.familyCreatedAt
+      graceSession.familyCreatedAt,
+      graceSession.mfaVerified === true
     )
 
     // The platform twin of the dashboard grace write, atomic for the same reason.
@@ -1063,21 +1107,19 @@ export class TokenManagerService {
    * Issues a platform access token and assembles a {@link RotatedTokenResult} from a session record.
    *
    * @remarks
-   * `mfaVerified` is always `false` after rotation — same semantics as {@link buildRotatedResult}.
-   * Platform admins must re-complete the MFA challenge flow to re-acquire a verified token.
+   * `mfaVerified` is the stored session's, as in {@link buildRotatedResult}.
    */
   private async buildPlatformRotatedResult(
     session: RefreshSession,
     rawRefreshToken: string
   ): Promise<RotatedTokenResult> {
-    // mfaVerified is always false after rotation (same semantics as buildRotatedResult).
     const epoch = await this.redis.getUserTokenEpoch(session.userId, undefined, 'platform')
     const accessToken = this.issuePlatformAccess({
       sub: session.userId,
       role: session.role,
       type: 'platform',
       mfaEnabled: session.mfaEnabled,
-      mfaVerified: false,
+      mfaVerified: session.mfaVerified === true,
       epoch
     })
 
