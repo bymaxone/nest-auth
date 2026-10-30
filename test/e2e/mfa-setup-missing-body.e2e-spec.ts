@@ -2,8 +2,8 @@
  * @fileoverview `POST …/mfa/setup` with no body answers exactly as it does for `{}`.
  *
  * `password` is optional on purpose: an account provisioned through OAuth has no local password
- * and needs none, so a request without a body is the same request as an empty object. It used to
- * reach the handler as `undefined` and answer 500.
+ * and needs none, so an absent body and an empty object are the same request and must get the
+ * same answer.
  */
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
@@ -79,7 +79,7 @@ async function platformAdmin(): Promise<{ boot: BootstrappedTestApp; token: stri
 describe('POST …/mfa/setup without a body (E2E)', () => {
   // Scenario: a dashboard account with a local password, once with no body and once with `{}`.
   // Expected: the same status and the same error body (a password is required and none was sent).
-  // Why: a missing body is the same request as an empty object, not a server fault.
+  // Why: an absent body and an empty object are the same request.
   it('answers a password account without a body as it answers {}', async () => {
     const bare = await dashboardUser(false)
     const empty = await dashboardUser(false)
@@ -112,7 +112,7 @@ describe('POST …/mfa/setup without a body (E2E)', () => {
 
   // Scenario: the platform surface, a password account, no body versus `{}`. Expected: the same
   // status and body as for the dashboard route. Why: the platform handler reads `dto.password`
-  // the same way and had the same fault.
+  // the same way, so it needs the same guarantee.
   it('answers a platform admin without a body as it answers {}', async () => {
     const bare = await platformAdmin()
     const empty = await platformAdmin()

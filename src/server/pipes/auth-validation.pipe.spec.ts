@@ -142,7 +142,7 @@ describe('createAuthValidationPipe — a missing body', () => {
 
   // Scenario: no body (undefined, then null) for a DTO whose fields are all optional.
   // Expected: an empty instance of the DTO, never the nil. Why: the base pipe validates `{}` and
-  // then returns the original nil, so a handler reading `dto.password` threw on `undefined`.
+  // returns the original nil, and a handler reading `dto.password` cannot run on `undefined`.
   it.each([
     ['undefined', undefined],
     ['null', null]
@@ -155,8 +155,7 @@ describe('createAuthValidationPipe — a missing body', () => {
     expect(out).toEqual({})
   })
 
-  // Scenario: no body for a DTO with a required field. Expected: the validation refusal, as
-  // before. Why: normalising a nil body must not turn a required field into an accepted one.
+  // Scenario: no body for a DTO with a required field. Expected: the validation refusal. Why: normalising a nil body must not turn a required field into an accepted one.
   it('still refuses a missing body when a field is required', async () => {
     const pipe = createAuthValidationPipe()
 
