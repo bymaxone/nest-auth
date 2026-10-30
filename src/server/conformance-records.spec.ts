@@ -399,6 +399,55 @@ describe('wire contract: sessionDetail record', () => {
   })
 })
 
+// The platform plane writes its own `psd:` detail from the token manager, on issue and on both
+// rotation paths, apart from the dashboard writers above. A field added to or dropped from that
+// object would only ever show on a platform session.
+describe('wire contract: sessionDetail record, platform writer', () => {
+  const { fields, optionalFields } = declared('sessionDetail')
+  const PREFIX = prefixOf('platformSessionDetail')
+
+  /** The `psd:` write among everything the producer handed Redis, as `[key, value]`. */
+  function detailWrite(): [string, unknown] {
+    const call = mockRedis.set.mock.calls.find(
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].startsWith(`${PREFIX}:`)
+    )
+    if (call === undefined) throw new Error('the producer never wrote a platform session detail')
+    return [call[0] as string, call[1]]
+  }
+
+  // Scenario: a platform session is issued. Expected: a record under the contract's `psd` prefix
+  // whose keys equal the declared set. Why: the session listing describes a platform session from
+  // this record alone.
+  it('issuePlatformTokens stores exactly the declared fields under the declared prefix', async () => {
+    const service = await build(TokenManagerService)
+
+    await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Chrome')
+
+    const [key, value] = detailWrite()
+    expect(key).toMatch(new RegExp(`^${PREFIX}:[0-9a-f]{64}$`))
+    expect(keysOf(value)).toEqual(sorted([...fields, ...optionalFields]))
+  })
+
+  // Scenario: a platform refresh token is rotated. Expected: the record written for the new hash
+  // has the same declared key set. Why: rotation is a second writer, and a drift there shows only
+  // on a rotated session.
+  it('reissuePlatformTokens stores exactly the declared fields under the declared prefix', async () => {
+    const service = await build(TokenManagerService)
+    await service.issuePlatformTokens(SAFE_ADMIN, '1.2.3.4', 'Chrome')
+    const stored = (firstCallArg(mockRedis.writeNewSession, 0) as { sessionJson: string })
+      .sessionJson
+    mockRedis.set.mockClear()
+    mockRedis.get.mockResolvedValue(stored)
+    mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'rotated', sessionJson: stored })
+
+    await service.reissuePlatformTokens('old-refresh', '1.2.3.4', 'Chrome')
+
+    const [key, value] = detailWrite()
+    expect(key).toMatch(new RegExp(`^${PREFIX}:[0-9a-f]{64}$`))
+    expect(keysOf(value)).toEqual(sorted([...fields, ...optionalFields]))
+  })
+})
+
 // ---------------------------------------------------------------------------
 // invitation
 // ---------------------------------------------------------------------------
