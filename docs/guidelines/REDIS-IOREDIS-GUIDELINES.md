@@ -323,10 +323,10 @@ This approach is intentional: blacklisting every possible access token for a use
 
 ### 4.1 Refresh Token Design
 
-Refresh tokens in this library are **opaque UUID v4 strings** (not JWTs). They are stored in Redis with session metadata, enabling stateful session management without database queries.
+Refresh tokens in this library are **opaque random tokens** (not JWTs): 32 random bytes encoded as 64 hex characters. They are stored in Redis with session metadata, enabling stateful session management without database queries.
 
 ```
-Token format:  UUID v4 (e.g., "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+Token format:  64 hex characters from 32 random bytes (generateSecureToken)
 Storage key:   auth:rt:{sha256(token)}
 Storage value: JSON string with session data
 TTL:           refreshExpiresInDays converted to seconds

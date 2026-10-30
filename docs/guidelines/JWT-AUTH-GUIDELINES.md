@@ -28,12 +28,12 @@
 
 The `@bymax-one/nest-auth` package uses a multi-token architecture to serve different authentication contexts. Every token has a strict purpose, a defined lifetime, and a typed payload. Understanding which token does what is essential before writing any JWT-related code.
 
-| Token Type                   | Format         | Lifetime             | Transport                                                         | Purpose                                               |
-| ---------------------------- | -------------- | -------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
-| **Access Token (Dashboard)** | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates dashboard/tenant users on every request |
-| **Access Token (Platform)**  | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates platform administrators                 |
-| **Refresh Token**            | Opaque UUID v4 | 7 days (default)     | HttpOnly cookie (path-scoped) or request body                     | Reissues access tokens without re-authentication      |
-| **MFA Temp Token**           | JWT (signed)   | 5 minutes (fixed)    | Response body (login) or `mfa_temp_token` cookie (OAuth callback) | Short-lived token for the MFA challenge window        |
+| Token Type                   | Format                       | Lifetime             | Transport                                                         | Purpose                                               |
+| ---------------------------- | ---------------------------- | -------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
+| **Access Token (Dashboard)** | JWT (signed)                 | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates dashboard/tenant users on every request |
+| **Access Token (Platform)**  | JWT (signed)                 | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates platform administrators                 |
+| **Refresh Token**            | Opaque random token (64 hex) | 7 days (default)     | HttpOnly cookie (path-scoped) or request body                     | Reissues access tokens without re-authentication      |
+| **MFA Temp Token**           | JWT (signed)                 | 5 minutes (fixed)    | Response body (login) or `mfa_temp_token` cookie (OAuth callback) | Short-lived token for the MFA challenge window        |
 
 ### 1.2 Access Tokens
 
@@ -48,11 +48,11 @@ Key properties:
 
 ### 1.3 Refresh Tokens
 
-Refresh tokens are **not JWTs**. They are opaque UUID v4 strings stored in Redis. This is a deliberate design decision:
+Refresh tokens are **not JWTs**. They are opaque random tokens (32 random bytes as 64 hex characters) stored in Redis. This is a deliberate design decision:
 
 - An opaque token cannot be decoded or verified without the Redis store, making it useless if intercepted without server access.
 - Revocation is instantaneous (delete the Redis key).
-- Rotation is simple (generate a new UUID, store it, delete the old one).
+- Rotation is simple (generate a new random token, store it, delete the old one).
 
 Storage key pattern: `auth:rt:{sha256(token)}` (dashboard) or `auth:prt:{sha256(token)}` (platform).
 
@@ -388,7 +388,7 @@ Flow:
 
 1. Client sends the current refresh token to `POST /auth/refresh`.
 2. `TokenManagerService.reissueTokens()` looks up `auth:rt:{sha256(oldToken)}` in Redis.
-3. If found, the old key is deleted atomically and a new refresh token (UUID v4) is generated.
+3. If found, the old key is deleted atomically and a new refresh token (64 hex characters) is generated.
 4. The new refresh token is stored in Redis at `auth:rt:{sha256(newToken)}`.
 5. Creates the rotation pointer `auth:rp:{sha256(oldToken)} → {sha256(newToken)}:{session JSON}` (TTL = grace window) and atomically updates, in the same Lua script, the session index `auth:sess:{hmac(subject)}` and the family (`fam:`). Reuse of an already-rotated token outside the window revokes the entire family.
 6. A new access token JWT is signed and returned alongside the new refresh token.
@@ -1211,7 +1211,7 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 
 ### Refresh Tokens
 
-- [ ] Refresh tokens are opaque UUIDs, never JWTs.
+- [ ] Refresh tokens are opaque random tokens, never JWTs.
 - [ ] Always hash refresh tokens with SHA-256 before using as Redis keys.
 - [ ] Always rotate refresh tokens on use (never reuse).
 - [ ] Always set TTL on refresh token Redis keys.

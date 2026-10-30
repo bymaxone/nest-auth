@@ -96,7 +96,7 @@ import { ModuleMetadata, Type } from '@nestjs/common'
 
 export interface AuthModuleOptions {
   jwt: {
-    secret: string // the single HS256 secret; refresh tokens are opaque (UUID in Redis), so there is no refreshSecret
+    secret: string // the single HS256 secret; refresh tokens are opaque (a random token stored in Redis), so there is no refreshSecret
     accessExpiresIn?: string // e.g., '15m'
     refreshExpiresInDays?: number // e.g., 7
   }

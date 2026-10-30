@@ -695,7 +695,7 @@ export function assertNonNull<T>(value: T): asserts value is NonNullable<T> {
 }
 
 // Usage:
-const user = await userRepo.findById(userId)
+const user = await userRepo.findById({ id: userId, tenantId })
 assertNonNull(user)
 // user is now AuthUser (not AuthUser | null)
 user.email // safe
@@ -762,7 +762,7 @@ async function getAuthenticatedUser(request: Request): Promise<AuthUser> {
   }
   // payload is narrowed to DashboardJwtPayload
 
-  const user = await userRepo.findById(payload.sub)
+  const user = await userRepo.findById({ id: payload.sub, tenantId: payload.tenantId })
   if (user === null) {
     throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID) // the token's subject no longer exists
   }
@@ -1309,11 +1309,11 @@ console.log(raw.tenantId)
 
 ```typescript
 // WRONG: Assuming a value exists without checking
-const user = await userRepo.findById(id)
+const user = await userRepo.findById({ id, tenantId })
 return user!.email // Runtime crash if user is null
 
 // CORRECT: Explicit null check
-const user = await userRepo.findById(id)
+const user = await userRepo.findById({ id, tenantId })
 if (user === null) {
   throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }

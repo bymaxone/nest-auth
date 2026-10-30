@@ -504,13 +504,16 @@ function generateUrlSafeToken(bytes = 32): string {
 
 ### UUID Generation
 
-For refresh tokens stored in Redis, this project uses `crypto.randomUUID()` (v4 UUID):
+Refresh tokens stored in Redis are not UUIDs: they are 32 random bytes encoded as 64 hex characters (`generateSecureToken()`). `crypto.randomUUID()` (v4 UUID) is used only for identifiers that are not bearer secrets, such as a JWT's `jti` and a refresh token's `familyId`:
 
 ```typescript
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+
+// Refresh token: 256 bits of entropy, 64 hex characters
+const refreshToken = randomBytes(32).toString('hex')
 
 // Native cryptographic UUID — no 'uuid' package needed
-const refreshTokenId = randomUUID()
+const jti = randomUUID()
 // Example: '550e8400-e29b-41d4-a716-446655440000'
 ```
 
@@ -1116,7 +1119,7 @@ Use this checklist when writing or reviewing cryptographic code in `@bymax-one/n
 
 - [ ] All tokens generated with `randomBytes(32)` minimum
 - [ ] Encoding: hex (64 chars) or base64url for URL-safe tokens
-- [ ] UUIDs via `crypto.randomUUID()` (not `uuid` package)
+- [ ] UUIDs (`jti`, `familyId`) via `crypto.randomUUID()` (not `uuid` package); refresh tokens via `randomBytes(32).toString('hex')`
 - [ ] Tokens stored as SHA-256 hashes, not plaintext
 - [ ] `Math.random()` never used for any security value
 

@@ -4250,7 +4250,8 @@ Flow:
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 ```
 
