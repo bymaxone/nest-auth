@@ -115,6 +115,23 @@ describe('buildAuthOpenApiFragment request schemas', () => {
     expect(buildAuthOpenApiFragment(optionsFor('cookie'), none).components.schemas).toEqual({})
   })
 
+  // Scenario: the table names a DTO the generated module has no schema for. Expected: building the
+  // fragment throws and names the DTO. Why: a name with no schema would otherwise be dropped and
+  // reach a consumer as the empty placeholder, which is the defect this fragment exists to remove;
+  // a failure at the consumer's boot, naming the DTO, is the cheaper way to find it.
+  it('refuses a table entry that has no generated schema', () => {
+    jest.isolateModules(() => {
+      jest.doMock('./generated/request-schemas', () => ({ REQUEST_SCHEMAS: {} }))
+      const isolated =
+        require('./auth-openapi-fragment') as typeof import('./auth-openapi-fragment')
+
+      expect(() => isolated.buildAuthOpenApiFragment(optionsFor('cookie'), DEFAULTS)).toThrow(
+        /no generated request schema for \w+Dto/
+      )
+    })
+    jest.dontMock('./generated/request-schemas')
+  })
+
   // Scenario: every family mounted. Expected: every body DTO and no query DTO. Why: the query
   // DTOs are not request bodies, and a schema contributed for a name the document never registers
   // is a component nothing references.
