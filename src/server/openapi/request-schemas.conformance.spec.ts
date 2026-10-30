@@ -147,6 +147,21 @@ describe('OpenAPI request schemas — generated artifact', () => {
     expect(committed.schemas).toEqual(derived)
   })
 
+  // Verifies no schema carries an empty `required`. OpenAPI 3.0 adopts JSON Schema Wright Draft 00,
+  // whose `required` MUST have at least one element (draft-wright-json-schema-validation-00
+  // section 5.15), so `required: []` makes the served document invalid to a strict validator. The
+  // equality checks around this one cannot see it: they compare the output with an artifact that
+  // carries the same defect.
+  it('never declares an empty required list', () => {
+    const names = Object.keys(REQUEST_SCHEMAS)
+
+    expect(names.length).toBeGreaterThan(0)
+    for (const name of names) {
+      const required = REQUEST_SCHEMAS[name]?.required
+      expect(required === undefined || required.length > 0).toBe(true)
+    }
+  })
+
   // Verifies the module compiled into the bundle is exactly what the decorators produce. The JSON
   // artifact is unpublished, so this module is the only copy a consumer's document ever receives:
   // a stale one ships a schema that disagrees with the validation the server performs.
@@ -154,7 +169,11 @@ describe('OpenAPI request schemas — generated artifact', () => {
     const derived = deriveAll()
 
     expect(REQUEST_SCHEMAS).toEqual(derived)
-    expect(readFileSync(GENERATED_MODULE, 'utf8')).toBe(renderModule(derived))
+    // The mutation runner prepends `// @ts-nocheck` to every source file in its sandbox; that line
+    // is the tool's, not part of what the generator writes.
+    const onDisk = readFileSync(GENERATED_MODULE, 'utf8').replace(/^\/\/ @ts-nocheck\n\n?/m, '')
+
+    expect(onDisk).toBe(renderModule(derived))
   })
 })
 

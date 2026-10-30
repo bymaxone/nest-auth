@@ -118,6 +118,17 @@ describe('request schemas offered to a document builder (E2E)', () => {
     expect(unreferenced).toEqual([])
   })
 
+  // Scenario: every schema the fragment offers. Expected: none declares an empty `required`.
+  // Why: OpenAPI 3.0 adopts Wright Draft 00, whose `required` MUST hold at least one element, so
+  // an empty list makes the merged document invalid to a strict validator.
+  it('offers no schema with an empty required list', () => {
+    const empty = Object.entries(offered)
+      .filter(([, schema]) => schema.required !== undefined && schema.required.length === 0)
+      .map(([name]) => name)
+
+    expect(empty).toEqual([])
+  })
+
   // Scenario: the schema of the most-used request. Expected: its fields, and the two a caller
   // must send. Why: the generated client's `login(body)` is typed from exactly this.
   it('describes LoginDto with its fields and required members', () => {

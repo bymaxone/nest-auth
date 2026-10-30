@@ -218,8 +218,7 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
         "maxLength": 128,
         "minLength": 1
       }
-    },
-    "required": []
+    }
   },
   "MfaVerifyDto": {
     "type": "object",
@@ -294,8 +293,7 @@ export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = {
         "maxLength": 128,
         "minLength": 1
       }
-    },
-    "required": []
+    }
   },
   "PlatformLoginDto": {
     "type": "object",
