@@ -498,11 +498,10 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     expect(!after.ok && refusalStatus(after.error)).toBe('error')
   })
 
-  // A ticket is minted from an authenticated session and then outlives it: a logout between the
-  // mint and the upgrade used to leave the ticket redeemable for the rest of its lifetime, and a
-  // socket admitted from it is authenticated once and never revalidated. The ticket must carry
-  // what the revocation channels are keyed by, so redemption is refused exactly when the token
-  // that minted it would be.
+  // A ticket is minted from an authenticated session and then outlives it, and a socket admitted
+  // from it is authenticated once and never revalidated. A logout between the mint and the upgrade
+  // must therefore end the ticket: it carries what the revocation channels are keyed by, so
+  // redemption is refused exactly when the token that minted it would be.
   it('refuses a ticket minted before a logout of the session that minted it', async () => {
     const registered = await request(app.getHttpServer()).post('/register').send({
       email: 'ws-ticket-logout@example.com',
