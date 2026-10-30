@@ -101,7 +101,7 @@ import 'server-only'
 import { verifyJwtToken } from '@bymax-one/nest-auth/nextjs'
 
 export async function getAuthUser(token: string) {
-  return verifyJwtToken(token)
+  return verifyJwtToken(token, process.env.JWT_SECRET)
 }
 ```
 
@@ -235,15 +235,18 @@ The `@bymax-one/nest-auth/nextjs` subpath provides factory functions that return
 ```typescript
 // app/api/auth/silent-refresh/route.ts
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const GET = createSilentRefreshHandler()
+export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
 
 // app/api/auth/client-refresh/route.ts
 import { createClientRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createClientRefreshHandler()
+export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_URL! })
 
 // app/api/auth/logout/route.ts
 import { createLogoutHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createLogoutHandler()
+export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
 ```
 
 These handlers encapsulate cookie forwarding, header propagation, error handling, and Set-Cookie deduplication. Consuming applications should use the factories directly rather than writing custom handlers.
@@ -286,8 +289,8 @@ The proxy function is exported as a named export `proxy` (not `middleware`):
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 
-const { proxy, config } = createAuthProxy({
-  publicRoutes: ['/', '/welcome', '/auth/*', '/privacy'],
+const authProxy = createAuthProxy({
+  publicRoutes: ['/', '/welcome', '/auth', '/privacy'],
   publicRoutesRedirectIfAuthenticated: [
     '/',
     '/welcome',
@@ -298,65 +301,79 @@ const { proxy, config } = createAuthProxy({
     '/auth/verify-otp'
   ],
   protectedRoutes: [
-    { pattern: /^\/admin\/.*/, allowedRoles: ['ADMIN'], redirectPath: '/app/dashboard' },
-    { pattern: /^\/app\/.*/, allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' }
+    { pattern: '/admin/:path*', allowedRoles: ['ADMIN'], redirectPath: '/app/dashboard' },
+    { pattern: '/app/:path*', allowedRoles: ['USER', 'ADMIN'], redirectPath: '/auth/login' }
   ],
-  getDefaultDashboard: (role) => (role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard')
+  loginPath: '/auth/login',
+  getDefaultDashboard: (role) => (role === 'ADMIN' ? '/admin/dashboard' : '/app/dashboard'),
+  apiBase: process.env.API_BASE_URL!,
+  jwtSecret: process.env.JWT_SECRET,
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' },
+  userHeaders: {
+    userId: 'x-user-id',
+    role: 'x-user-role',
+    tenantId: 'x-tenant-id',
+    tenantDomain: 'x-tenant-domain'
+  },
+  blockedUserStatuses: ['BANNED', 'INACTIVE', 'EXPIRED']
 })
 
-export { proxy, config }
+// Bind the instance and re-export the property — never destructure in the export
+export const proxy = authProxy.proxy
+
+// Next.js matcher (Next's own configuration, not the instance's)
+export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] }
 ```
 
 ### 3.3 AuthProxyConfig Interface
 
 ```typescript
 interface AuthProxyConfig {
-  /** Routes that do not require authentication */
-  publicRoutes?: string[] | ((pathname: string) => boolean)
+  /** Routes without authentication: exact match or `<route>/` prefix */
+  readonly publicRoutes: readonly string[]
 
-  /** Public routes that redirect to dashboard if user is already authenticated */
-  publicRoutesRedirectIfAuthenticated?: string[]
+  /** Subset of publicRoutes that redirects an already-authenticated user */
+  readonly publicRoutesRedirectIfAuthenticated: readonly string[]
 
-  /** Protected routes with role-based access control */
-  protectedRoutes: Array<{
-    pattern: RegExp
-    allowedRoles: string[]
-    redirectPath: string
-  }>
+  /** RBAC-protected routes; the first match wins */
+  readonly protectedRoutes: readonly {
+    readonly pattern: string // ex.: '/dashboard/:path*'
+    readonly allowedRoles: readonly string[]
+    readonly redirectPath?: string // without it, getDefaultDashboard(role) is used
+  }[]
 
-  /** Login page path. Default: '/auth/login' */
-  loginPath?: string
+  /** Login page path (same origin, starting with '/'). Required. */
+  readonly loginPath: string
 
-  /** Returns the default dashboard URL for a given role */
-  getDefaultDashboard: (role: string) => string
+  /** Returns the default dashboard for a role */
+  readonly getDefaultDashboard: (role: string) => string
 
-  /** Backend API base URL. Default: process.env.NEXT_PUBLIC_API_URL */
-  apiBase?: string
+  /** Absolute base URL of the NestJS API. Required; not read from an environment variable. */
+  readonly apiBase: string
 
-  /** JWT secret for HS256 verification. Default: process.env.JWT_SECRET */
-  jwtSecret?: string
+  /** HS256 secret (optional; without it the proxy only decodes and warns via console.warn). Pass it explicitly. */
+  readonly jwtSecret?: string
 
-  /** Maximum silent refresh attempts before giving up. Default: 2 */
-  maxRefreshAttempts?: number
+  /** Maximum number of chained silent refreshes. Default: 2 */
+  readonly maxRefreshAttempts?: number
 
-  /** Cookie name overrides. Defaults from @bymax-one/nest-auth/shared */
-  cookieNames?: {
-    access?: string // default: 'access_token'
-    refresh?: string // default: 'refresh_token'
-    hasSession?: string // default: 'has_session'
+  /** Cookie names; must match those of the NestJS module. Required. */
+  readonly cookieNames: {
+    readonly access: string
+    readonly refresh: string
+    readonly hasSession: string
   }
 
-  /** Header names propagated to server components after verification */
-  userHeaders?: {
-    userId?: string // default: 'x-user-id'
-    userRole?: string // default: 'x-user-role'
-    tenantId?: string // default: 'x-tenant-id'
-    tenantDomain?: string // default: 'x-tenant-domain'
+  /** Headers propagated to server components after verification. Required. */
+  readonly userHeaders: {
+    readonly userId: string
+    readonly role: string
+    readonly tenantId: string
+    readonly tenantDomain: string
   }
 
-  /** User statuses that are blocked at the proxy level.
-   *  Default: ['BANNED', 'INACTIVE', 'EXPIRED'] */
-  blockedUserStatuses?: string[]
+  /** Status claim values blocked at the proxy. Required (e.g. ['BANNED', 'INACTIVE', 'EXPIRED']). */
+  readonly blockedUserStatuses: readonly string[]
 }
 ```
 
@@ -640,7 +657,7 @@ The path must match exactly. A `delete` call without the correct path will silen
 The `@bymax-one/nest-auth/nextjs` subpath exports two JWT helper functions designed for use in the proxy, route handlers, and server components:
 
 - `decodeJwtToken(token)` -- Decodes without signature verification.
-- `verifyJwtToken(token)` -- Verifies HS256 signature using Web Crypto API.
+- `verifyJwtToken(token, secret)` -- Verifies HS256 signature using Web Crypto API; returns a `DecodedToken` (check `isValid`).
 
 These functions do **not** depend on `@nestjs/jwt` or `jsonwebtoken`. They use `crypto.subtle` (Web Crypto API), which is available in Node.js and Edge runtimes.
 
@@ -671,23 +688,23 @@ const payload = decodeJwtToken(accessToken)
 Verifies the JWT signature using HS256 via the Web Crypto API (`crypto.subtle`). This function:
 
 1. Parses the JWT header and validates `alg === 'HS256'` (prevents algorithm confusion attacks).
-2. Imports the `JWT_SECRET` as a `CryptoKey`.
+2. Imports the secret passed as the second argument as a `CryptoKey`.
 3. Verifies the HMAC-SHA256 signature.
 4. Validates the `exp` claim.
-5. Returns the decoded payload if valid.
+5. Returns a `DecodedToken` whose `isValid` reflects both the signature and the expiry check.
 
 ```typescript
 import { verifyJwtToken } from '@bymax-one/nest-auth/nextjs'
 
 // In a route handler or proxy
-const payload = await verifyJwtToken(accessToken)
-if (!payload) {
+const decoded = await verifyJwtToken(accessToken, process.env.JWT_SECRET)
+if (!decoded.isValid) {
   // Token is invalid or expired
   return Response.json({ error: 'Unauthorized' }, { status: 401 })
 }
 ```
 
-**Fallback behavior:** If `JWT_SECRET` is not available in the environment, falls back to `decodeJwtToken` (decode without verification). This allows development environments without the secret to function, but logs a warning.
+**Without a secret:** `verifyJwtToken(token, secret)` refuses — it returns an invalid `DecodedToken` when the secret is missing or empty. Use `decodeJwtToken` explicitly for non-authoritative reads.
 
 **When to use:**
 
@@ -727,7 +744,7 @@ interface JwtPayload {
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value
   if (token) {
-    const payload = await verifyJwtToken(token)
+    const payload = await verifyJwtToken(token, process.env.JWT_SECRET)
     // Use payload for routing decisions
   }
 }
@@ -735,7 +752,7 @@ export async function proxy(request: NextRequest) {
 // In a Route Handler
 export async function GET(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value
-  const payload = token ? await verifyJwtToken(token) : null
+  const decoded = token ? await verifyJwtToken(token, process.env.JWT_SECRET) : null
   // Use payload
 }
 
@@ -791,7 +808,10 @@ Factory that creates the GET handler for `/api/auth/silent-refresh`:
 ```typescript
 // app/api/auth/silent-refresh/route.ts
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const GET = createSilentRefreshHandler()
+export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
 ```
 
 The handler:
@@ -832,7 +852,7 @@ Factory that creates the POST handler for `/api/auth/client-refresh`:
 ```typescript
 // app/api/auth/client-refresh/route.ts
 import { createClientRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createClientRefreshHandler()
+export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_URL! })
 ```
 
 This handler exists as a same-origin bridge because:
@@ -848,7 +868,7 @@ Factory that creates the POST handler for `/api/auth/logout`:
 ```typescript
 // app/api/auth/logout/route.ts
 import { createLogoutHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createLogoutHandler()
+export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
 ```
 
 The handler forwards the logout request to the NestJS backend and clears all auth cookies on the response.
@@ -868,11 +888,14 @@ app/
   api/
     auth/
       silent-refresh/
-        route.ts      # export const GET = createSilentRefreshHandler()
+        route.ts      # export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
       client-refresh/
-        route.ts      # export const POST = createClientRefreshHandler()
+        route.ts      # export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_URL! })
       logout/
-        route.ts      # export const POST = createLogoutHandler()
+        route.ts      # export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
 ```
 
 These are one-line files. All logic is encapsulated in the factory functions.
@@ -894,8 +917,9 @@ The `createAuthProxy` factory already uses the new naming convention. When consu
 ```typescript
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
-export { proxy, config }
+const authProxy = createAuthProxy({/* ... */})
+export const proxy = authProxy.proxy
+export const config = { matcher: [/* ... */] }
 ```
 
 ### 7.2 Proxy Runtime
@@ -1012,9 +1036,9 @@ import { verifyJwtToken } from '@bymax-one/nest-auth/nextjs'
 export async function updateProfile(formData: FormData) {
   const cookieStore = await cookies()
   const token = cookieStore.get('access_token')?.value
-  const payload = token ? await verifyJwtToken(token) : null
+  const decoded = token ? await verifyJwtToken(token, process.env.JWT_SECRET) : null
 
-  if (!payload) {
+  if (!decoded?.isValid) {
     throw new Error('Unauthorized')
   }
 
@@ -1404,7 +1428,7 @@ import { verifyJwtToken } from '@bymax-one/nest-auth/nextjs'
 
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value
-  const payload = token ? await verifyJwtToken(token) : null
+  const decoded = token ? await verifyJwtToken(token, process.env.JWT_SECRET) : null
 }
 ```
 
@@ -1541,7 +1565,10 @@ export async function GET(request: NextRequest) {
 ```typescript
 // CORRECT -- use the factory
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const GET = createSilentRefreshHandler()
+export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
 ```
 
 ### 10.8 WRONG: Exporting `middleware` Instead of `proxy`
@@ -1558,8 +1585,9 @@ export function middleware(request: NextRequest) {
 // CORRECT -- use the proxy convention
 // proxy.ts
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
-export { proxy, config }
+const authProxy = createAuthProxy({/* ... */})
+export const proxy = authProxy.proxy
+export const config = { matcher: [/* ... */] }
 ```
 
 ### 10.9 WRONG: Using `export const dynamic = 'force-static'` on Auth Routes
@@ -1568,14 +1596,20 @@ export { proxy, config }
 // WRONG -- auth route handlers must be dynamic
 // app/api/auth/silent-refresh/route.ts
 export const dynamic = 'force-static'
-export const GET = createSilentRefreshHandler()
+export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
 ```
 
 ```typescript
 // CORRECT -- do not set caching directives on auth routes
 // app/api/auth/silent-refresh/route.ts
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
-export const GET = createSilentRefreshHandler()
+export const GET = createSilentRefreshHandler({
+  apiBase: process.env.API_BASE_URL!,
+  loginPath: '/auth/login'
+})
 ```
 
 ### 10.10 WRONG: Importing Server-Only Code in Client Components
@@ -1631,8 +1665,9 @@ export function proxy(request: NextRequest) {
 ```typescript
 // CORRECT -- use createAuthProxy which implements _r counter and reason=expired guard
 import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
-const { proxy, config } = createAuthProxy({/* ... */})
-export { proxy, config }
+const authProxy = createAuthProxy({/* ... */})
+export const proxy = authProxy.proxy
+export const config = { matcher: [/* ... */] }
 ```
 
 ---
@@ -1649,9 +1684,9 @@ export { proxy, config }
 
 ### Route Handlers
 
-- [ ] Create `app/api/auth/silent-refresh/route.ts` with `createSilentRefreshHandler()`
-- [ ] Create `app/api/auth/client-refresh/route.ts` with `createClientRefreshHandler()`
-- [ ] Create `app/api/auth/logout/route.ts` with `createLogoutHandler()`
+- [ ] Create `app/api/auth/silent-refresh/route.ts` with `createSilentRefreshHandler({ apiBase, loginPath })`
+- [ ] Create `app/api/auth/client-refresh/route.ts` with `createClientRefreshHandler({ apiBase })`
+- [ ] Create `app/api/auth/logout/route.ts` with `createLogoutHandler({ apiBase })`
 - [ ] No `dynamic = 'force-static'` on auth routes
 - [ ] Each route handler exports only the needed HTTP method
 

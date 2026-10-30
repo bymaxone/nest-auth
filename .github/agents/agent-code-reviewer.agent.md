@@ -30,7 +30,7 @@ You are a **senior code reviewer** for `@bymax-one/nest-auth`, a public npm libr
 ## Blockers Checklist (🔴)
 
 - `package.json → "dependencies"` gained a new entry — only `peerDependencies` are allowed.
-- Third-party crypto imported (`bcrypt`, `argon2`, `jose`, `uuid`, `nanoid`, `crypto-js`) or bare `crypto` without the `node:` prefix — banned by `no-restricted-imports`.
+- Third-party crypto imported (`bcrypt`, `argon2`, `jose`, `uuid`, `nanoid`, `crypto-js`) or bare `crypto` without the `node:` prefix — all but `jose` are banned by `no-restricted-imports`; `jose` is rejected by policy.
 - `===` / `==` / `.equals()` used to compare a secret, hash, token, OTP, or signature — must be `crypto.timingSafeEqual`.
 - `Math.random()` used on any security-sensitive path — must be `crypto.randomBytes` / `crypto.randomUUID`.
 - A tenant-owned repository query or Redis key omits `tenantId` — cross-tenant data leak.
@@ -54,7 +54,7 @@ You are a **senior code reviewer** for `@bymax-one/nest-auth`, a public npm libr
 - `type` used where `interface` is the correct choice (a contract/port that classes implement, e.g. `UserRepository`).
 - `interface` used where `type` is correct (a union or mapped type).
 - `OnModuleDestroy` missing on a class that holds a Redis client or other resource.
-- `forRootAsync` missing support for one of the three factory strategies (`useFactory`, `useClass`, `useExisting`).
+- `registerAsync` missing support for one of the factory strategies it declares in `AuthModuleAsyncOptions`.
 - Redis key written without a tenant prefix where the state is tenant-scoped.
 - JSDoc missing or lacks `@example` on a new exported symbol.
 - Mutation-aware test gap: both sides of `||` / `&&` not covered, or only the rejection path of a guard is tested.
@@ -86,5 +86,5 @@ You are a **senior code reviewer** for `@bymax-one/nest-auth`, a public npm libr
 - **Multi-tenant first** — every operation scoped by `tenantId`; a missing tenant is a security bug.
 - **Opt-in features** — MFA, sessions, OAuth, platform admin register nothing when disabled.
 - **Repository pattern + Redis** — consumer supplies `BYMAX_AUTH_USER_REPOSITORY`; shared state in Redis via `BYMAX_AUTH_REDIS_CLIENT`.
-- **100% coverage + Stryker break: 95** — both are hard gates, not aspirational targets.
+- **100% coverage + Stryker break: 100** — both are hard gates, not aspirational targets.
 - See `.github/copilot-instructions.md` for the full command reference and rule list.

@@ -124,14 +124,13 @@ This project uses a clear, consistent rule for choosing between `interface` and 
 ```typescript
 // CORRECT: Interface for a repository contract (will be implemented by a class)
 export interface IUserRepository {
-  findByEmail(email: string): Promise<AuthUser | null>
-  findById(id: string): Promise<AuthUser | null>
+  findByEmail(params: FindUserByEmailParams): Promise<AuthUser | null>
+  findById(params: TenantScopedUserRef): Promise<AuthUser | null>
   create(data: CreateUserData): Promise<AuthUser>
-  update(id: string, data: Partial<AuthUser>): Promise<AuthUser>
 }
 
 // CORRECT: Type for a union
-export type TokenDeliveryMethod = 'cookie' | 'body' | 'both'
+export type TokenDeliveryMethod = 'cookie' | 'bearer' | 'both'
 
 // CORRECT: Type for a function signature
 export type PasswordHasher = (password: string, salt: string) => Promise<string>
@@ -144,13 +143,13 @@ export type RequiredFields<T> = {
 // WRONG: Using type for an object shape that classes will implement
 type IUserRepository = {
   // Should be interface
-  findByEmail(email: string): Promise<AuthUser | null>
+  findByEmail(params: FindUserByEmailParams): Promise<AuthUser | null>
 }
 
 // WRONG: Using interface for a union
 interface TokenDeliveryMethod {
   // Cannot — interfaces don't support unions
-  kind: 'cookie' | 'body' | 'both'
+  kind: 'cookie' | 'bearer' | 'both'
 }
 ```
 
@@ -171,11 +170,11 @@ export interface DashboardJwtPayload {
   readonly exp: number
 }
 
-// CORRECT: Readonly array for roles
+// CORRECT: Readonly fields on the user
 export interface AuthUser {
   readonly id: string
   readonly email: string
-  readonly roles: readonly string[]
+  readonly role: string
 }
 
 // WRONG: Mutable JWT payload — risk of accidental mutation
@@ -423,7 +422,7 @@ Use the `I` prefix **only** for interfaces that define **contracts to be impleme
 ```typescript
 // CORRECT: I-prefix for a contract the host app implements
 export interface IUserRepository {
-  findByEmail(email: string): Promise<AuthUser | null>
+  findByEmail(params: FindUserByEmailParams): Promise<AuthUser | null>
   create(data: CreateUserData): Promise<AuthUser>
 }
 
@@ -432,7 +431,7 @@ export interface AuthUser {
   id: string
   email: string
   tenantId: string
-  roles: string[]
+  role: string
 }
 
 // WRONG: I-prefix on a data shape
@@ -445,7 +444,7 @@ export interface IAuthUser {
 // WRONG: Missing I-prefix on a repository contract
 export interface UserRepository {
   // Ambiguous — could be confused with a class name
-  findByEmail(email: string): Promise<AuthUser | null>
+  findByEmail(params: FindUserByEmailParams): Promise<AuthUser | null>
 }
 ```
 
@@ -578,28 +577,16 @@ type User = AsyncReturnType<typeof userRepo.findById>
 Use template literal types for string patterns.
 
 ```typescript
-// CORRECT: Auth error code pattern
-export type AuthErrorCode = `AUTH_${Uppercase<string>}`
-
-// More specific:
-export type AuthErrorCode =
-  | 'AUTH_INVALID_CREDENTIALS'
-  | 'AUTH_EMAIL_NOT_VERIFIED'
-  | 'AUTH_ACCOUNT_LOCKED'
-  | 'AUTH_TOKEN_EXPIRED'
-  | 'AUTH_TOKEN_REVOKED'
-  | 'AUTH_MFA_REQUIRED'
-  | 'AUTH_MFA_INVALID_CODE'
-  | 'AUTH_SESSION_EXPIRED'
-  | 'AUTH_RATE_LIMITED'
+// CORRECT: Auth error codes derived from the const catalog (values like 'auth.invalid_credentials')
+export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]
 
 // CORRECT: Redis key patterns
 export type RedisKeyPattern =
-  | `auth:blacklist:${string}`
-  | `auth:refresh:${string}:${string}`
-  | `auth:bruteforce:${string}`
-  | `auth:session:${string}:${string}`
-  | `auth:otp:${string}`
+  | `auth:rv:${string}`
+  | `auth:rt:${string}`
+  | `auth:lf:${string}`
+  | `auth:sess:${string}`
+  | `auth:otp:${string}:${string}`
 ```
 
 ### 5.4 Mapped Types
@@ -822,7 +809,7 @@ function resolveConfig(
 
 ```typescript
 // CORRECT: Pick only the fields needed for the client response
-export type AuthUserClient = Pick<AuthUser, 'id' | 'email' | 'name' | 'roles' | 'tenantId'>
+export type AuthUserClient = Pick<AuthUser, 'id' | 'email' | 'name' | 'role' | 'tenantId'>
 
 // This ensures AuthUserClient stays in sync with AuthUser — if a field
 // is renamed in AuthUser, TypeScript will error here.

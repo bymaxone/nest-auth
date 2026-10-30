@@ -1,7 +1,7 @@
 # Jest Testing Guidelines — @bymax-one/nest-auth
 
 > **Audience:** AI agents and developers working on this codebase.
-> **Stack:** Jest 29, ts-jest 29, @nestjs/testing, @testing-library/react
+> **Stack:** Jest 30, ts-jest 29, @nestjs/testing, @testing-library/react
 > **Rule:** Follow these guidelines for all test code in this project.
 
 ---
@@ -185,8 +185,11 @@ The project uses a TypeScript Jest config at the project root:
 import type { Config } from 'jest'
 
 const config: Config = {
-  // Use ts-jest ESM preset for this ESM-first package
-  preset: 'ts-jest/presets/default-esm',
+  // The real jest.config.ts uses rootDir 'src' and
+  // testMatch ['**/*.spec.ts', '**/*.spec.tsx', '**/*.test.ts'] (paths below are shown from the repo root).
+  // The per-subpath coverage gate lives in jest.coverage.config.ts (`pnpm test:cov:all`) and the
+  // e2e suite in jest.e2e.config.ts (test/e2e/*.e2e-spec.ts).
+  preset: 'ts-jest',
 
   // The test environment
   testEnvironment: 'node',
@@ -202,8 +205,7 @@ const config: Config = {
     '^.+\\.tsx?$': [
       'ts-jest',
       {
-        useESM: true,
-        tsconfig: 'tsconfig.json'
+        tsconfig: 'tsconfig.jest.json'
       }
     ]
   },
@@ -283,15 +285,15 @@ The project uses `ts-jest` 29 with the following considerations:
 
 ### 2.4 Running Tests
 
-| Command                                    | Purpose                                            |
-| ------------------------------------------ | -------------------------------------------------- |
-| `pnpm test`                                | Run all tests once                                 |
-| `pnpm test:cov`                            | Run all tests with coverage report                 |
-| `pnpm test:watch`                          | Run tests in watch mode (development)              |
-| `npx jest path/to/file.spec.ts`            | Run a single test file                             |
-| `npx jest --testNamePattern="should hash"` | Run tests matching a pattern                       |
-| `pnpm mutation`                            | Stryker mutation testing (Node 24, ~10 min)        |
-| `pnpm mutation:incremental`                | Faster Stryker re-run (uses the incremental cache) |
+| Command                                    | Purpose                                                       |
+| ------------------------------------------ | ------------------------------------------------------------- |
+| `pnpm test`                                | Run all tests once                                            |
+| `pnpm test:cov`                            | Run all tests with coverage report                            |
+| `pnpm test:watch`                          | Run tests in watch mode (development)                         |
+| `npx jest path/to/file.spec.ts`            | Run a single test file                                        |
+| `npx jest --testNamePattern="should hash"` | Run tests matching a pattern                                  |
+| `pnpm mutation`                            | Stryker incremental (reuses reports/stryker-incremental.json) |
+| `pnpm mutation:full`                       | Cold run; the only one that measures the truth                |
 
 ---
 
@@ -303,7 +305,7 @@ introducing small changes (flip `<`/`<=`, drop a `!`, blank a string) and checki
 suite catches them. For a security library this is the real quality gate.
 
 When adding tests to a hot path (`crypto/`, `guards/`, `services/`), run
-`pnpm mutation:incremental` locally and aim to **kill** the relevant mutants — pin exact
+`pnpm mutation` locally and aim to **kill** the relevant mutants — pin exact
 boundaries, error codes, Redis key shapes, and call arguments (`toHaveBeenCalledWith`)
 rather than just asserting "no throw".
 
@@ -607,6 +609,8 @@ function createMockExecutionContext(
 ```
 
 ### 4.3 Testing Guard Allow/Deny Logic
+
+> Simplified teaching example. The real `JwtAuthGuard` verifies the token with `JwtService.verify()` (via `verifyWithRotation`) and consults `AuthRevocationService.isAccessTokenRevoked`; the reusable verification outside the guards is `AuthTokenVerifierService.verifyAccessToken(token, { plane, requireMfa?, checkStatus? })`. Mock those dependencies when testing the real guard.
 
 ```typescript
 describe('canActivate()', () => {
@@ -1590,7 +1594,7 @@ collectCoverageFrom: [
 The global threshold is **100% across every layer** — there is no lower tier for
 any directory (guards, crypto, controllers, hooks, utils all sit at 100%). 100%
 line coverage proves code _executes_; it does NOT prove a test would _fail_ on a
-regression, so the deeper gate is **mutation testing** (Stryker `break: 95`).
+regression, so the deeper gate is **mutation testing** (Stryker `break: 100`).
 Treat 100% line coverage as the floor and a high mutation score as the real
 measure of test quality, especially on security-critical code (`crypto/`,
 `guards/`).
@@ -1854,7 +1858,7 @@ Use this checklist before submitting any test code:
 ### Coverage
 
 - [ ] Running `pnpm test:cov` shows all four metrics at 100% (the enforced gate).
-- [ ] Mutation testing (Stryker `break: 95`) passes — the deeper gate beyond 100% line coverage, especially on security-critical modules (guards, password, tokens).
+- [ ] Mutation testing (Stryker `break: 100`) passes — the deeper gate beyond 100% line coverage, especially on security-critical modules (guards, password, tokens).
 - [ ] Barrel files, `.d.ts` files, and pure interface/type files are excluded.
 
 ### TDD Compliance

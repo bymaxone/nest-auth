@@ -11,7 +11,7 @@ pnpm lint             # ESLint on src/
 pnpm test             # Jest unit tests
 pnpm test:e2e         # Jest E2E tests (real NestJS bootstrap)
 pnpm test:cov:all     # all tests with coverage — 100% gate (pre-publish enforced)
-pnpm mutation         # Stryker mutation tests — break: 95, aspirational high: 99
+pnpm mutation         # Stryker mutation tests (incremental) — break: 100; use pnpm mutation:full for a verdict
 pnpm build            # clean + tsup → dist/ (ESM + CJS + .d.ts for all 5 subpaths)
 pnpm size             # zero-dep brotli bundle-size gate
 ```
@@ -30,7 +30,7 @@ src/
 ## Non-negotiable rules
 
 1. **`package.json → "dependencies"` must remain empty** — every runtime requirement lives in `peerDependencies` (most are optional, gated per subpath). Adding a real dependency is a breaking change to the supply-chain contract.
-2. **Native crypto only (`node:crypto`)** — password hashing (scrypt), MFA secret encryption (AES-256-GCM), TOTP, and token generation. `bcrypt`, `argon2`, `jose`, `uuid`, `nanoid`, `crypto-js`, and bare `crypto` are ESLint-banned (`no-restricted-imports`). Use the `node:` prefix.
+2. **Native crypto only (`node:crypto`)** — password hashing (scrypt), MFA secret encryption (AES-256-GCM), TOTP, and token generation. `bcrypt`, `argon2`, `uuid`, `nanoid`, `crypto-js`, and bare `crypto` are ESLint-banned (`no-restricted-imports`); `jose` is excluded by policy, not by lint. Use the `node:` prefix.
 3. **Timing-safe comparisons** — every secret / hash / token comparison uses `crypto.timingSafeEqual`, never `===` or `==`. ESLint `security/detect-possible-timing-attacks` is an error.
 4. **Multi-tenant isolation** — every user-facing operation is scoped by `tenantId`. A missing or mismatched tenant is a **security bug**, not a 404. A repository query without `tenantId` is a cross-tenant data leak.
 5. **Opt-in features** — MFA, sessions, OAuth, platform admin are configured explicitly; when off, their controllers and providers are **never registered** in the NestJS container.

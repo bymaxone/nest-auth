@@ -793,7 +793,11 @@ back into a session. Minting requires an authenticated session in good standing 
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
-both channels are accepted, and a ticket wins when both are present.
+both channels are accepted, and a ticket wins when both are present. `WsJwtGuard` checks
+signature, token type and revocation on the Bearer path but not account status or MFA; where the
+socket must also refuse a blocked account or an unfinished second factor, authorize with
+`AuthTokenVerifierService.verifyAccessToken` (see
+[Authorising a long-lived transport](#authorising-a-long-lived-transport--authtokenverifierservice)).
 
 Both channels live on the client's `handshake`, and only a **Socket.IO** client has one — with
 `@nestjs/platform-ws` the gateway receives the raw `ws` socket, which carries no `handshake` and
@@ -813,11 +817,12 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | Group                 | Key Options                                                                                                                                         | Default                                   |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, `30d` cap, `HS256`, both off |
+| **identifierKey**     | Top-level secret the Redis account identifiers and MFA recovery-code digests derive from; pin it before rotating `jwt.secret`                       | `jwt.secret`                              |
 | **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                            |
 | **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1              |
 | **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                                |
 | **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)        |
-| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | —                                         |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | `totpWindow` `1`, `recoveryCodeCount` `8` |
 | **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                           |
 | **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                                |
 | **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                      |
@@ -828,10 +833,10 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 | **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                         |
 | **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                             |
 | **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                      |
-| **controllers**       | Toggle individual controllers on/off                                                                                                                | `auth`, `passwordReset` on; rest opt-in   |
+| **controllers**       | Toggle individual controllers on/off — passed to `registerAsync()` itself, never returned from `useFactory` (which refuses it at startup)           | `auth`, `passwordReset` on; rest opt-in   |
 
 > [!NOTE]
-> When a feature is not configured (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead.
+> When a feature is not enabled (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead. A feature is enabled by `controllers.<name>: true` on the `registerAsync()` call together with its configuration group (`mfa.encryptionKey` and `mfa.issuer`, `sessions.enabled`, `platform.enabled`); either half alone leaves it unregistered or fails at startup.
 
 > [!IMPORTANT]
 > **`environment` is how the module decides whether this is production, and it defaults to
@@ -977,7 +982,9 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 > claim _usually_ wrong instead of _reliably_ empty, which is the failure mode that survives
 > testing.
 >
-> Status is resolved per request or not at all: mount `UserStatusGuard` on the route, and for
+> Status is resolved per request or not at all: mount `UserStatusGuard` on the route (on a
+> WebSocket, SSE stream or message consumer, call `AuthTokenVerifierService.verifyAccessToken`,
+> which resolves status through the same cache before it applies the MFA policy), and for
 > anything richer read the account **tenant-scoped**, the way that guard does —
 > `findById({ id: request.user.sub, tenantId: request.user.tenantId })`. The tenant argument is required by the
 > port and cannot be dropped: ids may collide across tenants, so a lookup by bare id can resolve
@@ -988,10 +995,13 @@ All options are configurable via `registerAsync()`. Here are the key configurati
 >
 > One consequence worth planning for: the guard reads a status cache with a
 > `userStatusCacheTtlSeconds` window (default **60**), so a suspension takes up to that long to
-> bite on a guarded route, and a reactivation the same to restore. Nothing exported invalidates
-> that key for one user today — the only immediate lever is `bumpUserTokenEpoch`, which ends
-> every session the user has rather than refreshing one cached string. Lower the TTL if a faster
-> answer matters more than the repository reads it costs.
+> bite on a guarded route, and a reactivation the same to restore. Call
+> `AccountStatusService.invalidate({ userId, tenantId })` after persisting a status change to drop
+> that account's cached status immediately; a request already resolving can still write the old
+> value back, so the window narrows to one repository read rather than to zero (see
+> [Invalidating the account cache](#invalidating-the-account-cache--accountstatusserviceinvalidate)).
+> `bumpUserTokenEpoch` is the heavier lever: it ends every session the user has. Lower
+> `userStatusCacheTtlSeconds` if a faster answer matters more than the repository reads it costs.
 
 `jwt.absoluteSessionLifetimeDays` caps how long one login can be extended by rotation, and is
 **on by default at 30 days** — NIST SP 800-63B-4 §3 makes a definite reauthentication timeout a
@@ -1158,7 +1168,7 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
   <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js" />
   <img src="https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/Redis-7%2B-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis" />
-  <img src="https://img.shields.io/badge/Jest-29-C21325?style=flat-square&logo=jest&logoColor=white" alt="Jest" />
+  <img src="https://img.shields.io/badge/Jest-30-C21325?style=flat-square&logo=jest&logoColor=white" alt="Jest" />
 </p>
 
 ---
@@ -1168,9 +1178,9 @@ it is the one guarantee cookie delivery exists for and the one no server-side te
 Authentication is critical infrastructure, so the suite is held to a bar beyond "it runs" — every behavior is pinned so that a regression **fails a test**.
 
 - ✅ **100% line coverage** — statements, branches, functions, and lines, enforced as a release gate across unit + e2e
-- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/): 5,333 seeded faults detected (5,311 killed, 22 timed out), **no survivors and nothing left uncovered**, against a `break` threshold of 100 ([measured cold on 2026-08-15](./docs/mutation_testing_results.md#re-measured-cold--2026-08-15))
-- ✅ **3,971 tests** — 3,721 unit and 250 end-to-end, spanning all five subpaths
-- ✅ **Every equivalent mutant documented** — the 367 mutants that no test can kill (a redundant guard, a dependency array of stable references) each carry an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
+- ✅ **100% mutation score** — verified with [Stryker](https://stryker-mutator.io/) against a `break` threshold of 100, **no survivors and nothing left uncovered** (the latest cold measurement is in [docs/mutation_testing_results.md](./docs/mutation_testing_results.md))
+- ✅ **Thousands of tests** — unit and end-to-end, spanning all five subpaths
+- ✅ **Every equivalent mutant documented** — each mutant that no test can kill (a redundant guard, a dependency array of stable references) carries an inline `// Stryker disable` with the reason, so the score is an accounting rather than a number
 
 ```bash
 pnpm test          # unit suite
@@ -1196,18 +1206,18 @@ Conditionally registered controllers (mfa, sessions, platform, invitations, oaut
 | POST   | `/logout`                      | Public (reads both credentials)    | Revoke the session; blacklists the access token it is given |
 | POST   | `/refresh`                     | Public (refresh cookie or body)    | Rotate refresh token, issue new access token                |
 | GET    | `/me`                          | `JwtAuthGuard`                     | Current dashboard user payload                              |
-| POST   | `/ws-ticket`                   | `JwtAuthGuard`                     | Mint a single-use ticket for a WebSocket upgrade            |
+| POST   | `/ws-ticket`                   | `JwtAuthGuard`, `UserStatusGuard`  | Mint a single-use ticket for a WebSocket upgrade            |
 | POST   | `/verify-email`                | Public                             | Verify email with OTP                                       |
 | POST   | `/resend-verification`         | Public                             | Resend email-verification OTP                               |
 | POST   | `/password/forgot-password`    | Public                             | Request password reset (token or OTP)                       |
 | POST   | `/password/reset-password`     | Public                             | Submit new password with reset token                        |
 | POST   | `/password/verify-otp`         | Public                             | Verify password-reset OTP                                   |
 | POST   | `/password/resend-otp`         | Public                             | Resend password-reset OTP                                   |
-| POST   | `/mfa/setup`                   | `JwtAuthGuard`                     | Generate TOTP secret and recovery codes                     |
-| POST   | `/mfa/verify-enable`           | `JwtAuthGuard`                     | Confirm setup and enable MFA                                |
+| POST   | `/mfa/setup`                   | `JwtAuthGuard`, `UserStatusGuard`  | Generate TOTP secret and recovery codes                     |
+| POST   | `/mfa/verify-enable`           | `JwtAuthGuard`, `UserStatusGuard`  | Confirm setup and enable MFA                                |
 | POST   | `/mfa/challenge`               | Public + `@SkipMfa()`              | Submit TOTP/recovery code after login                       |
-| POST   | `/mfa/disable`                 | `JwtAuthGuard`                     | Disable MFA for the current user                            |
-| POST   | `/mfa/recovery-codes`          | `JwtAuthGuard`                     | Replace the recovery codes, proving a fresh OTP             |
+| POST   | `/mfa/disable`                 | `JwtAuthGuard`, `UserStatusGuard`  | Disable MFA for the current user                            |
+| POST   | `/mfa/recovery-codes`          | `JwtAuthGuard`, `UserStatusGuard`  | Replace the recovery codes, proving a fresh OTP             |
 | GET    | `/sessions`                    | `JwtAuthGuard`, `UserStatusGuard`  | List active sessions for the current user                   |
 | POST   | `/sessions/revoke-all`         | `JwtAuthGuard`, `UserStatusGuard`  | Revoke every session except the caller's                    |
 | DELETE | `/sessions/:id`                | `JwtAuthGuard`, `UserStatusGuard`  | Revoke a specific session                                   |
@@ -1643,10 +1653,10 @@ mean inventing an authorization model ("who is an admin?") that this library doe
 your application already does. Call them from your own admin surface, where the caller is
 already authorized.
 
-| Method                                     | Answers                                             |
-| ------------------------------------------ | --------------------------------------------------- |
-| `AuthService.unlockAccount(email, tenant)` | "I am locked out and I need in now"                 |
-| `MfaService.resetMfa(userId, context?)`    | "I lost my authenticator **and** my recovery codes" |
+| Method                                             | Answers                                             |
+| -------------------------------------------------- | --------------------------------------------------- |
+| `AuthService.unlockAccount(email, tenant)`         | "I am locked out and I need in now"                 |
+| `MfaService.resetMfa(userId, context?, tenantId?)` | "I lost my authenticator **and** my recovery codes" |
 
 **`unlockAccount`** clears the brute-force lockout. It grants no access: the password, the
 status gate, the verification gate and MFA all still apply — it restores the ability to _try_.
@@ -1663,7 +1673,8 @@ epoch, so access tokens carrying `mfaVerified: true` die with the factor; it **n
 account holder** through the same channel a self-service disable uses; and it logs at `warn`
 under its own prefix. The notification is not optional: an administrative reset the owner
 cannot see is an account-takeover path, and it is what makes the event detectable and
-disputable. Idempotent; throws for an id that resolves to nobody, so a typo cannot read as
+disputable. `tenantId` is required when `context` is `'dashboard'` (the default) and ignored for
+`'platform'`. Idempotent; throws for an id that resolves to nobody, so a typo cannot read as
 "done".
 
 > `MfaService` is only registered when `controllers.mfa` or `controllers.platform` is on —
@@ -1734,15 +1745,15 @@ const { plane, payload } = await this.verifier.verifyAccessToken(token, { plane:
 registry.add(socket, { plane, userId: payload.sub, tenantId: payload.tenantId })
 ```
 
-| It checks                                                                              | So that                                                                                                                       |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone        |
-| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all |
-| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                    |
-| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                          |
-| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                              |
-| MFA policy (`requireMfa`, default on)                                                  | A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed         |
-| Account status (`checkStatus`, default on)                                             | A suspension landing between two reconnects is seen — the token's own `status` claim is a snapshot taken at issuance          |
+| It checks                                                                              | So that                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Signature, pinned algorithm, `issuer`/`audience`, and any secret retired by a rotation | `alg: none` and a token carrying no binding claim are refused, and a rotation drains instead of disconnecting everyone                                                                                                                                                                                                                                                  |
+| `exp`                                                                                  | A revocation check answers "was this withdrawn", never "is this still current" — `isAccessTokenRevoked` reads no `exp` at all                                                                                                                                                                                                                                           |
+| `jti` a UUID v4; `sub` and (dashboard) `tenantId` bounded non-empty strings            | A malformed claim cannot build a Redis key nobody intended                                                                                                                                                                                                                                                                                                              |
+| Token `type`, against the plane **you** name                                           | An `mfa_challenge` token — signed with the same secret, half a credential — cannot read as a session                                                                                                                                                                                                                                                                    |
+| Both revocation channels                                                               | A logout's `jti` blacklist AND the epoch a password reset or revoke-all advances                                                                                                                                                                                                                                                                                        |
+| Account status (`checkStatus`, default on)                                             | Runs before the MFA decision. A suspension landing between two reconnects is seen, and so is an unverified email on the dashboard plane (`auth.email_not_verified`) — the token's own `status` claim is a snapshot taken at issuance                                                                                                                                    |
+| MFA policy (`requireMfa`, default on)                                                  | Runs after the account-status check, so a blocked account is refused with its own code even while a challenge is pending. A refresh mints `mfaEnabled: true, mfaVerified: false`; the type alone does not imply the second factor was completed. A token whose `mfaEnabled` claim is missing or not a boolean is refused `auth.token_invalid` before the account lookup |
 
 On the dashboard plane that last row reads a cache, and **its freshness is bounded by
 `userStatusCacheTtlSeconds` (default 60 s), not by how often you call**: a stream re-verifying every
@@ -1759,9 +1770,10 @@ otherwise be the cross-tenant platform arm.
 
 Every refusal is an `AuthException`, and each mirrors the code the equivalent guard already
 answers. Most answer `auth.token_invalid` so a caller cannot tell "valid but revoked" from "never
-valid"; `auth.mfa_required`, the `ACCOUNT_*` codes and — on the platform plane only —
-`auth.platform_auth_required` name themselves, because a legitimate client acts on each
-differently.
+valid"; `auth.mfa_required`, the `ACCOUNT_*` codes, `auth.email_not_verified` (dashboard plane) and — on
+the platform plane only — `auth.platform_auth_required` name themselves, because a legitimate
+client acts on each differently. The account codes are answered whether or not an MFA challenge
+is pending; `auth.mfa_required` is answered only for a usable account.
 
 > [!IMPORTANT]
 > **Three things it still does not do.** Route **authorization** is yours — this answers who the
@@ -1790,7 +1802,8 @@ await this.accountStatus.invalidate({ userId, tenantId })
 Call it whenever you change an account's status yourself. It drops both cached facts — the status
 and the email-verified flag — and is idempotent, so you need not know whether the account was
 cached. The tenant is required: a repository id is unique only within one, so a bare id would name
-another tenant's entry.
+another tenant's entry. An empty or blank `userId` or `tenantId` throws a `TypeError` rather than
+deleting nothing and resolving.
 
 **Persist the status change first, then invalidate.** The read path fills the cache in two steps —
 resolve from the repository, then write — so a request that resolved the old value just before your
@@ -1963,8 +1976,9 @@ went one release stated and unenforced.
 > internally for logs and control flow — branching on them client-side is the same dead branch as
 > an invented code, for a subtler reason.
 
-> **Anti-enumeration reads through the status too.** `POST /forgot-password` answers `200` and
-> `POST /verify-email` / the resend endpoints answer `204` **whether or not the address exists**.
+> **Anti-enumeration reads through the status too.** `POST /password/forgot-password`,
+> `POST /password/resend-otp` and `POST /password/verify-otp` answer `200`, and `POST /verify-email`
+> and `POST /resend-verification` answer `204`, **whether or not the address exists**.
 > A `200` there does not mean an email was sent, and treating it as confirmation re-introduces
 > the account enumeration the endpoints exist to prevent. For the same reason the OTP failures
 > collapse: a wrong code, a record that expired, and an exhausted attempt ceiling are one code

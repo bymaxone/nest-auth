@@ -18,74 +18,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
-### Documentation
-
-- **`conformance/wire-contract.json` names the key the token epoch is stored under.**
-  `accessTokenClaims.epoch.storedUnder` now reads `{ep|pep}:{hmac_sha256(hmacKey, userSubject)}`,
-  the derived key the epoch is written to, instead of the bare `{ep|pep}:{userId}`. Text only: the
-  key the library derives is unchanged.
-
-### Security
-
-- **Rotating `jwt.secret` no longer has to reset the token epoch.** Without `identifierKey`, a
-  rotation renamed the epoch key, every epoch read zero, and an access token that a password reset
-  or a revoke-all had refused was accepted again until it expired. With `identifierKey` pinned
-  before the rotation the epoch survives it. Deployments that rotate should set it first; the
-  README guide says how, and what a rotation after a compromise should do instead.
-
-- **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
-  `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.7` and `qs@6.16.0`. Severities and summaries
-  read per advisory rather than carried across as a group, because they are not one wave:
-
-  | advisory            | severity   | what it is                                                                            |
-  | ------------------- | ---------- | ------------------------------------------------------------------------------------- |
-  | GHSA-5jgf-p345-68v8 | 7.5 high   | `fast-uri` host confusion, skipped IDN canonicalization on scheme-relative references |
-  | GHSA-jqff-g426-hqxp | 7.5 high   | `fast-uri` host confusion, percent-encoded scheme normalization                       |
-  | GHSA-f65p-4m7j-42xc | 7.5 high   | `fast-uri` **SSRF**, malformed IPv6 normalization                                     |
-  | GHSA-fph4-wmhf-6fwf | 7.5 high   | `fast-uri` **SSRF**, repeated hostname percent-decoding                               |
-  | GHSA-4mjr-xmp4-gh2g | 5.3 medium | `qs` denial of service via attacker-controlled `isBuffer`                             |
-  | GHSA-x5fp-wj9c-mxmx | 3.7 medium | `qs` array-limit bypass via bracket-key comma parsing                                 |
-
-  Two of the four `fast-uri` advisories are SSRF rather than host confusion, and the `qs` pair is
-  5.3 and 3.7 rather than a single higher figure — both distinctions are lost by summarising a
-  batch, and a reader deciding urgency needs the per-ID numbers.
-
-  **How they reach this tree**, read from the lockfile rather than assumed: `qs` through `express`,
-  `body-parser`, `superagent` and `typed-rest-client`; `fast-uri` through `ajv`. Neither arrives via
-  `@stryker-mutator/core`.
-
-  `package.json` declares **no runtime dependencies at all**, so nothing this package publishes
-  carries either one. The floor is on this repository's own tree.
-
-  **It does not cover a consumer, and the reason matters.** `express` is a _peer_ dependency here,
-  so a consumer installs its own and resolves its own `qs` through it. An override is not published
-  — it applies to this lockfile and no other. A consumer wanting the same floor sets it in their
-  own workspace; reading this entry as protection they inherit would be the same mistake the entry
-  below documents.
-
-  **The `qs` entry is the finding worth keeping.** An override already existed —
-  `'qs@>=6.11.1 <=6.15.1': '>=6.15.2'` — and had stopped protecting anything. It fired once, the
-  resolved version moved to `6.15.3`, that left the selector's window, and the override silently
-  ceased to match. It still read in the config as coverage. **A selector-based override protects
-  against the advisory it was written for and nothing after it**, and nothing announces the moment
-  it stops applying. `fast-uri` had no override at all, so its appearance of coverage came from
-  nowhere in particular.
-
-  The only check that catches this is reading the **resolved** version in `pnpm-lock.yaml`. A
-  config range is a statement of intent, not of outcome.
-
-  **Swept the rest of the family rather than fixing only the two reported.** Every remaining
-  override — `brace-expansion`, `esbuild`, `postcss`, `sharp`, `tmp`, `ws` — resolves _above_ its
-  bound today, so all six are currently inert. That is harmless now and is the same shape that
-  made `qs` dangerous: each will read as protection and provide none the moment an advisory names
-  a range above its bound. They are left as they are, recorded here so the next reader knows the
-  entries are historical rather than active.
-
-  **Apply to a derived backend.** Check your own resolved versions. This package publishes no
-  runtime dependencies, so nothing here reaches you through it — but `express` is a peer, and your
-  own `express` brings its own `qs`. Floor it in your workspace if your resolution is below
-  `6.16.0`; our override cannot do it for you.
-
 ### Added
 
 - **`identifierKey` — rotate `jwt.secret` without moving the Redis identifiers.** Every name that
@@ -97,7 +29,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   it derives exactly the keys it derives today. Setting it to the current `jwt.secret` before a
   rotation keeps sessions, token epochs and MFA state where they are; choosing a new value keeps
   today's behaviour for a rotation that must cut the link. `jwt.previousSecrets` and the keys derived
-  from it are unchanged. The README gains a rotation guide with both paths, and
+  from it are unchanged. Choosing a new `identifierKey` has two consequences: the stored MFA
+  recovery-code digests are an HMAC under the same derived key, so recovery codes stop verifying
+  unless the old secret stays in `jwt.previousSecrets`, and sessions leave the session list until
+  their next refresh (opaque refresh tokens keep working). The README gains a rotation guide with both paths, and
   `conformance/wire-contract.json` states where the identifier secret comes from.
 
 - **`AccountStatusService.invalidate({ userId, tenantId })` — a supported way to drop an account's
@@ -140,65 +75,6 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   which is the precise failure this method exists to eliminate. An unset resolver value, or an
   `undefined` coerced by a JavaScript host, is how it arrives.
 
-### Changed
-
-- **`AuthTokenVerifierService` checks the account status before the MFA policy.** Both planes now
-  consult `assertDashboardAccountUsable` / `assertPlatformAccountUsable` first and only then
-  `requireMfa`. Only an account the status gate refuses, holding a token that predates its MFA
-  challenge, changes its error code, in two ways: a blocked account now receives the matching
-  `ACCOUNT_*` / `EMAIL_NOT_VERIFIED` code instead of `MFA_REQUIRED`, and a deleted account now
-  receives `TOKEN_INVALID` instead of `MFA_REQUIRED`. A usable account with a pending challenge
-  still receives `MFA_REQUIRED`, a missing or non-boolean `mfaEnabled` claim still answers
-  `TOKEN_INVALID` ahead of the lookup, and `checkStatus: false` still skips the lookup. **Apply to a derived backend:** a client that branched on `MFA_REQUIRED` for a
-  blocked account must handle the `ACCOUNT_*` code there.
-
-### Fixed
-
-- **The `uev:` key format was stated twice inside this library, and no test could see them
-  disagree.** `AccountStatusService` derived it; `AuthService.verifyEmail` hand-built the same
-  string inline to drop the flag after a verification. They agreed, and nothing kept them
-  agreeing — the consumer-facing risk this release fixes already existed one level in, between two
-  files in this package.
-
-  **The suites would have stayed green through the drift**, which is the part worth recording.
-  Each side was pinned by its own literal — `'uev:tenant-1:user-1'` in one spec,
-  `` `uev:tenant-1:${USER.id}` `` in the other — so changing the derivation would have been
-  absorbed by updating the spec that owns it, while the other stayed green against its unchanged
-  inline copy. Both passing, the two keys naming different entries, and a just-verified account
-  keeping a stale `0` until the TTL expired. Nothing fails; a user is simply locked out of the
-  routes they just earned.
-
-  `verifyEmail` now calls `invalidate` and the derivation lives in one place
-  (a module-private helper, deliberately not exported). The specs assert the delegation rather than
-  a key literal, which removes the second statement instead of pinning it, and a new test reads both
-  the write and the delete path and asserts they name the same keys.
-
-  **What that test guards, precisely.** With one derivation the two paths cannot disagree, so it
-  cannot fail on a format change — single-sourcing is what makes that unreachable, not the test.
-  What it catches is the reintroduction of a second statement: inline a key in either path, as
-  `verifyEmail` did, and it goes red. Verified that way rather than assumed — restoring an inline
-  derivation on one side turns it red, including on the delimiter and unicode cases.
-
-  The comment that stood where the inline key was had described this exact hazard — "the key must
-  be byte-identical to the guard's… or the delete misses" — and prevented none of it. It had also
-  gone stale within hours: it named the guard, which stopped building that key when
-  `AccountStatusService` was extracted.
-
-  **Apply to a derived backend.** Nothing changes for a consumer that uses `BymaxAuthModule` — the
-  service is registered and exported unconditionally, and every shipped flow resolves it through
-  the container.
-
-  **One narrow break:** `AuthService`'s constructor takes an additional `AccountStatusService` as
-  its last parameter, because `verifyEmail` now invalidates through it instead of naming the cache
-  key itself. That reaches you only if you construct `AuthService` yourself or provide it through a
-  custom factory rather than letting the module register it — add `AccountStatusService` to that
-  argument list, or to the `inject` array of your factory. A `useValue` double needs one method,
-  `invalidate({ userId, tenantId })`.
-
-  If you delete these cache keys yourself, replace that with
-  `AccountStatusService.invalidate({ userId, tenantId })`. Your delete works today and is not
-  guaranteed to keep working, and the day it stops there will be no error to notice.
-
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
   guarded HTTP route establishes seven things before a handler runs. A long-lived transport has no
   guard in front of it and must establish the same seven itself, on a cadence, for as long as the
@@ -211,9 +87,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   `verifyAccessToken(token, { plane })` performs, in the order the refusals fire: the signature
   under the pinned algorithm, the configured `issuer`/`audience` and any secret retired by a
-  rotation; `exp`; the claim shapes that become Redis keys downstream; the token type; both
-  revocation channels; the MFA policy; and the account's **current** status. The last two are
-  opt-out (`requireMfa`, `checkStatus`), defaulting to on.
+  rotation; `exp`; the claim shapes that become Redis keys downstream; the token type; both revocation
+  channels; the MFA claim shape; the account's **current** status;
+  and last the MFA policy (`MFA_REQUIRED`). The last two checks are opt-out (`checkStatus`,
+  `requireMfa`), defaulting to on.
 
   **The plane is the caller's to declare and is never inferred from the token's own `type` claim.**
   Inferring it would make the plane attacker-chosen — a platform token would open a dashboard
@@ -233,10 +110,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   connect is authorized for the lifetime of the token rather than of the session.
 
   **Two limits are stated rather than left to be discovered.** On the dashboard plane the status
-  check reads the `us:`/`uev:` cache, and nothing in this library invalidates those keys when a
-  status changes — they expire. So its freshness is bounded by `userStatusCacheTtlSeconds`
-  (default 60 s) and not by how often you call: a stream re-verifying every five seconds still
-  serves a banned account for up to a minute. The platform plane is uncached and genuinely current.
+  check reads the `us:`/`uev:` cache. Email verification drops it, but a status change made by the
+  host's own code is seen only after `userStatusCacheTtlSeconds` (default 60 s) unless the host
+  calls `AccountStatusService.invalidate({ userId, tenantId })` after persisting the change. So its
+  freshness is bounded by that TTL and not by how often you call: a stream re-verifying every five
+  seconds still serves a banned account for up to a minute without the invalidation. The platform plane is uncached and genuinely current.
   And a `plane` that is neither value throws a `TypeError` instead of falling through — the
   fall-through arm would be the cross-tenant platform one, so a `'Dashboard'` from an unnarrowed
   config value would verify a real platform token for a connection meant to be tenant-scoped.
@@ -245,6 +123,10 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   onto this service keeps branching on what it branched on before. That includes the asymmetry:
   a wrong token type is `PLATFORM_AUTH_REQUIRED` on the platform plane, as `JwtPlatformGuard`
   answers, and `TOKEN_INVALID` on the dashboard one, as `JwtAuthGuard` does.
+
+  The server entry exports the service together with the types `AuthPlane`, `VerifiedAccessToken`
+  and `VerifyAccessTokenOptions`, and `BymaxAuthModule` exports `AuthTokenVerifierService` and
+  `AccountStatusService`.
 
   Closes the first of the five candidate changes in [#172](https://github.com/bymaxone/nest-auth/issues/172),
   which is the one that removes the most from a consumer's plate — six of the eight obligations its
@@ -304,8 +186,69 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   correlating a hook against a live connection by comparing those two matched nothing on the
   platform plane and silently skipped every platform admin after an MFA enable, disable or
   administrative reset. Branch on `plane` instead of on the shape of `tenantId`.
+  Every `HookContext` literal built under `src/server` carries it, including the one
+  `TokenManagerService.emitReuseDetected` hands to `onRefreshTokenReuseDetected`.
+
+### Changed
+
+- **`AuthTokenVerifierService` checks the account status before the MFA policy.** Both planes now
+  consult `assertDashboardAccountUsable` / `assertPlatformAccountUsable` first and only then
+  `requireMfa`. Only an account the status gate refuses, holding a token that predates its MFA
+  challenge, changes its error code, in two ways: a blocked account now receives the matching
+  `ACCOUNT_*` / `EMAIL_NOT_VERIFIED` code instead of `MFA_REQUIRED`, and a deleted account now
+  receives `TOKEN_INVALID` instead of `MFA_REQUIRED`. A usable account with a pending challenge
+  still receives `MFA_REQUIRED`, a missing or non-boolean `mfaEnabled` claim still answers
+  `TOKEN_INVALID` ahead of the lookup, and `checkStatus: false` still skips the lookup.
+
+  **Apply to a derived backend:** a client that branched on `MFA_REQUIRED` for a
+  blocked account must handle the `ACCOUNT_*` code there.
 
 ### Fixed
+
+- **The `uev:` key format was stated twice inside this library, and no test could see them
+  disagree.** `AccountStatusService` derived it; `AuthService.verifyEmail` hand-built the same
+  string inline to drop the flag after a verification. They agreed, and nothing kept them
+  agreeing — the consumer-facing risk this release fixes already existed one level in, between two
+  files in this package.
+
+  **The suites would have stayed green through the drift**, which is the part worth recording.
+  Each side was pinned by its own literal — `'uev:tenant-1:user-1'` in one spec,
+  `` `uev:tenant-1:${USER.id}` `` in the other — so changing the derivation would have been
+  absorbed by updating the spec that owns it, while the other stayed green against its unchanged
+  inline copy. Both passing, the two keys naming different entries, and a just-verified account
+  keeping a stale `0` until the TTL expired. Nothing fails; a user is simply locked out of the
+  routes they just earned.
+
+  `verifyEmail` now calls `invalidate` and the derivation lives in one place
+  (a module-private helper, deliberately not exported). The specs assert the delegation rather than
+  a key literal, which removes the second statement instead of pinning it, and a new test reads both
+  the write and the delete path and asserts they name the same keys.
+
+  **What that test guards, precisely.** With one derivation the two paths cannot disagree, so it
+  cannot fail on a format change — single-sourcing is what makes that unreachable, not the test.
+  What it catches is the reintroduction of a second statement: inline a key in either path, as
+  `verifyEmail` did, and it goes red. Verified that way rather than assumed — restoring an inline
+  derivation on one side turns it red, including on the delimiter and unicode cases.
+
+  The comment that stood where the inline key was had described this exact hazard — "the key must
+  be byte-identical to the guard's… or the delete misses" — and prevented none of it. It had also
+  gone stale within hours: it named the guard, which stopped building that key when
+  `AccountStatusService` was extracted.
+
+  **Apply to a derived backend.** Nothing changes for a consumer that uses `BymaxAuthModule` — the
+  service is registered and exported unconditionally, and every shipped flow resolves it through
+  the container.
+
+  **One narrow break:** `AuthService`'s constructor takes an additional `AccountStatusService` as
+  its last parameter, because `verifyEmail` now invalidates through it instead of naming the cache
+  key itself. That reaches you only if you construct `AuthService` yourself or provide it through a
+  custom factory rather than letting the module register it — add `AccountStatusService` to that
+  argument list, or to the `inject` array of your factory. A `useValue` double needs one method,
+  `invalidate({ userId, tenantId })`.
+
+  If you delete these cache keys yourself, replace that with
+  `AccountStatusService.invalidate({ userId, tenantId })`. Your delete works today and is not
+  guaranteed to keep working, and the day it stops there will be no error to notice.
 
 - **Two hooks discarded the account scope they were holding.** `afterLogout` received an empty
   `HookContext` and `onSessionEvicted` a context naming neither the user nor the tenant — in both
@@ -335,8 +278,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   on the hook it fixed. Both now pin the context exactly.
 
   **The rest of the family was checked, and two sites are deliberately left alone.**
-  `afterEmailVerified` and `afterPasswordReset` also pass an empty context, but their first argument
-  is a `SafeAuthUser` carrying `id` and `tenantId`, so a consumer can already scope them and there
+  `afterEmailVerified` and `afterPasswordReset` pass a context carrying only `plane: 'dashboard'`;
+  their first argument is a `SafeAuthUser` carrying `id` and `tenantId`, so a consumer can already scope them and there
   is no defect to fix. `onRefreshTokenReuseDetected` is the one real remainder: it names the account
   in its `details` object but the tenant is genuinely not in scope at the emit — `emitReuseDetected`
   receives `(userId, familyId, ip, userAgent)` and nothing more — so scoping it means threading the
@@ -393,6 +336,83 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   The alternative fix — special-casing `'default'` server-side — was rejected. It would accept a
   client-supplied tenant under a resolver, which is precisely the hole 1.4.2 closed.
+
+### Security
+
+- **Rotating `jwt.secret` no longer has to reset the token epoch.** Without `identifierKey`, a
+  rotation renamed the epoch key, every epoch read zero, and an access token that a password reset
+  or a revoke-all had refused was accepted again until it expired. With `identifierKey` pinned
+  before the rotation the epoch survives it. Deployments that rotate should set it first; the
+  README guide says how, and what a rotation after a compromise should do instead.
+
+- **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
+  `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.9` and `qs@6.17.0` (floors `^3.1.9` and `^6.16.1`). Severities and summaries
+  read per advisory rather than carried across as a group, because they are not one wave:
+
+  | advisory            | severity   | what it is                                                                            |
+  | ------------------- | ---------- | ------------------------------------------------------------------------------------- |
+  | GHSA-5jgf-p345-68v8 | 7.5 high   | `fast-uri` host confusion, skipped IDN canonicalization on scheme-relative references |
+  | GHSA-jqff-g426-hqxp | 7.5 high   | `fast-uri` host confusion, percent-encoded scheme normalization                       |
+  | GHSA-f65p-4m7j-42xc | 7.5 high   | `fast-uri` **SSRF**, malformed IPv6 normalization                                     |
+  | GHSA-fph4-wmhf-6fwf | 7.5 high   | `fast-uri` **SSRF**, repeated hostname percent-decoding                               |
+  | GHSA-4mjr-xmp4-gh2g | 5.3 medium | `qs` denial of service via attacker-controlled `isBuffer`                             |
+  | GHSA-x5fp-wj9c-mxmx | 3.7 medium | `qs` array-limit bypass via bracket-key comma parsing                                 |
+
+  Two of the four `fast-uri` advisories are SSRF rather than host confusion, and the `qs` pair is
+  5.3 and 3.7 rather than a single higher figure — both distinctions are lost by summarising a
+  batch, and a reader deciding urgency needs the per-ID numbers.
+
+  **How they reach this tree**, read from the lockfile rather than assumed: `qs` through `express`,
+  `body-parser`, `superagent` and `typed-rest-client`; `fast-uri` through `ajv`. Neither arrives via
+  `@stryker-mutator/core`.
+
+  `package.json` declares **no runtime dependencies at all**, so nothing this package publishes
+  carries either one. The floor is on this repository's own tree.
+
+  **It does not cover a consumer, and the reason matters.** `express` is a _peer_ dependency here,
+  so a consumer installs its own and resolves its own `qs` through it. An override is not published
+  — it applies to this lockfile and no other. A consumer wanting the same floor sets it in their
+  own workspace; reading this entry as protection they inherit would be the same mistake the entry
+  below documents.
+
+  **The `qs` entry is the finding worth keeping.** An override already existed —
+  `'qs@>=6.11.1 <=6.15.1': '>=6.15.2'` — and had stopped protecting anything. It fired once, the
+  resolved version moved to `6.15.3`, that left the selector's window, and the override silently
+  ceased to match. It still read in the config as coverage. **A selector-based override protects
+  against the advisory it was written for and nothing after it**, and nothing announces the moment
+  it stops applying. `fast-uri` had no override at all, so its appearance of coverage came from
+  nowhere in particular.
+
+  The only check that catches this is reading the **resolved** version in `pnpm-lock.yaml`. A
+  config range is a statement of intent, not of outcome.
+
+  **Swept the rest of the family rather than fixing only the two reported.** The remaining selector
+  overrides — `esbuild`, `postcss`, `tmp`, `ws` — resolve above their bounds today and are inert:
+  harmless now, and the same shape that made `qs` dangerous, since each will read as protection and
+  provide none the moment an advisory names a range above its bound. `brace-expansion` (major 5) and
+  `sharp` were re-floored by the later OSV sweep below and are active.
+
+  **Apply to a derived backend.** Check your own resolved versions. This package publishes no
+  runtime dependencies, so nothing here reaches you through it — but `express` is a peer, and your
+  own `express` brings its own `qs`. Floor it in your workspace if your resolution is below
+  `6.16.1`; our override cannot do it for you.
+
+- **OSV advisories in the dev tree cleared.** 38 advisories across 15 packages in the
+  `pnpm-lock.yaml` transitive dev tree. Overrides now floor `fast-uri@3` at `^3.1.9`, `qs` at
+  `^6.16.1`, `sharp` at `>=0.35.5` and `brace-expansion@5` at `^5.0.12` (scoped to major 5, because
+  forcing every line onto 5.x broke `minimatch.braceExpand`), and add `body-parser@2`, `engine.io@6`,
+  `handlebars@4`, `js-yaml@3`/`4`, `multer@2`, `proxy-addr@2`, `source-map-js@1` and `zod@4`.
+  Dev-only `next` is raised to `^16.4.3`. `GHSA-gcqx-w48m-w2h4` (`deepmerge`, no patched release,
+  reached only through `jest-config`) is ignored in `osv-scanner.toml` until 2027-01-27. No
+  `peerDependencies` change and nothing under `src/`; the published package has no runtime
+  dependencies.
+
+### Documentation
+
+- **`conformance/wire-contract.json` names the key the token epoch is stored under.**
+  `accessTokenClaims.epoch.storedUnder` now reads `{ep|pep}:{hmac_sha256(hmacKey, userSubject)}`,
+  the derived key the epoch is written to, instead of the bare `{ep|pep}:{userId}`. Text only: the
+  key the library derives is unchanged.
 
 ## [1.4.5] - 2026-08-29
 

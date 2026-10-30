@@ -5,7 +5,7 @@ for NestJS, React and Next.js, with zero direct dependencies and all crypto thro
 Everything merged here reaches consumers as a versioned package, so a breaking change is one they
 read about in the changelog rather than one they discover.
 
-> **Prerequisite:** Read [CLAUDE.md](./CLAUDE.md) first for critical rules. This file extends it with architecture and patterns — load on demand, not every session.
+> **Prerequisite:** Read [CLAUDE.md](./CLAUDE.md) first for critical rules. This file carries only the rules that change a review's outcome; architecture is in `docs/repository-guide.md`.
 
 ---
 
@@ -363,3 +363,7 @@ module is correct and used here for import-time replacement — see
 discarding the real behaviour the test exists to check, not the call itself.)
 
 ---
+
+## Session memory (Obsidian vault)
+
+When `~/Documents/MyApps/obsidian/Brain/` exists, read this repository's hub under `02 - Areas/` (the map is `02 - Areas/Bymax/Bymax.md`) with its `Learnings.md`, `Decisions.md` and the stack notes in `03 - Resources/` before a task; the code wins over the vault. Record each non-obvious gotcha, root cause or decision there as `_meta/conventions.md` describes.
