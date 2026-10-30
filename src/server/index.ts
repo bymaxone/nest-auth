@@ -172,6 +172,7 @@ export type {
   AuthEmailSink,
   AuthEmailMessage,
   AuthEmailCatalogue,
+  AuthEmailContext,
   AuthEmailKind,
   DeliveryErrorPolicy,
   DeliveryErrorPolicyMap,

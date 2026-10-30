@@ -126,8 +126,9 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       assertDashboardSnapshot(snapshot)
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
       // what the access token proved at mint time. It is deliberately not a token: it carries
-      // no `jti` to revoke and no signature to re-verify, and it cannot be presented to the
-      // REST surface. Its authority ends when the socket closes.
+      // no signature to re-verify, and its `jti` and `epoch` are identifiers that `redeem` has
+      // already checked against revocation, not credentials the REST surface would accept. Its
+      // authority ends when the socket closes.
       client.data.user = snapshot
       return true
     }

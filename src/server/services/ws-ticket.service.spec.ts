@@ -14,6 +14,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { AuthException } from '../errors/auth-exception'
 import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { AuthRevocationService } from './auth-revocation.service'
 
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { WsTicketService } from './ws-ticket.service'
@@ -44,6 +45,7 @@ function payload(overrides: Partial<DashboardJwtPayload> = {}): DashboardJwtPayl
 }
 
 const mockUserRepo = { findById: jest.fn() }
+const mockRevocation = { isAccessTokenRevoked: jest.fn() }
 
 describe('WsTicketService', () => {
   let service: WsTicketService
@@ -51,6 +53,7 @@ describe('WsTicketService', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     mockRedis.mintWsTicket.mockResolvedValue('t'.repeat(64))
+    mockRevocation.isAccessTokenRevoked.mockResolvedValue(false)
     // The snapshot is read from the account, not the token, so the repository has to answer.
     mockUserRepo.findById.mockResolvedValue({
       id: 'user-1',
@@ -65,7 +68,8 @@ describe('WsTicketService', () => {
         WsTicketService,
         { provide: AuthRedisService, useValue: mockRedis },
         { provide: BYMAX_AUTH_OPTIONS, useValue: { blockedStatuses: ['BANNED', 'SUSPENDED'] } },
-        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo }
+        { provide: BYMAX_AUTH_USER_REPOSITORY, useValue: mockUserRepo },
+        { provide: AuthRevocationService, useValue: mockRevocation }
       ]
     }).compile()
 
@@ -73,10 +77,10 @@ describe('WsTicketService', () => {
   })
 
   describe('issue', () => {
-    // Scenario: a plain authenticated session. Expected: the snapshot carries exactly the six
-    // contract fields and the agreed TTL. Why: an extra field is a credential widened without
-    // anyone deciding to — `jti` in particular would hand the socket something revocable and
-    // replayable, which is the property the ticket exists to avoid.
+    // Scenario: a plain authenticated session. Expected: the snapshot carries exactly the contract
+    // fields and the agreed TTL. Why: an extra field is a credential widened without anyone
+    // deciding to. `jti` and `epoch` are the identifiers the two revocation checks are keyed by,
+    // and neither can be presented to the REST surface or replayed as a credential.
     it('should bind exactly the identity the token proved', async () => {
       const result = await service.issue(payload())
 
@@ -88,10 +92,28 @@ describe('WsTicketService', () => {
         role: 'MEMBER',
         status: 'ACTIVE',
         mfaEnabled: false,
-        mfaVerified: false
+        mfaVerified: false,
+        jti: 'jti-1',
+        epoch: 0
       })
       expect(ttl).toBe(WS_TICKET_TTL_SECONDS)
       expect(result).toStrictEqual({ ticket: 't'.repeat(64), expiresIn: WS_TICKET_TTL_SECONDS })
+    })
+
+    // Scenario: a token stamped with an epoch, and one stamped with nothing usable. Expected: the
+    // epoch is carried; an absent or malformed stamp is written as 0. Why: the ticket is compared
+    // with the user's current epoch at redemption, and the same reading of the stamp has to apply
+    // there as on a bearer token.
+    it.each([
+      ['an epoch of 4', 4, 4],
+      ['no epoch', undefined, 0],
+      ['a malformed epoch', 'four', 0]
+    ])("should bind the minting token's epoch for %s", async (_label, stamped, bound) => {
+      await service.issue(payload({ epoch: stamped } as Partial<DashboardJwtPayload>))
+
+      const [snapshot] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot]
+      expect(snapshot.epoch).toBe(bound)
+      expect(snapshot.jti).toBe('jti-1')
     })
 
     // Scenario: an MFA-enrolled session that has cleared its challenge. Expected: minted, with
@@ -207,12 +229,64 @@ describe('WsTicketService', () => {
         role: 'ADMIN',
         status: 'ACTIVE',
         mfaEnabled: true,
-        mfaVerified: true
+        mfaVerified: true,
+        jti: 'jti-9',
+        epoch: 2
       }
       mockRedis.redeemWsTicket.mockResolvedValue(snapshot)
 
       await expect(service.redeem('raw-ticket')).resolves.toStrictEqual(snapshot)
       expect(mockRedis.redeemWsTicket).toHaveBeenCalledWith('raw-ticket')
+    })
+
+    // Scenario: the session that minted the ticket was revoked between the mint and the upgrade.
+    // Expected: `auth.token_invalid`, the same code as every other refusal, and a warning. Why:
+    // the socket is authenticated once and never revalidated, so this is the only gate.
+    it('should refuse a ticket whose minting session was revoked', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+      mockRedis.redeemWsTicket.mockResolvedValue({
+        sub: 'user-9',
+        tenantId: 'tenant-9',
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false,
+        jti: 'jti-9',
+        epoch: 2
+      })
+      mockRevocation.isAccessTokenRevoked.mockResolvedValue(true)
+
+      await expect(service.redeem('raw-ticket')).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+      })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('session that minted it'))
+      warnSpy.mockRestore()
+    })
+
+    // Scenario: a live dashboard ticket and a tenant-less one. Expected: the revocation check is
+    // asked about the ticket's own jti, subject, epoch and tenant, on the plane the tenant names.
+    // Why: asking about anything else checks a different token than the one that minted it.
+    it.each([
+      ['a dashboard ticket', 'tenant-9', 'dashboard'],
+      ['a ticket with no tenant', undefined, 'platform']
+    ])('should check revocation for %s on the %s plane', async (_label, tenantId, plane) => {
+      mockRedis.redeemWsTicket.mockResolvedValue({
+        sub: 'user-9',
+        ...(tenantId === undefined ? {} : { tenantId }),
+        role: 'MEMBER',
+        status: 'ACTIVE',
+        mfaEnabled: false,
+        mfaVerified: false,
+        jti: 'jti-9',
+        epoch: 2
+      })
+
+      await service.redeem('raw-ticket')
+
+      expect(mockRevocation.isAccessTokenRevoked).toHaveBeenCalledWith(
+        { jti: 'jti-9', sub: 'user-9', epoch: 2, tenantId },
+        plane
+      )
     })
 
     // Scenario: unknown, expired, or already-redeemed — the store returns null for all three.

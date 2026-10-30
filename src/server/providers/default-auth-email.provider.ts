@@ -170,40 +170,51 @@ export interface AuthEmailMessage {
 }
 
 /**
+ * What every renderer is told about the delivery it renders for.
+ *
+ * A link built inside a renderer has to carry the tenant: a recipient who opens it in a browser
+ * with no tenant cookie is refused by a `tenantIdResolver` otherwise. The renderer is the only
+ * place that URL is built, so it receives the tenant and the recipient rather than having the
+ * host stash them on the provider, which is a singleton shared by concurrent requests.
+ */
+export interface AuthEmailContext {
+  /** The tenant the message is attributed to. */
+  readonly tenantId: string
+  /** The address the message is delivered to. */
+  readonly email: string
+  /** BCP 47 locale tag the message is rendered in, when the caller supplied one. */
+  readonly locale?: string | undefined
+}
+
+/**
  * The copy for every message the port can send, as pure renderers keyed by event.
  *
- * Each returns an {@link AuthEmailMessage}; the provider attaches the tenant and recipient and
+ * Each receives an {@link AuthEmailContext} together with its own fields and returns an
+ * {@link AuthEmailMessage}; the provider attaches the tenant and recipient and
  * handles escaping and delivery. Override any subset through
  * {@link DefaultAuthEmailProviderOptions.messages} — an entry left unset keeps the secure default.
  */
 export interface AuthEmailCatalogue {
   /** Password-reset link carrying a signed token. */
-  passwordResetToken(input: { token: string; locale?: string | undefined }): AuthEmailMessage
+  passwordResetToken(input: AuthEmailContext & { token: string }): AuthEmailMessage
   /** One-time code for the password-reset flow. */
-  passwordResetOtp(input: { otp: string; locale?: string | undefined }): AuthEmailMessage
+  passwordResetOtp(input: AuthEmailContext & { otp: string }): AuthEmailMessage
   /** One-time code that activates a newly registered account. */
-  emailVerificationOtp(input: { otp: string; locale?: string | undefined }): AuthEmailMessage
+  emailVerificationOtp(input: AuthEmailContext & { otp: string }): AuthEmailMessage
   /** Notice that the account password changed (NIST SP 800-63B §4.6). */
-  passwordChanged(input: { locale?: string | undefined }): AuthEmailMessage
+  passwordChanged(input: AuthEmailContext): AuthEmailMessage
   /** Code confirming ownership of an address the user is moving to. */
-  emailChangeVerification(input: { token: string; locale?: string | undefined }): AuthEmailMessage
+  emailChangeVerification(input: AuthEmailContext & { token: string }): AuthEmailMessage
   /** Notice to the previous address that the account's email moved. */
-  emailChanged(input: {
-    oldEmail: string
-    newEmail: string
-    locale?: string | undefined
-  }): AuthEmailMessage
+  emailChanged(input: AuthEmailContext & { oldEmail: string; newEmail: string }): AuthEmailMessage
   /** Notice that a second factor was added. */
-  mfaEnabled(input: { locale?: string | undefined }): AuthEmailMessage
+  mfaEnabled(input: AuthEmailContext): AuthEmailMessage
   /** Notice that a second factor was removed. */
-  mfaDisabled(input: { locale?: string | undefined }): AuthEmailMessage
+  mfaDisabled(input: AuthEmailContext): AuthEmailMessage
   /** Security alert about a newly established session. */
-  newSessionAlert(input: {
-    sessionInfo: SessionAlertInfo
-    locale?: string | undefined
-  }): AuthEmailMessage
+  newSessionAlert(input: AuthEmailContext & { sessionInfo: SessionAlertInfo }): AuthEmailMessage
   /** Invitation to join a tenant. */
-  invitation(input: { invite: InviteData; locale?: string | undefined }): AuthEmailMessage
+  invitation(input: AuthEmailContext & { invite: InviteData }): AuthEmailMessage
 }
 
 /** How the provider reacts to a delivery failure. */
@@ -564,7 +575,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.passwordResetToken({ token, locale }),
+      this.messages.passwordResetToken({ tenantId, email, token, locale }),
       'passwordResetToken'
     )
   }
@@ -579,7 +590,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.passwordResetOtp({ otp, locale }),
+      this.messages.passwordResetOtp({ tenantId, email, otp, locale }),
       'passwordResetOtp'
     )
   }
@@ -594,7 +605,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.emailVerificationOtp({ otp, locale }),
+      this.messages.emailVerificationOtp({ tenantId, email, otp, locale }),
       'emailVerificationOtp'
     )
   }
@@ -608,7 +619,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.passwordChanged({ locale }),
+      this.messages.passwordChanged({ tenantId, email, locale }),
       'passwordChanged'
     )
   }
@@ -623,7 +634,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       newEmail,
-      this.messages.emailChangeVerification({ token, locale }),
+      this.messages.emailChangeVerification({ tenantId, email: newEmail, token, locale }),
       'emailChangeVerification'
     )
   }
@@ -646,7 +657,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       oldEmail,
-      this.messages.emailChanged({ oldEmail, newEmail, locale }),
+      this.messages.emailChanged({ tenantId, email: oldEmail, oldEmail, newEmail, locale }),
       'emailChanged'
     )
   }
@@ -657,7 +668,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaEnabled({ locale }), 'mfaEnabled')
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.mfaEnabled({ tenantId, email, locale }),
+      'mfaEnabled'
+    )
   }
 
   /** @inheritdoc */
@@ -666,7 +682,12 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     email: string,
     locale?: string
   ): Promise<void> {
-    await this.deliver(tenantId, email, this.messages.mfaDisabled({ locale }), 'mfaDisabled')
+    await this.deliver(
+      tenantId,
+      email,
+      this.messages.mfaDisabled({ tenantId, email, locale }),
+      'mfaDisabled'
+    )
   }
 
   /** @inheritdoc */
@@ -683,7 +704,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.newSessionAlert({ sessionInfo, locale }),
+      this.messages.newSessionAlert({ tenantId, email, sessionInfo, locale }),
       'newSessionAlert'
     )
   }
@@ -698,7 +719,7 @@ export class DefaultAuthEmailProvider implements IEmailProvider {
     await this.deliver(
       tenantId,
       email,
-      this.messages.invitation({ invite: inviteData, locale }),
+      this.messages.invitation({ tenantId, email, invite: inviteData, locale }),
       'invitation'
     )
   }
