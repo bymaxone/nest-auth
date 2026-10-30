@@ -18,7 +18,20 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Documentation
+
+- **`conformance/wire-contract.json` names the key the token epoch is stored under.**
+  `accessTokenClaims.epoch.storedUnder` now reads `{ep|pep}:{hmac_sha256(hmacKey, userSubject)}`,
+  the derived key the epoch is written to, instead of the bare `{ep|pep}:{userId}`. Text only: the
+  key the library derives is unchanged.
+
 ### Security
+
+- **Rotating `jwt.secret` no longer has to reset the token epoch.** Without `identifierKey`, a
+  rotation renamed the epoch key, every epoch read zero, and an access token that a password reset
+  or a revoke-all had refused was accepted again until it expired. With `identifierKey` pinned
+  before the rotation the epoch survives it. Deployments that rotate should set it first; the
+  README guide says how, and what a rotation after a compromise should do instead.
 
 - **`fast-uri` and `qs` floored above the 2026-09-02 advisories.** Resolved versions were
   `fast-uri@3.1.5` and `qs@6.15.3`. Now `fast-uri@3.1.7` and `qs@6.16.0`. Severities and summaries
@@ -75,6 +88,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Added
 
+- **`identifierKey` — rotate `jwt.secret` without moving the Redis identifiers.** Every name that
+  identifies an account (the session index, the token epoch, the MFA keys, the recent-authentication
+  marker, the OTP and rate-limit identifiers) derives from one key, which was always derived from
+  `jwt.secret`; rotating the secret therefore renamed all of them. The new optional top-level
+  `identifierKey` is the secret those names derive from instead, validated like `jwt.secret`, never
+  used to sign or verify a token, and defaulting to `jwt.secret`, so a deployment that does not set
+  it derives exactly the keys it derives today. Setting it to the current `jwt.secret` before a
+  rotation keeps sessions, token epochs and MFA state where they are; choosing a new value keeps
+  today's behaviour for a rotation that must cut the link. `jwt.previousSecrets` and the keys derived
+  from it are unchanged. The README gains a rotation guide with both paths, and
+  `conformance/wire-contract.json` states where the identifier secret comes from.
+
 - **`AccountStatusService.invalidate({ userId, tenantId })` — a supported way to drop an account's
   cached status.** Status is read through a Redis cache with a `userStatusCacheTtlSeconds`
   lifetime, and nothing invalidated it on a change made outside this library. A host suspending a
@@ -114,6 +139,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   resolve normally — the caller's admin surface reporting a suspension that never took effect,
   which is the precise failure this method exists to eliminate. An unset resolver value, or an
   `undefined` coerced by a JavaScript host, is how it arrives.
+
+### Changed
+
+- **`AuthTokenVerifierService` checks the account status before the MFA policy.** Both planes now
+  consult `assertDashboardAccountUsable` / `assertPlatformAccountUsable` first and only then
+  `requireMfa`. Only an account the status gate refuses, holding a token that predates its MFA
+  challenge, changes its error code, in two ways: a blocked account now receives the matching
+  `ACCOUNT_*` / `EMAIL_NOT_VERIFIED` code instead of `MFA_REQUIRED`, and a deleted account now
+  receives `TOKEN_INVALID` instead of `MFA_REQUIRED`. A usable account with a pending challenge
+  still receives `MFA_REQUIRED`, a missing or non-boolean `mfaEnabled` claim still answers
+  `TOKEN_INVALID` ahead of the lookup, and `checkStatus: false` still skips the lookup. **Apply to a derived backend:** a client that branched on `MFA_REQUIRED` for a
+  blocked account must handle the `ACCOUNT_*` code there.
 
 ### Fixed
 
@@ -2518,8 +2555,10 @@ follows it. For a rolling upgrade this release dual-writes the anti-replay marke
 failure counters (every read consults both the old plane-only key and the new tenant-scoped key,
 every write touches both) and dual-acquires the transition lock, so old and new pods stay
 consistent while both are live. A later release drops the legacy arm; deploying it before this one
-has fully rolled out would split the anti-replay and lockout state across the two key shapes. No
-host code changes: the tenant is sourced from the authenticated account, never from the request.
+has fully rolled out would split the anti-replay and lockout state across the two key shapes. Host
+code changes: every `IUserRepository.updateMfa` implementation takes the tenant and scopes its
+write by it, and any direct dashboard call into `MfaService` passes one. The tenant is sourced from
+the authenticated account, never from the request.
 
 ## [1.3.1] - 2026-08-08
 

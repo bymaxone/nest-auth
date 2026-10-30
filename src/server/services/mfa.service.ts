@@ -638,7 +638,8 @@ export class MfaService {
    */
   private async verifyRecoveryCode(code: string, hashedCodes: string[]): Promise<number> {
     // One candidate per key in play: the current one, then any retired by a rotation. The
-    // digest is keyed by an HMAC derived from `jwt.secret`, so without the retired keys a
+    // digest is keyed by an HMAC derived from the identifier secret (`identifierKey`, else
+    // `jwt.secret`), so without the retired keys a
     // rotation would silently invalidate every code a user has printed and filed — they would
     // discover it at the moment they most need it. Retired keys verify only; a code that
     // matches one is consumed and the set is regenerated under the current key.

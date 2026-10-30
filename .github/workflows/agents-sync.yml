@@ -35,12 +35,11 @@ jobs:
       # within the hour, so there is no credential to rotate and none that can
       # expire unnoticed and leave the sync quietly using the default token.
       #
-      # This replaces a `sync-token: ${{ secrets.AGENTS_SYNC_TOKEN }}` mapping
-      # whose secret no longer exists. An absent secret evaluates to the empty
-      # string, the called workflow falls through to the default token, and the
-      # run then fails at the point it tries to open the pull request:
-      # `GitHub Actions is not permitted to create or approve pull requests`.
-      # Nothing about the mapping said it was dead, which is why this sat broken.
+      # A secret that does not exist evaluates to the empty string, the called
+      # workflow then falls through to the default token, and the run fails at
+      # the point it tries to open the pull request: `GitHub Actions is not
+      # permitted to create or approve pull requests`. Nothing in a mapping to
+      # an absent secret says that it is dead, so the names below must exist.
       #
       # Both are organisation secrets with `visibility: all`, so this repository
       # already reads them and nothing has to be configured here. They are named
