@@ -1344,8 +1344,8 @@ export class TokenManagerService {
       userId: payload.sub,
       context: payload.context,
       jti: payload.jti,
-      // Absent on a platform token and on a dashboard token minted before this claim existed;
-      // the challenge falls back to the pre-tenant lookup in that case.
+      // Absent on a platform token, which has no tenant. A dashboard token without one was
+      // refused above, so a dashboard result always carries it.
       ...(payload.tenantId !== undefined ? { tenantId: payload.tenantId } : {})
     }
   }
