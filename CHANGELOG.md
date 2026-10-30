@@ -18,6 +18,36 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-10-30
+
+### Apply to a derived backend
+
+What a backend built on this library does about the changes below. Nothing here is a breaking
+change to the public API; the items that change behaviour are the ones to read.
+
+- **`identifierKey` (new, optional).** Nothing to do unless you rotate `jwt.secret`. Set
+  `identifierKey` to the current secret before a rotation to keep sessions, token epochs and MFA
+  state where they are. Choosing a new value keeps today's behaviour, and recovery codes then stop
+  verifying unless the old secret stays in `jwt.previousSecrets`.
+- **`AuthTokenVerifierService` (new, exported by `BymaxAuthModule`).** Inject it where a long-lived
+  transport must establish the same facts a guarded route does:
+  `verifyAccessToken(token, { plane, requireMfa?, checkStatus? })` resolves `{ plane, payload }` and
+  rejects with an `AuthException`. It checks the account status before the MFA policy.
+- **`AuthEmailContext` (new, exported).** A catalogue that implements the ten renderers keeps
+  compiling; read `tenantId` and `email` from the new argument where a URL needs them.
+- **Refresh keeps the second factor.** A session that completed the MFA challenge now stays
+  `mfaVerified` across rotations. Refresh sessions stored before the deploy carry no field and stay
+  unverified until the user next completes the challenge. A backend that stores the record itself
+  must carry `mfaVerified` forward, written only as `true` and read strictly.
+- **WebSocket tickets.** A ticket is refused after its minting token is revoked, and it expires no
+  later than that token. The stored `wst:` record needs `jti` and `epoch`, so a ticket minted before
+  the deploy is refused at redemption; it lives at most 30 seconds, and a client that holds one asks
+  for a new one. Read `expiresIn` from `POST {prefix}/ws-ticket` rather than assuming 30 seconds.
+- **`next` peer floor `^16.4.1`.** Applies only to a deployment that uses the `./nextjs` subpath:
+  upgrade `next` to 16.4.1 or later.
+- **A request without a body to `POST …/mfa/setup`.** It now answers exactly as it does for `{}`
+  instead of 500; a client needs no change.
+
 ### Added
 
 - **`identifierKey` — rotate `jwt.secret` without moving the Redis identifiers.** Every name that
@@ -3946,7 +3976,8 @@ ever installable.
 - Phase 4 password-reset tests cover: both `token` and `otp` flows, mutual exclusivity validation, `verifiedToken` exchange, resend cooldown, anti-enumeration (no error on unknown email), and session invalidation on reset
 - Phase 5 tests cover: platform login with MFA path and brute-force lockout, `JwtPlatformGuard` cross-context rejection, `PlatformRolesGuard` hierarchy enforcement, OAuth CSRF state lifecycle, `onOAuthLogin` hook resolution strategies, and invitation role-authorization + acceptance single-use enforcement
 
-[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.5...HEAD
+[Unreleased]: https://github.com/bymaxone/nest-auth/compare/v1.4.6...HEAD
+[1.4.6]: https://github.com/bymaxone/nest-auth/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/bymaxone/nest-auth/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/bymaxone/nest-auth/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/bymaxone/nest-auth/compare/v1.4.2...v1.4.3
