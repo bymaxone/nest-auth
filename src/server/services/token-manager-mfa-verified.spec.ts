@@ -1,11 +1,10 @@
 /**
  * @fileoverview The second factor a session was established with survives refresh rotation.
  *
- * `MfaRequiredGuard` refuses a token whose claims say `mfaEnabled && !mfaVerified`, and the library
- * has no route that lets an authenticated session re-acquire the claim. A rotation that wrote
- * `mfaVerified: false` therefore locked every MFA user out of every route behind the guard the first
- * time their access token aged out. The factor is stored on the refresh-session record, written only
- * when `true` and read back strictly, and copied forward by every rotation path on both planes.
+ * `MfaRequiredGuard` refuses a token whose claims say `mfaEnabled && !mfaVerified`, and no route
+ * lets an authenticated session re-acquire the claim, so every rotation and grace-window recovery,
+ * on both planes, must carry the session's verified factor forward. The factor lives on the
+ * refresh-session record: written only when `true`, and read back strictly.
  */
 
 import { createHash } from 'node:crypto'
@@ -165,7 +164,7 @@ describe('the second factor across refresh rotation', () => {
     })
 
     // Scenario: a session opened without the challenge. Expected: the key is absent, not `false`.
-    // Why: the record stays byte-identical to what every earlier release wrote and what rust-auth reads.
+    // Why: the record stays byte-identical to what rust-auth reads for a session without the factor.
     it.each([
       ['dashboard', () => service.issueTokens(USER, '1.2.3.4', 'Browser')],
       ['platform', () => service.issuePlatformTokens(ADMIN, '1.2.3.4', 'Browser')]
@@ -206,7 +205,7 @@ describe('the second factor across refresh rotation', () => {
       expect(JSON.parse(next.newSessionJson)).toMatchObject({ mfaVerified: true })
     })
 
-    // Scenario: a record that never carried the field (written before it existed, or opened without the
+    // Scenario: a record that never carried the field (legacy, or opened without the
     // challenge). Expected: `false`, and the successor record gains no key. Why: persisting the factor
     // must not turn a rotation into a way around the guard.
     it.each([

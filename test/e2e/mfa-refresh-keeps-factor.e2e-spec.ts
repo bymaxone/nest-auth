@@ -2,9 +2,9 @@
  * @fileoverview A refresh keeps the second factor the session was established with.
  *
  * `MfaRequiredGuard` refuses a token whose claims say `mfaEnabled && !mfaVerified`. A session that
- * completed the MFA challenge carries `mfaVerified: true`; if a refresh rotation dropped that
- * claim, every MFA user would be locked out of every route behind the guard the first time their
- * access token rotated — after `jwt.accessExpiresIn` — and the only way back is to sign in again.
+ * completed the MFA challenge carries `mfaVerified: true`, and a refresh rotation must keep that
+ * claim: otherwise every MFA user is refused on every route behind the guard once the access token
+ * rotates after `jwt.accessExpiresIn`, and the only way back is to sign in again.
  *
  * So the rule is a whole-pipeline test: a user with MFA signs in, completes the challenge, refreshes,
  * and reaches a route mounted behind the guard, on the host's own controller (the composition the

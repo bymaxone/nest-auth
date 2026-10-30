@@ -92,8 +92,8 @@ interface RefreshSession {
   /**
    * Whether this session was established by completing the MFA challenge.
    *
-   * Written only when `true` and read back as `false` when absent, so a record that predates the
-   * field, or a session opened without the challenge, rotates exactly as before. Rotation copies
+   * Written only when `true` and read back as `false` when absent, so a record without the field,
+   * or a session opened without the challenge, rotates without the factor. Rotation copies
    * it forward: the lineage was authenticated with the second factor once, and `MfaRequiredGuard`
    * must not demand it again every time the access token ages out. Enabling or disabling MFA ends
    * every session, so a surviving session is one whose factor has not changed.
@@ -773,7 +773,22 @@ export class TokenManagerService {
     if (typeof rec['mfaEnabled'] !== 'boolean') {
       throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
     }
-    const mfaEnabled = rec['mfaEnabled']
+    return this.withOptionalFields(parsed as RefreshSession, rec, rec['mfaEnabled'])
+  }
+
+  /**
+   * Completes a validated session record with its optional fields, each read strictly.
+   *
+   * @param parsed - The stored record, already shape-checked by {@link parseSession}.
+   * @param rec - The same record as untyped keys, for the strict reads.
+   * @param mfaEnabled - The validated required flag.
+   * @returns The record with `familyId`, `familyCreatedAt` and `mfaVerified` normalized.
+   */
+  private withOptionalFields(
+    parsed: RefreshSession,
+    rec: Record<string, unknown>,
+    mfaEnabled: boolean
+  ): RefreshSession {
     // The family, by contrast, is genuinely optional: the placeholder record a replay produces
     // carries none, and the contract omits the key rather than writing an empty string. Absent
     // reads as "no family", which skips the family bookkeeping — a real state, not a missing
@@ -783,7 +798,7 @@ export class TokenManagerService {
     // ages out under the refresh lifetime like any other.
     const familyCreatedAt = typeof rec['familyCreatedAt'] === 'string' ? rec['familyCreatedAt'] : ''
     // Read back strictly: only the literal `true` counts, so a corrupt value can never read as verified.
-    const { mfaVerified: _stored, ...record } = parsed as RefreshSession
+    const { mfaVerified: _stored, ...record } = parsed
     return {
       ...record,
       mfaEnabled,
