@@ -197,8 +197,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   two workarounds are both bad, a field stashed on the singleton provider races across concurrent
   requests and can put one tenant's link in another's mail, and re-implementing a renderer
   re-implements its HTML escaping. All ten renderers now take an `AuthEmailContext`
-  (`{ tenantId, email, locale? }`, exported) together with their own fields, rather than only the two
-  that need it today, so the next message that builds a URL does not repeat this. `email` is always
+  (`{ tenantId, email, locale? }`, exported) together with their own fields, so any message that
+  builds a URL has the tenant and the recipient available. `email` is always
   the address the message is delivered to: the new address for `emailChangeVerification`, the
   previous one for `emailChanged`, which still receives `oldEmail` and `newEmail`. **Apply to a
   derived backend:** a catalogue that implements these renderers keeps compiling, since a function
