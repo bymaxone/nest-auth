@@ -19,7 +19,8 @@ import { bootstrapTestApp, JWT_SECRET } from './setup'
 import type { BootstrappedTestApp } from './setup'
 
 const PASSWORD = 'TicketExpiry-9!xyz'
-const TOKEN_LIFE_SECONDS = 2
+// Long enough that the whole-second `exp` still leaves 3 s at the mint, however slow the machine.
+const TOKEN_LIFE_SECONDS = 4
 
 /** Waits real time; the Redis expiry under test cannot be advanced any other way here. */
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))

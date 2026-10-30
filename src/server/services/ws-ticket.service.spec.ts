@@ -114,6 +114,37 @@ describe('WsTicketService', () => {
       expect(ttl).toBe(2)
     })
 
+    // Scenario: the account lookup takes time. Expected: the lifetime is measured after it, so the
+    // ticket's absolute end is still no later than the token's. Why: Redis applies the TTL from
+    // the moment it receives the write; a lifetime read before a slow lookup would carry the
+    // ticket past the token's expiry by the length of that lookup.
+    it('should measure the lifetime after the account lookup, not before it', async () => {
+      mockUserRepo.findById.mockImplementation(async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(NOW_MS + 2_000)
+        return { id: 'user-1', tenantId: 'tenant-1', role: 'MEMBER', status: 'ACTIVE' }
+      })
+
+      const result = await service.issue(payload({ exp: NOW_MS / 1000 + 5 }))
+
+      const [, ttl] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
+      expect(ttl).toBe(3)
+      expect(result.expiresIn).toBe(3)
+    })
+
+    // Scenario: the lookup consumes the token's last second. Expected: nothing is minted. Why: the
+    // same invariant as above, at the boundary where the remainder reaches zero.
+    it("should mint nothing when the lookup uses up the token's remaining life", async () => {
+      mockUserRepo.findById.mockImplementation(async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(NOW_MS + 1_500)
+        return { id: 'user-1', tenantId: 'tenant-1', role: 'MEMBER', status: 'ACTIVE' }
+      })
+
+      await expect(service.issue(payload({ exp: NOW_MS / 1000 + 1 }))).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+      })
+      expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
+    })
+
     // Scenario: a token with no life left, and one whose expiry is unusable. Expected: nothing is
     // minted and the refusal is `auth.token_invalid`. Why: a ticket needs a positive lifetime, and
     // a malformed expiry must not default to the 30-second ceiling.
@@ -129,7 +160,6 @@ describe('WsTicketService', () => {
         response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
       })
       expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
-      expect(mockUserRepo.findById).not.toHaveBeenCalled()
       // The refusal answers a deliberately uninformative code, so the log line is where an
       // operator learns why a ticket was not minted.
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no life left'))

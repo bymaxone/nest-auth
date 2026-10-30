@@ -75,15 +75,6 @@ export class WsTicketService {
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
-    // Rounded so the remainder can only be short of the real one: `ceil` on the clock leaves the
-    // ticket at most as long-lived as the token, never a fraction of a second longer. An absent or
-    // non-numeric `exp` is NaN here and fails the comparison, which refuses rather than mints.
-    const lifetime = Math.min(WS_TICKET_TTL_SECONDS, payload.exp - Math.ceil(Date.now() / 1000))
-    if (!(lifetime > 0)) {
-      this.logger.warn(`ws-ticket: refused, token has no life left userId=${logSafe(payload.sub)}`)
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-
     // The snapshot is read from the ACCOUNT, not from the token.
     //
     // A ticket authorizes a socket for that socket's whole lifetime — there is no per-request
@@ -108,11 +99,36 @@ export class WsTicketService {
       epoch: readStampedEpoch(payload)
     }
 
+    // Measured last, after every await above: Redis applies the TTL from the moment it receives
+    // the write, so a lifetime read before the account lookup would carry the ticket past the
+    // token's expiry by the length of that lookup.
+    const lifetime = this.lifetimeFor(payload)
     const ticket = await this.redis.mintWsTicket(snapshot, lifetime)
     this.logger.log(
       `ws-ticket: issued userId=${logSafe(payload.sub)} tenantId=${logSafe(payload.tenantId)}`
     )
     return { ticket, expiresIn: lifetime }
+  }
+
+  /**
+   * The seconds a ticket minted now may live: the smaller of {@link WS_TICKET_TTL_SECONDS} and what
+   * the access token has left.
+   *
+   * Rounded so the remainder can only be short of the real one: `ceil` on the clock leaves the
+   * ticket at most as long-lived as the token, never a fraction of a second longer. An absent or
+   * non-numeric `exp` is NaN here and fails the comparison, which refuses rather than mints.
+   *
+   * @param payload - The verified access-token payload the ticket is minted from.
+   * @returns A positive whole number of seconds.
+   * @throws {@link AuthException} `auth.token_invalid` when the token has no life left.
+   */
+  private lifetimeFor(payload: DashboardJwtPayload): number {
+    const lifetime = Math.min(WS_TICKET_TTL_SECONDS, payload.exp - Math.ceil(Date.now() / 1000))
+    if (!(lifetime > 0)) {
+      this.logger.warn(`ws-ticket: refused, token has no life left userId=${logSafe(payload.sub)}`)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    return lifetime
   }
 
   /**
