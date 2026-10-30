@@ -354,6 +354,24 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **A WebSocket ticket no longer outlives the session that minted it.** A ticket carried only
+  identity and account state, so one minted before a logout, a sign-out-everywhere, a password
+  change or an MFA reset still opened a socket for the rest of its 30 seconds, and a socket admitted
+  from it is authenticated once and never revalidated. The ticket now carries the `jti` and `epoch`
+  of the access token that minted it, and `WsTicketService.redeem` refuses it, with the same
+  `auth.token_invalid` as every other refusal, when that token is blacklisted or stamped below the
+  user's current epoch. This is the same two-channel check a bearer token gets at the handshake.
+  OWASP's WebSocket Security Cheat Sheet asks for exactly this: "Maintain a mapping of sessions to
+  active connections so you can invalidate WebSocket access the moment logout occurs"
+  (<https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html>).
+  **Apply to a derived backend:** the stored `wst:` record gains two required fields, `jti` (a
+  non-empty string) and `epoch` (a non-negative integer, `0` when the token carried none); a record
+  missing either is no longer a ticket, so a ticket minted by a backend that does not yet write them
+  is refused for its remaining seconds. `WsTicketSnapshot` gains the same two fields, and
+  `conformance/wire-contract.json` declares them. A ticket minted from an access token that was
+  itself rotated away by a refresh is not covered by the per-token blacklist, as a bearer token is
+  not; the epoch channel still reaches it.
+
 - **The `next` peer dependency floor is `^16.4.1`.** The previous floor, `^16.2.11`, admitted `next`
   releases with published advisories: GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (both critical,
   unauthenticated remote code execution, fixed in 16.4.1 for the 16 line). A consumer of the

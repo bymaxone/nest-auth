@@ -22,7 +22,8 @@ export const WS_TICKET_TTL_SECONDS = 30
  * A snapshot, never a token: it is what the access JWT already proved at mint time, frozen for
  * the socket's lifetime. It carries no signature, no expiry of its own, and nothing that can be
  * presented back to the REST surface — a leaked snapshot buys an attacker a socket, not a
- * session.
+ * session. It does carry the minting token's `jti` and `epoch`, the two keys the revocation
+ * channels are read by, so that redeeming it can be refused exactly when that token would be.
  *
  * The field names are the wire contract shared with rust-auth
  * (`conformance/wire-contract.json`, `recordEncodings.wsTicket`): both backends read each
@@ -41,4 +42,14 @@ export interface WsTicketSnapshot {
   mfaEnabled: boolean
   /** Whether the originating session had already satisfied MFA. */
   mfaVerified: boolean
+  /**
+   * The `jti` of the access token that minted the ticket — the key of the per-token blacklist.
+   * An identifier, not a credential: it cannot be presented to the REST surface.
+   */
+  jti: string
+  /**
+   * The user's token epoch stamped on the minting access token, `0` when it carried none. A ticket
+   * whose epoch is below the user's current one belongs to a session a bulk revocation ended.
+   */
+  epoch: number
 }

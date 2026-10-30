@@ -794,9 +794,12 @@ const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
 ```
 
 The ticket is opaque, 32 bytes of CSPRNG output, and lives 30 seconds. Only `sha256(ticket)` is
-ever a Redis key, and the stored value is a verified-identity **snapshot** — no `jti`, no
-signature, no expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned
-back into a session. Minting requires an authenticated session in good standing that has already
+ever a Redis key, and the stored value is a verified-identity **snapshot** — no signature, no
+expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned back into a
+session. It carries the `jti` and `epoch` of the access token that minted it, the two keys the
+revocation channels are read by, and redemption is refused when that token has been blacklisted by
+a logout or stamped below the user's current epoch (sign-out-everywhere, password change, MFA
+reset): a ticket does not outlive the session that asked for it. Minting requires an authenticated session in good standing that has already
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;

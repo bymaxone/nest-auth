@@ -26,6 +26,8 @@ import type { IUserRepository } from '../interfaces/user-repository.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { WS_TICKET_TTL_SECONDS } from '../interfaces/ws-ticket.interface'
 import { AuthRedisService } from '../redis/auth-redis.service'
+import { readStampedEpoch } from '../utils'
+import { AuthRevocationService } from './auth-revocation.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { logSafe } from '../utils/log-safe'
 
@@ -36,7 +38,8 @@ export class WsTicketService {
   constructor(
     @Inject(AuthRedisService) private readonly redis: AuthRedisService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository
+    @Inject(BYMAX_AUTH_USER_REPOSITORY) private readonly userRepo: IUserRepository,
+    @Inject(AuthRevocationService) private readonly revocation: AuthRevocationService
   ) {}
 
   /**
@@ -44,8 +47,9 @@ export class WsTicketService {
    *
    * The caller is responsible for having run the authentication, status and MFA guards — the
    * payload reaching here is what those guards admitted. Nothing from the token itself is
-   * copied into the ticket beyond the identity it proved: no `jti`, no expiry, nothing that
-   * could be replayed against the REST surface.
+   * copied into the ticket beyond the identity it proved and the two keys its revocation is read
+   * by (`jti`, `epoch`): no expiry, no signature, nothing that could be replayed against the REST
+   * surface.
    *
    * @param payload - The verified dashboard access-token payload.
    * @returns The raw ticket and how long it is valid for.
@@ -83,7 +87,9 @@ export class WsTicketService {
       role: user.role,
       status: user.status,
       mfaEnabled: payload.mfaEnabled,
-      mfaVerified: payload.mfaVerified
+      mfaVerified: payload.mfaVerified,
+      jti: payload.jti,
+      epoch: readStampedEpoch(payload)
     }
 
     const ticket = await this.redis.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)
@@ -98,8 +104,10 @@ export class WsTicketService {
    *
    * @param ticket - The raw ticket from the upgrade request.
    * @returns The identity the socket is authorized as.
-   * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, expired or
-   *   already redeemed — the three are deliberately indistinguishable to the caller.
+   * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, expired,
+   *   already redeemed, or minted by a session that has since been revoked — a logout or a bulk
+   *   revocation between the mint and the upgrade. The four are deliberately indistinguishable to
+   *   the caller.
    */
   async redeem(ticket: string): Promise<WsTicketSnapshot> {
     const snapshot = ticket ? await this.redis.redeemWsTicket(ticket) : null
@@ -108,6 +116,19 @@ export class WsTicketService {
       // URL or a client that took longer than the window to open its socket, and an operator
       // seeing a run of these is looking at one or the other.
       this.logger.warn('ws-ticket: redemption refused — unknown, expired, or already used')
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+
+    // The ticket outlives the request that minted it, and the socket it opens is authenticated
+    // once and never revalidated, so the session behind it is checked here against the same two
+    // channels a bearer token is. Only a dashboard ticket exists today; the platform plane is
+    // named for a snapshot with no tenant, the way the epoch key itself is.
+    const revoked = await this.revocation.isAccessTokenRevoked(
+      { jti: snapshot.jti, sub: snapshot.sub, epoch: snapshot.epoch, tenantId: snapshot.tenantId },
+      snapshot.tenantId === undefined ? 'platform' : 'dashboard'
+    )
+    if (revoked) {
+      this.logger.warn('ws-ticket: redemption refused — the session that minted it was revoked')
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
     return snapshot
