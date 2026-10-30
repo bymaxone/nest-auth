@@ -134,7 +134,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'bd1e183daac54d56221bb10722a1792c3796ebee84e61a421a2bec4ebbed65a0'
+const CONTRACT_SHA256 = 'f186512041069e99977cd442d56ed34d13dd1c9c2995d85f5f233c0b43262c79'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -1045,6 +1045,10 @@ describe('cross-implementation conformance', () => {
 
       expect(ticket).toMatch(/^[0-9a-f]{64}$/)
       expect(contract.credentialFormats['wsTicket']).toContain('64 lowercase hex')
+      // The lifetime is a ceiling, not a constant: the ticket must not outlive the access token
+      // that minted it, because a logout blacklists that token only for its remaining life.
+      expect(contract.credentialFormats['wsTicket']).toContain('at most 30 s')
+      expect(contract.credentialFormats['wsTicket']).toContain("minting access token's own expiry")
       const [key, value] = redis.set.mock.calls[0] as [string, string]
       expect(key).toBe(`auth:wst:${createHash('sha256').update(ticket).digest('hex')}`)
       expect(Object.keys(JSON.parse(value) as object).sort()).toEqual(

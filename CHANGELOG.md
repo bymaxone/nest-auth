@@ -386,6 +386,18 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Security
 
+- **A WebSocket ticket expires no later than the access token that minted it.** A logout blacklists
+  the token's `jti` only for the token's remaining life, because nothing later can present that
+  token. A ticket minted from a token with a few seconds left still received the full 30, so the
+  blacklist entry expired with the token while the ticket stayed redeemable: the user's epoch is
+  unchanged, and the ticket redeemed although its session had ended. The lifetime is now the smaller
+  of 30 seconds and the token's remaining seconds less a one-second margin that covers the write
+  reaching Redis, and a token with no life left mints nothing (`auth.token_invalid`). The `expiresIn` that
+  `POST {prefix}/ws-ticket` returns is that capped value, in seconds. `conformance/wire-contract.json`
+  states the lifetime as "at most 30 s and never beyond the minting access token's own expiry".
+  **Apply to a derived backend:** cap the ticket's Redis TTL the same way when you mint, and report
+  the capped value as `expiresIn`; a client that assumed 30 seconds must read `expiresIn`.
+
 - **A WebSocket ticket no longer outlives the session that minted it.** A ticket carried only
   identity and account state, so one minted before a logout, a sign-out-everywhere, a password
   change or an MFA reset still opened a socket for the rest of its 30 seconds, and a socket admitted
