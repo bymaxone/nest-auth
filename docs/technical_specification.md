@@ -3140,7 +3140,7 @@ The package **has no direct dependencies** (`"dependencies": {}`), so it adds no
     "express": "^5.0.0",
     "ioredis": "^6.0.0",
     "react": "^19.0.0",
-    "next": "^16.2.11",
+    "next": "^16.4.1",
     "reflect-metadata": "^0.2.0",
     "server-only": "^0.0.1"
   },
