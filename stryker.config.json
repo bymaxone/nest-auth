@@ -24,6 +24,7 @@
     "!src/**/*.test.ts",
     "!src/**/__tests__/**",
     "!src/**/index.ts",
+    "!src/server/openapi/generated/**",
     "!src/**/*.d.ts"
   ],
   "thresholds": {
