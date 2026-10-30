@@ -1184,7 +1184,9 @@ describe('AuthRedisService', () => {
         role: 'MEMBER',
         status: 'ACTIVE',
         mfaEnabled: false,
-        mfaVerified: false
+        mfaVerified: false,
+        jti: 'jti-1',
+        epoch: 0
       }
 
       const ticket = await service.mintWsTicket(snapshot, 30)
@@ -1210,7 +1212,9 @@ describe('AuthRedisService', () => {
         role: 'MEMBER',
         status: 'ACTIVE',
         mfaEnabled: false,
-        mfaVerified: false
+        mfaVerified: false,
+        jti: 'jti-1',
+        epoch: 0
       }
 
       const seen = new Set<string>()
@@ -1230,7 +1234,9 @@ describe('AuthRedisService', () => {
         role: 'ADMIN',
         status: 'ACTIVE',
         mfaEnabled: true,
-        mfaVerified: true
+        mfaVerified: true,
+        jti: 'jti-2',
+        epoch: 3
       }
       mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
 
@@ -1254,25 +1260,67 @@ describe('AuthRedisService', () => {
       ['not json at all', 'not-json'],
       ['a JSON scalar', '"just-a-string"'],
       ['null', 'null'],
-      ['a record missing mfaVerified', '{"sub":"u","role":"r","status":"s","mfaEnabled":true}'],
+      // The revocation keys. A ticket without them cannot be checked against either channel, so
+      // it is refused rather than admitted unchecked.
+      [
+        'a record missing jti',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"epoch":0}'
+      ],
+      [
+        'a record whose jti is empty',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"","epoch":0}'
+      ],
+      [
+        'a record whose jti is a number',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":1,"epoch":0}'
+      ],
+      [
+        'a record missing epoch',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j"}'
+      ],
+      [
+        'a record whose epoch is a string',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":"0"}'
+      ],
+      [
+        'a record whose epoch is negative',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":-1}'
+      ],
+      [
+        'a record whose epoch is fractional',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":1.5}'
+      ],
+      [
+        'a record missing mfaVerified',
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"jti":"j","epoch":0}'
+      ],
       [
         'a record whose mfaEnabled is a string',
-        '{"sub":"u","role":"r","status":"s","mfaEnabled":"true","mfaVerified":true}'
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":"true","mfaVerified":true,"jti":"j","epoch":0}'
       ],
       [
         'a record whose tenantId is a number',
-        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"tenantId":1}'
+        '{"sub":"u","role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":0,"tenantId":1}'
       ],
       // The three identity fields. A snapshot authorizes a socket for its whole lifetime with
       // no per-message gate behind it, so a missing `sub` is a socket bound to nobody, and a
       // missing `role` or `status` is one whose authorization fields read as `undefined` at
       // every check the consumer makes.
-      ['a record missing sub', '{"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'],
-      ['a record missing role', '{"sub":"u","status":"s","mfaEnabled":true,"mfaVerified":true}'],
-      ['a record missing status', '{"sub":"u","role":"r","mfaEnabled":true,"mfaVerified":true}'],
+      [
+        'a record missing sub',
+        '{"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":0}'
+      ],
+      [
+        'a record missing role',
+        '{"sub":"u","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":0}'
+      ],
+      [
+        'a record missing status',
+        '{"sub":"u","role":"r","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":0}'
+      ],
       [
         'a record whose sub is a number',
-        '{"sub":1,"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true}'
+        '{"sub":1,"role":"r","status":"s","mfaEnabled":true,"mfaVerified":true,"jti":"j","epoch":0}'
       ]
     ])('should refuse %s', async (_label, stored) => {
       mockRedis.eval.mockResolvedValue(stored)
@@ -1288,7 +1336,10 @@ describe('AuthRedisService', () => {
         role: 'SUPER_ADMIN',
         status: 'ACTIVE',
         mfaEnabled: true,
-        mfaVerified: true
+        mfaVerified: true,
+        jti: 'jti-3',
+        // The boundary: a token that carried no epoch is written as 0, and 0 is a valid stamp.
+        epoch: 0
       }
       mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
       await expect(service.redeemWsTicket('raw')).resolves.toStrictEqual(snapshot)

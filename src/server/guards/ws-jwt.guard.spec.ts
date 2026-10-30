@@ -449,7 +449,9 @@ describe('WsJwtGuard', () => {
       role: 'MEMBER',
       status: 'ACTIVE',
       mfaEnabled: true,
-      mfaVerified: true
+      mfaVerified: true,
+      jti: 'jti-7',
+      epoch: 0
     }
 
     /** A handshake carrying a parsed query, the shape Socket.IO provides. */

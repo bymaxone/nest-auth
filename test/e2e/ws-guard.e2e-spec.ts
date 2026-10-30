@@ -498,6 +498,66 @@ describe('WsJwtGuard under a real handshake (E2E)', () => {
     expect(!after.ok && refusalStatus(after.error)).toBe('error')
   })
 
+  // A ticket is minted from an authenticated session and then outlives it, and a socket admitted
+  // from it is authenticated once and never revalidated. A logout between the mint and the upgrade
+  // must therefore end the ticket: it carries what the revocation channels are keyed by, so
+  // redemption is refused exactly when the token that minted it would be.
+  it('refuses a ticket minted before a logout of the session that minted it', async () => {
+    const registered = await request(app.getHttpServer()).post('/register').send({
+      email: 'ws-ticket-logout@example.com',
+      password: PASSWORD,
+      name: 'Ticket Logout',
+      tenantId: 'tenant-1'
+    })
+    const token = registered.body.accessToken as string
+    const ticket = await mintTicket(token)
+
+    await request(app.getHttpServer())
+      .post('/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ refreshToken: registered.body.refreshToken as string })
+
+    const after = await whoami(port, { ticket })
+    expect(after.ok).toBe(false)
+    expect(!after.ok && refusalStatus(after.error)).toBe('error')
+  })
+
+  // The epoch channel: bumping it is what sign-out-everywhere, a password change and an MFA reset
+  // do, and every credential stamped below it dies — a ticket minted from such a session included.
+  it('refuses a ticket minted before the user epoch was bumped', async () => {
+    const registered = await request(app.getHttpServer()).post('/register').send({
+      email: 'ws-ticket-epoch@example.com',
+      password: PASSWORD,
+      name: 'Ticket Epoch',
+      tenantId: 'tenant-1'
+    })
+    const token = registered.body.accessToken as string
+    const id = (registered.body.user as { id: string }).id
+    const ticket = await mintTicket(token)
+
+    await boot.redis.set(`auth:${tokenEpochFor(id, 'tenant-1')}`, '99')
+
+    const after = await whoami(port, { ticket })
+    expect(after.ok).toBe(false)
+    expect(!after.ok && refusalStatus(after.error)).toBe('error')
+  })
+
+  // The control for the two cases above: with no revocation between mint and upgrade the same
+  // route admits, so a refusal is the revocation and not the fixture.
+  it('still admits a ticket whose session was not revoked', async () => {
+    const registered = await request(app.getHttpServer()).post('/register').send({
+      email: 'ws-ticket-live@example.com',
+      password: PASSWORD,
+      name: 'Ticket Live',
+      tenantId: 'tenant-1'
+    })
+    const ticket = await mintTicket(registered.body.accessToken as string)
+
+    const result = await whoami(port, { ticket })
+
+    expect(result.ok).toBe(true)
+  })
+
   // The pair for the case above, on the OTHER revocation channel: a password reset bumps the
   // user's epoch, and every token stamped below it dies — including one already presented to a
   // socket. Asserted with `refreshToken` untouched, so what kills it is the epoch and not the
