@@ -190,6 +190,21 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Changed
 
+- **Every `AuthEmailCatalogue` renderer now receives the tenant and the recipient.** The provider's
+  methods hold both (`tenantId`, and the address the message goes to), but the renderer that builds
+  the body was handed only its own fields, so a link built inside it could not carry `tenantId`: a
+  recipient opening it in a browser with no tenant cookie was refused by a `tenantIdResolver`. The
+  two workarounds are both bad, a field stashed on the singleton provider races across concurrent
+  requests and can put one tenant's link in another's mail, and re-implementing a renderer
+  re-implements its HTML escaping. All ten renderers now take an `AuthEmailContext`
+  (`{ tenantId, email, locale? }`, exported) together with their own fields, rather than only the two
+  that need it today, so the next message that builds a URL does not repeat this. `email` is always
+  the address the message is delivered to: the new address for `emailChangeVerification`, the
+  previous one for `emailChanged`, which still receives `oldEmail` and `newEmail`. **Apply to a
+  derived backend:** a catalogue that implements these renderers keeps compiling, since a function
+  that reads fewer fields is assignable; read `tenantId` and `email` from the input where a URL
+  needs them.
+
 - **`AuthTokenVerifierService` checks the account status before the MFA policy.** Both planes now
   consult `assertDashboardAccountUsable` / `assertPlatformAccountUsable` first and only then
   `requireMfa`. Only an account the status gate refuses, holding a token that predates its MFA
