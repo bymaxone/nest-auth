@@ -1493,8 +1493,10 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 @Injectable()
 export class AuthService {
-  async login(dto: LoginDto, res: Response): Promise<AuthResult> {
-    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId })
+  async login(dto: LoginDto, req: Request, res: Response): Promise<AuthResult> {
+    // The tenant is the DTO's, or the host's `tenantIdResolver` answer when one is configured
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId })
 
     if (!user) {
       // Use constant-time flow — do not reveal if the email exists
@@ -2362,8 +2364,9 @@ async login(dto: any): Promise<any> {
 }
 
 // CORRECT: Explicit types everywhere
-async login(dto: LoginDto): Promise<AuthResult> {
-  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId });
+async login(dto: LoginDto, req: Request): Promise<AuthResult> {
+  const tenantId = await this.resolveTenantId(dto.tenantId, req);
+  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId });
   if (!user) {
     throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS);
   }
@@ -2512,9 +2515,10 @@ import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto'
 // WRONG: Fail at first use — confusing error message
 @Injectable()
 export class AuthService {
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, req: Request) {
     // This will throw a cryptic NestJS error if BYMAX_AUTH_USER_REPOSITORY was never provided
-    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId })
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId })
   }
 }
 
