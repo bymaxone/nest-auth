@@ -1039,8 +1039,8 @@ export class ExampleService {
     // Validation logic
   }
 
-  private async fetchData(id: string): Promise<RawData> {
-    return this.userRepository.findById(id)
+  private async fetchData(id: string, tenantId: string): Promise<RawData> {
+    return this.userRepository.findById({ id, tenantId })
   }
 
   private transformResult(data: RawData): SomeResult {
@@ -1494,7 +1494,7 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 @Injectable()
 export class AuthService {
   async login(dto: LoginDto, res: Response): Promise<AuthResult> {
-    const user = await this.userRepository.findByEmail(dto.email)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId })
 
     if (!user) {
       // Use constant-time flow — do not reveal if the email exists
@@ -1958,12 +1958,15 @@ describe('AuthService', () => {
       tokenManager.generateRefreshToken.mockResolvedValue('refresh-token')
 
       const result = await service.login(
-        { email: 'test@example.com', password: 'Password1' },
+        { email: 'test@example.com', password: 'Password1', tenantId: 'tenant-1' },
         {} as Response
       )
 
       expect(result.accessToken).toBe('access-token')
-      expect(userRepository.findByEmail).toHaveBeenCalledWith('test@example.com')
+      expect(userRepository.findByEmail).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        tenantId: 'tenant-1'
+      })
       expect(passwordService.compare).toHaveBeenCalledWith('Password1', 'hashed-password')
     })
 
@@ -2354,13 +2357,13 @@ this.logger.warn(`Failed login attempt for email: ${dto.email}`)
 ```typescript
 // WRONG: Bypasses TypeScript safety
 async login(dto: any): Promise<any> {
-  const user = await this.userRepository.findByEmail(dto.email) as any;
+  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId }) as any;
   return { token: user.token };
 }
 
 // CORRECT: Explicit types everywhere
 async login(dto: LoginDto): Promise<AuthResult> {
-  const user = await this.userRepository.findByEmail(dto.email);
+  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId });
   if (!user) {
     throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS);
   }
@@ -2511,7 +2514,7 @@ import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto'
 export class AuthService {
   async login(dto: LoginDto) {
     // This will throw a cryptic NestJS error if BYMAX_AUTH_USER_REPOSITORY was never provided
-    const user = await this.userRepository.findByEmail(dto.email)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId })
   }
 }
 
