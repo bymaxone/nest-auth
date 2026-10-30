@@ -401,9 +401,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   missing either is no longer a ticket, so a ticket minted before the deploy, or by a backend that
   does not yet write them, is refused at redemption. A ticket lives 30 seconds, so the effect is a
   brief window in which a client that already holds one asks for a new one. `WsTicketSnapshot` gains the same two fields, and
-  `conformance/wire-contract.json` declares them. A ticket minted from an access token that was
-  itself rotated away by a refresh is not covered by the per-token blacklist, as a bearer token is
-  not; the epoch channel still reaches it.
+  `conformance/wire-contract.json` declares them. A logout
+  blacklists only the access token it was given and does not move the epoch, so a ticket minted
+  from an access token that a refresh had already replaced is not refused after that logout, as a
+  bearer token of that kind is not; it is refused only after a later epoch bump (a password reset or
+  change, an MFA enable, disable or reset, or revoking every other session).
 
 - **The `next` peer dependency floor is `^16.4.1`.** The previous floor, `^16.2.11`, admitted `next`
   releases with published advisories: GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (both critical,

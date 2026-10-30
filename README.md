@@ -799,10 +799,11 @@ expiry of its own — so a redeemed ticket authorizes a socket and cannot be tur
 session. It carries the `jti` and `epoch` of the access token that minted it, the two keys the
 revocation channels are read by, and redemption is refused when that token has been blacklisted by
 a logout or stamped below the user's current epoch (sign-out-everywhere, password change, MFA
-reset): a ticket does not outlive the session that asked for it. One case stays outside the
-blacklist, as it does for a bearer token: a logout blacklists only the access token it was given,
-so a ticket minted from an access token that a refresh had already replaced is not refused by the
-blacklist, only by the epoch. Minting requires an authenticated session in good standing that has already
+reset): a ticket does not outlive the session that asked for it. A logout blacklists only
+the access token it was given and does not move the epoch, so a ticket minted from an access token
+that a refresh had already replaced is not refused after that logout, as a bearer token of that
+kind is not; it is refused only after a later epoch bump (a password reset or change, an MFA
+enable, disable or reset, or revoking every other session). Minting requires an authenticated session in good standing that has already
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
@@ -1397,7 +1398,9 @@ client generated from the document types every request body as `{}`.
 > warning, and no `discarded` field on what `applyBymaxOpenApi` returns. From 1.6.1 the
 > placeholder is filled from the contribution. A schema of the same name that carries properties
 > of its own is a declaration and wins, and `applyBymaxOpenApi` reports the contribution that
-> lost in `discarded`.
+> lost in `discarded`. Components are keyed by the DTO's class name, so a DTO of your own that
+> shares a name with one of this library's (a `LoginDto`, say) and is itself an empty placeholder
+> is filled with this library's schema: name your own classes differently.
 
 Two limits, so a missing field is not mistaken for a bug. The OAuth endpoints take their input as
 query parameters, which the builder describes as operation parameters rather than as a component,
