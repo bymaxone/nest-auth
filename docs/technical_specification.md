@@ -865,16 +865,17 @@ export interface BymaxAuthModuleOptions {
 
   /**
    * Function to resolve the tenantId from the request.
-   * If provided, the package uses the resolved tenantId and IGNORES the tenantId from the body.
-   * This prevents tenant spoofing where a client sends the tenantId of another tenant.
+   * If provided, the resolved tenantId decides alone and a tenantId in the request body is
+   * refused (`auth.validation`, field `tenantId`), so a client cannot name another tenant.
    *
    * Examples:
    * - Resolution by subdomain: (req) => req.hostname.split('.')[0]
    * - Resolution by header: (req) => req.headers['x-tenant-id']
    * - Resolution by path: (req) => req.params.tenantId
    *
-   * If not provided, the package uses the tenantId from the request body/DTO.
-   * In this case, the host application is responsible for validating the tenantId.
+   * If not provided, the tenantId in the request body/DTO is required (a request without one is
+   * refused with `auth.validation`). In this case, the host application is responsible for
+   * validating the tenantId.
    */
   tenantIdResolver?: (req: import('express').Request) => string | Promise<string>
 
