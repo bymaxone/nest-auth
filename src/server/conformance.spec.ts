@@ -130,7 +130,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'bf3e8b63a7ce6dbb8d2aacd85f7d2aae660131e62ec809aa851d378cf98d0f91'
+const CONTRACT_SHA256 = '58164ba0a72b7ee3ca3e6e8c4f79f0092322438cc15130c1dc0ce74555ccea7d'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -817,7 +817,7 @@ describe('cross-implementation conformance', () => {
       const epoch = contract.accessTokenClaims['epoch'] as Record<string, unknown>
 
       expect(epoch['claim']).toBe('epoch')
-      expect(epoch['storedUnder']).toBe('{ep|pep}:{userId}')
+      expect(epoch['storedUnder']).toBe('{ep|pep}:{hmac_sha256(hmacKey, userSubject)}')
       expect(epoch['absentReadsAs']).toBe(0)
       expect(epoch['rejectWhen']).toBe('stampedEpoch < storedEpoch')
 

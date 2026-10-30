@@ -141,18 +141,35 @@ describe('WsTicketService', () => {
       mockUserRepo.findById.mockResolvedValue({
         id: 'user-1',
         email: 'u@example.com',
-        tenantId: 'tenant-live',
+        tenantId: 'tenant-1',
         role: 'ADMIN',
         status: 'ACTIVE'
       })
 
       // The token is the shape rotation produces: empty status, and authority frozen at login.
-      await service.issue(payload({ status: '', role: 'MEMBER', tenantId: 'tenant-old' }))
+      await service.issue(payload({ status: '', role: 'MEMBER' }))
 
       expect(mockRedis.mintWsTicket).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'ACTIVE', role: 'ADMIN', tenantId: 'tenant-live' }),
+        expect.objectContaining({ status: 'ACTIVE', role: 'ADMIN', tenantId: 'tenant-1' }),
         WS_TICKET_TTL_SECONDS
       )
+    })
+
+    // The account is looked up inside the token's tenant. A user id is unique only within a
+    // tenant, so a lookup by id alone could return another tenant's account and mint a ticket
+    // that describes it; the repository can only honour the scope it is given.
+    it('looks the account up by id within the token tenant', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        id: 'user-1',
+        email: 'u@example.com',
+        tenantId: 'tenant-7',
+        role: 'MEMBER',
+        status: 'ACTIVE'
+      })
+
+      await service.issue(payload({ tenantId: 'tenant-7' }))
+
+      expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-7' })
     })
 
     // The socket outlives every per-request check, so a blocked account must not get one at

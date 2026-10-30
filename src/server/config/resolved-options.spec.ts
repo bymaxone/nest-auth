@@ -33,6 +33,9 @@ function makeTestableHighEntropyString(length = 40): string {
 
 const VALID_SECRET = makeTestableHighEntropyString(48)
 
+/** A second, unrelated high-entropy secret, used as the key the identifiers derive from. */
+const IDENTIFIER_KEY = 'Zt8#vB3@nM6$qL9%wE2^rY5&uI1*oP4(aS7)dF0!gH'
+
 const MINIMAL_OPTIONS: BymaxAuthModuleOptions = {
   jwt: { secret: VALID_SECRET },
   roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
@@ -2785,7 +2788,8 @@ describe('resolveOptions — secret containment', () => {
         encryptionKey: MFA_KEY,
         previousEncryptionKeys: [RETIRED_MFA_KEY],
         issuer: 'Bymax'
-      }
+      },
+      identifierKey: IDENTIFIER_KEY
     }
   }
 
@@ -2809,6 +2813,7 @@ describe('resolveOptions — secret containment', () => {
       expect(rendered).not.toContain(resolved.hmacKey)
       expect(rendered).not.toContain(MFA_KEY)
       expect(rendered).not.toContain(RETIRED_MFA_KEY)
+      expect(rendered).not.toContain(IDENTIFIER_KEY)
     }
   })
 

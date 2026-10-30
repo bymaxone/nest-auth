@@ -4453,6 +4453,32 @@ describe('MfaService', () => {
       expect(mockUserRepo.findById).not.toHaveBeenCalled()
     })
 
+    // The READ is scoped too: a user id is unique only within a tenant, so the account a challenge
+    // verifies against has to be looked up inside the tenant the temp token was issued for. A lookup
+    // by id alone could return another tenant's account and verify the code against its secret.
+    it('reads the account within the challenge tenant', async () => {
+      const { encrypt } = await import('../crypto/aes-gcm')
+      const { generateTotpSecret } = await import('../crypto/totp')
+      const { base32 } = generateTotpSecret()
+      const plainRecovery = '1234-5678-9012'
+
+      mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+        userId: 'user-1',
+        context: 'dashboard',
+        tenantId: 'tenant-9',
+        jti: 'jti-read-scope'
+      })
+      mockUserRepo.findById.mockResolvedValue({
+        ...AUTH_USER_MFA_ENABLED,
+        mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+        mfaRecoveryCodes: [hmacSha256(plainRecovery, HMAC_KEY)]
+      })
+
+      await service.challenge('mfa.temp', plainRecovery, '1.2.3.4', 'Browser')
+
+      expect(mockUserRepo.findById).toHaveBeenCalledWith({ id: 'user-1', tenantId: 'tenant-9' })
+    })
+
     // Scoping the READ is not enough: the write every MFA transition makes must be scoped by the
     // same tenant, or a recovery-code splice lands on another tenant's row — or on no row — and the
     // spent code is never removed. The write must carry the FLOW's tenant, not a constant: a

@@ -66,6 +66,16 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
 }
 
 /**
+ * How many times a supersede re-derives its approval before giving up.
+ *
+ * The rank check and the index claim are separate round trips, so a concurrent invite for the
+ * same address can move the record between them. Re-deriving is the right answer — the
+ * contention is between two legitimate inviters — but an unbounded retry turns a hot address
+ * into an unbounded loop, so the budget is small and exceeding it is refused.
+ */
+const SUPERSEDE_ATTEMPTS = 3
+
+/**
  * Manages tenant invitation flows — creating and accepting invitations.
  *
  * @remarks
@@ -88,15 +98,6 @@ function isStoredInvitation(value: unknown): value is StoredInvitation {
  *
  * @layer Service
  */
-/**
- * How many times a supersede re-derives its approval before giving up.
- *
- * The rank check and the index claim are separate round trips, so a concurrent invite for the
- * same address can move the record between them. Re-deriving is the right answer — the
- * contention is between two legitimate inviters — but an unbounded retry turns a hot address
- * into an unbounded loop, so the budget is small and exceeding it is refused.
- */
-const SUPERSEDE_ATTEMPTS = 3
 
 @Injectable()
 export class InvitationService {
@@ -258,34 +259,6 @@ export class InvitationService {
     )
   }
 
-  // ---------------------------------------------------------------------------
-  // acceptInvitation()
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Accepts a pending invitation and creates the new user account.
-   *
-   * Steps:
-   * 1. Atomically reads and deletes `inv:{sha256(dto.token)}` via `getdel()`.
-   *    Missing key → `INVALID_INVITATION_TOKEN`. The atomic consumption prevents
-   *    race conditions where two concurrent requests both read a valid token before
-   *    either deletes it.
-   * 2. Validates and parses the stored JSON — rejects malformed payloads.
-   * 3. Re-validates the stored `role` against the configured hierarchy to prevent
-   *    privilege escalation from a tampered Redis value.
-   * 4. Verifies the invitee email is not already registered in the tenant.
-   * 5. Hashes `dto.password` via `PasswordService`.
-   * 6. Creates the user with `emailVerified: true` (invitation implies email ownership).
-   * 7. Issues dashboard tokens.
-   * 8. Calls `hooks.afterInvitationAccepted` if implemented.
-   *
-   * @param dto - Validated AcceptInvitationDto from the request body.
-   * @param ip - Client IP address (for session audit and hooks).
-   * @param userAgent - User-Agent string (for session audit and hooks).
-   * @returns Full `AuthResult` with access + refresh tokens and the new user record.
-   * @throws `AuthException` with `INVALID_INVITATION_TOKEN` if the token is missing or malformed.
-   * @throws `AuthException` with `EMAIL_ALREADY_EXISTS` if the email is taken.
-   */
   /**
    * Whether an account's status still permits it to act.
    *
@@ -613,6 +586,34 @@ export class InvitationService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // acceptInvitation()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Accepts a pending invitation and creates the new user account.
+   *
+   * Steps:
+   * 1. Atomically reads and deletes `inv:{sha256(dto.token)}` via `getdel()`.
+   *    Missing key → `INVALID_INVITATION_TOKEN`. The atomic consumption prevents
+   *    race conditions where two concurrent requests both read a valid token before
+   *    either deletes it.
+   * 2. Validates and parses the stored JSON — rejects malformed payloads.
+   * 3. Re-validates the stored `role` against the configured hierarchy to prevent
+   *    privilege escalation from a tampered Redis value.
+   * 4. Verifies the invitee email is not already registered in the tenant.
+   * 5. Hashes `dto.password` via `PasswordService`.
+   * 6. Creates the user with `emailVerified: true` (invitation implies email ownership).
+   * 7. Issues dashboard tokens.
+   * 8. Calls `hooks.afterInvitationAccepted` if implemented.
+   *
+   * @param dto - Validated AcceptInvitationDto from the request body.
+   * @param ip - Client IP address (for session audit and hooks).
+   * @param userAgent - User-Agent string (for session audit and hooks).
+   * @returns Full `AuthResult` with access + refresh tokens and the new user record.
+   * @throws `AuthException` with `INVALID_INVITATION_TOKEN` if the token is missing or malformed.
+   * @throws `AuthException` with `EMAIL_ALREADY_EXISTS` if the email is taken.
+   */
   async acceptInvitation(
     dto: AcceptInvitationDto,
     ip: string,
