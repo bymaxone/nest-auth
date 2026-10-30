@@ -391,8 +391,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   token. A ticket minted from a token with a few seconds left still received the full 30, so the
   blacklist entry expired with the token while the ticket stayed redeemable: the user's epoch is
   unchanged, and the ticket redeemed although its session had ended. The lifetime is now the smaller
-  of 30 seconds and the token's remaining seconds, rounded so the ticket never outlasts the token,
-  and a token with no life left mints nothing (`auth.token_invalid`). The `expiresIn` that
+  of 30 seconds and the token's remaining seconds less a one-second margin that covers the write
+  reaching Redis, and a token with no life left mints nothing (`auth.token_invalid`). The `expiresIn` that
   `POST {prefix}/ws-ticket` returns is that capped value, in seconds. `conformance/wire-contract.json`
   states the lifetime as "at most 30 s and never beyond the minting access token's own expiry".
   **Apply to a derived backend:** cap the ticket's Redis TTL the same way when you mint, and report

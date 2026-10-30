@@ -31,6 +31,12 @@ import { AuthRevocationService } from './auth-revocation.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { logSafe } from '../utils/log-safe'
 
+/**
+ * Seconds a ticket is kept short of the access token's expiry, to cover the time between reading
+ * the clock and Redis applying the write.
+ */
+const EXPIRY_MARGIN_SECONDS = 1
+
 @Injectable()
 export class WsTicketService {
   private readonly logger = new Logger(WsTicketService.name)
@@ -54,26 +60,19 @@ export class WsTicketService {
    * A ticket expires no later than the access token that minted it. A logout blacklists the
    * token's `jti` only for the token's remaining life, so a ticket given longer than that would
    * outlive the entry that refuses it and redeem after its session ended. The lifetime is
-   * therefore the smaller of {@link WS_TICKET_TTL_SECONDS} and the token's remaining seconds,
-   * rounded down so the ticket never outlasts the token, and a token with none left mints nothing.
+   * therefore the smaller of {@link WS_TICKET_TTL_SECONDS} and the token's remaining seconds less
+   * a one-second margin, and a token with none left mints nothing.
    *
    * @param payload - The verified dashboard access-token payload.
    * @returns The raw ticket and how long it is valid for, in seconds.
    * @throws {@link AuthException} `auth.token_invalid` when the token has no life left.
    */
   async issue(payload: DashboardJwtPayload): Promise<{ ticket: string; expiresIn: number }> {
-    // The second-factor rule, applied here rather than through `MfaRequiredGuard`: that guard
-    // is only registered when MFA is configured, and this endpoint has to work on deployments
-    // without it. The rule itself is the guard's, unchanged — a malformed `mfaEnabled` is an
-    // invalid token, and an enrolled session that has not cleared its challenge cannot mint a
-    // ticket that would outlive the challenge it skipped.
-    if (typeof payload.mfaEnabled !== 'boolean') {
-      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
-    }
-    if (payload.mfaEnabled && payload.mfaVerified !== true) {
-      this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${logSafe(payload.sub)}`)
-      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
-    }
+    this.assertSecondFactor(payload)
+
+    // Refused before any account read: a token with no life left mints nothing, and the lifetime
+    // is measured again below, after the awaits, because that is the one that reaches Redis.
+    this.lifetimeFor(payload)
 
     // The snapshot is read from the ACCOUNT, not from the token.
     //
@@ -111,19 +110,47 @@ export class WsTicketService {
   }
 
   /**
+   * Refuses a token whose session has not satisfied the second factor it is enrolled in.
+   *
+   * Applied here rather than through `MfaRequiredGuard`: that guard is only registered when MFA is
+   * configured, and this endpoint has to work on deployments without it. The rule itself is the
+   * guard's, unchanged.
+   *
+   * @param payload - The verified access-token payload.
+   * @throws {@link AuthException} `auth.token_invalid` for a malformed `mfaEnabled`, and
+   *   `auth.mfa_required` for an enrolled session that has not cleared its challenge.
+   */
+  private assertSecondFactor(payload: DashboardJwtPayload): void {
+    // A malformed `mfaEnabled` is an invalid token, and an enrolled session that has not cleared
+    // its challenge cannot mint a ticket that would outlive the challenge it skipped.
+    if (typeof payload.mfaEnabled !== 'boolean') {
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
+    }
+    if (payload.mfaEnabled && payload.mfaVerified !== true) {
+      this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${logSafe(payload.sub)}`)
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+  }
+
+  /**
    * The seconds a ticket minted now may live: the smaller of {@link WS_TICKET_TTL_SECONDS} and what
    * the access token has left.
    *
-   * Rounded so the remainder can only be short of the real one: `ceil` on the clock leaves the
-   * ticket at most as long-lived as the token, never a fraction of a second longer. An absent or
-   * non-numeric `exp` is NaN here and fails the comparison, which refuses rather than mints.
+   * Kept short of the token's expiry on purpose. `ceil` on the clock leaves between 0 and 1 second
+   * of slack, and one further second is held back, so the ticket still ends no later than the
+   * token when the write reaches Redis up to a second after this reading, at every sub-second
+   * offset. An absent or non-numeric `exp` is NaN here and fails the comparison, which refuses
+   * rather than mints.
    *
    * @param payload - The verified access-token payload the ticket is minted from.
    * @returns A positive whole number of seconds.
    * @throws {@link AuthException} `auth.token_invalid` when the token has no life left.
    */
   private lifetimeFor(payload: DashboardJwtPayload): number {
-    const lifetime = Math.min(WS_TICKET_TTL_SECONDS, payload.exp - Math.ceil(Date.now() / 1000))
+    const lifetime = Math.min(
+      WS_TICKET_TTL_SECONDS,
+      payload.exp - Math.ceil(Date.now() / 1000) - EXPIRY_MARGIN_SECONDS
+    )
     if (!(lifetime > 0)) {
       this.logger.warn(`ws-ticket: refused, token has no life left userId=${logSafe(payload.sub)}`)
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)

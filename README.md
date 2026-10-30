@@ -793,8 +793,8 @@ const { ticket, expiresIn } = await fetch('/auth/ws-ticket', {
 const socket = new WebSocket(`wss://api.example.com/socket?ticket=${ticket}`)
 ```
 
-The ticket is opaque, 32 bytes of CSPRNG output, and lives at most 30 seconds, never beyond the access
-token that minted it: `expiresIn` in the response is that capped lifetime in seconds, so a client
+The ticket is opaque, 32 bytes of CSPRNG output, and lives at most 30 seconds, ending a second before the access
+token that minted it does at the latest: `expiresIn` in the response is that capped lifetime in seconds, so a client
 schedules its upgrade by it, and a token with no life left mints nothing. Only `sha256(ticket)` is
 ever a Redis key, and the stored value is a verified-identity **snapshot** — no signature, no
 expiry of its own — so a redeemed ticket authorizes a socket and cannot be turned back into a

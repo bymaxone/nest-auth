@@ -86,14 +86,16 @@ describe('WsTicketService', () => {
 
   describe('issue', () => {
     // Scenario: tokens with different amounts of life left. Expected: the ticket lives for the
-    // smaller of the 30-second ceiling and what the token has left, and the response reports that
-    // same value. Why: a logout blacklists the token only for its remaining life, so a longer
-    // ticket outlives the entry that would refuse it.
+    // smaller of the 30-second ceiling and what the token has left less the one-second margin,
+    // and the response reports that same value. Why: a logout blacklists the token only for its
+    // remaining life, so a longer ticket outlives the entry that would refuse it, and the margin
+    // keeps the ticket's end short of the token's by more than the write can take to arrive.
     it.each([
       ['more than the ceiling', 900, WS_TICKET_TTL_SECONDS],
-      ['exactly the ceiling', 30, 30],
-      ['less than the ceiling', 5, 5],
-      ['one second', 1, 1]
+      ['just over the ceiling', 31, 30],
+      ['the ceiling exactly', 30, 29],
+      ['less than the ceiling', 5, 4],
+      ['two seconds', 2, 1]
     ])('should cap the lifetime when the token has %s left', async (_label, left, expected) => {
       const result = await service.issue(payload({ exp: NOW_MS / 1000 + left }))
 
@@ -102,13 +104,13 @@ describe('WsTicketService', () => {
       expect(result.expiresIn).toBe(expected)
     })
 
-    // Scenario: a clock part-way through a second. Expected: the lifetime is rounded down against
-    // the token, so the ticket is never longer-lived than it. Why: exp is whole seconds, and
-    // rounding the clock the other way would leave the ticket up to a second past the token.
+    // Scenario: a clock part-way through a second. Expected: the lifetime is rounded against the
+    // token. Why: exp is whole seconds, and rounding the clock the other way would leave the
+    // ticket up to a second past the token.
     it('should round so the ticket never outlasts the token', async () => {
       jest.spyOn(Date, 'now').mockReturnValue(NOW_MS + 400)
 
-      await service.issue(payload({ exp: NOW_MS / 1000 + 3 }))
+      await service.issue(payload({ exp: NOW_MS / 1000 + 4 }))
 
       const [, ttl] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
       expect(ttl).toBe(2)
@@ -124,22 +126,22 @@ describe('WsTicketService', () => {
         return { id: 'user-1', tenantId: 'tenant-1', role: 'MEMBER', status: 'ACTIVE' }
       })
 
-      const result = await service.issue(payload({ exp: NOW_MS / 1000 + 5 }))
+      const result = await service.issue(payload({ exp: NOW_MS / 1000 + 6 }))
 
       const [, ttl] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
       expect(ttl).toBe(3)
       expect(result.expiresIn).toBe(3)
     })
 
-    // Scenario: the lookup consumes the token's last second. Expected: nothing is minted. Why: the
-    // same invariant as above, at the boundary where the remainder reaches zero.
+    // Scenario: the lookup consumes the token's last usable second. Expected: nothing is minted.
+    // Why: the same invariant as above, at the boundary where the remainder reaches zero.
     it("should mint nothing when the lookup uses up the token's remaining life", async () => {
       mockUserRepo.findById.mockImplementation(async () => {
         jest.spyOn(Date, 'now').mockReturnValue(NOW_MS + 1_500)
         return { id: 'user-1', tenantId: 'tenant-1', role: 'MEMBER', status: 'ACTIVE' }
       })
 
-      await expect(service.issue(payload({ exp: NOW_MS / 1000 + 1 }))).rejects.toMatchObject({
+      await expect(service.issue(payload({ exp: NOW_MS / 1000 + 3 }))).rejects.toMatchObject({
         response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
       })
       expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
@@ -150,6 +152,7 @@ describe('WsTicketService', () => {
     // a malformed expiry must not default to the 30-second ceiling.
     it.each([
       ['no life left', NOW_MS / 1000],
+      ['one second left, which the margin consumes', NOW_MS / 1000 + 1],
       ['a past expiry', NOW_MS / 1000 - 10],
       ['no expiry', undefined],
       ['a non-numeric expiry', 'soon']
@@ -160,6 +163,8 @@ describe('WsTicketService', () => {
         response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
       })
       expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
+      // Refused before the account is read: a token with no life left costs no repository call.
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
       // The refusal answers a deliberately uninformative code, so the log line is where an
       // operator learns why a ticket was not minted.
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no life left'))
