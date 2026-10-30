@@ -79,8 +79,8 @@ describe('WsTicketService', () => {
   describe('issue', () => {
     // Scenario: a plain authenticated session. Expected: the snapshot carries exactly the contract
     // fields and the agreed TTL. Why: an extra field is a credential widened without anyone
-    // deciding to. `jti` and `epoch` are the two deliberate additions: identifiers the revocation
-    // channels are keyed by, with nothing in them that can be presented to the REST surface.
+    // deciding to. `jti` and `epoch` are the identifiers the two revocation checks are keyed by,
+    // and neither can be presented to the REST surface or replayed as a credential.
     it('should bind exactly the identity the token proved', async () => {
       const result = await service.issue(payload())
 
