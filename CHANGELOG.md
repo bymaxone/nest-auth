@@ -340,11 +340,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 - **The `next` peer dependency floor is `^16.4.1`.** The previous floor, `^16.2.11`, admitted `next`
   releases with published advisories: GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (both critical,
-  unauthenticated remote code execution, fixed in 16.4.1) and others fixed earlier in the same
-  line. A consumer of the `./nextjs` subpath on `next` below 16.4.1 now gets a peer-dependency
-  warning from the package manager and should upgrade `next`; `next` stays an optional peer, so a
-  deployment that does not use `./nextjs` is unaffected. `test/e2e/peer-floor-contract.e2e-spec.ts`
-  holds the floor.
+  unauthenticated remote code execution, fixed in 16.4.1 for the 16 line). A consumer of the
+  `./nextjs` subpath on `next` below 16.4.1 should upgrade `next`; `next` stays an optional peer,
+  so a deployment that does not use `./nextjs` is unaffected. A test holds the floor.
 
 - **Rotating `jwt.secret` no longer has to reset the token epoch.** Without `identifierKey`, a
   rotation renamed the epoch key, every epoch read zero, and an access token that a password reset
