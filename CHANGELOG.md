@@ -50,7 +50,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
   `us` and `uev` were also absent from the key table in `AGENTS.md` and from
   `conformance/wire-contract.json`, so the prefix a consumer actually reached for was the one
-  nothing had ever stated. `AGENTS.md` now lists both, with the rule that the format is not the
+  nothing had ever stated. `src/server/AGENTS.md` now lists both, with the rule that the format is not the
   interface. **The wire contract deliberately still does not**: it is the parity artefact shared
   with `rust-auth`, and adding a prefix there asserts a cross-implementation claim this change has
   not verified. Whether these caches are part of that contract at all is a question for the two
@@ -76,8 +76,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   `undefined` coerced by a JavaScript host, is how it arrives.
 
 - **`AuthTokenVerifierService` — the whole identity chain for an access token, in one call.** A
-  guarded HTTP route establishes seven things before a handler runs. A long-lived transport has no
-  guard in front of it and must establish the same seven itself, on a cadence, for as long as the
+  guarded HTTP route establishes a chain of facts before a handler runs. A long-lived transport has no
+  guard in front of it and must establish the same ones itself, on a cadence, for as long as the
   connection lives. Until now this library exported the parts and not the chain, and the parts do
   not compose into it by inspection: `AuthRevocationService` answers two revocation channels and
   says so, but a bridge calling it alone has checked a signature and a blacklist while checking
@@ -97,7 +97,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   stream by saying it is one. It is returned on the result for the reason `HookContext.plane`
   exists: a tenant cannot answer the question, because a platform token carries no tenant claim.
 
-  Two of the seven are worth naming for what they catch that a signature does not. A refresh mints
+  Two of them are worth naming for what they catch that a signature does not. A refresh mints
   `mfaEnabled: true, mfaVerified: false`, so a token that is otherwise entirely valid can represent
   a session that never completed its second factor — the type does not imply it. And the `status`
   claim a token carries is a snapshot taken at issuance, so a suspension landing between two
@@ -128,9 +128,8 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   and `VerifyAccessTokenOptions`, and `BymaxAuthModule` exports `AuthTokenVerifierService` and
   `AccountStatusService`.
 
-  Closes the first of the five candidate changes in [#172](https://github.com/bymaxone/nest-auth/issues/172),
-  which is the one that removes the most from a consumer's plate — six of the eight obligations its
-  table lists.
+  Closes the first candidate change in [#172](https://github.com/bymaxone/nest-auth/issues/172),
+  the one that removes the most from a consumer's plate.
 
 - **`AccountStatusService`**, exported alongside it. It is the account lifecycle gate
   `UserStatusGuard` already applied, lifted out of that guard so the verifier could share it rather
@@ -282,7 +281,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   their first argument is a `SafeAuthUser` carrying `id` and `tenantId`, so a consumer can already scope them and there
   is no defect to fix. `onRefreshTokenReuseDetected` is the one real remainder: it names the account
   in its `details` object but the tenant is genuinely not in scope at the emit — `emitReuseDetected`
-  receives `(userId, familyId, ip, userAgent)` and nothing more — so scoping it means threading the
+  receives no tenant — so scoping it means threading the
   tenant down from its callers. That is a larger change than this one and is tracked separately
   rather than smuggled in here.
 
@@ -356,7 +355,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   | GHSA-f65p-4m7j-42xc | 7.5 high   | `fast-uri` **SSRF**, malformed IPv6 normalization                                     |
   | GHSA-fph4-wmhf-6fwf | 7.5 high   | `fast-uri` **SSRF**, repeated hostname percent-decoding                               |
   | GHSA-4mjr-xmp4-gh2g | 5.3 medium | `qs` denial of service via attacker-controlled `isBuffer`                             |
-  | GHSA-x5fp-wj9c-mxmx | 3.7 medium | `qs` array-limit bypass via bracket-key comma parsing                                 |
+  | GHSA-x5fp-wj9c-mxmx | 3.7 low    | `qs` array-limit bypass via bracket-key comma parsing                                 |
 
   Two of the four `fast-uri` advisories are SSRF rather than host confusion, and the `qs` pair is
   5.3 and 3.7 rather than a single higher figure — both distinctions are lost by summarising a
@@ -397,7 +396,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   own `express` brings its own `qs`. Floor it in your workspace if your resolution is below
   `6.16.1`; our override cannot do it for you.
 
-- **OSV advisories in the dev tree cleared.** 38 advisories across 15 packages in the
+- **OSV advisories in the dev tree cleared.** Advisories in the
   `pnpm-lock.yaml` transitive dev tree. Overrides now floor `fast-uri@3` at `^3.1.9`, `qs` at
   `^6.16.1`, `sharp` at `>=0.35.5` and `brace-expansion@5` at `^5.0.12` (scoped to major 5, because
   forcing every line onto 5.x broke `minimatch.braceExpand`), and add `body-parser@2`, `engine.io@6`,

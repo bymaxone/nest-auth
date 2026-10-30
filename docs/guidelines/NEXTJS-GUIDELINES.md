@@ -691,7 +691,7 @@ Verifies the JWT signature using HS256 via the Web Crypto API (`crypto.subtle`).
 2. Imports the secret passed as the second argument as a `CryptoKey`.
 3. Verifies the HMAC-SHA256 signature.
 4. Validates the `exp` claim.
-5. Returns a `DecodedToken` whose `isValid` reflects both the signature and the expiry check.
+5. Returns a `DecodedToken`: an empty, invalid one on any failure; on success `signatureVerified` is `true` and `isValid` is the expiry check.
 
 ```typescript
 import { verifyJwtToken } from '@bymax-one/nest-auth/nextjs'

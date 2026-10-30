@@ -17,7 +17,7 @@
 **2. English Only**
 
 - All code, comments, JSDoc, variable names, and docs in English. JSDoc on every public export.
-- `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` are the end-user-facing default messages, written in **English** (like the rest of the project). Consumers can localize or override them via `BymaxAuthModule.registerAsync({ ... })` (via the `messages` option) (planned i18n support) — do not hardcode a non-English locale as the default.
+- `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` are the end-user-facing default messages, written in **English** (like the rest of the project). Localization is planned (no option for it exists yet) — do not hardcode a non-English locale as the default.
 
 **3. TypeScript — Zero `any`**
 
@@ -96,7 +96,7 @@ The three signals that separate a real run from a replayed one, in order of reli
 
 1. `Instrumented N source file(s) with M mutant(s)` — a legitimate scoped run names a real count.
 2. The file appears as a row in the final table. Absent means it was not measured.
-3. Wall-clock. The cold run here takes about two hours; 18 seconds is not a measurement.
+3. Wall-clock. The cold run here is close to an hour; 18 seconds is not a measurement.
 
 To measure one file without destroying the project baseline, point the run at a throwaway one:
 

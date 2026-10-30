@@ -54,7 +54,7 @@ You are a **senior code reviewer** for `@bymax-one/nest-auth`, a public npm libr
 - `type` used where `interface` is the correct choice (a contract/port that classes implement, e.g. `UserRepository`).
 - `interface` used where `type` is correct (a union or mapped type).
 - `OnModuleDestroy` missing on a class that holds a Redis client or other resource.
-- `registerAsync` missing support for one of the factory strategies it declares in `AuthModuleAsyncOptions`.
+- `registerAsync` ignoring an option that `AuthModuleAsyncOptions` declares.
 - Redis key written without a tenant prefix where the state is tenant-scoped.
 - JSDoc missing or lacks `@example` on a new exported symbol.
 - Mutation-aware test gap: both sides of `||` / `&&` not covered, or only the rejection path of a guard is tested.

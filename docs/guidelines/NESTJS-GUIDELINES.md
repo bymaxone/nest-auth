@@ -203,14 +203,9 @@ A better approach for this package -- since options are resolved via async facto
 
 ```typescript
 static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
-  // Controllers cannot be determined before the factory runs.
-  // Strategy: register all controllers, each controller checks
-  // at runtime whether its feature is enabled via the injected options.
-  // If disabled, routes return 404 or the controller is not bound.
-  //
-  // Alternative (used in this package): use a two-phase approach
-  // where the consumer specifies which controllers to enable
-  // in the options, and we use a conditional module factory.
+  // The factory resolves at runtime, so it cannot decide which controllers exist.
+  // This package reads the `controllers` flags from the registerAsync() call itself,
+  // synchronously, and registers only the enabled ones.
 
   return {
     module: BymaxAuthModule,
@@ -219,7 +214,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 }
 ```
 
-> **Important:** Since `registerAsync` uses a factory (resolved at runtime), you cannot conditionally include controllers at module definition time. The recommended pattern for this package is to register all controllers and have each controller inject `BYMAX_AUTH_OPTIONS` to check if its feature is enabled. Controllers for disabled features should throw a `NotFoundException` or simply not bind routes using a custom decorator.
+> **Important:** Since `registerAsync` uses a factory (resolved at runtime), the factory cannot decide which controllers the module contains. This package takes the `controllers` flags from the `registerAsync()` call itself and registers only the enabled controllers; a `controllers` key returned from the factory is refused at startup.
 
 ---
 
@@ -1365,19 +1360,15 @@ Since this package is a library, controllers should be registerable selectively.
 
 ```typescript
 static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
-  // All controllers are registered. Each controller internally checks
-  // whether its feature is enabled. Alternatively, use a wrapper module:
   const controllers: Type[] = [];
 
-  // The consumer tells us which controllers to activate via options.
-  // However, since options are async, we use a different strategy:
-  // Register all controllers, and have a feature-gate guard.
+  // The consumer names the controllers to activate on the registerAsync() call itself,
+  // because the async factory result is not available when the module is built.
   return {
     module: BymaxAuthModule,
     controllers: [
-      AuthController,       // Always available
+      AuthController,       // Registered unless `controllers.auth` is false
       // Optional controllers added based on a sync flag
-      // or all registered with runtime gating
     ],
     // ...
   };
@@ -1386,7 +1377,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 
 ### 6.7 Route Prefix Configuration
 
-The prefix is configurable via `routePrefix` (default `'auth'`); when changing it, align `cookies.refreshCookiePath` and `cookies.mfaTempCookiePath`. The host can also use `RouterModule` or a global prefix:
+The host applies the route prefix (`RouterModule` or a global prefix); the controllers add no `auth` segment themselves. `routePrefix` (default `'auth'`) states the prefix the host uses: when it differs, set `cookies.refreshCookiePath` (startup refuses it otherwise) and align `cookies.mfaTempCookiePath`.
 
 ```typescript
 // Host application can namespace all auth routes

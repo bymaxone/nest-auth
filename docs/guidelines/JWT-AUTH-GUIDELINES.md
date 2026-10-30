@@ -390,7 +390,7 @@ Flow:
 2. `TokenManagerService.reissueTokens()` looks up `auth:rt:{sha256(oldToken)}` in Redis.
 3. If found, the old key is deleted atomically and a new refresh token (UUID v4) is generated.
 4. The new refresh token is stored in Redis at `auth:rt:{sha256(newToken)}`.
-5. Creates the rotation pointer `auth:rp:{sha256(oldToken)} → {sha256(newToken)}:{session JSON}` (TTL = grace window) and atomically updates, in the same Lua script, the session index `auth:sess:{hmac(subject)}`, the detail `sd:{hash}` and the family (`fam:`). Reuse of an already-rotated token outside the window revokes the entire family.
+5. Creates the rotation pointer `auth:rp:{sha256(oldToken)} → {sha256(newToken)}:{session JSON}` (TTL = grace window) and atomically updates, in the same Lua script, the session index `auth:sess:{hmac(subject)}` and the family (`fam:`). Reuse of an already-rotated token outside the window revokes the entire family.
 6. A new access token JWT is signed and returned alongside the new refresh token.
 
 ### 5.2 Grace Window for Concurrent Requests
@@ -446,7 +446,7 @@ return nil
 | ----------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------ |
 | `auth:rt:{sha256(token)}`     | JSON: `{ userId, tenantId, role, device, ip, createdAt, familyId, familyCreatedAt, mfaEnabled }` | `refreshExpiresInDays` in seconds          |
 | `auth:rp:{sha256(oldToken)}`  | `{sha256(newToken)}:{session JSON}`                                                              | `refreshGraceWindowSeconds` (default: 30s) |
-| `auth:prt:{sha256(token)}`    | JSON: `{ userId, role, device, ip, createdAt }` (platform)                                       | `refreshExpiresInDays` in seconds          |
+| `auth:prt:{sha256(token)}`    | Same record as `auth:rt`, with an empty `tenantId` (platform)                                    | `refreshExpiresInDays` in seconds          |
 | `auth:prp:{sha256(oldToken)}` | `{sha256(newToken)}:{session JSON}` (platform)                                                   | `refreshGraceWindowSeconds` (default: 30s) |
 
 ### 5.5 Refresh Token Security Rules
@@ -797,7 +797,7 @@ The guard delegates token extraction to `TokenDeliveryService`, which behaves di
 | `RolesGuard`         | Role hierarchy via `@Roles()` metadata                                                                     | `FORBIDDEN`                                                               | Hierarchical: OWNER > ADMIN > MEMBER                                     |
 | `PlatformRolesGuard` | Platform role hierarchy                                                                                    | `FORBIDDEN`                                                               | Uses `platformHierarchy` config                                          |
 | `SelfOrAdminGuard`   | `params.userId === user.sub` OR admin role                                                                 | `FORBIDDEN`                                                               | Prevents IDOR attacks                                                    |
-| `OptionalAuthGuard`  | JWT if present, null if absent                                                                             | Never throws                                                              | For public endpoints with optional auth                                  |
+| `OptionalAuthGuard`  | JWT if present, null if absent                                                                             | No token: never. Invalid token: as `JwtAuthGuard`                         | For public endpoints with optional auth                                  |
 | `WsJwtGuard`         | Single-use ticket (`?ticket=`, from `POST /auth/ws-ticket`) or JWT in the handshake `Authorization` header | Disconnects client                                                        | The JWT never goes in the query; only the ticket (short TTL, single use) |
 
 ### 8.6 WebSocket Guard
@@ -1230,7 +1230,7 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 - [ ] `JwtPlatformGuard`: Same flow, check type `"platform"`.
 - [ ] Guard order: `JwtAuthGuard` > `UserStatusGuard` > `MfaRequiredGuard` > `RolesGuard`.
 - [ ] `WsJwtGuard`: Extract from handshake `Authorization` header, never from query params.
-- [ ] `OptionalAuthGuard`: Set `request.user = null` if no token, never throw.
+- [ ] `OptionalAuthGuard`: Set `request.user = null` if no token; an invalid token is rejected as in `JwtAuthGuard`.
 
 ### Secrets
 

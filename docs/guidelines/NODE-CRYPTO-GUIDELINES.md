@@ -179,8 +179,8 @@ async function comparePassword(plainPassword: string, storedHash: string): Promi
 | Environment          | N             | r   | p   | Time per hash (~)  | Memory |
 | -------------------- | ------------- | --- | --- | ------------------ | ------ |
 | Production (default) | 2^17 (131072) | 8   | 1   | hardware-dependent | 128 MB |
-| Testing / CI         | 2^14 (16384)  | 8   | 1   | ~40-60ms           | 16 MB  |
-| High-security        | 2^16 (65536)  | 8   | 1   | ~160-240ms         | 64 MB  |
+| Testing / CI         | 2^14 (16384)  | 8   | 1   | hardware-dependent | 16 MB  |
+| High-security        | 2^16 (65536)  | 8   | 1   | hardware-dependent | 64 MB  |
 | **Never use**        | < 2^14        | < 8 | —   | —                  | —      |
 
 ---

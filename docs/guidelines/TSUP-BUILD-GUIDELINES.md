@@ -303,7 +303,7 @@ This is why `.mjs` / `.cjs` extensions are non-negotiable for this project.
 
 ### 4.1 Enabling Declarations
 
-Set `dts: true` on every build configuration object. tsup uses its own TypeScript rollup process (via the `@microsoft/api-extractor` pipeline under the hood in tsup v8) to generate the declaration files per entry point (`index.d.ts` for ESM and `index.d.cts` for CJS).
+Set `dts: true` on every build configuration object. tsup bundles the declarations itself to generate the declaration files per entry point (`index.d.ts` for ESM and `index.d.cts` for CJS).
 
 ```ts
 {
@@ -800,7 +800,7 @@ The project's `prepublishOnly` script runs the full validation pipeline:
 }
 ```
 
-This ensures the types compile, 100% coverage passes, the build works, and the size, the exports map, the published surface and the consumer runtime (`size`, `check:exports`, `check:published`, `check:runtime`) are verified before any publish. Additional checks such as `publint` and `attw` can be run on demand:
+This ensures the types compile, coverage passes, the build works, and the built package is checked before any publish (the scripts it chains are the list). Additional checks such as `publint` and `attw` can be run on demand:
 
 ```json
 {

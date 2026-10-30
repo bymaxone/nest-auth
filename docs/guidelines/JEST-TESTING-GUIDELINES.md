@@ -610,7 +610,7 @@ function createMockExecutionContext(
 
 ### 4.3 Testing Guard Allow/Deny Logic
 
-> Simplified teaching example. The real `JwtAuthGuard` verifies the token with `JwtService.verify()` (via `verifyWithRotation`) and consults `AuthRevocationService.isAccessTokenRevoked`; the reusable verification outside the guards is `AuthTokenVerifierService.verifyAccessToken(token, { plane, requireMfa?, checkStatus? })`. Mock those dependencies when testing the real guard.
+> Simplified teaching example. The real `JwtAuthGuard` verifies the token with `JwtService.verify()` (via `verifyWithRotation`) and consults `AuthRevocationService.isAccessTokenRevoked`; the reusable verification outside the guards is `AuthTokenVerifierService.verifyAccessToken`. Mock those dependencies when testing the real guard.
 
 ```typescript
 describe('canActivate()', () => {
