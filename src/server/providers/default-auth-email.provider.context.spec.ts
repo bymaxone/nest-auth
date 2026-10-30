@@ -62,7 +62,7 @@ describe('the input every catalogue renderer receives', () => {
   const sink: AuthEmailSink = { send: jest.fn().mockResolvedValue(undefined) }
 
   // Scenario: each of the ten messages is sent. Expected: its renderer is told the tenant and the
-  // recipient, next to the fields it already had. Why: a link built inside a renderer cannot carry
+  // recipient, next to the fields of its own message. Why: a link built inside a renderer cannot carry
   // `tenantId` otherwise, and the consumer's only workarounds are a shared mutable field on the
   // singleton provider (a cross-tenant race) or re-implementing the renderer.
   it.each(AUTH_EMAIL_KINDS)('tells the %s renderer the tenant and the recipient', async (kind) => {
@@ -75,7 +75,7 @@ describe('the input every catalogue renderer receives', () => {
   })
 
   // Scenario: the notice that goes to the previous address while naming both. Expected: `email` is
-  // the address the message is delivered to, and the old and new addresses stay as they were. Why:
+  // the address the message is delivered to, and the old and new addresses are passed as their own fields. Why:
   // `email` means "the recipient" for every renderer, so a renderer can address its reader without
   // knowing which message it renders.
   it('keeps the recipient apart from the addresses the emailChanged notice names', async () => {
