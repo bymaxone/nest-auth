@@ -1256,6 +1256,11 @@ function isWsTicketSnapshot(value: unknown): value is WsTicketSnapshot {
     typeof record['status'] === 'string' &&
     typeof record['mfaEnabled'] === 'boolean' &&
     typeof record['mfaVerified'] === 'boolean' &&
+    typeof record['jti'] === 'string' &&
+    record['jti'] !== '' &&
+    typeof record['epoch'] === 'number' &&
+    Number.isSafeInteger(record['epoch']) &&
+    record['epoch'] >= 0 &&
     (record['tenantId'] === undefined || typeof record['tenantId'] === 'string')
   )
 }

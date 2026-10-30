@@ -75,6 +75,8 @@ interface WireContract {
       familyCreatedAt?: string
       optionalFields?: string[]
       mfaVerified?: string
+      jti?: string
+      epoch?: string
       tenantId?: string
     }
   >
@@ -132,7 +134,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = '5063e9668d3ff0befd6b53ade554e8159d6345334db63609bf4f6335146b8558'
+const CONTRACT_SHA256 = 'bd1e183daac54d56221bb10722a1792c3796ebee84e61a421a2bec4ebbed65a0'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -990,7 +992,7 @@ describe('cross-implementation conformance', () => {
 
   describe('websocket upgrade ticket', () => {
     // Scenario: the prefix and record shape a ticket is stored under. Expected: `wst:` keyed by
-    // the ticket's sha256, with the six snapshot fields. Why: a ticket minted by one backend is
+    // the ticket's sha256, with the snapshot fields. Why: a ticket minted by one backend is
     // redeemed by whichever one receives the upgrade, so the two must agree on both.
     it('declares the wst prefix and the snapshot shape', () => {
       expect(contract.redisKeyPrefixes['wsTicket']).toBe('wst')
@@ -1001,8 +1003,21 @@ describe('cross-implementation conformance', () => {
         'role',
         'status',
         'mfaEnabled',
-        'mfaVerified'
+        'mfaVerified',
+        'jti',
+        'epoch'
       ])
+    })
+
+    // Scenario: the revocation keys a ticket carries. Expected: `jti` and `epoch` are declared with
+    // their types, and the comment says redemption follows the minting token's revocation. Why:
+    // both backends mint and redeem over one keyspace, so a backend that writes no `jti` hands the
+    // other a ticket it can only admit unchecked.
+    it('declares the revocation keys a ticket carries', () => {
+      const record = contract.recordEncodings['wsTicket']
+      expect(record?.fields).toEqual(expect.arrayContaining(['jti', 'epoch']))
+      expect(record?.['jti']).toContain('rv:{jti}')
+      expect(record?.['epoch']).toContain('non-negative integer')
     })
 
     // Scenario: what this library actually mints and stores. Expected: the raw ticket is the
@@ -1021,7 +1036,9 @@ describe('cross-implementation conformance', () => {
         role: 'MEMBER',
         status: 'ACTIVE',
         mfaEnabled: false,
-        mfaVerified: false
+        mfaVerified: false,
+        jti: 'jti-1',
+        epoch: 0
       }
 
       const ticket = await service.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)
@@ -1046,7 +1063,15 @@ describe('cross-implementation conformance', () => {
       )
 
       await service.mintWsTicket(
-        { sub: 'a1', role: 'SUPER_ADMIN', status: 'ACTIVE', mfaEnabled: true, mfaVerified: true },
+        {
+          sub: 'a1',
+          role: 'SUPER_ADMIN',
+          status: 'ACTIVE',
+          mfaEnabled: true,
+          mfaVerified: true,
+          jti: 'jti-1',
+          epoch: 0
+        },
         WS_TICKET_TTL_SECONDS
       )
 
