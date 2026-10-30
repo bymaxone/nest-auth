@@ -1337,8 +1337,9 @@ describe('AuthRedisService', () => {
         status: 'ACTIVE',
         mfaEnabled: true,
         mfaVerified: true,
-        jti: 'jti-2',
-        epoch: 3
+        jti: 'jti-3',
+        // The boundary: a token that carried no epoch is written as 0, and 0 is a valid stamp.
+        epoch: 0
       }
       mockRedis.eval.mockResolvedValue(JSON.stringify(snapshot))
       await expect(service.redeemWsTicket('raw')).resolves.toStrictEqual(snapshot)

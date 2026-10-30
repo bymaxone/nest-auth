@@ -366,8 +366,9 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   (<https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html>).
   **Apply to a derived backend:** the stored `wst:` record gains two required fields, `jti` (a
   non-empty string) and `epoch` (a non-negative integer, `0` when the token carried none); a record
-  missing either is no longer a ticket, so a ticket minted by a backend that does not yet write them
-  is refused for its remaining seconds. `WsTicketSnapshot` gains the same two fields, and
+  missing either is no longer a ticket, so a ticket minted before the deploy, or by a backend that
+  does not yet write them, is refused at redemption. A ticket lives 30 seconds, so the effect is a
+  brief window in which a client that already holds one asks for a new one. `WsTicketSnapshot` gains the same two fields, and
   `conformance/wire-contract.json` declares them. A ticket minted from an access token that was
   itself rotated away by a refresh is not covered by the per-token blacklist, as a bearer token is
   not; the epoch channel still reaches it.

@@ -799,7 +799,10 @@ expiry of its own — so a redeemed ticket authorizes a socket and cannot be tur
 session. It carries the `jti` and `epoch` of the access token that minted it, the two keys the
 revocation channels are read by, and redemption is refused when that token has been blacklisted by
 a logout or stamped below the user's current epoch (sign-out-everywhere, password change, MFA
-reset): a ticket does not outlive the session that asked for it. Minting requires an authenticated session in good standing that has already
+reset): a ticket does not outlive the session that asked for it. One case stays outside the
+blacklist, as it does for a bearer token: a logout blacklists only the access token it was given,
+so a ticket minted from an access token that a refresh had already replaced is not refused by the
+blacklist, only by the epoch. Minting requires an authenticated session in good standing that has already
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;
