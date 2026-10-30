@@ -1616,7 +1616,7 @@ class AuthService {
    * 2. Marks the email as verified via the repository
    * 3. Runs the afterEmailVerified hook
    *
-   * @param tenantId Tenant ID (ignored when a `tenantIdResolver` is configured)
+   * @param tenantId Tenant ID (required without a `tenantIdResolver`; refused when one is configured)
    * @param email User email
    * @param otp OTP code
    * @param req The incoming request (IP and tenant resolution)

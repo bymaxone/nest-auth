@@ -1494,7 +1494,8 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 @Injectable()
 export class AuthService {
   async login(dto: LoginDto, req: Request, res: Response): Promise<AuthResult> {
-    // The tenant is the DTO's, or the host's `tenantIdResolver` answer when one is configured
+    // With a `tenantIdResolver` configured the resolver decides and a body `tenantId` is refused;
+    // without one the body's `tenantId` is required
     const tenantId = await this.resolveTenantId(dto.tenantId, req)
     const user = await this.userRepository.findByEmail({ email: dto.email, tenantId })
 
@@ -1961,6 +1962,7 @@ describe('AuthService', () => {
 
       const result = await service.login(
         { email: 'test@example.com', password: 'Password1', tenantId: 'tenant-1' },
+        {} as Request,
         {} as Response
       )
 
