@@ -107,6 +107,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     with a stack-trace tradeoff rather than something to do while unblocking a PR, so it is
 //     tracked separately; recorded here so the next person reads a measurement instead of the
 //     narrower claim.
+//     129 KiB: the bundle measures 122.48 KiB, of which 0.60 KiB is the request-body schemas the
+//     OpenAPI contributor offers (measured by removing that one block from the built bundle and
+//     compressing both). They are data compiled into the bundle, so the comment-stripping lever
+//     above does not touch them. The budget keeps about 5% headroom over the measured size.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that
@@ -140,7 +144,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //   react    1.71 KiB →  2.5 KiB (~46% headroom; hooks surface may expand)
 //   nextjs   8.16 KiB → 10 KiB  (~22% headroom)
 const BUDGETS = [
-  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 122 * 1024 },
+  { name: 'server  (NestJS module)', path: 'dist/server/index.mjs', brotli: 129 * 1024 },
   { name: 'shared  (types + constants)', path: 'dist/shared/index.mjs', brotli: 4.25 * 1024 },
   { name: 'client  (fetch auth client)', path: 'dist/client/index.mjs', brotli: 4.25 * 1024 },
   { name: 'react   (hooks + AuthProvider)', path: 'dist/react/index.mjs', brotli: 2.5 * 1024 },

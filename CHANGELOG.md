@@ -219,6 +219,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **A served OpenAPI document described every request body as `{}`.** This package is built without
+  the `@nestjs/swagger` CLI plugin, so `@nestjs/swagger` registered each of its DTOs as
+  `{"type":"object","properties":{}}` — valid, resolvable, and invisible to a dangling-`$ref`
+  sweep — and a client generated from the document typed `login(body: {})`. The contributor that
+  already describes the security posture now also offers the request-body schema of every DTO the
+  mounted controllers take, taken from `conformance/openapi-request-schemas.json` (compiled into the
+  bundle as a generated module, since `conformance/` is not published, with a gate that fails when
+  it differs from what the decorators produce). Only the controllers a deployment mounted
+  contribute, so a deployment without MFA, platform or invitations gets no unreferenced component. Measured in a scratch application
+  (outside this repository's suite) with `@bymax-one/nest-core` 1.6.1 and 1.6.3 over the package's
+  16 exported request DTOs: all 16 were empty before and carried their properties after, with
+  nothing reported as discarded. **Request schemas appear with `@bymax-one/nest-core` ≥ 1.6.1; older versions ignore the
+  contribution without a signal** — through 1.6.0 the empty placeholder wins and nothing reports it.
+  The two OAuth query DTOs are not request bodies and get no schema. No public export, option or
+  dependency is added; the server bundle grows by about 0.6 KiB brotli, and its size budget moves
+  from 122 to 129 KiB.
+
 - **A refresh rotation dropped the second factor, locking every MFA user out of `MfaRequiredGuard`
   routes at the first rotation.** The guard refuses a token whose claims say
   `mfaEnabled && !mfaVerified`. A session that completed the MFA challenge carries
@@ -384,9 +401,11 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   missing either is no longer a ticket, so a ticket minted before the deploy, or by a backend that
   does not yet write them, is refused at redemption. A ticket lives 30 seconds, so the effect is a
   brief window in which a client that already holds one asks for a new one. `WsTicketSnapshot` gains the same two fields, and
-  `conformance/wire-contract.json` declares them. A ticket minted from an access token that was
-  itself rotated away by a refresh is not covered by the per-token blacklist, as a bearer token is
-  not; the epoch channel still reaches it.
+  `conformance/wire-contract.json` declares them. A logout
+  blacklists only the access token it was given and does not move the epoch, so a ticket minted
+  from an access token that a refresh had already replaced is not refused after that logout, as a
+  bearer token of that kind is not; it is refused only after a later epoch bump (a password reset or
+  change, an MFA enable, disable or reset, or revoking another session or all of them).
 
 - **The `next` peer dependency floor is `^16.4.1`.** The previous floor, `^16.2.11`, admitted `next`
   releases with published advisories: GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (both critical,

@@ -42,7 +42,8 @@ export interface DerivedPropertySchema {
 export interface DerivedObjectSchema {
   type: 'object'
   properties: Record<string, DerivedPropertySchema>
-  required: string[]
+  /** Absent when no property is required: OpenAPI 3.0's `required` must hold at least one name. */
+  required?: string[]
 }
 
 /**
@@ -197,7 +198,9 @@ function applyValidator(
  * @param dto - The DTO class to read metadata from.
  * @param read - How to obtain the entries. Defaults to class-validator's storage; overridden in
  *   tests to reach the guards that decorator-produced metadata cannot.
- * @returns The object schema, with properties in declaration order and `required` sorted.
+ * @returns The object schema, with properties in declaration order and `required` sorted, or
+ *   without `required` when every property is optional, because OpenAPI 3.0 adopts Wright Draft 00,
+ *   whose `required` MUST have at least one element.
  * @throws `Error` when a mapped `@Matches()` carries regex flags, which OpenAPI 3.0 `pattern`
  *   cannot express — see `applyValidator`. A DTO with no metadata does NOT throw: it yields an
  *   empty schema, which the conformance suite surfaces as a mismatch against the committed
@@ -234,5 +237,7 @@ export function deriveRequestSchema(
     .filter((property) => !conditional.has(property))
     .sort()
 
-  return { type: 'object', properties, required }
+  return required.length === 0
+    ? { type: 'object', properties }
+    : { type: 'object', properties, required }
 }

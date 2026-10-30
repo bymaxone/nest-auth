@@ -172,8 +172,20 @@ describe('deriveRequestSchema', () => {
   it('returns an empty schema for a class with no metadata', () => {
     expect(deriveRequestSchema(class {}, reader())).toEqual({
       type: 'object',
-      properties: {},
-      required: []
+      properties: {}
     })
+  })
+
+  // Scenario: a DTO whose every property is optional. Expected: the schema has properties and no
+  // `required` key at all. Why: OpenAPI 3.0 adopts Wright Draft 00, whose `required` MUST have at
+  // least one element, so `required: []` makes the whole document invalid to a strict validator.
+  it('omits required when every property is optional', () => {
+    const schema = deriveRequestSchema(
+      class {},
+      reader({ propertyName: 'a', type: 'conditionalValidation' }, validator('a', 'maxLength', 5))
+    )
+
+    expect(Object.keys(schema.properties)).toEqual(['a'])
+    expect(schema).not.toHaveProperty('required')
   })
 })
