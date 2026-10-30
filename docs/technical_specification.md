@@ -4113,9 +4113,18 @@ interface ProtectedRoutePattern {
 // Every field is required unless marked optional: the library ships no defaults that could
 // hide a misconfiguration, and nothing is read from the environment.
 interface AuthProxyConfig {
-  /** Public routes (no authentication required) */
+  /**
+   * Public routes (no authentication required): exact match or `<route>/` prefix, no wildcards
+   * (`'/auth'` covers `/auth/login`; `'/auth/*'` matches nothing). A route ending in `/` is a plain
+   * prefix, so `'/'` matches every path; protected patterns are tried first, so it never opens a
+   * protected route.
+   */
   publicRoutes: readonly string[]
-  /** Public routes that redirect to dashboard if already authenticated */
+  /**
+   * Public routes that redirect to the dashboard if already authenticated. Same matching, so `'/'`
+   * here redirects a signed-in user away from every unprotected page: list the login and register
+   * pages, never `'/'`.
+   */
   publicRoutesRedirectIfAuthenticated: readonly string[]
   /** Protected routes with allowed roles (the first matching pattern wins) */
   protectedRoutes: readonly ProtectedRoutePattern[]
@@ -4212,9 +4221,8 @@ const authProxy = createAuthProxy({
     tenantDomain: 'x-tenant-domain'
   },
   blockedUserStatuses: ['BANNED', 'INACTIVE', 'EXPIRED'],
-  publicRoutes: ['/', '/welcome', '/auth/*', '/privacy'],
+  publicRoutes: ['/', '/welcome', '/auth', '/privacy'],
   publicRoutesRedirectIfAuthenticated: [
-    '/',
     '/welcome',
     '/auth/login',
     '/auth/register',
