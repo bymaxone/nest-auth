@@ -388,7 +388,7 @@ Flow:
 
 1. Client sends the current refresh token to `POST /auth/refresh`.
 2. `TokenManagerService.reissueTokens()` looks up `auth:rt:{sha256(oldToken)}` in Redis.
-3. If found, the old key is deleted atomically and a new refresh token (64 hex characters) is generated.
+3. If found, the old key is deleted atomically and a new refresh token is generated.
 4. The new refresh token is stored in Redis at `auth:rt:{sha256(newToken)}`.
 5. Creates the rotation pointer `auth:rp:{sha256(oldToken)} → {sha256(newToken)}:{session JSON}` (TTL = grace window) and atomically updates, in the same Lua script, the session index `auth:sess:{hmac(subject)}` and the family (`fam:`). Reuse of an already-rotated token outside the window revokes the entire family.
 6. A new access token JWT is signed and returned alongside the new refresh token.
