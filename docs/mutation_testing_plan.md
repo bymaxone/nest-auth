@@ -183,6 +183,7 @@ Create the file **`stryker.config.json`** at the repo root. Use exactly this con
     "!src/**/*.test.ts",
     "!src/**/__tests__/**",
     "!src/**/index.ts",
+    "!src/server/openapi/generated/**",
     "!src/**/*.d.ts"
   ],
 
