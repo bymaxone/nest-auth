@@ -17,10 +17,40 @@ import { join } from 'node:path'
 import { getMetadataStorage } from 'class-validator'
 
 import { deriveRequestSchema } from './derive-request-schemas'
+import { REQUEST_SCHEMAS } from './generated/request-schemas'
 import type { DerivedObjectSchema } from './derive-request-schemas'
 import { REQUEST_SCHEMA_DTOS } from './request-schema-dtos'
 
 const ARTIFACT = join(__dirname, '../../../conformance/openapi-request-schemas.json')
+const GENERATED_MODULE = join(__dirname, 'generated/request-schemas.ts')
+
+/**
+ * Renders the schemas as the TypeScript module the published bundle compiles in.
+ *
+ * `conformance/` is not published, so the artifact reaches a consumer only as this module. The
+ * text is a pure function of the schemas, and the directory is ignored by Prettier, so the
+ * comparison below is byte for byte.
+ */
+function renderModule(schemas: Record<string, DerivedObjectSchema>): string {
+  return [
+    '/**',
+    ' * @fileoverview The request-body schemas of every DTO this library declares, compiled into the',
+    ' * bundle so the OpenAPI contributor can hand them to the document builder.',
+    ' *',
+    " * GENERATED from the DTOs' class-validator metadata and identical to",
+    ' * `conformance/openapi-request-schemas.json`. Do not edit by hand: run `pnpm gen:openapi-schemas`',
+    ' * and review the diff. `request-schemas.conformance.spec.ts` fails when this file differs from',
+    ' * what the decorators produce.',
+    ' *',
+    ' * @layer OpenAPI',
+    ' */',
+    "import type { DerivedObjectSchema } from '../derive-request-schemas'",
+    '',
+    '/** Request-body schemas keyed by DTO class name; OpenAPI 3.0. */',
+    `export const REQUEST_SCHEMAS: Readonly<Record<string, DerivedObjectSchema>> = ${JSON.stringify(schemas, null, 2)}`,
+    ''
+  ].join('\n')
+}
 
 /**
  * Every validator the derivation maps, plus the two that reach it as a metadata *type* rather
@@ -95,6 +125,7 @@ describe('OpenAPI request schemas — generated artifact', () => {
         `${JSON.stringify({ $comment: ARTIFACT_COMMENT, openapi: '3.0', schemas: derived }, null, 2)}\n`,
         'utf8'
       )
+      writeFileSync(GENERATED_MODULE, renderModule(derived), 'utf8')
     }
 
     const committed = JSON.parse(readFileSync(ARTIFACT, 'utf8')) as {
@@ -114,6 +145,16 @@ describe('OpenAPI request schemas — generated artifact', () => {
     // validates as neither.
     expect(committed.openapi).toBe('3.0')
     expect(committed.schemas).toEqual(derived)
+  })
+
+  // Verifies the module compiled into the bundle is exactly what the decorators produce. The JSON
+  // artifact is unpublished, so this module is the only copy a consumer's document ever receives:
+  // a stale one ships a schema that disagrees with the validation the server performs.
+  it('matches the generated module the bundle compiles in', () => {
+    const derived = deriveAll()
+
+    expect(REQUEST_SCHEMAS).toEqual(derived)
+    expect(readFileSync(GENERATED_MODULE, 'utf8')).toBe(renderModule(derived))
   })
 })
 

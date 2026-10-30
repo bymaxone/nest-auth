@@ -1383,6 +1383,28 @@ const security = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
 > whether this library is new enough to contribute them at all, and only then your nest-core
 > version. The two states look identical from the document.
 
+#### On `@bymax-one/nest-core` 1.6.1 or later, the request bodies are described too
+
+The same contributor offers the request-body schema of every DTO that the controllers your
+deployment mounted take (`LoginDto`, `RegisterDto`, `ResetPasswordDto` and the rest), derived from
+their `class-validator` decorators. Without it `@nestjs/swagger` registers each of them as
+`{"type":"object","properties":{}}`, because this package is built without its CLI plugin, and a
+client generated from the document types every request body as `{}`.
+
+> **Request schemas appear with `@bymax-one/nest-core` ≥ 1.6.1; older versions ignore the
+> contribution without a signal.** Through 1.6.0 an empty placeholder counts as a declaration, so
+> the schema offered here is dropped and the document renders exactly as before: no error, no
+> warning, and no `discarded` field on what `applyBymaxOpenApi` returns. From 1.6.1 the
+> placeholder is filled from the contribution. A schema of the same name that carries properties
+> of its own is a declaration and wins, and `applyBymaxOpenApi` reports the contribution that
+> lost in `discarded`.
+
+Two limits, so a missing field is not mistaken for a bug. The OAuth endpoints take their input as
+query parameters, which the builder describes as operation parameters rather than as a component,
+so no schema is offered for those two DTOs. And what a decorator cannot express (which proof
+`ResetPasswordDto` accepts for the configured `passwordReset.method`, the deployment's
+`password.minLength`) stays in the endpoint descriptions rather than in the schema.
+
 **If you already wrote these by hand, delete them** — not because they are wrong. They are what
 makes your document correct today; the deletion is what hands the job to the library, and it is
 needed precisely because they were doing it. Precedence, read from nest-core's

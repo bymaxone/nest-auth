@@ -20,6 +20,9 @@ allowBuilds:
   # EXITS on an unlisted build script, so the decision has to be on record BEFORE a dependency
   # bump introduces one, or that bump cannot install.
   '@parcel/watcher': false
+  # Analytics postinstall of swagger-ui-dist, pulled in by the dev-only @nestjs/swagger; nothing
+  # here needs it, so it stays off.
+  '@scarf/scarf': false
   '@swc/core': true
   esbuild: true
   unrs-resolver: true

@@ -219,6 +219,23 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **A served OpenAPI document described every request body as `{}`.** This package is built without
+  the `@nestjs/swagger` CLI plugin, so `@nestjs/swagger` registered each of its DTOs as
+  `{"type":"object","properties":{}}` — valid, resolvable, and invisible to a dangling-`$ref`
+  sweep — and a client generated from the document typed `login(body: {})`. The contributor that
+  already describes the security posture now also offers the request-body schema of every DTO the
+  mounted controllers take, taken from `conformance/openapi-request-schemas.json` (compiled into the
+  bundle as a generated module, since `conformance/` is not published, with a gate that fails when
+  it differs from what the decorators produce). Only the controllers a deployment mounted
+  contribute, so a deployment without MFA or OAuth gets no unreferenced component. Measured in a scratch application
+  (outside this repository's suite) with `@bymax-one/nest-core` 1.6.1 and 1.6.3 over the package's
+  16 exported request DTOs: all 16 were empty before and carried their properties after, with
+  nothing reported as discarded. **Request schemas appear with `@bymax-one/nest-core` ≥ 1.6.1; older versions ignore the
+  contribution without a signal** — through 1.6.0 the empty placeholder wins and nothing reports it.
+  The two OAuth query DTOs are not request bodies and get no schema. No public export, option or
+  dependency is added; the server bundle grows by about 0.6 KiB brotli, and its size budget moves
+  from 122 to 129 KiB.
+
 - **A refresh rotation dropped the second factor, locking every MFA user out of `MfaRequiredGuard`
   routes at the first rotation.** The guard refuses a token whose claims say
   `mfaEnabled && !mfaVerified`. A session that completed the MFA challenge carries

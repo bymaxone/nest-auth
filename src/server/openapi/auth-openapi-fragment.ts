@@ -15,6 +15,9 @@
  *
  * @layer OpenAPI
  */
+import type { DerivedObjectSchema } from './derive-request-schemas'
+import { REQUEST_SCHEMAS } from './generated/request-schemas'
+import { REQUEST_SCHEMAS_BY_CONTROLLER } from './request-schema-mounts'
 import type { ResolvedOptions } from '../config/resolved-options'
 import type { BymaxAuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
@@ -113,7 +116,10 @@ type FragmentObject = Readonly<Record<string, unknown>>
 export interface AuthOpenApiFragment {
   readonly contractVersion: typeof OPENAPI_CONTRACT_VERSION
   readonly operations: Readonly<Record<string, FragmentObject>>
-  readonly components: { readonly securitySchemes: Readonly<Record<string, FragmentObject>> }
+  readonly components: {
+    readonly securitySchemes: Readonly<Record<string, FragmentObject>>
+    readonly schemas: Readonly<Record<string, DerivedObjectSchema>>
+  }
 }
 
 /**
@@ -392,6 +398,30 @@ const PLATFORM_REFRESH_BODY: FragmentObject = {
 }
 
 /**
+ * The request schemas of the controllers a deployment mounted.
+ *
+ * A DTO two families share (`MfaChallengeDto` is taken by the dashboard and the platform
+ * controller) is contributed once, under its class name.
+ *
+ * @param registered - Which of this library's controllers the deployment mounted.
+ * @returns The schemas, keyed by DTO class name.
+ */
+function schemasFor(
+  registered: RegisteredControllers
+): Readonly<Record<string, DerivedObjectSchema>> {
+  const schemas: Record<string, DerivedObjectSchema> = {}
+  for (const [controller, names] of Object.entries(REQUEST_SCHEMAS_BY_CONTROLLER)) {
+    if (!registered[controller as keyof RegisteredControllers]) continue
+    for (const name of names) {
+      const schema = REQUEST_SCHEMAS[name]
+      if (schema === undefined) throw new Error(`no generated request schema for ${name}`)
+      schemas[name] = schema
+    }
+  }
+  return schemas
+}
+
+/**
  * Builds this library's fragment for one resolved deployment.
  *
  * @param options - The options this deployment resolved.
@@ -420,7 +450,10 @@ export function buildAuthOpenApiFragment(
   return {
     contractVersion: OPENAPI_CONTRACT_VERSION,
     operations,
-    components: { securitySchemes: schemesFor(options, registered, cookieDelivery, bearerDelivery) }
+    components: {
+      securitySchemes: schemesFor(options, registered, cookieDelivery, bearerDelivery),
+      schemas: schemasFor(registered)
+    }
   }
 }
 
