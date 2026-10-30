@@ -33,7 +33,7 @@ change to the public API; the items that change behaviour are the ones to read.
   transport must establish the same facts a guarded route does:
   `verifyAccessToken(token, { plane, requireMfa?, checkStatus? })` resolves `{ plane, payload }` and
   rejects with an `AuthException`. It checks the account status before the MFA policy.
-- **`AuthEmailContext` (new, exported).** A catalogue that implements the ten renderers keeps
+- **`AuthEmailContext` (new, exported).** A catalogue that implements the renderers keeps
   compiling; read `tenantId` and `email` from the new argument where a URL needs them.
 - **Refresh keeps the second factor.** A session that completed the MFA challenge now stays
   `mfaVerified` across rotations. Refresh sessions stored before the deploy carry no field and stay
