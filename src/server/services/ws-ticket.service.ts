@@ -51,8 +51,15 @@ export class WsTicketService {
    * by (`jti`, `epoch`): no expiry, no signature, nothing that could be replayed against the REST
    * surface.
    *
+   * A ticket expires no later than the access token that minted it. A logout blacklists the
+   * token's `jti` only for the token's remaining life, so a ticket given longer than that would
+   * outlive the entry that refuses it and redeem after its session ended. The lifetime is
+   * therefore the smaller of {@link WS_TICKET_TTL_SECONDS} and the token's remaining seconds,
+   * rounded down so the ticket never outlasts the token, and a token with none left mints nothing.
+   *
    * @param payload - The verified dashboard access-token payload.
-   * @returns The raw ticket and how long it is valid for.
+   * @returns The raw ticket and how long it is valid for, in seconds.
+   * @throws {@link AuthException} `auth.token_invalid` when the token has no life left.
    */
   async issue(payload: DashboardJwtPayload): Promise<{ ticket: string; expiresIn: number }> {
     // The second-factor rule, applied here rather than through `MfaRequiredGuard`: that guard
@@ -66,6 +73,15 @@ export class WsTicketService {
     if (payload.mfaEnabled && payload.mfaVerified !== true) {
       this.logger.warn(`ws-ticket: refused, MFA not satisfied userId=${logSafe(payload.sub)}`)
       throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
+    }
+
+    // Rounded so the remainder can only be short of the real one: `ceil` on the clock leaves the
+    // ticket at most as long-lived as the token, never a fraction of a second longer. An absent or
+    // non-numeric `exp` is NaN here and fails the comparison, which refuses rather than mints.
+    const lifetime = Math.min(WS_TICKET_TTL_SECONDS, payload.exp - Math.ceil(Date.now() / 1000))
+    if (!(lifetime > 0)) {
+      this.logger.warn(`ws-ticket: refused, token has no life left userId=${logSafe(payload.sub)}`)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     // The snapshot is read from the ACCOUNT, not from the token.
@@ -92,11 +108,11 @@ export class WsTicketService {
       epoch: readStampedEpoch(payload)
     }
 
-    const ticket = await this.redis.mintWsTicket(snapshot, WS_TICKET_TTL_SECONDS)
+    const ticket = await this.redis.mintWsTicket(snapshot, lifetime)
     this.logger.log(
       `ws-ticket: issued userId=${logSafe(payload.sub)} tenantId=${logSafe(payload.tenantId)}`
     )
-    return { ticket, expiresIn: WS_TICKET_TTL_SECONDS }
+    return { ticket, expiresIn: lifetime }
   }
 
   /**

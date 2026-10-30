@@ -50,8 +50,12 @@ const mockRevocation = { isAccessTokenRevoked: jest.fn() }
 describe('WsTicketService', () => {
   let service: WsTicketService
 
+  /** The clock the fixture payload's `iat`/`exp` are written against: 900 s of life remaining. */
+  const NOW_MS = 1_700_000_000_000
+
   beforeEach(async () => {
     jest.clearAllMocks()
+    jest.spyOn(Date, 'now').mockReturnValue(NOW_MS)
     mockRedis.mintWsTicket.mockResolvedValue('t'.repeat(64))
     mockRevocation.isAccessTokenRevoked.mockResolvedValue(false)
     // The snapshot is read from the account, not the token, so the repository has to answer.
@@ -76,7 +80,61 @@ describe('WsTicketService', () => {
     service = module.get(WsTicketService)
   })
 
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   describe('issue', () => {
+    // Scenario: tokens with different amounts of life left. Expected: the ticket lives for the
+    // smaller of the 30-second ceiling and what the token has left, and the response reports that
+    // same value. Why: a logout blacklists the token only for its remaining life, so a longer
+    // ticket outlives the entry that would refuse it.
+    it.each([
+      ['more than the ceiling', 900, WS_TICKET_TTL_SECONDS],
+      ['exactly the ceiling', 30, 30],
+      ['less than the ceiling', 5, 5],
+      ['one second', 1, 1]
+    ])('should cap the lifetime when the token has %s left', async (_label, left, expected) => {
+      const result = await service.issue(payload({ exp: NOW_MS / 1000 + left }))
+
+      const [, ttl] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
+      expect(ttl).toBe(expected)
+      expect(result.expiresIn).toBe(expected)
+    })
+
+    // Scenario: a clock part-way through a second. Expected: the lifetime is rounded down against
+    // the token, so the ticket is never longer-lived than it. Why: exp is whole seconds, and
+    // rounding the clock the other way would leave the ticket up to a second past the token.
+    it('should round so the ticket never outlasts the token', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(NOW_MS + 400)
+
+      await service.issue(payload({ exp: NOW_MS / 1000 + 3 }))
+
+      const [, ttl] = mockRedis.mintWsTicket.mock.calls[0] as [WsTicketSnapshot, number]
+      expect(ttl).toBe(2)
+    })
+
+    // Scenario: a token with no life left, and one whose expiry is unusable. Expected: nothing is
+    // minted and the refusal is `auth.token_invalid`. Why: a ticket needs a positive lifetime, and
+    // a malformed expiry must not default to the 30-second ceiling.
+    it.each([
+      ['no life left', NOW_MS / 1000],
+      ['a past expiry', NOW_MS / 1000 - 10],
+      ['no expiry', undefined],
+      ['a non-numeric expiry', 'soon']
+    ])('should mint nothing for a token with %s', async (_label, exp) => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+      await expect(service.issue(payload({ exp: exp as number }))).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+      })
+      expect(mockRedis.mintWsTicket).not.toHaveBeenCalled()
+      expect(mockUserRepo.findById).not.toHaveBeenCalled()
+      // The refusal answers a deliberately uninformative code, so the log line is where an
+      // operator learns why a ticket was not minted.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no life left'))
+    })
+
     // Scenario: a plain authenticated session. Expected: the snapshot carries exactly the contract
     // fields and the agreed TTL. Why: an extra field is a credential widened without anyone
     // deciding to. `jti` and `epoch` are the identifiers the two revocation checks are keyed by,
