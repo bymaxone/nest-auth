@@ -818,8 +818,8 @@ export class AppModule {}
 | **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                                                                                     |
 | **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                                                                                     |
 | **Throw specific exceptions** | Guards throw `AuthException` with an `AUTH_ERROR_CODES` code (e.g. `TOKEN_INVALID`, `INSUFFICIENT_ROLE`) — never Nest's built-in HTTP exceptions or generic errors. |
-| **Attach payload to request** | After successful validation, assign `request['user'] = payload`. Use bracket notation for type safety.                                                              |
-| **Token extraction order**    | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly).                                                                     |
+| **Attach payload to request** | After successful validation, assign the payload to `request.user`.                                                                                                  |
+| **Token extraction order**    | In `both` delivery mode: cookie first, then `Authorization: Bearer`. The other modes read only their own source.                                                    |
 
 ---
 
