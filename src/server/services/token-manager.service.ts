@@ -804,10 +804,8 @@ export class TokenManagerService {
    * @returns The JSON string written under an `rt:`/`prt:` key.
    */
   private serializeSession(session: RefreshSession): string {
-    const { mfaVerified, ...withoutFactor } = session
-    const record = mfaVerified === true ? { ...withoutFactor, mfaVerified } : withoutFactor
-    if (session.familyId !== '') return JSON.stringify(record)
-    const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = record
+    if (session.familyId !== '') return JSON.stringify(session)
+    const { familyId: _omitted, familyCreatedAt: _alsoOmitted, ...rest } = session
     return JSON.stringify(rest)
   }
 

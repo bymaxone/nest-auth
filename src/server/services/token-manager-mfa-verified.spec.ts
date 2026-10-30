@@ -252,6 +252,51 @@ describe('the second factor across refresh rotation', () => {
     )
   })
 
+  describe('never inventing it', () => {
+    // Scenario: a grace recovery of a session that never completed the challenge. Expected: the
+    // recovered record gains no field and the token claims false. Why: recovery must copy the
+    // stored factor, not assume it.
+    it.each([
+      [
+        'dashboard',
+        dashboardRecord(),
+        (): Promise<unknown> => service.reissueTokens('old', '1.2.3.4', 'B')
+      ],
+      [
+        'platform',
+        platformRecord(),
+        (): Promise<unknown> => service.reissuePlatformTokens('old', '1.2.3.4', 'B')
+      ]
+    ])('recovers an unverified %s session as unverified', async (_plane, stored, recover) => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({ kind: 'grace', sessionJson: stored })
+
+      await recover()
+
+      expect(lastClaims()).toMatchObject({ mfaEnabled: true, mfaVerified: false })
+      const written = (
+        mockRedis.writeRecoveredSession.mock.calls[0] as [{ newSessionJson: string }]
+      )[0]
+      expect(JSON.parse(written.newSessionJson)).not.toHaveProperty('mfaVerified')
+    })
+
+    // Scenario: the presented token's record vanished before the rotation read it, so the seed is
+    // the empty placeholder. Expected: the successor record carries no factor. Why: a placeholder
+    // must never be able to mint a token that clears the MFA gate.
+    it('does not let the empty placeholder seed a verified successor', async () => {
+      mockRedis.get.mockResolvedValue(null)
+      mockRedis.rotateRefreshSession.mockResolvedValue({
+        kind: 'rotated',
+        sessionJson: dashboardRecord()
+      })
+
+      await service.reissueTokens('old-refresh', '1.2.3.4', 'Browser')
+
+      const next = (mockRedis.rotateRefreshSession.mock.calls[0] as [{ newSessionJson: string }])[0]
+      expect(JSON.parse(next.newSessionJson)).not.toHaveProperty('mfaVerified')
+    })
+  })
+
   describe('carrying it through a grace-window recovery', () => {
     // Scenario: the presented token was already consumed but is inside its grace window, so the session
     // is recovered from the grace record. Expected: the recovered session and its access token carry the
