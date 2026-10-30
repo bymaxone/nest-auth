@@ -803,7 +803,7 @@ reset): a ticket does not outlive the session that asked for it. A logout blackl
 the access token it was given and does not move the epoch, so a ticket minted from an access token
 that a refresh had already replaced is not refused after that logout, as a bearer token of that
 kind is not; it is refused only after a later epoch bump (a password reset or change, an MFA
-enable, disable or reset, or revoking every other session). Minting requires an authenticated session in good standing that has already
+enable, disable or reset, or revoking another session or all of them). Minting requires an authenticated session in good standing that has already
 satisfied MFA, so a ticket never carries more authority than the request that asked for it.
 
 Non-browser clients that can set headers keep using `Authorization: Bearer` at the handshake;

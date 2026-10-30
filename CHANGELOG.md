@@ -405,7 +405,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   blacklists only the access token it was given and does not move the epoch, so a ticket minted
   from an access token that a refresh had already replaced is not refused after that logout, as a
   bearer token of that kind is not; it is refused only after a later epoch bump (a password reset or
-  change, an MFA enable, disable or reset, or revoking every other session).
+  change, an MFA enable, disable or reset, or revoking another session or all of them).
 
 - **The `next` peer dependency floor is `^16.4.1`.** The previous floor, `^16.2.11`, admitted `next`
   releases with published advisories: GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (both critical,
