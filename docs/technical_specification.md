@@ -881,6 +881,10 @@ export interface BymaxAuthModuleOptions {
   /**
    * Granular control over which controllers are registered.
    * Allows disabling endpoints that are not needed.
+   *
+   * Passed to `BymaxAuthModule.registerAsync()` itself, never returned by `useFactory`:
+   * Nest decides the module's shape before any factory runs, so a `controllers` key in the
+   * factory result is refused at startup.
    */
   controllers?: {
     /** Enables AuthController (register, login, logout, refresh, me). Default: true */
@@ -923,6 +927,8 @@ export interface BymaxAuthModuleOptions {
 ```
 
 ### 4.2 Options table with default values
+
+> **`controllers.*` placement.** The `controllers` flags are options of the `registerAsync()` call (a sibling of `useFactory`, `inject` and `extraProviders`), not fields of the object `useFactory` returns. A `controllers` key in the factory result throws at startup.
 
 | Option                            | Type                                      | Required    | Default                               | Description                                                                                                                                                                                                             |
 | --------------------------------- | ----------------------------------------- | ----------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1108,6 +1114,15 @@ import { RedisService } from './redis/redis.service'
         routePrefix: 'auth'
         // tenantIdResolver: (req) => req.hostname.split('.')[0], // uncomment to resolve tenantId by subdomain
       }),
+      // Controller flags belong here, not in the factory result. Every opt-in controller
+      // whose configuration group is set above must be enabled explicitly.
+      controllers: {
+        mfa: true,
+        sessions: true,
+        platform: true,
+        invitations: true,
+        oauth: true
+      },
       extraProviders: [
         {
           provide: BYMAX_AUTH_USER_REPOSITORY,
@@ -1179,7 +1194,7 @@ export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
 
 /**
  * Token for the password breach checker (IPasswordBreachChecker).
- * Optional — if not provided, a checker that approves every password is registered.
+ * Optional — if not provided, `CommonPasswordChecker` (a bundled list of common passwords) is registered.
  */
 export const BYMAX_AUTH_BREACH_CHECKER = Symbol('BYMAX_AUTH_BREACH_CHECKER')
 ```
@@ -1364,32 +1379,27 @@ export interface AuthPlatformUser {
   /** Whether MFA is enabled */
   mfaEnabled: boolean
 
-  /** Encrypted TOTP secret */
-  mfaSecret: string | null
+  /** AES-256-GCM encrypted TOTP secret. Absent when MFA has never been configured. */
+  mfaSecret?: string
 
-  /** Hashed recovery codes */
-  mfaRecoveryCodes: string[] | null
+  /** SHA-256 hashed recovery codes. Absent when MFA has never been configured. */
+  mfaRecoveryCodes?: string[]
 
-  /** Timestamp of the last login */
+  /** Logical platform identifier for multi-platform deployments. Absent in single-platform configurations. */
+  platformId?: string
+
+  /** Timestamp of the last login, or null if the admin never logged in */
   lastLoginAt: Date | null
-
-  /** Creation timestamp */
-  createdAt: Date
 
   /** Last update timestamp */
   updatedAt: Date
 
-  /**
-   * Logical deletion (soft-delete) timestamp.
-   * Admins with `deletedAt != null` must be treated as nonexistent:
-   * - `IPlatformUserRepository.findById()` and `findByEmail()` MUST return `null`
-   * - The `JwtPlatformGuard` will reject access since the repository will not find the admin
-   * - When deleting an admin, the host application MUST call `PlatformAuthService.revokeAllPlatformSessions()`
-   *   to invalidate all active tokens immediately
-   */
-  deletedAt: Date | null
+  /** Creation timestamp */
+  createdAt: Date
 }
 ```
+
+> **Removing an admin.** `AuthPlatformUser` carries no deletion field. A host that deletes (or soft-deletes) an admin must make `findById()` and `findByEmail()` stop returning the record, and call `PlatformAuthService.revokeAllPlatformSessions()` to invalidate all active tokens immediately. MFA changes go through `updateMfa(id, UpdatePlatformMfaData)`, where `null` clears the secret and the recovery codes.
 
 ### 5.4 `IPlatformUserRepository` interface
 
@@ -1699,7 +1709,9 @@ const fromPhcB64 = (value: string): Buffer => Buffer.from(value, 'base64')
 async hash(plainPassword: string): Promise<string> {
   const { costFactor: N, blockSize: r, parallelization: p } = this.options.password // N default: 2^17
   const salt = randomBytes(16)
-  const derived = await scryptAsync(plainPassword, salt, 64, { N, r, p }) as Buffer
+  // scrypt needs about 128 * N * r bytes (128 MiB at the default N); Node's default maxmem is 32 MiB
+  const maxmem = Math.max(N * r * 128 * 2, 64 * 1024 * 1024)
+  const derived = await scryptAsync(plainPassword, salt, 64, { N, r, p, maxmem }) as Buffer
   const ln = Math.log2(N)
   return `$scrypt$ln=${ln},r=${r},p=${p}$${toPhcB64(salt)}$${toPhcB64(derived)}`
 }
@@ -1714,14 +1726,16 @@ async compare(plainPassword: string, storedHash: string): Promise<boolean> {
   const derived = await scryptAsync(plainPassword, fromPhcB64(saltB64), stored.length, {
     N: 2 ** Number(ln),
     r: Number(r),
-    p: Number(p)
+    p: Number(p),
+    // a fixed ceiling, never derived from the stored record: above it scrypt throws instead of allocating
+    maxmem: MAX_KDF_BYTES_PER_DERIVATION * 2
   }) as Buffer
 
   return timingSafeEqual(stored, derived)
 }
 ```
 
-> The reference omits the bounds the real service enforces on a stored record, which make a malformed or hostile value answer `false` instead of throwing.
+> Both calls pass an explicit `maxmem`: without it, Node rejects the default cost (`ERR_CRYPTO_INVALID_SCRYPT_PARAMS`). The reference omits the bounds the real service enforces on a stored record (including the parameter ceiling `MAX_KDF_BYTES_PER_DERIVATION`), which make a malformed or hostile value answer `false` instead of throwing.
 
 ### 6.3 TokenManagerService
 
@@ -1742,7 +1756,7 @@ class TokenManagerService {
    *
    * Flow:
    * 1. Generates access JWT with complete claims
-   * 2. Generates opaque refresh token (UUID v4)
+   * 2. Generates opaque refresh token (256-bit random value, 64 hex characters)
    * 3. Stores refresh token in Redis with session data
    *
    * Does NOT manipulate Response — the controller uses TokenDeliveryService to deliver.
@@ -1772,7 +1786,7 @@ class TokenManagerService {
    *
    * Flow:
    * 1. Generates access JWT with claims per `PlatformJwtPayload` (type: 'platform')
-   * 2. Generates opaque refresh token (UUID v4)
+   * 2. Generates opaque refresh token (256-bit random value, 64 hex characters)
    * 3. Stores refresh token in Redis with prefix `prt:` and session data
    * 4. Updates the platform session index — `psess:{hmac_sha256(hmacKey, "platform:{userId}")}`
    *    — and details `psd:{sessionHash}`
@@ -2188,7 +2202,7 @@ class PasswordResetService {
    *
    * Flow:
    * 1. Validates the OTP via OtpService.verify() (CONSUMES the OTP)
-   * 2. Generates a temporary verification token (UUID)
+   * 2. Generates a temporary verification token (256-bit random value, 64 hex characters)
    * 3. Stores in Redis: auth:pw_vtok:{sha256(token)} → { userId, email, tenantId, passwordFingerprint }, TTL 5 minutes
    * 4. Returns the verification token
    *
@@ -2687,12 +2701,13 @@ export class MfaDisableDto {
 
 **Prefix:** `/{routePrefix}/password` (default: `/auth/password`)
 
-| Method | Route              | Auth   | Guards | Body                       | Description                                             |
-| ------ | ------------------ | ------ | ------ | -------------------------- | ------------------------------------------------------- |
-| `POST` | `/forgot-password` | Public | —      | `ForgotPasswordDto`        | Starts password reset                                   |
-| `POST` | `/reset-password`  | Public | —      | `ResetPasswordDto`         | Resets password with token or OTP                       |
-| `POST` | `/verify-otp`      | Public | —      | `{ email, otp, tenantId }` | Verifies OTP and returns a temporary verification token |
-| `POST` | `/resend-otp`      | Public | —      | `{ email, tenantId }`      | Resends reset OTP                                       |
+| Method | Route              | Auth   | Guards                            | Body                                                   | Description                                                                                                            |
+| ------ | ------------------ | ------ | --------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/forgot-password` | Public | —                                 | `ForgotPasswordDto`                                    | Starts password reset                                                                                                  |
+| `POST` | `/reset-password`  | Public | —                                 | `ResetPasswordDto`                                     | Resets password with token or OTP                                                                                      |
+| `POST` | `/change`          | JWT    | `JwtAuthGuard`, `UserStatusGuard` | `ChangePasswordDto` (`currentPassword`, `newPassword`) | Changes the authenticated account's password after proving the current one; ends every other session and returns `204` |
+| `POST` | `/verify-otp`      | Public | —                                 | `{ email, otp, tenantId }`                             | Verifies OTP and returns a temporary verification token                                                                |
+| `POST` | `/resend-otp`      | Public | —                                 | `{ email, tenantId }`                                  | Resends reset OTP                                                                                                      |
 
 **DTOs:**
 
@@ -2874,7 +2889,7 @@ The MFA challenge itself stays on `POST /auth/platform/mfa/challenge` (section 7
 | `JwtAuthGuard` | Validates the dashboard/tenant JWT in the cookie or `Authorization: Bearer` header. Checks `payload.type === 'dashboard'` — rejects `platform` and `mfa_challenge` tokens with `auth.token_invalid`. Extracts the payload and populates `request.user`. Respects the `@Public()` decorator to skip validation. | Global or per-route guard for authenticated endpoints |
 | `JwtPlatformGuard` | Validates the platform JWT. Checks `payload.type === 'platform'` — rejects `dashboard` tokens with `auth.platform_auth_required`. Shares `jwt.secret` with `JwtAuthGuard` (isolation via the `type` claim, not via the key). | Platform admin endpoints |
 | `RolesGuard` | Checks whether the user's role satisfies the defined hierarchy. Uses metadata set by `@Roles()`. A parent role inherits all child roles. | Endpoint, via `@Roles()` |
-| `TrustedOriginGuard` | Rejects state-changing cross-site requests from an origin outside `cookies.trustedOrigins`, whether or not they carry a cookie (CSRF and login-CSRF defence). Safe methods pass untouched. | Every library controller (class-level) |
+| `TrustedOriginGuard` | CSRF and login-CSRF defence for state-changing requests, whether or not they carry a cookie. Safe methods (`GET`, `HEAD`, `OPTIONS`) and `Sec-Fetch-Site: same-origin` / `none` pass untouched. An `Origin` listed in `cookies.trustedOrigins` passes. An unlisted `Origin` is refused (`UNTRUSTED_ORIGIN`) when the request carries any other `Sec-Fetch-Site` value or when `trustedOrigins` is non-empty; it passes only when `trustedOrigins` is empty and `Sec-Fetch-Site` is absent, because the module cannot tell its own origin from another one without trusting a client-controlled header. A request with a non-safe `Sec-Fetch-Site` and no `Origin` is refused; a request with neither header (non-browser client) passes. | Every library controller (class-level) |
 | `AuthRateLimitGuard` | Enforces the per-IP limit a route declares with `@AuthRateLimit`, backed by Redis. Active while `rateLimit.enabled` is `true` (default). | Every library controller (class-level) |
 | `UserStatusGuard` | Checks the account status through `AccountStatusService` (Redis cache): refuses blocked statuses and, when `emailVerification.required`, an unverified email. Composed after `JwtAuthGuard`. | Authenticated routes, after `JwtAuthGuard` |
 | `MfaRequiredGuard` | Refuses a token whose `mfaEnabled` claim is `true` without `mfaVerified: true`. Synchronous (reads the verified payload); opt out with `@SkipMfa()`. | Routes that require a completed MFA challenge |
@@ -3635,7 +3650,7 @@ Client                     AuthController              TokenManager             
   │                            │                          │─────────────────────────>│
   │                            │                          │<─────────────────────────│ sessionData
   │                            │                          │                          │
-  │                            │                          │ Generate NEW = UUID v4    │
+  │                            │                          │ Generate NEW (256-bit hex)│
   │                            │                          │                          │
   │                            │                          │ SET rp:{sha256(OLD)} = NEW│
   │                            │                          │ EX 30                     │
@@ -3846,7 +3861,10 @@ interface AuthClientConfig {
   defaultHeaders?: Record<string, string>
   /** Callback when the session expires definitively (refresh failed) */
   onSessionExpired?: () => void
-  // There is no `timeout` option: pass an `AbortSignal` per request when one is needed.
+  /** Callback for every refresh attempt that did not produce a session, with the reason; runs before `onSessionExpired` */
+  onRefreshFailed?: (failure: RefreshFailure) => void // { ok: false, reason: 'rejected' | 'unavailable' | 'unreachable', status: number | null }
+  /** Per-request timeout in milliseconds. Default: 30000 (30 s); `0` disables it */
+  timeout?: number
 }
 ```
 
@@ -3872,24 +3890,19 @@ interface AuthClient {
 The internal core of the client that implements 401 interception with single-flight refresh:
 
 ```typescript
-function createAuthFetch(config: AuthClientConfig) {
+function createAuthFetch(config: AuthFetchConfig = {}) {
   /** Single in-flight refresh so that concurrent 401s share one request */
   let refreshPromise: Promise<boolean> | null = null
 
-  /** URLs of auth endpoints that should NOT trigger a refresh on 401 */
-  const AUTH_PATHS = [
-    '/auth/sign-in',
-    '/auth/sign-up',
-    '/auth/refresh',
-    '/api/auth/client-refresh',
-    '/api/auth/silent-refresh',
-    '/auth/forgot-password',
-    '/auth/verify',
-    '/auth/reset-password'
-  ]
+  /**
+   * Pathname suffixes of credential-issuing endpoints that should NOT trigger a refresh on 401.
+   * Derived from `config.routePrefix` (default 'auth') plus the proxy refresh endpoints.
+   */
+  const skipRefreshSuffixes = buildAuthRefreshSkipSuffixes(config.routePrefix)
 
   function shouldSkipRefreshOnUrl(url: string): boolean {
-    return AUTH_PATHS.some((path) => url.includes(path))
+    const pathname = new URL(url, 'http://_placeholder').pathname
+    return skipRefreshSuffixes.some((suffix) => pathname.endsWith(suffix))
   }
 
   async function refreshSession(): Promise<boolean> {
@@ -4023,7 +4036,7 @@ function useSession(): {
   status: 'authenticated' | 'unauthenticated' | 'loading'
   isLoading: boolean
   refresh: () => Promise<void>
-  lastValidation: number | null
+  lastValidation: Date | null
 }
 ```
 

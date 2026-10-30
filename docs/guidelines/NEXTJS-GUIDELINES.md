@@ -237,7 +237,8 @@ The `@bymax-one/nest-auth/nextjs` subpath provides factory functions that return
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 
 // app/api/auth/client-refresh/route.ts
@@ -246,7 +247,10 @@ export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_U
 
 // app/api/auth/logout/route.ts
 import { createLogoutHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
+export const POST = createLogoutHandler({
+  apiBase: process.env.API_BASE_URL!,
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
+})
 ```
 
 These handlers encapsulate cookie forwarding, header propagation, error handling, and Set-Cookie deduplication. Consuming applications should use the factories directly rather than writing custom handlers.
@@ -351,7 +355,7 @@ interface AuthProxyConfig {
   /** Absolute base URL of the NestJS API. Required; not read from an environment variable. */
   readonly apiBase: string
 
-  /** HS256 secret (optional; without it the proxy only decodes and warns via console.warn). Pass it explicitly. */
+  /** HS256 secret. Required at runtime: `createAuthProxy` throws when it is undefined or empty, because without it no signature can be verified. Typed optional only so it can be read from `process.env.JWT_SECRET`; pass it explicitly. */
   readonly jwtSecret?: string
 
   /** Maximum number of chained silent refreshes. Default: 2 */
@@ -810,7 +814,8 @@ Factory that creates the GET handler for `/api/auth/silent-refresh`:
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 ```
 
@@ -868,7 +873,10 @@ Factory that creates the POST handler for `/api/auth/logout`:
 ```typescript
 // app/api/auth/logout/route.ts
 import { createLogoutHandler } from '@bymax-one/nest-auth/nextjs'
-export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
+export const POST = createLogoutHandler({
+  apiBase: process.env.API_BASE_URL!,
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
+})
 ```
 
 The handler forwards the logout request to the NestJS backend and clears all auth cookies on the response.
@@ -888,14 +896,11 @@ app/
   api/
     auth/
       silent-refresh/
-        route.ts      # export const GET = createSilentRefreshHandler({
-  apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
-})
+        route.ts      # export const GET = createSilentRefreshHandler({ apiBase, loginPath, cookieNames })
       client-refresh/
-        route.ts      # export const POST = createClientRefreshHandler({ apiBase: process.env.API_BASE_URL! })
+        route.ts      # export const POST = createClientRefreshHandler({ apiBase })
       logout/
-        route.ts      # export const POST = createLogoutHandler({ apiBase: process.env.API_BASE_URL! })
+        route.ts      # export const POST = createLogoutHandler({ apiBase, cookieNames })
 ```
 
 These are one-line files. All logic is encapsulated in the factory functions.
@@ -1567,7 +1572,8 @@ export async function GET(request: NextRequest) {
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 ```
 
@@ -1598,7 +1604,8 @@ export const config = { matcher: [/* ... */] }
 export const dynamic = 'force-static'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 ```
 
@@ -1608,7 +1615,8 @@ export const GET = createSilentRefreshHandler({
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'
 export const GET = createSilentRefreshHandler({
   apiBase: process.env.API_BASE_URL!,
-  loginPath: '/auth/login'
+  loginPath: '/auth/login',
+  cookieNames: { access: 'access_token', refresh: 'refresh_token', hasSession: 'has_session' }
 })
 ```
 
@@ -1684,9 +1692,9 @@ export const config = { matcher: [/* ... */] }
 
 ### Route Handlers
 
-- [ ] Create `app/api/auth/silent-refresh/route.ts` with `createSilentRefreshHandler({ apiBase, loginPath })`
+- [ ] Create `app/api/auth/silent-refresh/route.ts` with `createSilentRefreshHandler({ apiBase, loginPath, cookieNames })`
 - [ ] Create `app/api/auth/client-refresh/route.ts` with `createClientRefreshHandler({ apiBase })`
-- [ ] Create `app/api/auth/logout/route.ts` with `createLogoutHandler({ apiBase })`
+- [ ] Create `app/api/auth/logout/route.ts` with `createLogoutHandler({ apiBase, cookieNames })`
 - [ ] No `dynamic = 'force-static'` on auth routes
 - [ ] Each route handler exports only the needed HTTP method
 

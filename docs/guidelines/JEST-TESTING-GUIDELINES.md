@@ -110,7 +110,7 @@ describe('AuthService', () => {
     it('should return tokens for valid credentials', async () => {
       /* ... */
     })
-    it('should throw UnauthorizedException for invalid password', async () => {
+    it('should throw AuthException(INVALID_CREDENTIALS) for invalid password', async () => {
       /* ... */
     })
     it('should enforce brute-force lockout after threshold', async () => {
@@ -271,17 +271,9 @@ This avoids the need for multiple Jest config files. The `node` environment is t
 
 The project uses `ts-jest` 29 with the following considerations:
 
-- **ESM mode** is enabled (`useESM: true`) because the package uses `"type": "module"` in `package.json`.
-- The `tsconfig.json` used by ts-jest should have `"module": "ESNext"` and `"moduleResolution": "bundler"` or `"node16"`.
-- If you encounter ESM import issues in tests, ensure the `NODE_OPTIONS` environment variable includes `--experimental-vm-modules`:
-
-```jsonc
-// package.json scripts
-{
-  "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
-  "test:cov": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
-}
-```
+- **CommonJS transform.** Although `package.json` declares `"type": "module"`, the suite runs the CommonJS transform: `jest.config.ts` uses `preset: 'ts-jest'` with no `useESM`, and `tsconfig.jest.json` extends `tsconfig.json` with `"module": "CommonJS"` and `"moduleResolution": "node"`.
+- `NODE_OPTIONS=--experimental-vm-modules` is not set; the `test` and `test:cov` scripts are plain `jest` and `jest --coverage`.
+- `moduleNameMapper` maps the package subpath specifiers to `src/`, so tests import `@bymax-one/nest-auth/...` exactly as consumers do.
 
 ### 2.4 Running Tests
 
@@ -343,10 +335,9 @@ describe('AuthService', () => {
 
   const mockConfig = {
     jwt: {
-      accessSecret: 'test-access-secret',
-      refreshSecret: 'test-refresh-secret',
+      secret: 'test-secret',
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d'
+      refreshExpiresInDays: 7
     },
     registration: {
       enabled: true,
@@ -525,7 +516,9 @@ Guards are a critical security boundary. Every guard MUST be thoroughly tested f
 ```typescript
 import { Test, TestingModule } from '@nestjs/testing'
 import { Reflector } from '@nestjs/core'
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { ExecutionContext } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { JwtAuthGuard } from './jwt-auth.guard'
 import { TokenManagerService } from '../services/token-manager.service'
 
@@ -641,7 +634,10 @@ describe('canActivate()', () => {
     reflector.getAllAndOverride.mockReturnValue(false)
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+    })
   })
 
   it('should allow access to routes decorated with @Public()', async () => {
@@ -668,7 +664,7 @@ describe('canActivate()', () => {
     reflector.getAllAndOverride.mockReturnValue(false)
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
   })
 })
 ```
@@ -699,7 +695,9 @@ describe('RolesGuard', () => {
     reflector.getAllAndOverride.mockReturnValue(['admin'])
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException)
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+    })
   })
 
   it('should allow access when no roles are required', async () => {
@@ -826,7 +824,7 @@ describe('login()', () => {
       expect.objectContaining({
         httpOnly: true,
         secure: true,
-        sameSite: 'strict'
+        sameSite: 'lax'
       })
     )
   })
@@ -1211,29 +1209,29 @@ Use `rejects` matcher for testing promise rejections:
 ```typescript
 it('should throw when refresh token is blacklisted', async () => {
   tokenManager.verifyRefreshToken.mockImplementation(() => {
-    throw new UnauthorizedException('Token has been revoked')
+    throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   })
 
-  await expect(service.refreshToken('blacklisted-token')).rejects.toThrow(UnauthorizedException)
+  await expect(service.refreshToken('blacklisted-token')).rejects.toThrow(AuthException)
 })
 
-// Test specific error message
-it('should include error code in the exception', async () => {
-  await expect(service.refreshToken('bad-token')).rejects.toThrow(
-    expect.objectContaining({
-      message: expect.stringContaining('revoked')
-    })
-  )
+// Test the specific error code: AuthException carries it under response.error.code
+it('should include the error code in the exception', async () => {
+  await expect(service.refreshToken('bad-token')).rejects.toMatchObject({
+    response: { error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID } }
+  })
 })
 
-// Test specific error properties
-it('should throw with AUTH_TOKEN_EXPIRED error code', async () => {
+// Test the exception type and its code together
+it('should throw AuthException with the REFRESH_TOKEN_INVALID code', async () => {
   try {
     await service.refreshToken('expired-token')
     fail('Expected an error to be thrown')
   } catch (error) {
-    expect(error).toBeInstanceOf(UnauthorizedException)
-    expect(error.response.errorCode).toBe('AUTH_TOKEN_EXPIRED')
+    expect(error).toBeInstanceOf(AuthException)
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID }
+    })
   }
 })
 ```
@@ -1699,14 +1697,12 @@ it('should throw for invalid token', async () => {
   await expect(service.verifyToken('bad')).rejects.toThrow()
 })
 
-// CORRECT — asserts the specific exception type and message
-it('should throw UnauthorizedException for invalid token', async () => {
-  await expect(service.verifyToken('bad')).rejects.toThrow(UnauthorizedException)
-  await expect(service.verifyToken('bad')).rejects.toThrow(
-    expect.objectContaining({
-      message: expect.stringContaining('invalid')
-    })
-  )
+// CORRECT — asserts the specific exception type and error code
+it('should throw AuthException(TOKEN_INVALID) for invalid token', async () => {
+  await expect(service.verifyToken('bad')).rejects.toThrow(AuthException)
+  await expect(service.verifyToken('bad')).rejects.toMatchObject({
+    response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+  })
 })
 ```
 
@@ -1773,19 +1769,19 @@ describe('login()', () => {
   it('should return tokens for valid credentials', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for wrong password', async () => {
+  it('should throw AuthException(INVALID_CREDENTIALS) for wrong password', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for non-existent user', async () => {
+  it('should throw AuthException(INVALID_CREDENTIALS) for non-existent user', async () => {
     /* ... */
   })
-  it('should throw ForbiddenException when account is locked', async () => {
+  it('should throw AuthException(ACCOUNT_LOCKED) when account is locked', async () => {
     /* ... */
   })
-  it('should throw ForbiddenException when MFA is required but not provided', async () => {
+  it('should throw AuthException(MFA_REQUIRED) when MFA is required but not provided', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for invalid MFA code', async () => {
+  it('should throw AuthException(MFA_INVALID_CODE) for invalid MFA code', async () => {
     /* ... */
   })
 })

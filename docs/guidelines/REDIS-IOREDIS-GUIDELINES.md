@@ -740,7 +740,7 @@ OTPs (One-Time Passwords) are short numeric codes sent via email for password re
 
 ```
 Key:   auth:otp:{purpose}:{hmac_sha256(hmacKey, "{tenantId}:{email}")}
-Value: JSON: { "code": "<hmac_sha256(identifier:code)>", "attempts": 0 }
+Value: HASH { code: "<hmac_sha256(identifier:code)>", attempts: 0 }
 TTL:   otpTtlSeconds (varies by purpose)
 ```
 
@@ -748,62 +748,56 @@ The `purpose` segment (`password_reset` or `email_verification`) prevents a code
 
 ### 7.3 Storing an OTP
 
+The record is a HASH, written together with its expiry in one script so the key never exists without a TTL (an `HSET` followed by a separate `EXPIRE` leaves a window where a crash strands the record with no expiry):
+
 ```typescript
+const OTP_STORE_LUA = `
+redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+`
+
 async storeOtp(
   purpose: "password_reset" | "email_verification",
-  tenantId: string,
-  email: string,
+  identifier: string,
   code: string,
   ttlSeconds: number,
 ): Promise<void> {
-  const key = this.key("otp", `${purpose}:${sha256(tenantId + ":" + email)}`);
-  await this.redis.set(
-    key,
-    JSON.stringify({ code, attempts: 0 }),
-    "EX",
-    ttlSeconds,
+  // `fingerprint` is the keyed HMAC of identifier + code; the code itself is never stored.
+  await this.redis.eval(
+    OTP_STORE_LUA,
+    [`otp:${purpose}:${identifier}`],
+    [this.fingerprint(identifier, code), String(ttlSeconds)],
   );
 }
 ```
 
 ### 7.4 Atomic Check-and-Delete (Verify OTP)
 
-OTP verification must be atomic to prevent race conditions where the same code is verified twice:
+OTP verification must be atomic to prevent race conditions where the same code is verified twice, and so that parallel wrong guesses cannot exceed the attempt ceiling. A read in JS followed by a write back would let N concurrent guesses all read `attempts: 0`. The decision is made inside one script, with `HINCRBY` bumping the counter in place (it leaves the key's TTL untouched, so a wrong guess cannot extend the OTP's lifetime):
 
 ```typescript
-async verifyOtp(
-  purpose: "password_reset" | "email_verification",
-  tenantId: string,
-  email: string,
-  submittedCode: string,
-): Promise<"valid" | "invalid" | "expired" | "max_attempts"> {
-  const key = this.key("otp", `${purpose}:${sha256(tenantId + ":" + email)}`);
+const OTP_VERIFY_LUA = `
+local code = redis.call('HGET', KEYS[1], 'code')
+if not code then
+    return { 'EXPIRED', '' }
+end
+local attempts = tonumber(redis.call('HGET', KEYS[1], 'attempts')) or 0
+if attempts >= tonumber(ARGV[2]) then
+    redis.call('DEL', KEYS[1])
+    return { 'MAX', '' }
+end
+if code == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+else
+    redis.call('HINCRBY', KEYS[1], 'attempts', 1)
+end
+return { 'PRESENT', code }
+`
 
-  const data = await this.redis.get(key);
-  if (!data) return "expired";
-
-  const otp = JSON.parse(data) as { code: string; attempts: number };
-
-  if (otp.attempts >= 5) {
-    await this.redis.del(key);
-    return "max_attempts";
-  }
-
-  if (otp.code !== submittedCode) {
-    // Increment attempt counter atomically
-    otp.attempts += 1;
-    const ttl = await this.redis.ttl(key);
-    if (ttl > 0) {
-      await this.redis.set(key, JSON.stringify(otp), "EX", ttl);
-    }
-    return "invalid";
-  }
-
-  // Valid — delete immediately to prevent reuse
-  await this.redis.del(key);
-  return "valid";
-}
+const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [fingerprint, String(MAX_ATTEMPTS)])
 ```
+
+The caller re-compares the returned stored fingerprint to the submitted one in constant time (`timingSafeEqual`), and answers every failure (missing record, exhausted ceiling, wrong code) with the same `OTP_INVALID` error in the same time, so the responses do not reveal whether a record exists.
 
 ### 7.5 Resend Cooldown
 

@@ -1976,11 +1976,12 @@ went one release stated and unenforced.
 > internally for logs and control flow — branching on them client-side is the same dead branch as
 > an invented code, for a subtler reason.
 
-> **Anti-enumeration reads through the status too.** `POST /password/forgot-password`,
-> `POST /password/resend-otp` and `POST /password/verify-otp` answer `200`, and `POST /verify-email`
-> and `POST /resend-verification` answer `204`, **whether or not the address exists**.
+> **Anti-enumeration reads through the status too.** `POST /password/forgot-password` and
+> `POST /password/resend-otp` answer `200`, and `POST /verify-email` and
+> `POST /resend-verification` answer `204`, **whether or not the address exists**.
 > A `200` there does not mean an email was sent, and treating it as confirmation re-introduces
-> the account enumeration the endpoints exist to prevent. For the same reason the OTP failures
+> the account enumeration the endpoints exist to prevent. `POST /password/verify-otp` answers `200`
+> only for a correct code; for the same reason the OTP failures
 > collapse: a wrong code, a record that expired, and an exhausted attempt ceiling are one code
 > (`auth.otp_invalid`) at one status (`401`) — a `429` on the ceiling would say the address was
 > registered, since only a record that exists can reach one.

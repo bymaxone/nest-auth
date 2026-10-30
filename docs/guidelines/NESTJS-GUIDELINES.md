@@ -445,15 +445,11 @@ The primary guard — extracts and validates JWT tokens from cookies or the `Aut
 ```typescript
 // guards/jwt-auth.guard.ts
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  Inject,
-  UnauthorizedException
-} from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
@@ -484,7 +480,7 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractToken(request)
 
     if (!token) {
-      throw new UnauthorizedException('Missing authentication token')
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     try {
@@ -495,7 +491,7 @@ export class JwtAuthGuard implements CanActivate {
       // Attach the validated payload to the request for downstream use
       request['user'] = payload
     } catch {
-      throw new UnauthorizedException('Invalid or expired token')
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     return true
@@ -530,7 +526,9 @@ Checks that the authenticated user has the required role(s) based on a hierarchi
 ```typescript
 // guards/roles.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { ROLES_KEY } from '../decorators/roles.decorator'
 import { hasRole } from '../utils/roles.util'
@@ -555,13 +553,13 @@ export class RolesGuard implements CanActivate {
     const user = request['user'] as DashboardJwtPayload
 
     if (!user) {
-      throw new ForbiddenException('Authentication required')
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     const authorized = requiredRoles.some((role) => hasRole(user.role, role))
 
     if (!authorized) {
-      throw new ForbiddenException('Insufficient permissions')
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     return true
@@ -576,7 +574,9 @@ Prevents banned or inactive users from accessing resources:
 ```typescript
 // guards/user-status.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
@@ -596,7 +596,7 @@ export class UserStatusGuard implements CanActivate {
     const isBlocked = await this.redisService.isUserBlocked(user.sub)
 
     if (isBlocked) {
-      throw new ForbiddenException('Account is suspended')
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
     }
 
     return true
@@ -611,7 +611,9 @@ Ensures that MFA-enabled users have completed the MFA challenge:
 ```typescript
 // guards/mfa-required.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -639,7 +641,7 @@ export class MfaRequiredGuard implements CanActivate {
 
     // If the user has MFA enabled but has not completed the challenge
     if (user.mfaEnabled && !user.mfaVerified) {
-      throw new ForbiddenException('MFA verification required')
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
     return true
@@ -810,14 +812,14 @@ export class AppModule {}
 
 ### 3.10 Rules for Guards in This Project
 
-| Rule                          | Description                                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **No Passport**               | All guards implement `CanActivate` directly. Never import `@nestjs/passport`.                          |
-| **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                        |
-| **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                        |
-| **Throw specific exceptions** | Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403) — never generic errors.       |
-| **Attach payload to request** | After successful validation, assign `request['user'] = payload`. Use bracket notation for type safety. |
-| **Token extraction order**    | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly).        |
+| Rule                          | Description                                                                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No Passport**               | All guards implement `CanActivate` directly. Never import `@nestjs/passport`.                                                                                       |
+| **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                                                                                     |
+| **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                                                                                     |
+| **Throw specific exceptions** | Guards throw `AuthException` with an `AUTH_ERROR_CODES` code (e.g. `TOKEN_INVALID`, `INSUFFICIENT_ROLE`) — never Nest's built-in HTTP exceptions or generic errors. |
+| **Attach payload to request** | After successful validation, assign `request['user'] = payload`. Use bracket notation for type safety.                                                              |
+| **Token extraction order**    | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly).                                                                     |
 
 ---
 
@@ -1293,7 +1295,7 @@ async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
 
 ### 6.4 DTO Validation with Pipes
 
-Use `class-validator` and `class-transformer` for input validation. The host application must register the `ValidationPipe` globally:
+Use `class-validator` and `class-transformer` for input validation. The package does not register a global `ValidationPipe`. Its own controllers mount `createAuthValidationPipe()` (exported from the package root), which produces the `AUTH_ERROR_CODES` validation error shape with per-field `details`. The host registers a `ValidationPipe` for its own routes, and can reuse `createAuthValidationPipe()` to get the same error shape:
 
 ```typescript
 // dto/register.dto.ts
@@ -1334,7 +1336,7 @@ export class LoginDto {
 }
 ```
 
-> **Important:** This package does NOT register `ValidationPipe` globally. That is the host application's responsibility. Document this requirement for consumers.
+> **Important:** This package does NOT register `ValidationPipe` globally. The host decides how its own routes are validated; `createAuthValidationPipe()` is available for hosts that want the same error shape. Document this for consumers.
 
 ### 6.5 HTTP Status Codes
 
@@ -1394,14 +1396,14 @@ export class AppModule {}
 
 ### 6.8 Rules for Controllers in This Project
 
-| Rule                            | Description                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Thin controllers**            | Controllers only validate, call services, and return. No business logic in controllers.                 |
-| **Explicit `@HttpCode()`**      | Every route handler must have an explicit HTTP status code.                                             |
-| **`passthrough: true`**         | Always use `@Res({ passthrough: true })` when injecting the response object.                            |
-| **No global `ValidationPipe`**  | The package does not register global pipes. Document this for consumers.                                |
-| **No hardcoded route prefixes** | Do not use `@Controller('api/v1/auth')`. Use `@Controller('auth')` and let the host configure prefixes. |
-| **Type all return values**      | Every handler method must have an explicit return type annotation.                                      |
+| Rule                            | Description                                                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Thin controllers**            | Controllers only validate, call services, and return. No business logic in controllers.                    |
+| **Explicit `@HttpCode()`**      | Every route handler must have an explicit HTTP status code.                                                |
+| **`passthrough: true`**         | Always use `@Res({ passthrough: true })` when injecting the response object.                               |
+| **No global `ValidationPipe`**  | The package does not register global pipes; its controllers mount `createAuthValidationPipe()` themselves. |
+| **No hardcoded route prefixes** | Do not use `@Controller('api/v1/auth')`. Use `@Controller('auth')` and let the host configure prefixes.    |
+| **Type all return values**      | Every handler method must have an explicit return type annotation.                                         |
 
 ---
 
@@ -1991,7 +1993,8 @@ describe('AuthService', () => {
 // guards/jwt-auth.guard.spec.ts
 
 import { Test, TestingModule } from '@nestjs/testing'
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { ExecutionContext } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { JwtAuthGuard } from './jwt-auth.guard'
@@ -2036,12 +2039,12 @@ describe('JwtAuthGuard', () => {
     expect(result).toBe(true)
   })
 
-  it('should throw UnauthorizedException when no token is present', async () => {
+  it('should throw AuthException when no token is present', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
 
     const context = createMockExecutionContext({ cookies: {}, headers: {} })
 
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
   })
 
   it('should attach user payload to request on valid token', async () => {
@@ -2552,7 +2555,7 @@ Use this checklist when writing or reviewing NestJS code in this project:
 - [ ] No Passport — all guards implement `CanActivate` directly
 - [ ] No `APP_GUARD` registered by the library
 - [ ] Guards use `Reflector.getAllAndOverride()` for metadata
-- [ ] Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403)
+- [ ] Guards throw `AuthException` with an `AUTH_ERROR_CODES` code (the `AuthExceptionFilter` maps it to 401/403)
 - [ ] JWT extracted from cookie first, then `Authorization` header
 - [ ] Validated payload attached to `request['user']`
 

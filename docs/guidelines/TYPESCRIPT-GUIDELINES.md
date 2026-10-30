@@ -348,7 +348,7 @@ const payload = jwt.decode(token) as any as DashboardJwtPayload
 function decodeDashboardToken(token: string): DashboardJwtPayload {
   const raw: unknown = jwt.decode(token)
   if (!isDashboardPayload(raw)) {
-    throw new AuthException('INVALID_TOKEN', 'Token payload does not match expected shape')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }
   return raw
 }
@@ -512,19 +512,19 @@ const sessions: PaginatedResult<SessionInfo> = await sessionService.listSessions
 
 #### 5.1.3 Generic Factories
 
-The NestJS dynamic module pattern relies on generic factories.
+The NestJS dynamic module pattern relies on generic factories. The sample below is a simplified illustration of the shape of `BymaxAuthModule.registerAsync`, not its exact source.
 
 ```typescript
-// CORRECT: Generic module factory with constraints
+// CORRECT: Generic module factory with constraints. The package exposes registerAsync only,
+// and the module is not global: the host imports it where it needs it.
 export class BymaxAuthModule {
-  static forRoot<
+  static registerAsync<
     TUser extends AuthUser = AuthUser,
     TPlatformUser extends AuthPlatformUser = AuthPlatformUser
-  >(options: BymaxAuthModuleOptions<TUser, TPlatformUser>): DynamicModule {
+  >(options: AuthModuleAsyncOptions<TUser, TPlatformUser>): DynamicModule {
     const providers = buildProviders(options)
     return {
       module: BymaxAuthModule,
-      global: true,
       providers,
       exports: providers
     }
@@ -637,7 +637,7 @@ export function isDashboardPayload(value: unknown): value is DashboardJwtPayload
 // Usage:
 function handleToken(decoded: unknown): DashboardJwtPayload {
   if (!isDashboardPayload(decoded)) {
-    throw new AuthException('INVALID_TOKEN', 'Malformed dashboard token payload')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }
   // decoded is now narrowed to DashboardJwtPayload
   return decoded
@@ -672,7 +672,7 @@ Assertion functions throw on failure instead of returning a boolean. They are us
 // CORRECT: Assertion function — narrows type or throws
 export function assertDashboardPayload(value: unknown): asserts value is DashboardJwtPayload {
   if (!isDashboardPayload(value)) {
-    throw new AuthException('INVALID_TOKEN', 'Expected a dashboard JWT payload')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }
 }
 
@@ -688,15 +688,15 @@ function processToken(decoded: unknown): void {
 
 ```typescript
 // CORRECT: Generic non-null assertion
-export function assertNonNull<T>(value: T, message: string): asserts value is NonNullable<T> {
+export function assertNonNull<T>(value: T): asserts value is NonNullable<T> {
   if (value === null || value === undefined) {
-    throw new AuthException('INTERNAL_ERROR', message)
+    throw new AuthException(AUTH_ERROR_CODES.INTERNAL)
   }
 }
 
 // Usage:
 const user = await userRepo.findById(userId)
-assertNonNull(user, `User not found: ${userId}`)
+assertNonNull(user)
 // user is now AuthUser (not AuthUser | null)
 user.email // safe
 ```
@@ -752,19 +752,19 @@ const AUTH_ERRORS: Record<string, { status: number; message: string }> = {
 async function getAuthenticatedUser(request: Request): Promise<AuthUser> {
   const token = extractToken(request)
   if (token === undefined) {
-    throw new AuthException('AUTH_NO_TOKEN', 'No authentication token provided')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_MISSING)
   }
   // token is narrowed to string
 
   const payload = verifyToken(token)
   if (!isDashboardPayload(payload)) {
-    throw new AuthException('AUTH_INVALID_TOKEN', 'Invalid token payload')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }
   // payload is narrowed to DashboardJwtPayload
 
   const user = await userRepo.findById(payload.sub)
   if (user === null) {
-    throw new AuthException('AUTH_USER_NOT_FOUND', 'User no longer exists')
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID) // the token's subject no longer exists
   }
   // user is narrowed to AuthUser
 
@@ -781,14 +781,16 @@ async function getAuthenticatedUser(request: Request): Promise<AuthUser> {
 #### `Partial<T>` — Make all properties optional
 
 ```typescript
-// CORRECT: Partial for update operations
-export interface IUserRepository {
-  update(id: string, data: Partial<AuthUser>): Promise<AuthUser>
+// CORRECT: Partial for update operations. Generic teaching example: IUserRepository does not
+// declare a catch-all update(); it has narrow, tenant-scoped methods (updatePassword,
+// updateStatus, updateEmail, ...), each taking a params object that extends TenantScopedUserRef.
+export interface IBaseRepository<TEntity> {
+  update(id: string, data: Partial<TEntity>): Promise<TEntity>
 }
 
 // The caller can update any subset of fields:
-await userRepo.update(userId, { email: newEmail })
-await userRepo.update(userId, { roles: ['admin'], status: 'active' })
+await repo.update(id, { email: newEmail })
+await repo.update(id, { role: 'admin', status: 'active' })
 ```
 
 #### `Required<T>` — Make all properties required
@@ -1297,7 +1299,7 @@ console.log(payload.tenantId) // undefined if token has wrong shape
 // CORRECT: Validate, then narrow
 const raw: unknown = jwt.decode(token)
 if (!isDashboardPayload(raw)) {
-  throw new AuthException('AUTH_INVALID_TOKEN', 'Malformed token payload')
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 // raw is now DashboardJwtPayload — safe to access
 console.log(raw.tenantId)
@@ -1313,7 +1315,7 @@ return user!.email // Runtime crash if user is null
 // CORRECT: Explicit null check
 const user = await userRepo.findById(id)
 if (user === null) {
-  throw new AuthException('AUTH_USER_NOT_FOUND', `User ${id} not found`)
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 return user.email // Safe — narrowed by the if-check
 ```

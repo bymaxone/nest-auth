@@ -1204,7 +1204,7 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 ### Cookies
 
 - [ ] Access token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Lax`, `Path=/`.
-- [ ] Refresh token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Strict`, `Path=/auth`.
+- [ ] Refresh token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Lax` (the default; configurable via `cookies.sameSite`), `Path=/auth`.
 - [ ] Session signal cookie: NOT HttpOnly, value `"1"` only.
 - [ ] If `routePrefix` changes, update `refreshCookiePath` to match.
 - [ ] Validate `resolveDomains` input against an allowlist.
