@@ -204,6 +204,22 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **A refresh rotation dropped the second factor, locking every MFA user out of `MfaRequiredGuard`
+  routes at the first rotation.** The guard refuses a token whose claims say
+  `mfaEnabled && !mfaVerified`. A session that completed the MFA challenge carries
+  `mfaVerified: true`, but the refresh-session record stored only `mfaEnabled`, so every rotation
+  minted `mfaVerified: false`, and no route lets an authenticated session re-acquire the claim.
+  After `jwt.accessExpiresIn` the user was refused everywhere behind the guard until they signed in
+  again. The record now carries `mfaVerified`, written only as `true` and read back strictly (a
+  record without the field, or with any value other than the boolean `true`, reads as not
+  verified), and every rotation and grace-window recovery copies it forward on both planes. A
+  session opened without the challenge gains nothing, so no rotation can turn into a way around the
+  guard. This follows NIST SP 800-63B-4 §5: "A session SHOULD inherit the AAL properties of the
+  authentication event that triggered its creation"
+  (<https://pages.nist.gov/800-63-4/sp800-63b/session/>). Sessions already stored carry no field
+  and stay unverified until the user next completes the challenge. `conformance/wire-contract.json`
+  states the field under `refreshSession` (`optionalFields`), so `rust-auth` must carry the same.
+
 - **The `uev:` key format was stated twice inside this library, and no test could see them
   disagree.** `AccountStatusService` derived it; `AuthService.verifyEmail` hand-built the same
   string inline to drop the flag after a verification. They agreed, and nothing kept them

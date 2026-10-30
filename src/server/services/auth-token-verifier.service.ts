@@ -57,9 +57,9 @@ export interface VerifyAccessTokenOptions {
    * Refuse a token whose account has MFA enabled but which was not itself issued after a
    * successful challenge — the rule {@link MfaRequiredGuard} applies to an HTTP route.
    *
-   * It matters most on a reconnect: a refresh mints `mfaEnabled: true, mfaVerified: false`, so a
-   * token that is otherwise entirely valid can represent a session that never completed its
-   * second factor. The token's `type` does not imply it.
+   * It matters most on a reconnect: a refresh carries `mfaVerified` forward only from a session
+   * that completed the challenge, so a token that is otherwise entirely valid can still represent
+   * a session that never did. The token's `type` does not imply it.
    *
    * @defaultValue true
    */
