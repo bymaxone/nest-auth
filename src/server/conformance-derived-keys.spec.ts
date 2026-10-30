@@ -78,9 +78,8 @@ function renderDerivedKey(
 describe('account-derived keys rendered from the contract', () => {
   // Scenario: the key naming a user's live sessions and the key holding their token epoch, for a
   // tenant id that contains the delimiter and one with multi-byte characters. Expected: the key
-  // the code derives equals the key the contract's templates render. Why: the epoch key was once
-  // declared one way and written another, so every epoch-bump revocation was a silent no-op for a
-  // verifier that built its key from the declaration.
+  // the code derives equals the key the contract's templates render. Why: a verifier that builds its key from the declaration reads a key nothing writes, resolves an
+  // absent epoch as 0, and then never rejects, so every epoch-bump revocation is a silent no-op.
   describe.each([
     ['sessionIndex', sessionIndexKey],
     ['tokenEpoch', tokenEpochKey]
