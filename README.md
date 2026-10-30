@@ -726,6 +726,13 @@ export const config = {
 }
 ```
 
+How the route lists match a path: an entry matches the path that equals it and anything under
+it (`'/auth'` covers `/auth/login`), and takes no wildcards (`'/auth/*'` matches nothing). An
+entry ending in `/` is a plain prefix, so `'/'` matches every path. In `publicRoutes` that is
+harmless: `protectedRoutes` are tried first, and a path no list names is already let through. In
+`publicRoutesRedirectIfAuthenticated` it sends a signed-in user to their dashboard from every page
+that is not protected, so list the login and register pages there, never `'/'`.
+
 ```typescript
 // app/api/auth/silent-refresh/route.ts
 import { createSilentRefreshHandler } from '@bymax-one/nest-auth/nextjs'

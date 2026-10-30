@@ -296,7 +296,6 @@ import { createAuthProxy } from '@bymax-one/nest-auth/nextjs'
 const authProxy = createAuthProxy({
   publicRoutes: ['/', '/welcome', '/auth', '/privacy'],
   publicRoutesRedirectIfAuthenticated: [
-    '/',
     '/welcome',
     '/auth/login',
     '/auth/register',
@@ -333,10 +332,19 @@ export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)
 
 ```typescript
 interface AuthProxyConfig {
-  /** Routes without authentication: exact match or `<route>/` prefix */
+  /**
+   * Routes without authentication: exact match or `<route>/` prefix. No wildcards: `'/auth'`
+   * covers `/auth/login`, `'/auth/*'` matches nothing. A route that ends in `/` is a plain
+   * prefix, so `'/'` matches every path; protected patterns are tried first, so it never
+   * makes a protected route public.
+   */
   readonly publicRoutes: readonly string[]
 
-  /** Subset of publicRoutes that redirects an already-authenticated user */
+  /**
+   * Subset of publicRoutes that redirects an already-authenticated user. Same matching as
+   * `publicRoutes`, which makes `'/'` here redirect a signed-in user away from every page that is
+   * not protected: list the login and register pages, never `'/'`.
+   */
   readonly publicRoutesRedirectIfAuthenticated: readonly string[]
 
   /** RBAC-protected routes; the first match wins */

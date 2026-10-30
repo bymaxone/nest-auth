@@ -414,6 +414,14 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Documentation
 
+- **The proxy route lists say how an entry matches, and two examples no longer mislead.** An entry
+  matches the path equal to it and anything under it, takes no wildcards, and a `'/'` entry is a
+  plain prefix that matches every path. In `publicRoutes` that never opens a protected route
+  (protected patterns are tried first); in `publicRoutesRedirectIfAuthenticated` it redirects a
+  signed-in user away from every unprotected page. The specification's `'/auth/*'` public route
+  (which matches nothing) is now `'/auth'`, and the redirect examples in the guide and the
+  specification no longer list `'/'`. Text and tests only: the matcher is unchanged.
+
 - **`conformance/wire-contract.json` names the key the token epoch is stored under.**
   `accessTokenClaims.epoch.storedUnder` now reads `{ep|pep}:{hmac_sha256(hmacKey, userSubject)}`,
   the derived key the epoch is written to, instead of the bare `{ep|pep}:{userId}`. Text only: the
