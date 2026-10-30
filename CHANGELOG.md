@@ -227,7 +227,7 @@ what moves, and that note is the compatibility contract until strict SemVer begi
   mounted controllers take, taken from `conformance/openapi-request-schemas.json` (compiled into the
   bundle as a generated module, since `conformance/` is not published, with a gate that fails when
   it differs from what the decorators produce). Only the controllers a deployment mounted
-  contribute, so a deployment without MFA or OAuth gets no unreferenced component. Measured in a scratch application
+  contribute, so a deployment without MFA, platform or invitations gets no unreferenced component. Measured in a scratch application
   (outside this repository's suite) with `@bymax-one/nest-core` 1.6.1 and 1.6.3 over the package's
   16 exported request DTOs: all 16 were empty before and carried their properties after, with
   nothing reported as discarded. **Request schemas appear with `@bymax-one/nest-core` ≥ 1.6.1; older versions ignore the

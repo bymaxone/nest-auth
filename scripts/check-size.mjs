@@ -107,13 +107,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 //     with a stack-trace tradeoff rather than something to do while unblocking a PR, so it is
 //     tracked separately; recorded here so the next person reads a measurement instead of the
 //     narrower claim.
-//     Raised to 129 KiB for the request schemas the OpenAPI contributor carries: the 20 body
-//     DTOs' schemas compiled in as a generated module, so a served document stops describing
-//     every request as `{}`. Measured by removing that one block from the built bundle and
-//     compressing both: 121.88 -> 122.48 KiB, so +0.60 KiB against 0.12 KiB of headroom, which
-//     is why the gate failed by 0.48. This is DATA, not prose, so the comment-stripping lever
-//     above does not touch it. A shipped control with red-checked tests behind it; 129 puts
-//     headroom back at ~5%, inside this entry's historical band.
+//     Raised to 129 KiB for the request schemas the OpenAPI contributor carries, compiled in as a
+//     generated module so a served document stops describing every request as `{}`. Measured by
+//     removing that one block from the built bundle and compressing both: 121.88 -> 122.48 KiB,
+//     so +0.60 KiB against 0.12 KiB of headroom. This is DATA, not prose, so the
+//     comment-stripping lever above does not touch it. 129 puts headroom back at about 5%.
 //   shared   2.35 KiB →  3 KiB  (~28% headroom)
 //     Raised to 3.5 KiB: the subpath gained the two error codes that close the catalog gap
 //     with rust-auth (`auth.token_missing`, `auth.internal`) and a linear slash trimmer that

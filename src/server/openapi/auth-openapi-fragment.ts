@@ -400,8 +400,8 @@ const PLATFORM_REFRESH_BODY: FragmentObject = {
 /**
  * The request schemas of the controllers a deployment mounted.
  *
- * A DTO two families share (`MfaChallengeDto` is taken by the dashboard and the platform
- * controller) is contributed once, under its class name.
+ * A DTO that more than one family takes is contributed once, under its class name, because the
+ * result is keyed by name.
  *
  * @param registered - Which of this library's controllers the deployment mounted.
  * @returns The schemas, keyed by DTO class name.

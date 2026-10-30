@@ -14,8 +14,7 @@
  * placeholder the builder registers — and none for a name it does not. The name is the join key
  * of the merge, so a fragment keyed by anything else is dropped without a signal.
  *
- * Whether the builder then fills the placeholder is measured in the consumer's suite, where both
- * packages are installed at the versions that run.
+ * The merge itself belongs to the document builder and is not exercised here.
  */
 
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'

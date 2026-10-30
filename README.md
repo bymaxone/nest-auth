@@ -1387,7 +1387,7 @@ const security = [{ [AUTH_SECURITY_SCHEMES.accessCookie]: [] }]
 
 The same contributor offers the request-body schema of every DTO that the controllers your
 deployment mounted take (`LoginDto`, `RegisterDto`, `ResetPasswordDto` and the rest), derived from
-their `class-validator` decorators. Without it `@nestjs/swagger` registers each of them as
+their `class-validator` decorators. Without a contribution `@nestjs/swagger` registers each of them as
 `{"type":"object","properties":{}}`, because this package is built without its CLI plugin, and a
 client generated from the document types every request body as `{}`.
 
@@ -1403,7 +1403,7 @@ Two limits, so a missing field is not mistaken for a bug. The OAuth endpoints ta
 query parameters, which the builder describes as operation parameters rather than as a component,
 so no schema is offered for those two DTOs. And what a decorator cannot express (which proof
 `ResetPasswordDto` accepts for the configured `passwordReset.method`, the deployment's
-`password.minLength`) stays in the endpoint descriptions rather than in the schema.
+`password.minLength`) is not in the schema and is not described elsewhere in the served document.
 
 **If you already wrote these by hand, delete them** — not because they are wrong. They are what
 makes your document correct today; the deletion is what hands the job to the library, and it is
