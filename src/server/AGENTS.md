@@ -9,15 +9,15 @@ carries the ones that are true only here.
 
 ### Injection Tokens (7 Symbols)
 
-| Token                                 | Type                      | Required                                                                                  |
-| ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `BYMAX_AUTH_OPTIONS`                  | `ResolvedOptions`         | Always                                                                                    |
-| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Always                                                                                    |
-| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | If `platformAdmin.enabled`                                                                |
-| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Always (NoOp default)                                                                     |
-| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Always (NoOp default)                                                                     |
-| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                                    |
-| `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`AllowAllBreachChecker` default — the check reaches the network, so it is opt-in) |
+| Token                                 | Type                      | Required                                                                   |
+| ------------------------------------- | ------------------------- | -------------------------------------------------------------------------- |
+| `BYMAX_AUTH_OPTIONS`                  | `ResolvedOptions`         | Always                                                                     |
+| `BYMAX_AUTH_USER_REPOSITORY`          | `IUserRepository`         | Always                                                                     |
+| `BYMAX_AUTH_PLATFORM_USER_REPOSITORY` | `IPlatformUserRepository` | If `platformAdmin.enabled`                                                 |
+| `BYMAX_AUTH_EMAIL_PROVIDER`           | `IEmailProvider`          | Always (NoOp default)                                                      |
+| `BYMAX_AUTH_HOOKS`                    | `IAuthHooks`              | Always (NoOp default)                                                      |
+| `BYMAX_AUTH_REDIS_CLIENT`             | `Redis`                   | Always                                                                     |
+| `BYMAX_AUTH_BREACH_CHECKER`           | `IPasswordBreachChecker`  | Always (`CommonPasswordChecker` default; a network breach check is opt-in) |
 
 ### Service and controller shape
 

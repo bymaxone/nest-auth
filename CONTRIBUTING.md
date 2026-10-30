@@ -12,7 +12,7 @@ reporting process described in [SECURITY.md](./SECURITY.md).
 ## Prerequisites
 
 - Node.js >= 24
-- pnpm 10.8.1 (`corepack enable`)
+- pnpm 11.20.0 (`corepack enable`)
 
 ## Getting started
 
@@ -36,19 +36,21 @@ everything ships as a `peerDependency` or a `node:` builtin (all crypto via
 ## Verification — run before every PR
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build && pnpm size
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:cov:all && pnpm build && pnpm size
 ```
 
 All of the following must pass:
 
 - **Typecheck** — `tsc --noEmit` (strict, zero errors)
 - **Lint** — ESLint (zero `any`, import order, security rules)
+- **Format** — `prettier --check .`; `pnpm format` fixes it
 - **Coverage** — 100% statements / branches / functions / lines
 - **Build** — tsup produces ESM + CJS + `.d.ts` for every subpath
 - **Size** — every subpath stays within the budget in `scripts/check-size.mjs`
 
-Mutation testing (`pnpm mutation`) is a **release gate**, run manually before
-tagging a version — never on every PR.
+Mutation testing (Stryker, `break: 100`) is not part of the per-PR checks. It runs on
+`main` after merge and as a weekly cold run (`Mutation (full)`); only a cold
+`pnpm mutation:full` verdict is evidence.
 
 ## Commits — Conventional Commits
 
@@ -65,7 +67,8 @@ The `pre-commit` hook runs lint-staged (ESLint + Prettier on staged files).
 
 - Keep PRs focused and small.
 - Record user-facing changes under the `Unreleased` section of `CHANGELOG.md`.
-- All CI checks (`ci`, `codeql`, `scorecard`) must be green.
+- All CI checks must be green; the required check is `CI passed`, which aggregates the
+  `ci`, `verify` and `security` jobs.
 
 ## License
 

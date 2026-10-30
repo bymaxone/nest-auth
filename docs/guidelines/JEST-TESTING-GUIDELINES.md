@@ -1,7 +1,7 @@
 # Jest Testing Guidelines — @bymax-one/nest-auth
 
 > **Audience:** AI agents and developers working on this codebase.
-> **Stack:** Jest 29, ts-jest 29, @nestjs/testing, @testing-library/react
+> **Stack:** Jest 30, ts-jest 29, @nestjs/testing, @testing-library/react
 > **Rule:** Follow these guidelines for all test code in this project.
 
 ---
@@ -110,7 +110,7 @@ describe('AuthService', () => {
     it('should return tokens for valid credentials', async () => {
       /* ... */
     })
-    it('should throw UnauthorizedException for invalid password', async () => {
+    it('should throw AuthException(INVALID_CREDENTIALS) for invalid password', async () => {
       /* ... */
     })
     it('should enforce brute-force lockout after threshold', async () => {
@@ -185,8 +185,11 @@ The project uses a TypeScript Jest config at the project root:
 import type { Config } from 'jest'
 
 const config: Config = {
-  // Use ts-jest ESM preset for this ESM-first package
-  preset: 'ts-jest/presets/default-esm',
+  // The real jest.config.ts uses rootDir 'src' and
+  // testMatch ['**/*.spec.ts', '**/*.spec.tsx', '**/*.test.ts'] (paths below are shown from the repo root).
+  // The per-subpath coverage gate lives in jest.coverage.config.ts (`pnpm test:cov:all`) and the
+  // e2e suite in jest.e2e.config.ts (test/e2e/*.e2e-spec.ts).
+  preset: 'ts-jest',
 
   // The test environment
   testEnvironment: 'node',
@@ -202,8 +205,7 @@ const config: Config = {
     '^.+\\.tsx?$': [
       'ts-jest',
       {
-        useESM: true,
-        tsconfig: 'tsconfig.json'
+        tsconfig: 'tsconfig.jest.json'
       }
     ]
   },
@@ -269,29 +271,21 @@ This avoids the need for multiple Jest config files. The `node` environment is t
 
 The project uses `ts-jest` 29 with the following considerations:
 
-- **ESM mode** is enabled (`useESM: true`) because the package uses `"type": "module"` in `package.json`.
-- The `tsconfig.json` used by ts-jest should have `"module": "ESNext"` and `"moduleResolution": "bundler"` or `"node16"`.
-- If you encounter ESM import issues in tests, ensure the `NODE_OPTIONS` environment variable includes `--experimental-vm-modules`:
-
-```jsonc
-// package.json scripts
-{
-  "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
-  "test:cov": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
-}
-```
+- **CommonJS transform.** Although `package.json` declares `"type": "module"`, the suite runs the CommonJS transform: `jest.config.ts` uses `preset: 'ts-jest'` with no `useESM`, and `tsconfig.jest.json` extends `tsconfig.json` with `"module": "CommonJS"` and `"moduleResolution": "node"`.
+- `NODE_OPTIONS=--experimental-vm-modules` is not set; the `test` and `test:cov` scripts are plain `jest` and `jest --coverage`.
+- `moduleNameMapper` maps the package subpath specifiers to `src/`, so tests import `@bymax-one/nest-auth/...` exactly as consumers do.
 
 ### 2.4 Running Tests
 
-| Command                                    | Purpose                                            |
-| ------------------------------------------ | -------------------------------------------------- |
-| `pnpm test`                                | Run all tests once                                 |
-| `pnpm test:cov`                            | Run all tests with coverage report                 |
-| `pnpm test:watch`                          | Run tests in watch mode (development)              |
-| `npx jest path/to/file.spec.ts`            | Run a single test file                             |
-| `npx jest --testNamePattern="should hash"` | Run tests matching a pattern                       |
-| `pnpm mutation`                            | Stryker mutation testing (Node 24, ~10 min)        |
-| `pnpm mutation:incremental`                | Faster Stryker re-run (uses the incremental cache) |
+| Command                                    | Purpose                                                       |
+| ------------------------------------------ | ------------------------------------------------------------- |
+| `pnpm test`                                | Run all tests once                                            |
+| `pnpm test:cov`                            | Run all tests with coverage report                            |
+| `pnpm test:watch`                          | Run tests in watch mode (development)                         |
+| `npx jest path/to/file.spec.ts`            | Run a single test file                                        |
+| `npx jest --testNamePattern="should hash"` | Run tests matching a pattern                                  |
+| `pnpm mutation`                            | Stryker incremental (reuses reports/stryker-incremental.json) |
+| `pnpm mutation:full`                       | Cold run; the only one that measures the truth                |
 
 ---
 
@@ -303,7 +297,7 @@ introducing small changes (flip `<`/`<=`, drop a `!`, blank a string) and checki
 suite catches them. For a security library this is the real quality gate.
 
 When adding tests to a hot path (`crypto/`, `guards/`, `services/`), run
-`pnpm mutation:incremental` locally and aim to **kill** the relevant mutants — pin exact
+`pnpm mutation` locally and aim to **kill** the relevant mutants — pin exact
 boundaries, error codes, Redis key shapes, and call arguments (`toHaveBeenCalledWith`)
 rather than just asserting "no throw".
 
@@ -341,10 +335,9 @@ describe('AuthService', () => {
 
   const mockConfig = {
     jwt: {
-      accessSecret: 'test-access-secret',
-      refreshSecret: 'test-refresh-secret',
+      secret: 'test-secret',
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d'
+      refreshExpiresInDays: 7
     },
     registration: {
       enabled: true,
@@ -523,7 +516,9 @@ Guards are a critical security boundary. Every guard MUST be thoroughly tested f
 ```typescript
 import { Test, TestingModule } from '@nestjs/testing'
 import { Reflector } from '@nestjs/core'
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { ExecutionContext } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 import { JwtAuthGuard } from './jwt-auth.guard'
 import { TokenManagerService } from '../services/token-manager.service'
 
@@ -608,6 +603,8 @@ function createMockExecutionContext(
 
 ### 4.3 Testing Guard Allow/Deny Logic
 
+> Simplified teaching example. The real `JwtAuthGuard` verifies the token with `JwtService.verify()` (via `verifyWithRotation`) and consults `AuthRevocationService.isAccessTokenRevoked`; the reusable verification outside the guards is `AuthTokenVerifierService.verifyAccessToken`. Mock those dependencies when testing the real guard.
+
 ```typescript
 describe('canActivate()', () => {
   it('should allow access with a valid JWT in Authorization header', async () => {
@@ -637,7 +634,10 @@ describe('canActivate()', () => {
     reflector.getAllAndOverride.mockReturnValue(false)
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+    })
   })
 
   it('should allow access to routes decorated with @Public()', async () => {
@@ -664,7 +664,7 @@ describe('canActivate()', () => {
     reflector.getAllAndOverride.mockReturnValue(false)
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
   })
 })
 ```
@@ -695,7 +695,9 @@ describe('RolesGuard', () => {
     reflector.getAllAndOverride.mockReturnValue(['admin'])
 
     // Act & Assert
-    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException)
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { error: { code: AUTH_ERROR_CODES.INSUFFICIENT_ROLE } }
+    })
   })
 
   it('should allow access when no roles are required', async () => {
@@ -822,7 +824,7 @@ describe('login()', () => {
       expect.objectContaining({
         httpOnly: true,
         secure: true,
-        sameSite: 'strict'
+        sameSite: 'lax'
       })
     )
   })
@@ -1207,29 +1209,29 @@ Use `rejects` matcher for testing promise rejections:
 ```typescript
 it('should throw when refresh token is blacklisted', async () => {
   tokenManager.verifyRefreshToken.mockImplementation(() => {
-    throw new UnauthorizedException('Token has been revoked')
+    throw new AuthException(AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID)
   })
 
-  await expect(service.refreshToken('blacklisted-token')).rejects.toThrow(UnauthorizedException)
+  await expect(service.refreshToken('blacklisted-token')).rejects.toThrow(AuthException)
 })
 
-// Test specific error message
-it('should include error code in the exception', async () => {
-  await expect(service.refreshToken('bad-token')).rejects.toThrow(
-    expect.objectContaining({
-      message: expect.stringContaining('revoked')
-    })
-  )
+// Test the specific error code: AuthException carries it under response.error.code
+it('should include the error code in the exception', async () => {
+  await expect(service.refreshToken('bad-token')).rejects.toMatchObject({
+    response: { error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID } }
+  })
 })
 
-// Test specific error properties
-it('should throw with AUTH_TOKEN_EXPIRED error code', async () => {
+// Test the exception type and its code together
+it('should throw AuthException with the REFRESH_TOKEN_INVALID code', async () => {
   try {
     await service.refreshToken('expired-token')
     fail('Expected an error to be thrown')
   } catch (error) {
-    expect(error).toBeInstanceOf(UnauthorizedException)
-    expect(error.response.errorCode).toBe('AUTH_TOKEN_EXPIRED')
+    expect(error).toBeInstanceOf(AuthException)
+    expect((error as AuthException).getResponse()).toMatchObject({
+      error: { code: AUTH_ERROR_CODES.REFRESH_TOKEN_INVALID }
+    })
   }
 })
 ```
@@ -1590,7 +1592,7 @@ collectCoverageFrom: [
 The global threshold is **100% across every layer** — there is no lower tier for
 any directory (guards, crypto, controllers, hooks, utils all sit at 100%). 100%
 line coverage proves code _executes_; it does NOT prove a test would _fail_ on a
-regression, so the deeper gate is **mutation testing** (Stryker `break: 95`).
+regression, so the deeper gate is **mutation testing** (Stryker `break: 100`).
 Treat 100% line coverage as the floor and a high mutation score as the real
 measure of test quality, especially on security-critical code (`crypto/`,
 `guards/`).
@@ -1695,14 +1697,12 @@ it('should throw for invalid token', async () => {
   await expect(service.verifyToken('bad')).rejects.toThrow()
 })
 
-// CORRECT — asserts the specific exception type and message
-it('should throw UnauthorizedException for invalid token', async () => {
-  await expect(service.verifyToken('bad')).rejects.toThrow(UnauthorizedException)
-  await expect(service.verifyToken('bad')).rejects.toThrow(
-    expect.objectContaining({
-      message: expect.stringContaining('invalid')
-    })
-  )
+// CORRECT — asserts the specific exception type and error code
+it('should throw AuthException(TOKEN_INVALID) for invalid token', async () => {
+  await expect(service.verifyToken('bad')).rejects.toThrow(AuthException)
+  await expect(service.verifyToken('bad')).rejects.toMatchObject({
+    response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+  })
 })
 ```
 
@@ -1769,19 +1769,19 @@ describe('login()', () => {
   it('should return tokens for valid credentials', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for wrong password', async () => {
+  it('should throw AuthException(INVALID_CREDENTIALS) for wrong password', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for non-existent user', async () => {
+  it('should throw AuthException(INVALID_CREDENTIALS) for non-existent user', async () => {
     /* ... */
   })
-  it('should throw ForbiddenException when account is locked', async () => {
+  it('should throw AuthException(ACCOUNT_LOCKED) when account is locked', async () => {
     /* ... */
   })
-  it('should throw ForbiddenException when MFA is required but not provided', async () => {
+  it('should throw AuthException(MFA_REQUIRED) when MFA is required but not provided', async () => {
     /* ... */
   })
-  it('should throw UnauthorizedException for invalid MFA code', async () => {
+  it('should throw AuthException(MFA_INVALID_CODE) for invalid MFA code', async () => {
     /* ... */
   })
 })
@@ -1854,7 +1854,7 @@ Use this checklist before submitting any test code:
 ### Coverage
 
 - [ ] Running `pnpm test:cov` shows all four metrics at 100% (the enforced gate).
-- [ ] Mutation testing (Stryker `break: 95`) passes — the deeper gate beyond 100% line coverage, especially on security-critical modules (guards, password, tokens).
+- [ ] Mutation testing (Stryker `break: 100`) passes — the deeper gate beyond 100% line coverage, especially on security-critical modules (guards, password, tokens).
 - [ ] Barrel files, `.d.ts` files, and pure interface/type files are excluded.
 
 ### TDD Compliance

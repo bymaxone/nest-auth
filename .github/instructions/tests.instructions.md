@@ -1,5 +1,5 @@
 ---
-applyTo: '**/*.spec.ts,**/*.e2e.spec.ts'
+applyTo: '**/*.spec.ts,**/*.e2e-spec.ts'
 ---
 
 # Testing standards
@@ -10,7 +10,7 @@ applyTo: '**/*.spec.ts,**/*.e2e.spec.ts'
 
 ## Mutation testing threshold
 
-Stryker `break: 95` is the enforced gate (aspirational `high: 99`). Flag tests that use generic matchers (`toBeDefined()`, `toBeTruthy()`) where a value assertion is possible — they survive Stryker mutants.
+Stryker `break: 100` is the enforced gate. Flag tests that use generic matchers (`toBeDefined()`, `toBeTruthy()`) where a value assertion is possible — they survive Stryker mutants.
 
 ## Test structure and naming
 
@@ -72,7 +72,7 @@ Equivalent mutants only: `// Stryker disable next-line <Mutator>: <reason why mu
 
 Use `@nestjs/testing → Test.createTestingModule(...)`. Override only external I/O — Redis via `ioredis-mock`, the email provider, the consumer-supplied repository. Keep all DI wiring real; do not stub the library's own services.
 
-## E2E tests (`*.e2e.spec.ts`)
+## E2E tests (`*.e2e-spec.ts`)
 
 Real NestJS app (`NestFactory.create`) + `supertest`. Must validate end-to-end: guards reject unauthenticated/cross-tenant requests, login issues access+refresh tokens, refresh rotation works, and revocation (JTI blacklist) blocks a revoked token.
 

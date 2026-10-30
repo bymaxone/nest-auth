@@ -87,25 +87,25 @@ The `node:` prefix was introduced in Node.js 16 and is mandatory in this project
 
 | Parameter           | Config Key                 | Default Value | Description                                                   |
 | ------------------- | -------------------------- | ------------- | ------------------------------------------------------------- |
-| N (cost factor)     | `password.costFactor`      | 2^15 (32768)  | CPU/memory cost. Doubling N doubles time and memory.          |
+| N (cost factor)     | `password.costFactor`      | 2^17 (131072) | CPU/memory cost. Doubling N doubles the time and the memory.  |
 | r (block size)      | `password.blockSize`       | 8             | Block size. Each block is 128\*r bytes.                       |
 | p (parallelization) | `password.parallelization` | 1             | Parallelization factor.                                       |
 | keyLen              | (fixed)                    | 64            | Derived key length in bytes (512 bits).                       |
 | salt                | (generated)                | 16 bytes      | Unique random salt per password via `crypto.randomBytes(16)`. |
 
-**Memory usage formula:** `128 * N * r * p` bytes = `128 * 32768 * 8 * 1` = **32 MB** per hash operation.
+**Memory usage formula:** `128 * N * r` bytes (per derivation) = `128 * 131072 * 8` = **128 MB** per hash. The `PasswordService` passes `maxmem = max(2 * 128 * N * r, 64 MiB)` to `scrypt`, because Node's default limit (32 MiB) is lower than required.
 
 ### Storage Format
 
 ```
-scrypt:{salt_hex}:{derived_hex}
+$scrypt$ln={log2(N)},r={r},p={p}${salt_b64}${derived_b64}
 ```
 
-- Prefix `scrypt:` enables future algorithm migration (e.g., if switching to Argon2 when natively available)
-- Salt is stored as lowercase hexadecimal (32 characters for 16 bytes)
-- Derived key is stored as lowercase hexadecimal (128 characters for 64 bytes)
+- The format is PHC (the same one `rust-auth` writes): the `ln`, `r` and `p` parameters travel inside the hash itself, which allows changing the cost (`password.costFactor`) without invalidating stored hashes and migrating to another algorithm in the future
+- The salt (16 bytes) and the derived key (64 bytes) are standard base64 without `=` padding; the parser accepts only the canonical encoding
+- The parser rejects out-of-bounds parameters (`ln`, `r`, `p` and the memory requested by the record), returning `false` instead of throwing
 
-Example: `scrypt:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4:7f8e9d...` (total ~164 characters)
+Example: `$scrypt$ln=17,r=8,p=1$<salt_b64>$<derived_b64>`
 
 ### Reference Implementation
 
@@ -120,16 +120,18 @@ const scryptAsync = promisify(scrypt)
  * Generates a unique 16-byte salt per password.
  *
  * @param plainPassword - The user's plaintext password
- * @returns Hash string in format scrypt:{salt_hex}:{derived_hex}
+ * @returns PHC hash: $scrypt$ln={log2(N)},r={r},p={p}${salt_b64}${derived_b64}
  */
 async function hashPassword(plainPassword: string): Promise<string> {
   const salt = randomBytes(16)
   const derived = (await scryptAsync(plainPassword, salt, 64, {
-    N: 32768, // 2^15 — configurable via password.costFactor
+    N: 131072, // 2^17 - configurable via password.costFactor
     r: 8, // configurable via password.blockSize
-    p: 1 // configurable via password.parallelization
+    p: 1, // configurable via password.parallelization
+    maxmem: 256 * 1024 * 1024 // Node's default limit (32 MiB) is lower than the 128 MiB this cost requires
   })) as Buffer
-  return `scrypt:${salt.toString('hex')}:${derived.toString('hex')}`
+  const b64 = (buf: Buffer): string => buf.toString('base64').replace(/=+$/, '')
+  return `$scrypt$ln=17,r=8,p=1$${b64(salt)}$${b64(derived)}`
 }
 
 /**
@@ -137,19 +139,25 @@ async function hashPassword(plainPassword: string): Promise<string> {
  * Uses timing-safe comparison to prevent timing attacks.
  *
  * @param plainPassword - The user's plaintext password
- * @param storedHash - The stored hash in scrypt:{salt}:{hash} format
+ * @param storedHash - The stored hash in PHC format ($scrypt$ln=..,r=..,p=..$salt$hash)
  * @returns true if the password matches
  */
 async function comparePassword(plainPassword: string, storedHash: string): Promise<boolean> {
-  const [prefix, saltHex, hashHex] = storedHash.split(':')
-  if (prefix !== 'scrypt' || !saltHex || !hashHex) return false
+  const [leading, algorithm, params, saltB64, hashB64] = storedHash.split('$')
+  if (leading !== '' || algorithm !== 'scrypt' || !params || !saltB64 || !hashB64) return false
 
-  const salt = Buffer.from(saltHex, 'hex')
-  const stored = Buffer.from(hashHex, 'hex')
-  const derived = (await scryptAsync(plainPassword, salt, 64, {
-    N: 32768,
-    r: 8,
-    p: 1
+  // The parameters come from the hash itself (ln, r, p), not from the current configuration
+  const { ln, r, p } = Object.fromEntries(
+    params.split(',').map((pair) => pair.split('=') as [string, string])
+  )
+  const salt = Buffer.from(saltB64, 'base64')
+  const stored = Buffer.from(hashB64, 'base64')
+  const N = 2 ** Number(ln)
+  const derived = (await scryptAsync(plainPassword, salt, stored.length, {
+    N,
+    r: Number(r),
+    p: Number(p),
+    maxmem: 2 * 128 * N * Number(r)
   })) as Buffer
 
   // CRITICAL: Always use timingSafeEqual — never use === or Buffer.equals()
@@ -162,18 +170,18 @@ async function comparePassword(plainPassword: string, storedHash: string): Promi
 1. **Always generate a fresh salt** for every `hash()` call. Never reuse salts across passwords.
 2. **Always use `promisify(scrypt)`** for the async version. The callback form works but `async/await` integrates better with NestJS services.
 3. **Always compare with `timingSafeEqual`** — never use `===`, `Buffer.equals()`, or string comparison.
-4. **Always parse the stored format** by splitting on `:` and validating the `scrypt` prefix before comparison.
-5. **Never lower N below 2^14 (16384)** in production. The default 2^15 provides adequate security margins as of 2024-2026.
-6. **Recovery codes** are also hashed with scrypt using the same parameters — they are treated as passwords.
+4. **Always parse the PHC format** (`$scrypt$ln=..,r=..,p=..$salt$hash`), validating the canonical base64 and the parameter bounds before comparing. The real library also rejects records that request more memory than the derivation ceiling.
+5. **Never lower N below 2^14 (16384)**: startup rejects a `password.costFactor` smaller than that. The default is 2^17 (131072).
+6. **Recovery codes** do NOT use scrypt: they are HMAC-SHA-256 digests keyed by `options.hmacKey`, compared in constant time against all stored digests. The code carries 96 bits of CSPRNG output, so a slow KDF adds no resistance and would be a CPU amplifier for anyone submitting wrong codes.
 
 ### Parameter Tuning Guidelines
 
-| Environment          | N            | r   | p   | Time per hash (~) | Memory |
-| -------------------- | ------------ | --- | --- | ----------------- | ------ |
-| Production (default) | 2^15 (32768) | 8   | 1   | ~80-120ms         | 32 MB  |
-| Testing / CI         | 2^14 (16384) | 8   | 1   | ~40-60ms          | 16 MB  |
-| High-security        | 2^16 (65536) | 8   | 1   | ~160-240ms        | 64 MB  |
-| **Never use**        | < 2^14       | < 8 | —   | —                 | —      |
+| Environment          | N             | r   | p   | Time per hash (~)  | Memory |
+| -------------------- | ------------- | --- | --- | ------------------ | ------ |
+| Production (default) | 2^17 (131072) | 8   | 1   | hardware-dependent | 128 MB |
+| Testing / CI         | 2^14 (16384)  | 8   | 1   | hardware-dependent | 16 MB  |
+| High-security        | 2^16 (65536)  | 8   | 1   | hardware-dependent | 64 MB  |
+| **Never use**        | < 2^14        | < 8 | —   | —                  | —      |
 
 ---
 
@@ -496,13 +504,16 @@ function generateUrlSafeToken(bytes = 32): string {
 
 ### UUID Generation
 
-For refresh tokens stored in Redis, this project uses `crypto.randomUUID()` (v4 UUID):
+Refresh tokens stored in Redis are not UUIDs: they are 32 random bytes encoded as 64 hex characters (`generateSecureToken()`). `crypto.randomUUID()` (v4 UUID) is used only for identifiers that are not bearer secrets, such as a JWT's `jti` and a refresh token's `familyId`:
 
 ```typescript
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+
+// Refresh token: 256 bits of entropy, 64 hex characters
+const refreshToken = randomBytes(32).toString('hex')
 
 // Native cryptographic UUID — no 'uuid' package needed
-const refreshTokenId = randomUUID()
+const jti = randomUUID()
 // Example: '550e8400-e29b-41d4-a716-446655440000'
 ```
 
@@ -581,13 +592,14 @@ For OTP storage keys in Redis, tenant-scoped identifiers are hashed to avoid sto
 ```typescript
 /**
  * Creates a deterministic, tenant-scoped identifier for OTP Redis keys.
- * Hashes the combination to avoid storing raw email in Redis key names.
+ * Uses HMAC-SHA-256 keyed by `options.hmacKey` (`hmacSha256` from `src/server/crypto/secure-token.ts`),
+ * because an email has little entropy and a plain SHA-256 would be reversible by dictionary.
  */
-function otpIdentifier(tenantId: string, email: string): string {
-  return sha256(`${tenantId}:${email}`)
+function otpIdentifier(tenantId: string, email: string, hmacKey: string): string {
+  return hmacSha256(`${tenantId}:${email}`, hmacKey)
 }
 
-// Redis key: auth:otp:password_reset:{sha256(tenantId:email)}
+// Redis key: auth:otp:password_reset:{hmac_sha256(hmacKey, "{tenantId}:{email}")}
 ```
 
 ---
@@ -886,8 +898,13 @@ import { promisify } from 'node:util'
 const scryptAsync = promisify(scrypt)
 
 const salt = randomBytes(16)
-const derived = (await scryptAsync(password, salt, 64, { N: 32768, r: 8, p: 1 })) as Buffer
-const hash = `scrypt:${salt.toString('hex')}:${derived.toString('hex')}`
+const derived = (await scryptAsync(password, salt, 64, {
+  N: 131072,
+  r: 8,
+  p: 1,
+  maxmem: 256 * 1024 * 1024
+})) as Buffer
+// store in PHC format: $scrypt$ln=17,r=8,p=1$<salt_b64>$<derived_b64>
 ```
 
 ### Anti-Pattern 2: Using Math.random() for Tokens or OTPs
@@ -1041,14 +1058,19 @@ const hash = createHash('sha256').update(data).digest('hex')
 ```typescript
 // WRONG — blocks the event loop for ~100ms per request
 import { scryptSync } from 'node:crypto'
-const derived = scryptSync(password, salt, 64, { N: 32768, r: 8, p: 1 })
+const derived = scryptSync(password, salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 })
 
 // CORRECT — async scrypt does not block the event loop
 // (Node.js runs scrypt on the libuv thread pool)
 import { scrypt } from 'node:crypto'
 import { promisify } from 'node:util'
 const scryptAsync = promisify(scrypt)
-const derived = (await scryptAsync(password, salt, 64, { N: 32768, r: 8, p: 1 })) as Buffer
+const derived = (await scryptAsync(password, salt, 64, {
+  N: 131072,
+  r: 8,
+  p: 1,
+  maxmem: 256 * 1024 * 1024
+})) as Buffer
 ```
 
 ---
@@ -1066,11 +1088,11 @@ Use this checklist when writing or reviewing cryptographic code in `@bymax-one/n
 ### Password Hashing (scrypt)
 
 - [ ] Salt: 16 bytes from `randomBytes(16)`, unique per password
-- [ ] Parameters: N=32768 (2^15), r=8, p=1, keyLen=64
-- [ ] Storage format: `scrypt:{salt_hex}:{derived_hex}`
+- [ ] Parameters: N=131072 (2^17), r=8, p=1, keyLen=64
+- [ ] Storage format: `$scrypt$ln={log2(N)},r={r},p={p}${salt_b64}${derived_b64}`
 - [ ] Comparison uses `timingSafeEqual` (not `===` or `Buffer.equals`)
 - [ ] Async version used (`promisify(scrypt)`, never `scryptSync` in request handlers)
-- [ ] Recovery codes hashed with same scrypt parameters
+- [ ] Recovery codes: HMAC-SHA-256 digest keyed by `hmacKey`
 
 ### AES-256-GCM Encryption
 
@@ -1097,7 +1119,7 @@ Use this checklist when writing or reviewing cryptographic code in `@bymax-one/n
 
 - [ ] All tokens generated with `randomBytes(32)` minimum
 - [ ] Encoding: hex (64 chars) or base64url for URL-safe tokens
-- [ ] UUIDs via `crypto.randomUUID()` (not `uuid` package)
+- [ ] UUIDs (`jti`, `familyId`) via `crypto.randomUUID()` (not `uuid` package); refresh tokens via `randomBytes(32).toString('hex')`
 - [ ] Tokens stored as SHA-256 hashes, not plaintext
 - [ ] `Math.random()` never used for any security value
 

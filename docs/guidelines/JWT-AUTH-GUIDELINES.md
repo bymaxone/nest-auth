@@ -28,12 +28,12 @@
 
 The `@bymax-one/nest-auth` package uses a multi-token architecture to serve different authentication contexts. Every token has a strict purpose, a defined lifetime, and a typed payload. Understanding which token does what is essential before writing any JWT-related code.
 
-| Token Type                   | Format         | Lifetime             | Transport                                     | Purpose                                               |
-| ---------------------------- | -------------- | -------------------- | --------------------------------------------- | ----------------------------------------------------- |
-| **Access Token (Dashboard)** | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header      | Authenticates dashboard/tenant users on every request |
-| **Access Token (Platform)**  | JWT (signed)   | 15 minutes (default) | Cookie or `Authorization: Bearer` header      | Authenticates platform administrators                 |
-| **Refresh Token**            | Opaque UUID v4 | 7 days (default)     | HttpOnly cookie (path-scoped) or request body | Reissues access tokens without re-authentication      |
-| **MFA Temp Token**           | JWT (signed)   | 5 minutes (fixed)    | Response body only                            | Short-lived token for the MFA challenge window        |
+| Token Type                   | Format                       | Lifetime             | Transport                                                         | Purpose                                               |
+| ---------------------------- | ---------------------------- | -------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
+| **Access Token (Dashboard)** | JWT (signed)                 | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates dashboard/tenant users on every request |
+| **Access Token (Platform)**  | JWT (signed)                 | 15 minutes (default) | Cookie or `Authorization: Bearer` header                          | Authenticates platform administrators                 |
+| **Refresh Token**            | Opaque random token (64 hex) | 7 days (default)     | HttpOnly cookie (path-scoped) or request body                     | Reissues access tokens without re-authentication      |
+| **MFA Temp Token**           | JWT (signed)                 | 5 minutes (fixed)    | Response body (login) or `mfa_temp_token` cookie (OAuth callback) | Short-lived token for the MFA challenge window        |
 
 ### 1.2 Access Tokens
 
@@ -48,11 +48,11 @@ Key properties:
 
 ### 1.3 Refresh Tokens
 
-Refresh tokens are **not JWTs**. They are opaque UUID v4 strings stored in Redis. This is a deliberate design decision:
+Refresh tokens are **not JWTs**. They are opaque random tokens (32 random bytes as 64 hex characters) stored in Redis. This is a deliberate design decision:
 
 - An opaque token cannot be decoded or verified without the Redis store, making it useless if intercepted without server access.
 - Revocation is instantaneous (delete the Redis key).
-- Rotation is simple (generate a new UUID, store it, delete the old one).
+- Rotation is simple (generate a new random token, store it, delete the old one).
 
 Storage key pattern: `auth:rt:{sha256(token)}` (dashboard) or `auth:prt:{sha256(token)}` (platform).
 
@@ -66,7 +66,7 @@ Key properties:
 
 - Expires in exactly 5 minutes.
 - Contains a `context` claim (`"dashboard"` or `"platform"`) so the MFA service knows which repository and token-issuing path to use.
-- Stored in Redis (`auth:mfa:{sha256(token)}`) and consumed (deleted) after successful verification — single-use.
+- Registered in Redis at `auth:mfa:{sha256(jti)}` (value: `userId`) and consumed (deleted) after successful verification — single use. The OAuth flow's `mfa_temp_token` cookie uses the path `cookies.mfaTempCookiePath` (default `/auth/mfa`).
 
 ### 1.5 Platform Admin Tokens
 
@@ -119,7 +119,7 @@ MFA temp tokens are signed the same way but with a fixed short expiration:
 
 ```typescript
 const mfaTempToken = this.jwtService.sign(
-  { sub: userId, jti: uuidv4(), type: 'mfa_challenge', context },
+  { sub: userId, jti: randomUUID(), type: 'mfa_challenge', context, tenantId },
   {
     secret: this.options.jwt.secret,
     algorithm: 'HS256',
@@ -144,7 +144,7 @@ const payload = this.jwtService.verify<DashboardJwtPayload>(token, {
 
 ### 2.5 Decoding Without Verification
 
-For specific internal operations (such as extracting the `jti` from an expired token during logout to add it to the blacklist), use `decode()`:
+For specific internal operations (such as extracting the `jti` from an expired token at logout to put it on the blacklist), the library uses `TokenManagerService.verifyIgnoringExpiry()` / `verifyPlatformIgnoringExpiry()`: the signature is verified and only the expiration is ignored. A raw `decode()` only reads the payload:
 
 ```typescript
 // decode() does NOT verify the signature or expiration
@@ -154,18 +154,18 @@ const payload = this.jwtService.decode(token)
 **Rules for `decode()`:**
 
 - Never use the output of `decode()` for authorization decisions.
-- Only use it when you need claims from a token you know is expired or when you need the `jti` to perform a blacklist operation.
+- To obtain the `jti` of an expired token, use `verifyIgnoringExpiry()` / `verifyPlatformIgnoringExpiry()` (signature verified, only the expiration is ignored); a raw `decode()` must never feed a revocation list.
 - Mark any method that uses `decode()` as `@internal` to signal it should not be used in authorization paths.
 
 ### 2.6 Sign and Verify Options Reference
 
-| Option             | Sign | Verify | Required         | Description                                                         |
-| ------------------ | ---- | ------ | ---------------- | ------------------------------------------------------------------- |
-| `secret`           | Yes  | Yes    | Always           | The HMAC secret. Minimum 32 characters, validated at startup.       |
-| `algorithm`        | Yes  | No     | Always at sign   | Must be `'HS256'`. The only supported algorithm.                    |
-| `algorithms`       | No   | Yes    | Always at verify | Must be `['HS256']`. Pins the accepted algorithm.                   |
-| `expiresIn`        | Yes  | No     | Always at sign   | String like `'15m'`, `'5m'`, `'7d'`. Controls `exp` claim.          |
-| `ignoreExpiration` | No   | Yes    | Never            | Do not use. If you need claims from expired tokens, use `decode()`. |
+| Option             | Sign | Verify | Required              | Description                                                                                                |
+| ------------------ | ---- | ------ | --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `secret`           | Yes  | Yes    | Always                | The HMAC secret. Minimum 32 characters, validated at startup.                                              |
+| `algorithm`        | Yes  | No     | Always at sign        | Must be `'HS256'`. The only supported algorithm.                                                           |
+| `algorithms`       | No   | Yes    | Always at verify      | Must be `['HS256']`. Pins the accepted algorithm.                                                          |
+| `expiresIn`        | Yes  | No     | Always at sign        | String like `'15m'`, `'5m'`, `'7d'`. Controls `exp` claim.                                                 |
+| `ignoreExpiration` | No   | Yes    | Never (except logout) | Use only via `verifyIgnoringExpiry()` / `verifyPlatformIgnoringExpiry()`; the signature is still verified. |
 
 ### 2.7 JwtModule Registration
 
@@ -212,7 +212,7 @@ Behavior:
 // Cookie mode response example
 // HTTP/1.1 200 OK
 // Set-Cookie: access_token=eyJhbG...; HttpOnly; Secure; SameSite=Lax; Path=/
-// Set-Cookie: refresh_token=f47ac10b-...; HttpOnly; Secure; SameSite=Strict; Path=/auth
+// Set-Cookie: refresh_token=f47ac10b-...; HttpOnly; Secure; SameSite=Lax; Path=/auth
 // Set-Cookie: has_session=1; Secure; SameSite=Lax; Path=/
 //
 // Body: { "user": { "id": "...", "email": "...", ... } }
@@ -294,11 +294,11 @@ All token delivery logic is encapsulated in `TokenDeliveryService`. Controllers 
 
 ### 4.1 Cookie Configuration Table
 
-| Cookie         | Default Name    | Path    | HttpOnly | Secure     | SameSite | Max-Age                 | Purpose                                                 |
-| -------------- | --------------- | ------- | -------- | ---------- | -------- | ----------------------- | ------------------------------------------------------- |
-| Access Token   | `access_token`  | `/`     | Yes      | Yes (prod) | `Lax`    | 900,000 ms (15 min)     | Carries the JWT on every HTTP request                   |
-| Refresh Token  | `refresh_token` | `/auth` | Yes      | Yes (prod) | `Strict` | 7 days (604,800,000 ms) | Token rotation at the refresh endpoint only             |
-| Session Signal | `has_session`   | `/`     | **No**   | Yes (prod) | `Lax`    | Same as refresh         | Non-sensitive flag (`"1"`) readable by JavaScript/proxy |
+| Cookie         | Default Name    | Path    | HttpOnly | Secure     | SameSite                            | Max-Age                 | Purpose                                                 |
+| -------------- | --------------- | ------- | -------- | ---------- | ----------------------------------- | ----------------------- | ------------------------------------------------------- |
+| Access Token   | `access_token`  | `/`     | Yes      | Yes (prod) | `Lax`                               | 900,000 ms (15 min)     | Carries the JWT on every HTTP request                   |
+| Refresh Token  | `refresh_token` | `/auth` | Yes      | Yes (prod) | `Lax` (default; `cookies.sameSite`) | 7 days (604,800,000 ms) | Token rotation at the refresh endpoint only             |
+| Session Signal | `has_session`   | `/`     | **No**   | Yes (prod) | `Lax`                               | Same as refresh         | Non-sensitive flag (`"1"`) readable by JavaScript/proxy |
 
 ### 4.2 HttpOnly
 
@@ -308,12 +308,12 @@ The `has_session` cookie is intentionally **not** HttpOnly. It contains only the
 
 ### 4.3 Secure Flag
 
-In production (`NODE_ENV === 'production'`), all cookies are set with `Secure: true`, ensuring they are only transmitted over HTTPS. In development, the `Secure` flag may be omitted to allow `http://localhost` workflows.
+By default (`secureCookies` omitted and `environment` absent or `'production'`), all cookies are emitted with `Secure: true`, so they are transmitted over HTTPS only. For development on `http://localhost`, use `environment: 'development'` or `secureCookies: false`. The library does not read `NODE_ENV`.
 
 ### 4.4 SameSite Policy
 
 - **Access token: `Lax`** — Sent on top-level navigations and same-site requests. This allows the cookie to be included when a user clicks a link to your site from an external page, while still blocking most cross-site request forgery vectors.
-- **Refresh token: `Strict`** — Sent only on same-site requests. Never sent on cross-site navigations. Combined with path scoping, this ensures the refresh token is only sent to the refresh endpoint from same-origin requests.
+- **Refresh token: `cookies.sameSite`** (default `Lax`, same as the access token). Combined with the path scope, the cookie is sent only to the refresh endpoint. Under `'none'`, the package requires `secureCookies` and `cookies.trustedOrigins`, and the `TrustedOriginGuard` validates the `Origin` of cookie-based writes.
 
 ### 4.5 Path Scoping for Refresh Token
 
@@ -325,12 +325,14 @@ The refresh token cookie is scoped to `path=/auth` (or whatever `cookies.refresh
 
 ```typescript
 // If routePrefix is changed, refreshCookiePath must match
-BymaxAuthModule.register({
-  routePrefix: 'api/v1/auth',
-  cookies: {
-    refreshCookiePath: '/api/v1/auth' // MUST match routePrefix
-  }
-  // ...
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({
+    routePrefix: 'api/v1/auth',
+    cookies: {
+      refreshCookiePath: '/api/v1/auth' // MUST match routePrefix
+    }
+    // ...
+  })
 })
 ```
 
@@ -386,9 +388,9 @@ Flow:
 
 1. Client sends the current refresh token to `POST /auth/refresh`.
 2. `TokenManagerService.reissueTokens()` looks up `auth:rt:{sha256(oldToken)}` in Redis.
-3. If found, the old key is deleted atomically and a new refresh token (UUID v4) is generated.
+3. If found, the old key is deleted atomically and a new refresh token is generated.
 4. The new refresh token is stored in Redis at `auth:rt:{sha256(newToken)}`.
-5. A rotation pointer is created at `auth:rp:{sha256(oldToken)} → newRawToken` with a grace window TTL.
+5. Creates the rotation pointer `auth:rp:{sha256(oldToken)} → {sha256(newToken)}:{session JSON}` (TTL = grace window) and atomically updates, in the same Lua script, the session index `auth:sess:{hmac(subject)}` and the family (`fam:`). Reuse of an already-rotated token outside the window revokes the entire family.
 6. A new access token JWT is signed and returned alongside the new refresh token.
 
 ### 5.2 Grace Window for Concurrent Requests
@@ -440,12 +442,12 @@ return nil
 
 ### 5.4 Redis Storage for Refresh Tokens
 
-| Key Pattern                   | Value                                                      | TTL                                        |
-| ----------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
-| `auth:rt:{sha256(token)}`     | JSON: `{ userId, tenantId, role, device, ip, createdAt }`  | `refreshExpiresInDays` in seconds          |
-| `auth:rp:{sha256(oldToken)}`  | New raw token string                                       | `refreshGraceWindowSeconds` (default: 30s) |
-| `auth:prt:{sha256(token)}`    | JSON: `{ userId, role, device, ip, createdAt }` (platform) | `refreshExpiresInDays` in seconds          |
-| `auth:prp:{sha256(oldToken)}` | New raw token string (platform)                            | `refreshGraceWindowSeconds` (default: 30s) |
+| Key Pattern                   | Value                                                                                            | TTL                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| `auth:rt:{sha256(token)}`     | JSON: `{ userId, tenantId, role, device, ip, createdAt, familyId, familyCreatedAt, mfaEnabled }` | `refreshExpiresInDays` in seconds          |
+| `auth:rp:{sha256(oldToken)}`  | `{sha256(newToken)}:{session JSON}`                                                              | `refreshGraceWindowSeconds` (default: 30s) |
+| `auth:prt:{sha256(token)}`    | Same record as `auth:rt`, with an empty `tenantId` (platform)                                    | `refreshExpiresInDays` in seconds          |
+| `auth:prp:{sha256(oldToken)}` | `{sha256(newToken)}:{session JSON}` (platform)                                                   | `refreshGraceWindowSeconds` (default: 30s) |
 
 ### 5.5 Refresh Token Security Rules
 
@@ -467,15 +469,15 @@ Access tokens are stateless JWTs — once signed, they are valid until they expi
 
 On logout:
 
-1. Extract the `jti` claim from the access token (via `decode()`, since the token may already be expired).
-2. Store the `jti` in Redis: `SET auth:rv:{jti} "1" EX {remaining_seconds}`.
+1. Extract the `jti` from the access token via `verifyIgnoringExpiry()` (the signature is verified; the token may already be expired).
+2. Write the `jti` to Redis: `SET auth:rv:{jti} "1" EX {remaining_seconds}`. Bulk invalidations (password change/reset, revoke-all) advance the user epoch (`auth:ep:{hmac}` / `auth:pep:{hmac}`), which rejects every token issued earlier, without listing `jti`.
 3. The TTL is calculated as `token.exp - now()` — the blacklist entry only needs to live as long as the token would have been valid.
 
 On every authenticated request:
 
 1. The guard verifies the JWT signature and expiration.
 2. If verification succeeds, the guard checks `auth:rv:{payload.jti}` in Redis.
-3. If the key exists, the token has been revoked — throw `UnauthorizedException` with `AUTH_ERROR_CODES.TOKEN_REVOKED`.
+3. If the key exists, the token was revoked — throw `AuthException` with `AUTH_ERROR_CODES.TOKEN_INVALID` (`TOKEN_REVOKED` is internal and does not leak to the client).
 
 ### 6.3 Key Pattern
 
@@ -485,7 +487,7 @@ Value: "1"
 TTL:   Remaining seconds until token.exp
 ```
 
-If for any reason the `jti` claim is not available, the fallback is to use the SHA-256 hash of the entire JWT string as the key: `auth:rv:{sha256(jwt)}`. However, this is more expensive (hashing the full JWT) and should be avoided. Always include `jti` in token payloads.
+The `jti` is mandatory: a token without a valid `jti` is rejected with `TOKEN_INVALID` before the lookup; there is no `sha256(jwt)` fallback.
 
 ### 6.4 TTL Strategy
 
@@ -507,21 +509,21 @@ If the token is already expired (`remainingSeconds <= 0`), there is no need to b
 
 ```typescript
 // Inside JwtAuthGuard.canActivate()
-if (payload.jti && (await this.authRedis.isBlacklisted(payload.jti))) {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
+if (await this.revocation.isAccessTokenRevoked(payload)) {
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 ```
 
-The `isBlacklisted()` method performs a single `GET` operation on Redis — O(1) with negligible latency. This check runs on every authenticated request, so performance is critical.
+`AuthRevocationService.isAccessTokenRevoked()` checks the blacklist (`rv:{jti}`) and the user epoch (`ep:`/`pep:`). The blacklist lookup is a single Redis `GET` — O(1) with negligible latency. This check runs on every authenticated request, so performance is critical.
 
 ### 6.6 When to Blacklist
 
-| Event                  | Action                                                                             |
-| ---------------------- | ---------------------------------------------------------------------------------- |
-| User logout            | Blacklist the current access token's `jti`                                         |
-| Password change        | Blacklist current token + revoke all refresh sessions                              |
-| Account ban/suspension | Blacklist current token (if available) + user status check catches future requests |
-| Admin force-logout     | Blacklist the target user's token + revoke refresh sessions                        |
+| Event                  | Action                                                                                         |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| User logout            | Blacklist the current access token's `jti`                                                     |
+| Password change        | Advances the user epoch (invalidates all earlier access tokens) + revokes all refresh sessions |
+| Account ban/suspension | Blacklist current token (if available) + user status check catches future requests             |
+| Admin force-logout     | Blacklist the target user's token + revoke refresh sessions                                    |
 
 ---
 
@@ -557,6 +559,12 @@ export interface DashboardJwtPayload {
    * - false: user has MFA enabled but did not verify in this session
    */
   mfaVerified: boolean
+
+  /** Whether the user has MFA enabled (required; the `MfaRequiredGuard` rejects the token if it is not a boolean) */
+  mfaEnabled: boolean
+
+  /** User epoch at issuance time (compared against `ep:{hmac}`) */
+  epoch?: number
 
   /** Issued At — automatically set by @nestjs/jwt */
   iat: number
@@ -600,8 +608,14 @@ export interface PlatformJwtPayload {
   /** Token type — always 'platform' */
   type: 'platform'
 
+  /** Whether MFA is enabled for this admin */
+  mfaEnabled: boolean
+
   /** Whether MFA has been verified (if enabled for this admin) */
   mfaVerified: boolean
+
+  /** Admin epoch at issuance time (compared against `pep:{hmac}`) */
+  epoch?: number
 
   /** Issued At */
   iat: number
@@ -631,6 +645,12 @@ export interface MfaTempPayload {
   /** Origin context: 'dashboard' for tenant users, 'platform' for admins */
   context: 'dashboard' | 'platform'
 
+  /** User's tenant (dashboard plane) */
+  tenantId?: string
+
+  /** Subject epoch at issuance time */
+  epoch?: number
+
   /** Issued At */
   iat: number
 
@@ -657,12 +677,12 @@ Guards use the `type` claim as the first validation step after signature verific
 ```typescript
 // JwtAuthGuard — accepts only dashboard tokens
 if (payload.type !== 'dashboard') {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 
 // JwtPlatformGuard — accepts only platform tokens
 if (payload.type !== 'platform') {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
+  throw new AuthException(AUTH_ERROR_CODES.PLATFORM_AUTH_REQUIRED)
 }
 ```
 
@@ -687,7 +707,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
     @Inject(BYMAX_AUTH_OPTIONS) private readonly options: ResolvedOptions,
-    private readonly authRedis: AuthRedisService,
+    private readonly revocation: AuthRevocationService,
     private readonly tokenDelivery: TokenDeliveryService
   ) {}
 
@@ -703,33 +723,31 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest()
     const token = this.tokenDelivery.extractAccessToken(request)
     if (!token) {
-      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_MISSING)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     try {
       // Step 3: Verify signature with pinned algorithm
-      const payload = this.jwtService.verify<DashboardJwtPayload>(token, {
-        secret: this.options.jwt.secret,
-        algorithms: ['HS256'] // MANDATORY — prevents algorithm confusion
-      })
+      // verifyWithRotation pins HS256 and also accepts `jwt.previousSecrets` during a secret rotation
+      const payload = verifyWithRotation<DashboardJwtPayload>(this.jwtService, this.options, token)
 
       // Step 4: Validate token type
       if (payload.type !== 'dashboard') {
-        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+        throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
 
       // Step 5: Check blacklist
-      if (payload.jti && (await this.authRedis.isBlacklisted(payload.jti))) {
-        throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED)
+      if (await this.revocation.isAccessTokenRevoked(payload)) {
+        throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
       }
 
       // Step 6: Populate request.user
       request.user = payload
       return true
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error
+      if (error instanceof AuthException) throw error
       // Any other error (expired, malformed, bad signature) → generic invalid
-      throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
   }
 }
@@ -770,21 +788,21 @@ The guard delegates token extraction to `TokenDeliveryService`, which behaves di
 
 ### 8.5 All Guards Reference
 
-| Guard                | Validates                                           | Rejects With                                               | Notes                                   |
-| -------------------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------- |
-| `JwtAuthGuard`       | Dashboard JWT (`type: "dashboard"`)                 | `TOKEN_MISSING`, `TOKEN_INVALID`, `TOKEN_REVOKED`          | Respects `@Public()`                    |
-| `JwtPlatformGuard`   | Platform JWT (`type: "platform"`)                   | `TOKEN_MISSING`, `PLATFORM_AUTH_REQUIRED`, `TOKEN_REVOKED` | Same logic, different type check        |
-| `UserStatusGuard`    | User status not in `blockedStatuses`                | `ACCOUNT_BANNED`, `ACCOUNT_INACTIVE`, `ACCOUNT_SUSPENDED`  | Checks Redis cache, then DB             |
-| `MfaRequiredGuard`   | `mfaVerified === true`                              | `MFA_REQUIRED`                                             | Respects `@SkipMfa()`                   |
-| `RolesGuard`         | Role hierarchy via `@Roles()` metadata              | `FORBIDDEN`                                                | Hierarchical: OWNER > ADMIN > MEMBER    |
-| `PlatformRolesGuard` | Platform role hierarchy                             | `FORBIDDEN`                                                | Uses `platformHierarchy` config         |
-| `SelfOrAdminGuard`   | `params.userId === user.sub` OR admin role          | `FORBIDDEN`                                                | Prevents IDOR attacks                   |
-| `OptionalAuthGuard`  | JWT if present, null if absent                      | Never throws                                               | For public endpoints with optional auth |
-| `WsJwtGuard`         | JWT from WebSocket handshake `Authorization` header | Disconnects client                                         | Never uses query params (security)      |
+| Guard                | Validates                                                                                                  | Rejects With                                                              | Notes                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `JwtAuthGuard`       | Dashboard JWT (`type: "dashboard"`)                                                                        | `TOKEN_INVALID` (missing, malformed, expired, revoked or of another type) | Respects `@Public()`                                                     |
+| `JwtPlatformGuard`   | Platform JWT (`type: "platform"`)                                                                          | `TOKEN_INVALID`, `PLATFORM_AUTH_REQUIRED` (wrong token type)              | Same logic, different type check                                         |
+| `UserStatusGuard`    | User status not in `blockedStatuses`                                                                       | `ACCOUNT_BANNED`, `ACCOUNT_INACTIVE`, `ACCOUNT_SUSPENDED`                 | Checks Redis cache, then DB                                              |
+| `MfaRequiredGuard`   | `mfaVerified === true`                                                                                     | `MFA_REQUIRED`                                                            | Respects `@SkipMfa()`                                                    |
+| `RolesGuard`         | Role hierarchy via `@Roles()` metadata                                                                     | `FORBIDDEN`                                                               | Hierarchical: OWNER > ADMIN > MEMBER                                     |
+| `PlatformRolesGuard` | Platform role hierarchy                                                                                    | `FORBIDDEN`                                                               | Uses `platformHierarchy` config                                          |
+| `SelfOrAdminGuard`   | `params.userId === user.sub` OR admin role                                                                 | `FORBIDDEN`                                                               | Prevents IDOR attacks                                                    |
+| `OptionalAuthGuard`  | JWT if present, null if absent                                                                             | No token: never. Invalid token: as `JwtAuthGuard`                         | For public endpoints with optional auth                                  |
+| `WsJwtGuard`         | Single-use ticket (`?ticket=`, from `POST /auth/ws-ticket`) or JWT in the handshake `Authorization` header | Disconnects client                                                        | The JWT never goes in the query; only the ticket (short TTL, single use) |
 
 ### 8.6 WebSocket Guard
 
-The `WsJwtGuard` extracts the JWT from the WebSocket handshake `Authorization` header, never from query parameters. Tokens in query parameters are logged in plaintext by proxies, CDNs, and web server access logs, making them a security risk.
+The `WsJwtGuard` accepts a single-use ticket (`ticket` in the handshake URL, issued by `POST /auth/ws-ticket` and redeemed via `WsTicketService`) or the JWT in the handshake `Authorization` header; the JWT is never read from query parameters. Tokens in query parameters are logged in plaintext by proxies, CDNs, and web server access logs, making them a security risk.
 
 ```typescript
 // WsJwtGuard extraction
@@ -818,15 +836,15 @@ try {
   })
   // ... type check, blacklist check ...
 } catch (error) {
-  // Re-throw our own UnauthorizedExceptions (specific error codes)
-  if (error instanceof UnauthorizedException) throw error
+  // Re-throw our own AuthExceptions (specific error codes)
+  if (error instanceof AuthException) throw error
 
   // Catch-all for jsonwebtoken errors:
   // - TokenExpiredError → token has expired
   // - JsonWebTokenError → malformed token, bad signature
   // - NotBeforeError → token not yet valid
   // Map all to TOKEN_INVALID — do not leak internal error details
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID)
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
 }
 ```
 
@@ -992,9 +1010,9 @@ const payload = this.jwtService.verify(token, {
   ignoreExpiration: true // NEVER do this
 })
 
-// CORRECT — Use decode() when you need claims from expired tokens
-const payload = this.jwtService.decode(token)
-// But NEVER use decoded payload for authorization decisions
+// CORRECT — the only exception is logout: verifyIgnoringExpiry() verifies the signature and ignores only the expiration
+const payload = this.tokenManager.verifyIgnoringExpiry(token)
+// a raw decode() never authorizes or revokes
 ```
 
 ### 10.4 Skipping Blacklist Check
@@ -1011,8 +1029,8 @@ async canActivate(context: ExecutionContext): Promise<boolean> {
 async canActivate(context: ExecutionContext): Promise<boolean> {
   const payload = this.jwtService.verify(token, { ... });
 
-  if (payload.jti && await this.authRedis.isBlacklisted(payload.jti)) {
-    throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_REVOKED);
+  if (await this.revocation.isAccessTokenRevoked(payload)) {
+    throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID);
   }
 
   request.user = payload;
@@ -1030,7 +1048,7 @@ request.user = payload; // No type check!
 // CORRECT — Validate the type claim
 const payload = this.jwtService.verify(token, { ... });
 if (payload.type !== 'dashboard') {
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID);
 }
 request.user = payload;
 ```
@@ -1068,14 +1086,14 @@ const token = this.tokenDelivery.extractAccessToken(req)
 ```typescript
 // WRONG — Leaks internal error information to attackers
 catch (error) {
-  throw new UnauthorizedException(error.message);
+  throw new AuthException(error.message);
   // Exposes: "jwt expired", "invalid signature", "jwt malformed"
 }
 
 // CORRECT — Use generic error codes
 catch (error) {
-  if (error instanceof UnauthorizedException) throw error;
-  throw new UnauthorizedException(AUTH_ERROR_CODES.TOKEN_INVALID);
+  if (error instanceof AuthException) throw error;
+  throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID);
 }
 ```
 
@@ -1186,14 +1204,14 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 ### Cookies
 
 - [ ] Access token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Lax`, `Path=/`.
-- [ ] Refresh token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Strict`, `Path=/auth`.
+- [ ] Refresh token cookie: `HttpOnly`, `Secure` (prod), `SameSite=Lax` (the default; configurable via `cookies.sameSite`), `Path=/auth`.
 - [ ] Session signal cookie: NOT HttpOnly, value `"1"` only.
 - [ ] If `routePrefix` changes, update `refreshCookiePath` to match.
 - [ ] Validate `resolveDomains` input against an allowlist.
 
 ### Refresh Tokens
 
-- [ ] Refresh tokens are opaque UUIDs, never JWTs.
+- [ ] Refresh tokens are opaque random tokens, never JWTs.
 - [ ] Always hash refresh tokens with SHA-256 before using as Redis keys.
 - [ ] Always rotate refresh tokens on use (never reuse).
 - [ ] Always set TTL on refresh token Redis keys.
@@ -1212,7 +1230,7 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 - [ ] `JwtPlatformGuard`: Same flow, check type `"platform"`.
 - [ ] Guard order: `JwtAuthGuard` > `UserStatusGuard` > `MfaRequiredGuard` > `RolesGuard`.
 - [ ] `WsJwtGuard`: Extract from handshake `Authorization` header, never from query params.
-- [ ] `OptionalAuthGuard`: Set `request.user = null` if no token, never throw.
+- [ ] `OptionalAuthGuard`: Set `request.user = null` if no token; an invalid token is rejected as in `JwtAuthGuard`.
 
 ### Secrets
 
@@ -1223,17 +1241,17 @@ Use this checklist when writing or reviewing JWT-related code in this project.
 
 ### Redis Key Patterns
 
-| Prefix | Key Pattern                   | Purpose                           |
-| ------ | ----------------------------- | --------------------------------- |
-| `rt`   | `auth:rt:{sha256(token)}`     | Dashboard refresh session         |
-| `rv`   | `auth:rv:{jti}`               | Access token blacklist            |
-| `rp`   | `auth:rp:{sha256(oldToken)}`  | Refresh rotation grace pointer    |
-| `prt`  | `auth:prt:{sha256(token)}`    | Platform refresh session          |
-| `prp`  | `auth:prp:{sha256(oldToken)}` | Platform rotation grace pointer   |
-| `mfa`  | `auth:mfa:{sha256(token)}`    | MFA temp token (single-use)       |
-| `us`   | `auth:us:{userId}`            | User status cache                 |
-| `sess` | `auth:sess:{userId}`          | Session SET (all active sessions) |
-| `sd`   | `auth:sd:{sessionHash}`       | Session details                   |
+| Prefix | Key Pattern                                                                                    | Purpose                                                                   |
+| ------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `rt`   | `auth:rt:{sha256(token)}`                                                                      | Dashboard refresh session                                                 |
+| `rv`   | `auth:rv:{jti}`                                                                                | Access token blacklist                                                    |
+| `rp`   | `auth:rp:{sha256(oldToken)}`                                                                   | Refresh rotation grace pointer                                            |
+| `prt`  | `auth:prt:{sha256(token)}`                                                                     | Platform refresh session                                                  |
+| `prp`  | `auth:prp:{sha256(oldToken)}`                                                                  | Platform rotation grace pointer                                           |
+| `mfa`  | `auth:mfa:{sha256(jti)}`                                                                       | MFA temp token (single use)                                               |
+| `us`   | `auth:us:{tenantId}:{userId}` (each part passed through `encodeURIComponent`)                  | Status cache; `uev:` holds the verified email                             |
+| `sess` | `auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}` | Session index (SET); `psess:{hmac("platform:{userId}")}` for the platform |
+| `sd`   | `auth:sd:{sessionHash}`                                                                        | Session details                                                           |
 
 ---
 

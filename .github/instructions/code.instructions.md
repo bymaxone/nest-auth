@@ -27,7 +27,7 @@ applyTo: 'src/**/*.ts'
 ## Crypto — `node:crypto` only (security-critical)
 
 - **Always `import ... from 'node:crypto'`** with the `node:` prefix. Bare `crypto` is banned.
-- **No third-party crypto packages** — `bcrypt`, `argon2`, `jose`, `uuid`, `nanoid`, `crypto-js` are ESLint-banned. Password hashing = `scrypt`; IDs = `crypto.randomUUID()`; random = `crypto.randomBytes()`.
+- **No third-party crypto packages** — `bcrypt`, `argon2`, `uuid`, `nanoid`, `crypto-js` are ESLint-banned; `jose` is not permitted either. Password hashing = `scrypt`; IDs = `crypto.randomUUID()`; random = `crypto.randomBytes()`.
 - **Timing-safe**: every secret / hash / token / OTP / signature comparison uses `crypto.timingSafeEqual` on equal-length buffers — never `===`, `==`, or `.equals()` on the raw string.
 - **MFA secrets encrypted at rest** with AES-256-GCM — never stored or logged plaintext.
 - **Randomness**: `crypto.randomBytes` / `crypto.randomUUID` only. Flag any `Math.random()` on a security path.
@@ -41,7 +41,7 @@ applyTo: 'src/**/*.ts'
 
 - DI only — no `new ServiceClass()` outside tests.
 - **Injection tokens must use `Symbol()`** declared in `bymax-auth.constants.ts` as `BYMAX_AUTH_*` — never string literals.
-- Dynamic module supports `forRoot(options)` and `forRootAsync({ useFactory, useClass, useExisting })`.
+- Dynamic module is configured through `registerAsync(options)`.
 - **Opt-in features** (MFA, sessions, OAuth, platform admin) must NOT register their controllers/providers when disabled. Flag a controller registered unconditionally for an opt-in feature.
 - **Repository pattern** — core logic depends on the `UserRepository` / `PlatformUserRepository` interface, never a concrete persistence class.
 - Controller inputs are `class-validator` DTOs — flag a handler reading a raw `@Body()` without a validated DTO.

@@ -45,14 +45,14 @@ export class RegisterDto {
 
   @IsString({ message: 'Password must be a string.' })
   @IsNotEmpty({ message: 'Password is required.' })
-  @MinLength(8, { message: 'Password must be at least 8 characters.' })
+  @MinLength(8, { message: 'Password must be at least 8 characters.' }) // structural floor; the policy (default 15) is enforced by PasswordService via `password.minLength`
   password: string
 }
 ```
 
 ### 1.3 ValidationPipe Integration
 
-The global `ValidationPipe` MUST be configured in the NestJS application bootstrap or as a module-level provider exported by this library. The canonical configuration is:
+The global `ValidationPipe` MUST be configured in the application bootstrap; the library exports `createAuthValidationPipe()` (`whitelist` and `forbidNonWhitelisted` enabled, errors converted into `AuthException(auth.validation)` with `{ field, message }[]`). The reference configuration below is the one recommended for custom pipes:
 
 ```typescript
 import { ValidationPipe } from '@nestjs/common'

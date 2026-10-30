@@ -51,7 +51,7 @@ export default defineConfig([
       'express'
     ],
     target: 'node24',
-    clean: true,
+    clean: false, // dist/ is cleaned by `pnpm clean` in the build script
     splitting: false,
     treeshake: true,
     sourcemap: false
@@ -81,7 +81,7 @@ export default defineConfig([
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
     }),
-    external: [],
+    external: ['@bymax-one/nest-auth/shared'],
     target: 'es2022',
     clean: false,
     splitting: false,
@@ -97,7 +97,7 @@ export default defineConfig([
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
     }),
-    external: ['react', 'react-dom'],
+    external: ['react', 'react-dom', '@bymax-one/nest-auth/shared', '@bymax-one/nest-auth/client'],
     target: 'es2022',
     clean: false,
     splitting: false,
@@ -116,7 +116,15 @@ export default defineConfig([
     outExtension: ({ format }) => ({
       js: format === 'esm' ? '.mjs' : '.cjs'
     }),
-    external: ['react', 'react-dom', 'next'],
+    external: [
+      'react',
+      'react-dom',
+      'next',
+      'server-only',
+      '@bymax-one/nest-auth/shared',
+      '@bymax-one/nest-auth/client',
+      '@bymax-one/nest-auth/react'
+    ],
     target: 'es2022',
     clean: false,
     splitting: false,
@@ -131,17 +139,17 @@ export default defineConfig([
 
 ### 1.2 Key Configuration Fields
 
-| Field          | Value                      | Purpose                                               |
-| -------------- | -------------------------- | ----------------------------------------------------- |
-| `format`       | `['esm', 'cjs']`           | Dual-format output for maximum compatibility          |
-| `dts`          | `true`                     | Generate `.d.ts` declaration files                    |
-| `outDir`       | `'dist'`                   | All output goes to `dist/`                            |
-| `outExtension` | `.mjs` / `.cjs`            | Explicit extensions avoid ambiguity                   |
-| `target`       | `'node24'` or `'es2022'`   | Match the runtime environment of each entry           |
-| `clean`        | `true` on first entry only | Wipe `dist/` before building, but not between entries |
-| `splitting`    | `false`                    | Not needed for library builds (see section 2.4)       |
-| `treeshake`    | `true`                     | Remove dead code from output bundles                  |
-| `sourcemap`    | `false`                    | Not shipped in the npm package                        |
+| Field          | Value                    | Purpose                                                                              |
+| -------------- | ------------------------ | ------------------------------------------------------------------------------------ |
+| `format`       | `['esm', 'cjs']`         | Dual-format output for maximum compatibility                                         |
+| `dts`          | `true`                   | Generate `.d.ts` declaration files                                                   |
+| `outDir`       | `'dist'`                 | All output goes to `dist/`                                                           |
+| `outExtension` | `.mjs` / `.cjs`          | Explicit extensions avoid ambiguity                                                  |
+| `target`       | `'node24'` or `'es2022'` | Match the runtime environment of each entry                                          |
+| `clean`        | `false` on all           | `dist/` is wiped by `pnpm clean && tsup` (the `build` script), never between entries |
+| `splitting`    | `false`                  | Not needed for library builds (see section 2.4)                                      |
+| `treeshake`    | `true`                   | Remove dead code from output bundles                                                 |
+| `sourcemap`    | `false`                  | Not shipped in the npm package                                                       |
 
 ### 1.3 Why `defineConfig` Takes an Array
 
@@ -197,13 +205,10 @@ Keep `splitting: false` for all entries. If a utility is used by multiple subpat
 
 ### 2.5 Shared Code Between Entry Points
 
-Code in `src/shared/` may be imported by `src/server/`, `src/client/`, `src/react/`, and `src/nextjs/`. With `splitting: false`, tsup inlines the shared code into each consuming bundle. This is the correct behavior because:
+The code in `src/shared/` can be imported by server, client, react and nextjs. In the `client`, `react` and `nextjs` bundles, the `@bymax-one/nest-auth/shared` subpaths (and `client`/`react`) are `external`: the consumer resolves them through the `exports` map, so the whole package must be installed. This avoids duplicating shared code (and module state) across bundles.
 
-- Consumers may install only `@bymax-one/nest-auth/react` and never `@bymax-one/nest-auth/shared`.
-- Each bundle must be self-contained so it works independently.
-- The `./shared` subpath exists for consumers who need the types/DTOs directly, not as an internal shared chunk.
-
-Do NOT try to configure tsup to deduplicate shared code across entry points. Let each bundle inline what it needs.
+- The `./shared` subpath exists for those who need the types/DTOs directly and is also the internal dependency of the other bundles.
+- Do not try to make tsup deduplicate code across entry points: `splitting: false` stays, and whatever is not a package subpath is inlined into each bundle.
 
 ---
 
@@ -223,18 +228,22 @@ dist/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   client/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   react/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   nextjs/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
 ```
 
 ### 3.2 Why Both Formats
@@ -294,7 +303,7 @@ This is why `.mjs` / `.cjs` extensions are non-negotiable for this project.
 
 ### 4.1 Enabling Declarations
 
-Set `dts: true` on every build configuration object. tsup uses its own TypeScript rollup process (via the `@microsoft/api-extractor` pipeline under the hood in tsup v8) to generate a single `.d.ts` file per entry point.
+Set `dts: true` on every build configuration object. tsup bundles the declarations itself to generate the declaration files per entry point (`index.d.ts` for ESM and `index.d.cts` for CJS).
 
 ```ts
 {
@@ -306,17 +315,18 @@ Set `dts: true` on every build configuration object. tsup uses its own TypeScrip
 
 ### 4.2 Output Structure
 
-Each entry produces a single declaration file alongside its JavaScript outputs:
+Each entry produces its declaration files alongside its JavaScript outputs:
 
 ```
-dist/server/index.d.ts    # Types for both .mjs and .cjs consumers
-dist/shared/index.d.ts
-dist/client/index.d.ts
-dist/react/index.d.ts
-dist/nextjs/index.d.ts
+dist/server/index.d.ts    # Types for .mjs consumers
+dist/server/index.d.cts   # Types for .cjs consumers
+dist/shared/index.d.ts / index.d.cts
+dist/client/index.d.ts / index.d.cts
+dist/react/index.d.ts / index.d.cts
+dist/nextjs/index.d.ts / index.d.cts
 ```
 
-A single `.d.ts` file (not `.d.mts` / `.d.cts`) is sufficient because TypeScript resolves the same declaration file for both `import` and `require` when the `"types"` condition is listed first in the exports map (see section 7).
+tsup generates `index.d.ts` (ESM) and `index.d.cts` (CJS) per entry; the `exports` map points to each one inside the `import` and `require` conditions (see section 7).
 
 ### 4.3 Declaration-Only Builds
 
@@ -489,30 +499,56 @@ The `"exports"` field in `package.json` is the primary mechanism for subpath res
 {
   "exports": {
     ".": {
-      "types": "./dist/server/index.d.ts",
-      "import": "./dist/server/index.mjs",
-      "require": "./dist/server/index.cjs"
+      "import": {
+        "types": "./dist/server/index.d.ts",
+        "default": "./dist/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/server/index.d.cts",
+        "default": "./dist/server/index.cjs"
+      }
     },
     "./shared": {
-      "types": "./dist/shared/index.d.ts",
-      "import": "./dist/shared/index.mjs",
-      "require": "./dist/shared/index.cjs"
+      "import": {
+        "types": "./dist/shared/index.d.ts",
+        "default": "./dist/shared/index.mjs"
+      },
+      "require": {
+        "types": "./dist/shared/index.d.cts",
+        "default": "./dist/shared/index.cjs"
+      }
     },
     "./client": {
-      "types": "./dist/client/index.d.ts",
-      "import": "./dist/client/index.mjs",
-      "require": "./dist/client/index.cjs"
+      "import": {
+        "types": "./dist/client/index.d.ts",
+        "default": "./dist/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/client/index.d.cts",
+        "default": "./dist/client/index.cjs"
+      }
     },
     "./react": {
-      "types": "./dist/react/index.d.ts",
-      "import": "./dist/react/index.mjs",
-      "require": "./dist/react/index.cjs"
+      "import": {
+        "types": "./dist/react/index.d.ts",
+        "default": "./dist/react/index.mjs"
+      },
+      "require": {
+        "types": "./dist/react/index.d.cts",
+        "default": "./dist/react/index.cjs"
+      }
     },
     "./nextjs": {
-      "types": "./dist/nextjs/index.d.ts",
-      "import": "./dist/nextjs/index.mjs",
-      "require": "./dist/nextjs/index.cjs"
-    }
+      "import": {
+        "types": "./dist/nextjs/index.d.ts",
+        "default": "./dist/nextjs/index.mjs"
+      },
+      "require": {
+        "types": "./dist/nextjs/index.d.cts",
+        "default": "./dist/nextjs/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   }
 }
 ```
@@ -521,22 +557,20 @@ The `"exports"` field in `package.json` is the primary mechanism for subpath res
 
 The order of conditions within each export is significant. Node.js and bundlers evaluate conditions top-to-bottom and use the first match:
 
-1. **`"types"` must always be first.** TypeScript resolves types using this condition. If `"import"` comes first, TypeScript may fail to find declarations.
+1. **`"types"` must come first inside each condition** (`import`/`require`): `"import": { "types": "...d.ts", "default": "...mjs" }`, `"require": { "types": "...d.cts", "default": "...cjs" }`. If `"default"` comes first, TypeScript may not find the declarations.
 2. **`"import"` before `"require"`.** ESM consumers match `"import"`; CJS consumers match `"require"`.
 
 ```json
 // CORRECT order
 {
-  "types": "./dist/server/index.d.ts",
-  "import": "./dist/server/index.mjs",
-  "require": "./dist/server/index.cjs"
+  "import": { "types": "./dist/server/index.d.ts", "default": "./dist/server/index.mjs" },
+  "require": { "types": "./dist/server/index.d.cts", "default": "./dist/server/index.cjs" }
 }
 
 // WRONG order - TypeScript cannot resolve types
 {
-  "import": "./dist/server/index.mjs",
-  "require": "./dist/server/index.cjs",
-  "types": "./dist/server/index.d.ts"
+  "import": { "default": "./dist/server/index.mjs", "types": "./dist/server/index.d.ts" },
+  "require": { "default": "./dist/server/index.cjs", "types": "./dist/server/index.d.cts" }
 }
 ```
 
@@ -573,7 +607,7 @@ The `"files"` array in `package.json` controls what gets published to npm:
 
 ```json
 {
-  "files": ["dist", "LICENSE", "README.md"]
+  "files": ["dist", "LICENSE", "README.md", "CHANGELOG.md"]
 }
 ```
 
@@ -676,25 +710,30 @@ dist/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   shared/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   client/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   react/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
   nextjs/
     index.mjs
     index.cjs
     index.d.ts
+    index.d.cts
 ```
 
-Every subpath must have exactly three files: `.mjs`, `.cjs`, and `.d.ts`. Missing files indicate a build configuration error.
+Every subpath must have exactly four files: `.mjs`, `.cjs`, `.d.ts` and `.d.cts`. Missing files indicate a build configuration error.
 
 ### 9.2 Verifying ESM Output
 
@@ -757,15 +796,15 @@ The project's `prepublishOnly` script runs the full validation pipeline:
 
 ```json
 {
-  "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm test && pnpm build"
+  "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm lint && pnpm test:cov:all && pnpm build && pnpm size && pnpm check:exports && pnpm check:published && pnpm check:runtime"
 }
 ```
 
-This ensures that types compile, tests pass, and the build succeeds before any publish attempt. Consider adding `publint` and `attw` checks to this pipeline:
+This ensures the types compile, coverage passes, the build works, and the built package is checked before any publish (the scripts it chains are the list). Additional checks such as `publint` and `attw` can be run on demand:
 
 ```json
 {
-  "prepublishOnly": "pnpm clean && pnpm typecheck && pnpm test && pnpm build && npx publint && npx @arethetypeswrong/cli --pack ."
+  "verify:package": "npx publint && npx @arethetypeswrong/cli --pack ."
 }
 ```
 
@@ -856,7 +895,7 @@ export default defineConfig({
 
 **Why it is wrong:** Bundling React causes "invalid hook call" errors and doubles the bundle size. See section 5.5.
 
-### 10.5 `clean: true` on Every Entry in an Array Config
+### 10.5 `clean: true` on Every Entry of an Array
 
 ```ts
 // WRONG - each entry wipes the previous entry's output
@@ -867,12 +906,12 @@ export default defineConfig([
 ]);
 ```
 
-**Why it is wrong:** tsup builds each config object sequentially. If every entry has `clean: true`, each build wipes the output of the previous build. Only the first entry should have `clean: true`.
+**Why it is wrong:** tsup builds each config object sequentially. If every entry has `clean: true`, each build wipes the output of the previous build. In this project no entry uses `clean: true`: the `build` script wipes `dist/` first (`pnpm clean && tsup`).
 
 ```ts
 // CORRECT
 export default defineConfig([
-  { entry: { 'server/index': '...' }, clean: true, ... },   // Cleans dist/
+  { entry: { 'server/index': '...' }, clean: false, ... },  // dist/ was already cleaned by `pnpm clean`
   { entry: { 'shared/index': '...' }, clean: false, ... },  // Keeps server output
   { entry: { 'client/index': '...' }, clean: false, ... },  // Keeps both
   // ...
@@ -908,15 +947,14 @@ export default defineConfig([
 {
   "exports": {
     ".": {
-      "import": "./dist/server/index.mjs",
-      "require": "./dist/server/index.cjs",
-      "types": "./dist/server/index.d.ts"
+      "import": { "default": "./dist/server/index.mjs", "types": "./dist/server/index.d.ts" },
+      "require": { "default": "./dist/server/index.cjs", "types": "./dist/server/index.d.cts" }
     }
   }
 }
 ```
 
-**Why it is wrong:** TypeScript reads conditions top-to-bottom. With `"types"` last, TypeScript may resolve the `.mjs` file instead of the `.d.ts` file, causing type resolution failures. Always put `"types"` first.
+**Why it is wrong:** TypeScript reads conditions top-to-bottom. With `"types"` after `"default"`, TypeScript may resolve the `.mjs` file instead of the `.d.ts` file, causing type resolution failures. Always put `"types"` first.
 
 ---
 
@@ -931,7 +969,7 @@ Use this checklist when modifying the build configuration or adding a new entry 
 - [ ] `dts` is `true` for every entry
 - [ ] `outDir` is `'dist'` for every entry
 - [ ] `outExtension` maps ESM to `.mjs` and CJS to `.cjs`
-- [ ] `clean: true` is set on the FIRST entry only; all others use `clean: false`
+- [ ] `clean: false` on every entry; `dist/` is cleaned by `pnpm clean` in the `build` script
 - [ ] `splitting` is `false` for every entry
 - [ ] `treeshake` is `true` for every entry
 - [ ] Server/shared entries use `target: 'node24'`
@@ -952,13 +990,13 @@ Use this checklist when modifying the build configuration or adding a new entry 
 - [ ] `"type": "module"` is set
 - [ ] `"sideEffects": false` is set
 - [ ] `"exports"` map has all five subpaths (`.`, `./shared`, `./client`, `./react`, `./nextjs`)
-- [ ] Each export has `"types"` listed FIRST, then `"import"`, then `"require"`
+- [ ] Each export has `"import"` then `"require"`, and inside each `"types"` comes FIRST, then `"default"`
 - [ ] `"typesVersions"` includes entries for `shared`, `client`, `react`, `nextjs`
 - [ ] `"files"` includes `"dist"` and does NOT include `"src"`
 
 ### Post-Build Verification
 
-- [ ] `dist/` contains 5 subdirectories, each with `.mjs`, `.cjs`, and `.d.ts`
+- [ ] `dist/` contains 5 subdirectories, each with `.mjs`, `.cjs`, `.d.ts` and `.d.cts`
 - [ ] ESM files contain `import`/`export` statements
 - [ ] CJS files contain `require`/`exports` statements
 - [ ] `.d.ts` files contain `export declare` statements
@@ -973,7 +1011,7 @@ When adding a sixth (or later) subpath entry:
 1. Create `src/<name>/index.ts` with public API re-exports
 2. Add a new configuration object to the `defineConfig` array in `tsup.config.ts`
 3. Set the correct `target` and `external` for the new entry's runtime
-4. Set `clean: false` (only the first entry cleans)
+4. Set `clean: false` (`dist/` is cleaned by `pnpm clean` in the `build` script)
 5. Add the JSX `esbuildOptions` if the entry contains `.tsx` files
 6. Add the subpath to `"exports"` in `package.json` with `types`/`import`/`require`
 7. Add the subpath to `"typesVersions"` in `package.json`

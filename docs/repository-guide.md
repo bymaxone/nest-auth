@@ -59,10 +59,10 @@ tsup builds 5 entry points → `dist/{subpath}/index.{mjs,cjs,d.ts}`
 
 ```bash
 pnpm clean        # rm -rf dist coverage
-pnpm typecheck    # tsc --noEmit
+pnpm typecheck    # tsc --noEmit (tsconfig.json + tsconfig.server.json)
 pnpm test         # jest
 pnpm build        # tsup
-pnpm release      # npm publish --access public
+pnpm release      # npm publish --provenance --access public
 ```
 
 Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bundled peer deps.
@@ -79,7 +79,7 @@ Post-build checks: all 5 exports resolve, CJS + ESM work, .d.ts present, no bund
 
 **Before finishing:**
 
-- [ ] `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all pass
+- [ ] `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build` — all pass
 - [ ] Barrel export updated if new public API added
 - [ ] JSDoc on new public exports
 - [ ] All text in English

@@ -17,7 +17,7 @@
 **2. English Only**
 
 - All code, comments, JSDoc, variable names, and docs in English. JSDoc on every public export.
-- `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` are the end-user-facing default messages, written in **English** (like the rest of the project). Consumers can localize or override them via `BymaxAuthModule.forRoot({ messages: { ... } })` (planned i18n support) — do not hardcode a non-English locale as the default.
+- `AUTH_ERROR_MESSAGES` in `src/server/errors/auth-error-codes.ts` are the end-user-facing default messages, written in **English** (like the rest of the project). Localization is planned (no option for it exists yet) — do not hardcode a non-English locale as the default.
 
 **3. TypeScript — Zero `any`**
 
@@ -46,7 +46,7 @@
 **7. Testing — TDD, 100% Coverage + 100% Mutation (hard gates)**
 
 - Co-located tests (`*.spec.ts`). AAA pattern. Mock external deps — never real Redis/email in unit tests.
-- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`), per-subpath and global. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 100`) is the deeper gate against weak tests, and the suite currently holds **100%**: no survivors, nothing uncovered. Keep it there — a new survivor is either a missing test or an equivalent that must carry its reason.
+- **100% statements / branches / functions / lines** enforced by `jest.coverage.config.ts` (`pnpm test:cov:all`) as a global threshold. Not a target — a pre-publish gate. Mutation testing (Stryker `break: 100`) is the deeper gate against weak tests, and the suite currently holds **100%**: no survivors, nothing uncovered. Keep it there — a new survivor is either a missing test or an equivalent that must carry its reason.
 
 **8. Build** — tsup builds 5 subpaths → ESM (.mjs) + CJS (.cjs) + .d.ts. `sideEffects: false`. Peer deps always external.
 
@@ -54,13 +54,13 @@
 
 ## Subpaths
 
-| Subpath      | Purpose                                       | Peer Deps                           |
-| ------------ | --------------------------------------------- | ----------------------------------- |
-| `.` (server) | NestJS module — guards, services, controllers | NestJS 11, ioredis, class-validator |
-| `./shared`   | Types + constants                             | None                                |
-| `./client`   | Fetch-based auth client                       | None                                |
-| `./react`    | Hooks + AuthProvider                          | react ^19                           |
-| `./nextjs`   | Proxy factory + route handlers                | next ^16, react ^19                 |
+| Subpath      | Purpose                                       | Peer Deps                                                                                                                              |
+| ------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `.` (server) | NestJS module — guards, services, controllers | NestJS 11 (`common`, `core`, `jwt`, `throttler`, `websockets`), ioredis, class-validator, class-transformer, express, reflect-metadata |
+| `./shared`   | Types + constants                             | None                                                                                                                                   |
+| `./client`   | Fetch-based auth client                       | None                                                                                                                                   |
+| `./react`    | Hooks + AuthProvider                          | react ^19                                                                                                                              |
+| `./nextjs`   | Proxy factory + route handlers                | next ^16, react ^19                                                                                                                    |
 
 Graph: `shared` → `client` → `react` → `nextjs` (each depends on previous + shared). `server` is independent.
 
@@ -186,7 +186,7 @@ and say in the reason why the per-line form did not serve. (They ship in the
 unminified `.mjs` as cosmetic noise — negligible in size. Documenting equivalents in
 `docs/mutation_testing_results.md` instead is the alternative, but only fits when there are few;
 nest-auth's legitimate equivalents make inline the pragmatic choice — moving them to docs would
-drop the score below the 95 gate.) Full setup, config rationale, and the iteration workflow live in
+drop the score below the 100 gate.) Full setup, config rationale, and the iteration workflow live in
 [docs/mutation_testing_plan.md](./docs/mutation_testing_plan.md). Do **not** add
 mutation testing to `prepublishOnly` or the per-PR CI — it runs automatically post-merge on `main` via the shared reusable (`bymaxone/.github` → node-lib-ci) and can also be run on demand (`pnpm mutation`).
 

@@ -4,18 +4,17 @@
 
 ## Supported versions
 
-Security patches are issued for the most recent minor on the active `1.x` line. Older lines stop receiving fixes when a new minor ships.
+Only the most recent minor of the `1.x` line receives security fixes. Earlier versions are not supported: update to the latest minor to get a fix.
 
-| Version | Status                              |
-| ------- | ----------------------------------- |
-| `1.x`   | ✅ Active — receives security fixes |
-| `< 1.0` | ❌ End-of-life                      |
-
-If you are stuck on an older line and need a backport, open a private advisory (see below) and we will discuss feasibility on a case-by-case basis.
+| Version                 | Status                              |
+| ----------------------- | ----------------------------------- |
+| Latest `1.x` minor      | ✅ Active — receives security fixes |
+| Any earlier `1.x` minor | ❌ Not supported — update           |
+| `< 1.0`                 | ❌ End-of-life                      |
 
 ## Reporting a vulnerability
 
-**Do not report security issues through public GitHub Issues, Discussions, or pull requests.** Public reports give attackers a window between disclosure and patch deployment.
+**Do not report security issues through public GitHub Issues or pull requests.** Public reports give attackers a window between disclosure and patch deployment.
 
 Use GitHub **Private Vulnerability Reporting**, which is enabled on this repository:
 
@@ -78,7 +77,7 @@ The repository documentation covers production deployment hardening:
 - [docs/guidelines/JWT-AUTH-GUIDELINES.md](docs/guidelines/JWT-AUTH-GUIDELINES.md) — token management, secret rotation, algorithm pinning
 - [docs/guidelines/REDIS-IOREDIS-GUIDELINES.md](docs/guidelines/REDIS-IOREDIS-GUIDELINES.md) — session storage, brute-force protection
 - [docs/guidelines/NODE-CRYPTO-GUIDELINES.md](docs/guidelines/NODE-CRYPTO-GUIDELINES.md) — cryptographic primitives and `timingSafeEqual` usage
-- [docs/guidelines/NEXTJS-GUIDELINES.md](docs/guidelines/NEXTJS-GUIDELINES.md) — Edge-Runtime proxy hardening, cookie attributes
+- [docs/guidelines/NEXTJS-GUIDELINES.md](docs/guidelines/NEXTJS-GUIDELINES.md) — proxy hardening, cookie attributes
 
 Pin the package to an exact version in production, verify the publish provenance (`npm audit signatures`), and subscribe to the repository's security advisories so you receive notifications when a CVE is published.
 

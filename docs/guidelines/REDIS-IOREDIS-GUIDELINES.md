@@ -136,8 +136,8 @@ Every Redis key in this library follows a strict three-part format:
 ```
 
 - **`{namespace}`** is the value of the `redisNamespace` configuration option (default: `auth`). This prevents collisions with keys from other parts of the host application or other libraries that share the same Redis instance.
-- **`{prefix}`** is a short, fixed abbreviation identifying the entity type (e.g., `rt` for refresh token, `bl` for blacklist).
-- **`{identifier}`** is always a SHA-256 hash of the actual sensitive value (token, email, userId combination). Raw tokens or emails never appear in key names.
+- **`{prefix}`** is a short, fixed abbreviation identifying the entity type (e.g. `rt` for the refresh token, `rv` for the access-token blacklist).
+- **`{identifier}`** is always a hash of the sensitive value, never the raw value: SHA-256 for opaque tokens (`rt`, `mfa`, `pw_reset`, `inv`, `os`, `ec`, `wst`...) and HMAC-SHA-256 keyed by `options.hmacKey` (derived from `identifierKey ?? jwt.secret`) for anything that names an account, an email or an IP (`sess`, `ep`, `lf`, `otp`, `tu`, `rl`...). Raw tokens and emails never appear in key names. `rv` uses the token's `jti`, which is a random UUID and not sensitive data.
 
 ### 2.2 Why SHA-256 in Key Names
 
@@ -156,33 +156,46 @@ function sha256(input: string): string {
 
 // Key construction examples:
 const refreshKey = `${namespace}:rt:${sha256(refreshToken)}`
-const bruteForceKey = `${namespace}:lf:${sha256(tenantId + ':' + email)}`
+const bruteForceKey = `${namespace}:lf:${hmacSha256(`dashboard:${tenantId}:${email}`, hmacKey)}`
 ```
 
 ### 2.3 Complete Key Reference Table
 
-| Prefix      | Key Pattern                                              | Value                                                     | TTL                                             | Purpose                               |
-| ----------- | -------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
-| `rt`        | `auth:rt:{sha256(token)}`                                | JSON: `{ userId, tenantId, role, device, ip, createdAt }` | `refreshExpiresInDays` (converted to seconds)   | Refresh token session data            |
-| `rv`        | `auth:rv:{jti \|\| sha256(jwt)}`                         | `'1'`                                                     | Remaining TTL of the JWT                        | Access JWT blacklist (revocation)     |
-| `us`        | `auth:us:{userId}`                                       | Status string (e.g., `'ACTIVE'`, `'BANNED'`)              | `userStatusCacheTtlSeconds` (default: 60s)      | User status cache                     |
-| `rp`        | `auth:rp:{sha256(oldToken)}`                             | New raw refresh token (UUID)                              | `refreshGraceWindowSeconds` (default: 30s)      | Rotation pointer (grace window)       |
-| `lf`        | `auth:lf:{sha256(tenantId + ":" + email)}`               | Numeric counter (string)                                  | `windowSeconds` (default: 900s)                 | Login failure counter (brute-force)   |
-| `pr`        | `auth:pr:{sha256(token)}`                                | `userId` (string)                                         | `tokenTtlSeconds` (default: 3600s)              | Password reset token                  |
-| `otp`       | `auth:otp:{purpose}:{sha256(tenantId + ":" + email)}`    | JSON: `{ code, attempts }`                                | `otpTtlSeconds` (varies by purpose)             | OTP codes with attempt tracking       |
-| `mfa`       | `auth:mfa:{sha256(mfaTempToken)}`                        | `userId` (string)                                         | 300s (5 minutes)                                | MFA temporary challenge token         |
-| `mfa_setup` | `auth:mfa_setup:{sha256(userId)}`                        | JSON: `{ encryptedSecret, hashedCodes }`                  | 600s (10 minutes)                               | Temporary MFA setup data              |
-| `sess`      | `auth:sess:{userId}`                                     | Redis SET of session hashes                               | Max refresh TTL                                 | Active session tracking per user      |
-| `sd`        | `auth:sd:{sessionHash}`                                  | JSON: `{ device, ip, createdAt, lastActivityAt }`         | Max refresh TTL                                 | Session detail metadata               |
-| `inv`       | `auth:inv:{sha256(token)}`                               | JSON: `{ email, role, tenantId, inviterId }`              | `invitations.tokenTtlSeconds` (default: 7 days) | Pending invitations                   |
-| `os`        | `auth:os:{sha256(state)}`                                | JSON: `{ tenantId }`                                      | 600s (10 minutes)                               | OAuth CSRF state                      |
-| `tu`        | `auth:tu:{userId}:{code}`                                | `'1'`                                                     | 90s (3 x TOTP window)                           | TOTP replay prevention                |
-| `prt`       | `auth:prt:{sha256(token)}`                               | JSON: `{ userId, role, device, ip, createdAt }`           | `refreshExpiresInDays` (converted to seconds)   | Platform admin refresh token          |
-| `prp`       | `auth:prp:{sha256(oldToken)}`                            | New raw platform refresh token                            | `refreshGraceWindowSeconds` (default: 30s)      | Platform rotation pointer             |
-| `prv`       | `auth:prv:{sha256(token)}`                               | JSON: `{ email, tenantId }`                               | 300s (5 minutes)                                | Password reset OTP verification token |
-| `psess`     | `auth:psess:{userId}`                                    | Redis SET of platform session hashes                      | Max refresh TTL                                 | Platform admin session tracking       |
-| `psd`       | `auth:psd:{sessionHash}`                                 | JSON: `{ device, ip, createdAt, lastActivityAt }`         | Max refresh TTL                                 | Platform session detail metadata      |
-| `resend`    | `auth:resend:{purpose}:{sha256(tenantId + ":" + email)}` | `'1'`                                                     | 60s                                             | OTP resend cooldown                   |
+| Prefix      | Key Pattern                                                                                       | Value                                                                                            | TTL                                             | Purpose                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `rt`        | `auth:rt:{sha256(token)}`                                                                         | JSON: `{ userId, tenantId, role, device, ip, createdAt, familyId, familyCreatedAt, mfaEnabled }` | `refreshExpiresInDays` (converted to seconds)   | Refresh token session data                                                                                             |
+| `rp`        | `auth:rp:{sha256(oldToken)}`                                                                      | `{sha256(newToken)}:{session JSON}`                                                              | `refreshGraceWindowSeconds` (default: 30s)      | Rotation pointer (grace window)                                                                                        |
+| `fam`       | `auth:fam:{familyId}`                                                                             | SET of the family's live `sha256(token)` values                                                  | Refresh TTL                                     | Refresh family (revocation on reuse); `pfam` for the platform                                                          |
+| `cf`        | `auth:cf:{sha256(oldToken)}`                                                                      | `familyId`                                                                                       | Refresh TTL                                     | Consumed-token marker (detects reuse after the grace window); `pcf` for the platform                                   |
+| `rv`        | `auth:rv:{jti}`                                                                                   | `'1'`                                                                                            | Remaining JWT TTL                               | Access token blacklist (revocation)                                                                                    |
+| `ep`        | `auth:ep:{hmac_sha256(hmacKey, userSubject)}`                                                     | Integer (user epoch, `INCR`)                                                                     | 30 days, renewed on each increment              | Token epoch: bulk-invalidates access tokens issued earlier (password change/reset, revoke-all); `pep` for the platform |
+| `ra`        | `auth:ra:{hmac_sha256(hmacKey, userSubject)}`                                                     | `'1'`                                                                                            | 300s                                            | Recent re-authentication marker                                                                                        |
+| `us`        | `auth:us:{tenantId}:{userId}` (each part passed through `encodeURIComponent`)                     | Status string (e.g. `'ACTIVE'`, `'BANNED'`)                                                      | `userStatusCacheTtlSeconds` (default: 60s)      | User status cache                                                                                                      |
+| `uev`       | `auth:uev:{tenantId}:{userId}` (same scope as `us`)                                               | Verified-email flag                                                                              | Same TTL as the status cache                    | Verified-email cache                                                                                                   |
+| `lf`        | `auth:lf:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{email}")}` (platform: `"platform:{email}"`) | Numeric counter (string)                                                                         | `windowSeconds` (default: 900s)                 | Login failure counter (brute-force)                                                                                    |
+| `pw_reset`  | `auth:pw_reset:{sha256(token)}`                                                                   | JSON: `{ userId, email, tenantId, passwordFingerprint }`                                         | `passwordReset.tokenTtlSeconds` (default: 600s) | Password reset token                                                                                                   |
+| `pw_vtok`   | `auth:pw_vtok:{sha256(token)}`                                                                    | JSON: `{ userId, email, tenantId, passwordFingerprint }`                                         | 300s                                            | Password reset OTP verification token                                                                                  |
+| `otp`       | `auth:otp:{purpose}:{hmac_sha256(hmacKey, "{tenantId}:{email}")}`                                 | HASH: fields `code` (fingerprint HMAC) and `attempts`                                            | `otpTtlSeconds` (varies by purpose)             | OTP codes with attempt counting                                                                                        |
+| `resend`    | `auth:resend:{purpose}:{hmac_sha256(hmacKey, "{tenantId}:{email}")}`                              | `'1'`                                                                                            | 60s                                             | OTP resend cooldown                                                                                                    |
+| `mfa`       | `auth:mfa:{sha256(jti)}` (jti of the MFA temp token)                                              | `userId` (string)                                                                                | 300s (5 minutes)                                | MFA temp token (single use)                                                                                            |
+| `mfa_setup` | `auth:mfa_setup:{hmac_sha256(hmacKey, userSubject)}`                                              | JSON: `{ encryptedSecret, hashedCodes }`                                                         | 600s (10 minutes)                               | Temporary MFA setup data                                                                                               |
+| `mfalock`   | `auth:mfalock:{hmac_sha256(hmacKey, userSubject)}`                                                | Nonce of the call that took the lock                                                             | 10s                                             | Lock that serializes MFA state transitions                                                                             |
+| `rcu`       | `auth:rcu:{hmac_sha256(hmacKey, "{userSubject}:{code}")}`                                         | Marker (`SET NX`)                                                                                | 300s                                            | Single-use claim of the recovery code                                                                                  |
+| `tu`        | `auth:tu:{hmac_sha256(hmacKey, "{userSubject}:{code}")}`                                          | `'1'`                                                                                            | `(2 x window + 1) x 30s` (90s with window 1)    | TOTP replay prevention                                                                                                 |
+| `sess`      | `auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`    | SET of `rt:{hash}` and `rp:{hash}` members                                                       | Refresh TTL                                     | Per-user index of active sessions                                                                                      |
+| `sd`        | `auth:sd:{sessionHash}`                                                                           | JSON: `{ device, ip, createdAt, lastActivityAt }`                                                | Refresh TTL                                     | Session metadata                                                                                                       |
+| `inv`       | `auth:inv:{sha256(token)}`                                                                        | JSON: `{ email, role, tenantId, inviterUserId, createdAt }`                                      | `invitations.tokenTtlSeconds` (default: 48h)    | Pending invitations                                                                                                    |
+| `invidx`    | `auth:invidx:{tenantId}:{hmac_sha256(hmacKey, email)}`                                            | `sha256(token)` of the pending invitation                                                        | `invitations.tokenTtlSeconds`                   | Invitee index: one pending invitation per address                                                                      |
+| `os`        | `auth:os:{sha256(state)}`                                                                         | JSON: `{ provider, tenantId, codeVerifier }`                                                     | 600s (10 minutes)                               | OAuth CSRF state (with the PKCE verifier)                                                                              |
+| `ec`        | `auth:ec:{sha256(token)}`                                                                         | JSON: `{ userId, newEmail, tenantId, passwordFingerprint }`                                      | `emailChange.tokenTtlSeconds` (default: 3600s)  | Email change token                                                                                                     |
+| `wst`       | `auth:wst:{sha256(ticket)}`                                                                       | JSON: identity snapshot (`sub`, `tenantId?`, `role`, `status`, `mfaEnabled`, `mfaVerified`)      | 30s                                             | Single-use ticket for the WebSocket upgrade                                                                            |
+| `rl`        | `auth:rl:{Class.handler}:{hmac_sha256(hmacKey, IP bucket)}`                                       | Numeric counter                                                                                  | Route window (fixed TTL)                        | Per-route, per-IP rate limit                                                                                           |
+| `prt`       | `auth:prt:{sha256(token)}`                                                                        | Same record as `rt`, with an empty `tenantId`                                                    | `refreshExpiresInDays` (converted to seconds)   | Platform admin refresh token                                                                                           |
+| `prp`       | `auth:prp:{sha256(oldToken)}`                                                                     | `{sha256(newToken)}:{session JSON}`                                                              | `refreshGraceWindowSeconds` (default: 30s)      | Platform rotation pointer                                                                                              |
+| `psess`     | `auth:psess:{hmac_sha256(hmacKey, "platform:{userId}")}`                                          | SET of `prt:{hash}` and `prp:{hash}` members                                                     | Refresh TTL                                     | Platform admin session index                                                                                           |
+| `psd`       | `auth:psd:{sessionHash}`                                                                          | JSON: `{ device, ip, createdAt, lastActivityAt }`                                                | Refresh TTL                                     | Platform session metadata                                                                                              |
+
+`userSubject` is `dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}` on the dashboard plane and `platform:{userId}` on the platform plane (`src/server/constants/user-subject.ts`). The length prefix keeps the key injective even when the `tenantId` contains `:`.
 
 ### 2.4 Key Expiration Strategy
 
@@ -231,13 +244,12 @@ JWTs are stateless — once issued, they remain valid until expiration. When a u
 ### 3.2 Blacklist Key Structure
 
 ```
-Key:   auth:rv:{jti || sha256(accessJwt)}
+Key:   auth:rv:{jti}
 Value: '1'
 TTL:   Remaining seconds until the JWT's exp claim
 ```
 
-- **Prefer `jti` when available.** The `jti` (JWT ID) claim is a UUID included in the token payload. Using it as the key avoids the cost of hashing the entire JWT string.
-- **Fall back to `sha256(jwt)` if `jti` is absent.** This ensures backward compatibility and works with any JWT regardless of claims.
+- **The `jti` is mandatory.** The `jti` claim (JWT ID) is a UUID included in the token payload and is the entry's key. A token without a valid `jti` is rejected with `TOKEN_INVALID` before the lookup; there is no `sha256(jwt)` fallback.
 
 ### 3.3 Setting the Blacklist Entry
 
@@ -299,9 +311,9 @@ async canActivate(context: ExecutionContext): Promise<boolean> {
 
 When all sessions for a user must be invalidated (e.g., password change, account compromise), the library does not blacklist every access token individually. Instead:
 
-1. All refresh token sessions are deleted (removing the ability to get new access tokens).
-2. The short-lived access token (default 15 minutes) expires naturally.
-3. For immediate revocation of a specific access token, its `jti` is added to the blacklist.
+1. All refresh sessions are deleted (atomic sweep of the `sess:` index).
+2. The user epoch (`ep:`/`pep:`) is advanced: every access token issued earlier is rejected immediately, without listing `jti`.
+3. To revoke one specific access token, its `jti` goes to the blacklist (`rv:`).
 
 This approach is intentional: blacklisting every possible access token for a user would require tracking all issued `jti` values, adding complexity with marginal benefit given the short access token TTL.
 
@@ -311,10 +323,10 @@ This approach is intentional: blacklisting every possible access token for a use
 
 ### 4.1 Refresh Token Design
 
-Refresh tokens in this library are **opaque UUID v4 strings** (not JWTs). They are stored in Redis with session metadata, enabling stateful session management without database queries.
+Refresh tokens in this library are **opaque random tokens** (not JWTs): 32 random bytes encoded as 64 hex characters. They are stored in Redis with session metadata, enabling stateful session management without database queries.
 
 ```
-Token format:  UUID v4 (e.g., "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+Token format:  64 hex characters from 32 random bytes (generateSecureToken)
 Storage key:   auth:rt:{sha256(token)}
 Storage value: JSON string with session data
 TTL:           refreshExpiresInDays converted to seconds
@@ -448,7 +460,7 @@ Brute-force protection uses Redis atomic counters to track failed login attempts
 ### 5.2 Key Structure
 
 ```
-Key:   auth:lf:{sha256(tenantId + ":" + email)}
+Key:   auth:lf:{hmac_sha256(hmacKey, "dashboard:{tenantId}:{email}")}
 Value: Numeric counter (stored as string by Redis)
 TTL:   windowSeconds (default: 900s = 15 minutes)
 ```
@@ -538,7 +550,7 @@ async checkAndRecordFailure(identifier: string): Promise<{
 
 ### 5.8 MFA Brute-Force Protection
 
-MFA verification has its own brute-force counter scoped by `sha256(userId)`. After 5 consecutive MFA failures, the `mfaTempToken` is revoked in Redis, forcing the user to re-authenticate with their password before retrying MFA.
+MFA verification has its own brute-force counters, one per flow, keyed by `hmac_sha256(hmacKey, "{flow}:{userSubject}")`, so a pre-auth attacker cannot exhaust the budget of the authenticated user's other flows. A wrong code does not revoke the `mfaTempToken`: the user can retry under it until the flow's counter reaches `bruteForce.maxAttempts`, after which the flow answers `ACCOUNT_LOCKED`.
 
 ---
 
@@ -550,7 +562,7 @@ Session management is opt-in (`sessions.enabled: true`). When enabled, the libra
 
 The data model uses two complementary structures:
 
-- **A Redis SET** (`auth:sess:{userId}`) containing hashes of all active refresh tokens for that user.
+- **A Redis SET** (`auth:sess:{hmac_sha256(hmacKey, "dashboard:{utf8ByteLength(tenantId)}:{tenantId}:{userId}")}`) whose members are `rt:{hash}` (live sessions) and `rp:{hash}` (grace pointers).
 - **Individual keys** (`auth:sd:{sessionHash}`) containing JSON metadata for each session.
 
 ### 6.2 Creating a Session
@@ -708,11 +720,11 @@ async revokeAllSessions(userId: string): Promise<void> {
 
 Platform admin sessions use the same architecture with distinct prefixes:
 
-| Entity          | Tenant User          | Platform Admin        |
-| --------------- | -------------------- | --------------------- |
-| Session set     | `auth:sess:{userId}` | `auth:psess:{userId}` |
-| Session details | `auth:sd:{hash}`     | `auth:psd:{hash}`     |
-| Refresh token   | `auth:rt:{hash}`     | `auth:prt:{hash}`     |
+| Entity          | Tenant User                                                     | Platform Admin                         |
+| --------------- | --------------------------------------------------------------- | -------------------------------------- |
+| Session set     | `auth:sess:{hmac(dashboard:{bytes(tenant)}:{tenant}:{userId})}` | `auth:psess:{hmac(platform:{userId})}` |
+| Session details | `auth:sd:{hash}`                                                | `auth:psd:{hash}`                      |
+| Refresh token   | `auth:rt:{hash}`                                                | `auth:prt:{hash}`                      |
 
 This separation ensures that a tenant-level session revocation operation never accidentally affects platform admin sessions, and vice versa.
 
@@ -727,8 +739,8 @@ OTPs (One-Time Passwords) are short numeric codes sent via email for password re
 ### 7.2 Key Structure
 
 ```
-Key:   auth:otp:{purpose}:{sha256(tenantId + ":" + email)}
-Value: JSON: { "code": "123456", "attempts": 0 }
+Key:   auth:otp:{purpose}:{hmac_sha256(hmacKey, "{tenantId}:{email}")}
+Value: HASH { code: "<hmac_sha256(identifier:code)>", attempts: 0 }
 TTL:   otpTtlSeconds (varies by purpose)
 ```
 
@@ -736,69 +748,63 @@ The `purpose` segment (`password_reset` or `email_verification`) prevents a code
 
 ### 7.3 Storing an OTP
 
+The record is a HASH, written together with its expiry in one script so the key never exists without a TTL (an `HSET` followed by a separate `EXPIRE` leaves a window where a crash strands the record with no expiry):
+
 ```typescript
+const OTP_STORE_LUA = `
+redis.call('HSET', KEYS[1], 'code', ARGV[1], 'attempts', 0)
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+`
+
 async storeOtp(
   purpose: "password_reset" | "email_verification",
-  tenantId: string,
-  email: string,
+  identifier: string,
   code: string,
   ttlSeconds: number,
 ): Promise<void> {
-  const key = this.key("otp", `${purpose}:${sha256(tenantId + ":" + email)}`);
-  await this.redis.set(
-    key,
-    JSON.stringify({ code, attempts: 0 }),
-    "EX",
-    ttlSeconds,
+  // `fingerprint` is the keyed HMAC of identifier + code; the code itself is never stored.
+  await this.redis.eval(
+    OTP_STORE_LUA,
+    [`otp:${purpose}:${identifier}`],
+    [this.fingerprint(identifier, code), String(ttlSeconds)],
   );
 }
 ```
 
 ### 7.4 Atomic Check-and-Delete (Verify OTP)
 
-OTP verification must be atomic to prevent race conditions where the same code is verified twice:
+OTP verification must be atomic to prevent race conditions where the same code is verified twice, and so that parallel wrong guesses cannot exceed the attempt ceiling. A read in JS followed by a write back would let N concurrent guesses all read `attempts: 0`. The decision is made inside one script, with `HINCRBY` bumping the counter in place (it leaves the key's TTL untouched, so a wrong guess cannot extend the OTP's lifetime):
 
 ```typescript
-async verifyOtp(
-  purpose: "password_reset" | "email_verification",
-  tenantId: string,
-  email: string,
-  submittedCode: string,
-): Promise<"valid" | "invalid" | "expired" | "max_attempts"> {
-  const key = this.key("otp", `${purpose}:${sha256(tenantId + ":" + email)}`);
+const OTP_VERIFY_LUA = `
+local code = redis.call('HGET', KEYS[1], 'code')
+if not code then
+    return { 'EXPIRED', '' }
+end
+local attempts = tonumber(redis.call('HGET', KEYS[1], 'attempts')) or 0
+if attempts >= tonumber(ARGV[2]) then
+    redis.call('DEL', KEYS[1])
+    return { 'MAX', '' }
+end
+if code == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+else
+    redis.call('HINCRBY', KEYS[1], 'attempts', 1)
+end
+return { 'PRESENT', code }
+`
 
-  const data = await this.redis.get(key);
-  if (!data) return "expired";
-
-  const otp = JSON.parse(data) as { code: string; attempts: number };
-
-  if (otp.attempts >= 5) {
-    await this.redis.del(key);
-    return "max_attempts";
-  }
-
-  if (otp.code !== submittedCode) {
-    // Increment attempt counter atomically
-    otp.attempts += 1;
-    const ttl = await this.redis.ttl(key);
-    if (ttl > 0) {
-      await this.redis.set(key, JSON.stringify(otp), "EX", ttl);
-    }
-    return "invalid";
-  }
-
-  // Valid — delete immediately to prevent reuse
-  await this.redis.del(key);
-  return "valid";
-}
+const raw = await this.redis.eval(OTP_VERIFY_LUA, [key], [fingerprint, String(MAX_ATTEMPTS)])
 ```
+
+The caller re-compares the returned stored fingerprint to the submitted one in constant time (`timingSafeEqual`), and answers every failure (missing record, exhausted ceiling, wrong code) with the same `OTP_INVALID` error in the same time, so the responses do not reveal whether a record exists.
 
 ### 7.5 Resend Cooldown
 
 To prevent attackers from endlessly resending OTPs (which would reset the attempt counter), a cooldown key is set:
 
 ```
-Key:   auth:resend:{purpose}:{sha256(tenantId + ":" + email)}
+Key:   auth:resend:{purpose}:{hmac_sha256(hmacKey, "{tenantId}:{email}")}
 Value: '1'
 TTL:   60 seconds
 ```
@@ -821,9 +827,9 @@ async markOtpResent(purpose: string, tenantId: string, email: string): Promise<v
 For MFA TOTP codes, the library prevents replay attacks by storing used codes temporarily:
 
 ```
-Key:   auth:tu:{userId}:{code}
+Key:   auth:tu:{hmac_sha256(hmacKey, "{userSubject}:{code}")}
 Value: '1'
-TTL:   90 seconds (3 x TOTP 30-second window)
+TTL:   (2 x window + 1) x 30 seconds (90s with the default window of 1)
 ```
 
 This ensures the same TOTP code cannot be reused within its validity window, even though the TOTP algorithm would accept it.

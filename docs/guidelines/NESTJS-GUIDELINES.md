@@ -40,11 +40,11 @@ The primary entry point for consumers is `registerAsync`. This allows the host a
 
 import { DynamicModule, Module, Provider, Type } from '@nestjs/common'
 import {
-  AUTH_MODULE_OPTIONS,
-  USER_REPOSITORY,
-  EMAIL_PROVIDER,
-  AUTH_REDIS_CLIENT,
-  AUTH_HOOKS
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_REDIS_CLIENT,
+  BYMAX_AUTH_HOOKS
 } from './bymax-auth.constants'
 import type { AuthModuleAsyncOptions } from './interfaces/auth-module-options.interface'
 
@@ -61,7 +61,7 @@ export class BymaxAuthModule {
 
     return {
       module: BymaxAuthModule,
-      global: options.isGlobal ?? false,
+      // no `global`: the module offers no isGlobal; import it wherever it is used
       imports: [...(options.imports ?? [])],
       providers: [
         ...asyncProviders,
@@ -73,7 +73,13 @@ export class BymaxAuthModule {
         BruteForceService
       ],
       controllers: [...conditionalControllers],
-      exports: [AuthService, TokenManagerService, AUTH_MODULE_OPTIONS]
+      exports: [
+        BYMAX_AUTH_OPTIONS,
+        AuthService,
+        JwtAuthGuard,
+        SessionService,
+        TokenDeliveryService /* ... */
+      ]
     }
   }
 
@@ -90,14 +96,13 @@ import { ModuleMetadata, Type } from '@nestjs/common'
 
 export interface AuthModuleOptions {
   jwt: {
-    accessSecret: string
-    refreshSecret: string
-    accessExpiresIn: string // e.g., '15m'
-    refreshExpiresIn: string // e.g., '7d'
+    secret: string // the single HS256 secret; refresh tokens are opaque (a random token stored in Redis), so there is no refreshSecret
+    accessExpiresIn?: string // e.g., '15m'
+    refreshExpiresInDays?: number // e.g., 7
   }
-  tokenDelivery: 'cookie' | 'body' | 'both'
+  tokenDelivery: 'cookie' | 'bearer' | 'both'
   mfa?: { issuer: string }
-  sessions?: { enabled: boolean; maxPerUser?: number }
+  sessions?: { enabled?: boolean; defaultMaxSessions?: number }
   oauth?: { google?: GoogleOAuthConfig }
   platform?: { enabled: boolean }
   invitations?: { enabled: boolean }
@@ -112,7 +117,6 @@ export interface AuthModuleOptions {
 }
 
 export interface AuthModuleAsyncOptions extends Pick<ModuleMetadata, 'imports'> {
-  isGlobal?: boolean
   useFactory: (...args: unknown[]) => Promise<AuthModuleOptions> | AuthModuleOptions
   inject?: (Type | string | symbol)[]
 }
@@ -126,7 +130,7 @@ The factory function creates providers that resolve the configuration at runtime
 private static createAsyncProviders(options: AuthModuleAsyncOptions): Provider[] {
   return [
     {
-      provide: AUTH_MODULE_OPTIONS,
+      provide: BYMAX_AUTH_OPTIONS,
       useFactory: options.useFactory,
       inject: options.inject ?? [],
     },
@@ -146,18 +150,16 @@ import { ConfigService } from '@nestjs/config'
 @Module({
   imports: [
     BymaxAuthModule.registerAsync({
-      isGlobal: true,
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         jwt: {
-          accessSecret: config.getOrThrow('JWT_ACCESS_SECRET'),
-          refreshSecret: config.getOrThrow('JWT_REFRESH_SECRET'),
+          secret: config.getOrThrow('JWT_ACCESS_SECRET'),
           accessExpiresIn: '15m',
-          refreshExpiresIn: '7d'
+          refreshExpiresInDays: 7
         },
         tokenDelivery: 'cookie',
         mfa: { issuer: 'MyApp' },
-        sessions: { enabled: true, maxPerUser: 5 }
+        sessions: { enabled: true, defaultMaxSessions: 5 }
       }),
       inject: [ConfigService]
     })
@@ -173,7 +175,7 @@ export class AppModule {}
 | **Async only**                        | Only expose `registerAsync()`. Never expose a synchronous `register()` — all real-world configs depend on environment variables.                          |
 | **No `forRoot` / `forFeature` split** | This package is a single cohesive module, not an ORM-style multi-instance module. Use `registerAsync` exclusively.                                        |
 | **Conditional registration**          | Controllers and optional services (MFA, sessions, OAuth) are registered only when their configuration section is present.                                 |
-| **`global` is opt-in**                | The `isGlobal` option defaults to `false`. The host decides whether the module is global.                                                                 |
+| **No `isGlobal`**                     | The module offers no `isGlobal` option. The host imports it in each module that needs it.                                                                 |
 | **No hard dependencies**              | The module must never import concrete implementations. All external dependencies (user repository, email provider, Redis client) are injected via tokens. |
 
 ### 1.7 Conditional Controller Registration
@@ -201,14 +203,9 @@ A better approach for this package -- since options are resolved via async facto
 
 ```typescript
 static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
-  // Controllers cannot be determined before the factory runs.
-  // Strategy: register all controllers, each controller checks
-  // at runtime whether its feature is enabled via the injected options.
-  // If disabled, routes return 404 or the controller is not bound.
-  //
-  // Alternative (used in this package): use a two-phase approach
-  // where the consumer specifies which controllers to enable
-  // in the options, and we use a conditional module factory.
+  // The factory resolves at runtime, so it cannot decide which controllers exist.
+  // This package reads the `controllers` flags from the registerAsync() call itself,
+  // synchronously, and registers only the enabled ones.
 
   return {
     module: BymaxAuthModule,
@@ -217,7 +214,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 }
 ```
 
-> **Important:** Since `registerAsync` uses a factory (resolved at runtime), you cannot conditionally include controllers at module definition time. The recommended pattern for this package is to register all controllers and have each controller inject `AUTH_MODULE_OPTIONS` to check if its feature is enabled. Controllers for disabled features should throw a `NotFoundException` or simply not bind routes using a custom decorator.
+> **Important:** Since `registerAsync` uses a factory (resolved at runtime), the factory cannot decide which controllers the module contains. This package takes the `controllers` flags from the `registerAsync()` call itself and registers only the enabled controllers; a `controllers` key returned from the factory is refused at startup.
 
 ---
 
@@ -234,44 +231,44 @@ This package uses `Symbol()` for all injection tokens to avoid naming collisions
  * Injection token for the resolved auth module options.
  * Provided by the async factory in registerAsync().
  */
-export const AUTH_MODULE_OPTIONS = Symbol('AUTH_MODULE_OPTIONS')
+export const BYMAX_AUTH_OPTIONS = Symbol('BYMAX_AUTH_OPTIONS')
 
 /**
  * Injection token for the user repository implementation.
  * The host application must provide a class implementing IUserRepository.
  */
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY')
+export const BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY')
 
 /**
  * Injection token for the email provider implementation.
  * The host application must provide a class implementing IEmailProvider.
  */
-export const EMAIL_PROVIDER = Symbol('EMAIL_PROVIDER')
+export const BYMAX_AUTH_EMAIL_PROVIDER = Symbol('BYMAX_AUTH_EMAIL_PROVIDER')
 
 /**
  * Injection token for the ioredis client instance.
  * The host application must provide a configured Redis client.
  */
-export const AUTH_REDIS_CLIENT = Symbol('AUTH_REDIS_CLIENT')
+export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
 
 /**
  * Injection token for auth lifecycle hooks.
  * Optional — falls back to NoOpAuthHooks if not provided.
  */
-export const AUTH_HOOKS = Symbol('AUTH_HOOKS')
+export const BYMAX_AUTH_HOOKS = Symbol('BYMAX_AUTH_HOOKS')
 ```
 
 ### 2.2 Why `Symbol()` Instead of Strings
 
 ```typescript
 // WRONG: String tokens can collide with host application tokens
-export const USER_REPOSITORY = 'USER_REPOSITORY'
+export const BYMAX_AUTH_USER_REPOSITORY = 'BYMAX_AUTH_USER_REPOSITORY'
 
 // CORRECT: Symbol tokens are unique by identity
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY')
+export const BYMAX_AUTH_USER_REPOSITORY = Symbol('BYMAX_AUTH_USER_REPOSITORY')
 ```
 
-String tokens like `'USER_REPOSITORY'` can collide if the host application or another package uses the same string. `Symbol()` guarantees uniqueness because each call creates a distinct identity. The string argument is purely a debug label.
+String tokens like `'BYMAX_AUTH_USER_REPOSITORY'` can collide if the host application or another package uses the same string. `Symbol()` guarantees uniqueness because each call creates a distinct identity. The string argument is purely a debug label.
 
 ### 2.3 Using `@Inject()` with Symbol Tokens
 
@@ -279,17 +276,17 @@ When a token is not a class (i.e., it is a Symbol, string, or abstract class), y
 
 ```typescript
 import { Injectable, Inject } from '@nestjs/common'
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 
 @Injectable()
 export class AuthService {
   constructor(
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions,
 
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepository: IUserRepository,
 
     // Class-based tokens do NOT need @Inject()
@@ -307,7 +304,7 @@ This package uses all four provider types. Here is when and how to use each:
 ```typescript
 // Provide a default implementation that can be overridden
 {
-  provide: AUTH_HOOKS,
+  provide: BYMAX_AUTH_HOOKS,
   useClass: NoOpAuthHooks,
 }
 ```
@@ -317,13 +314,12 @@ This package uses all four provider types. Here is when and how to use each:
 ```typescript
 // Configuration factory — the most common pattern in this package
 {
-  provide: AUTH_MODULE_OPTIONS,
+  provide: BYMAX_AUTH_OPTIONS,
   useFactory: async (config: ConfigService): Promise<AuthModuleOptions> => ({
     jwt: {
-      accessSecret: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-      refreshSecret: config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      secret: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d',
+      refreshExpiresInDays: 7,
     },
     tokenDelivery: 'cookie',
   }),
@@ -336,15 +332,14 @@ This package uses all four provider types. Here is when and how to use each:
 ```typescript
 // Useful for testing or constant values
 {
-  provide: AUTH_MODULE_OPTIONS,
+  provide: BYMAX_AUTH_OPTIONS,
   useValue: {
     jwt: {
-      accessSecret: 'test-secret',
-      refreshSecret: 'test-refresh-secret',
+      secret: 'test-secret',
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d',
+      refreshExpiresInDays: 7,
     },
-    tokenDelivery: 'body',
+    tokenDelivery: 'bearer',
   },
 }
 ```
@@ -355,7 +350,7 @@ This package uses all four provider types. Here is when and how to use each:
 // Alias an existing provider under a different token
 {
   provide: LEGACY_USER_REPO,
-  useExisting: USER_REPOSITORY,
+  useExisting: BYMAX_AUTH_USER_REPOSITORY,
 }
 ```
 
@@ -374,7 +369,7 @@ export class AuthService {
 @Injectable()
 export class AuthService {
   constructor(
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepo: IUserRepository
   ) {}
 }
@@ -394,7 +389,7 @@ const mfaProvider: Provider = {
     }
     return new MfaService(options.mfa)
   },
-  inject: [AUTH_MODULE_OPTIONS]
+  inject: [BYMAX_AUTH_OPTIONS]
 }
 ```
 
@@ -450,16 +445,12 @@ The primary guard — extracts and validates JWT tokens from cookies or the `Aut
 ```typescript
 // guards/jwt-auth.guard.ts
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  Inject,
-  UnauthorizedException
-} from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -470,7 +461,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly reflector: Reflector,
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions
   ) {}
 
@@ -489,18 +480,18 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractToken(request)
 
     if (!token) {
-      throw new UnauthorizedException('Missing authentication token')
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     try {
       const payload = await this.jwtService.verifyAsync<DashboardJwtPayload>(token, {
-        secret: this.options.jwt.accessSecret
+        secret: this.options.jwt.secret
       })
 
       // Attach the validated payload to the request for downstream use
       request['user'] = payload
     } catch {
-      throw new UnauthorizedException('Invalid or expired token')
+      throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
     return true
@@ -535,7 +526,9 @@ Checks that the authenticated user has the required role(s) based on a hierarchi
 ```typescript
 // guards/roles.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { ROLES_KEY } from '../decorators/roles.decorator'
 import { hasRole } from '../utils/roles.util'
@@ -560,13 +553,13 @@ export class RolesGuard implements CanActivate {
     const user = request['user'] as DashboardJwtPayload
 
     if (!user) {
-      throw new ForbiddenException('Authentication required')
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     const authorized = requiredRoles.some((role) => hasRole(user.role, role))
 
     if (!authorized) {
-      throw new ForbiddenException('Insufficient permissions')
+      throw new AuthException(AUTH_ERROR_CODES.INSUFFICIENT_ROLE)
     }
 
     return true
@@ -581,7 +574,9 @@ Prevents banned or inactive users from accessing resources:
 ```typescript
 // guards/user-status.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { AuthRedisService } from '../redis/auth-redis.service'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 
@@ -601,7 +596,7 @@ export class UserStatusGuard implements CanActivate {
     const isBlocked = await this.redisService.isUserBlocked(user.sub)
 
     if (isBlocked) {
-      throw new ForbiddenException('Account is suspended')
+      throw new AuthException(AUTH_ERROR_CODES.ACCOUNT_SUSPENDED)
     }
 
     return true
@@ -616,7 +611,9 @@ Ensures that MFA-enabled users have completed the MFA challenge:
 ```typescript
 // guards/mfa-required.guard.ts
 
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common'
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
+import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { SKIP_MFA_KEY } from '../decorators/skip-mfa.decorator'
 import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
@@ -644,7 +641,7 @@ export class MfaRequiredGuard implements CanActivate {
 
     // If the user has MFA enabled but has not completed the challenge
     if (user.mfaEnabled && !user.mfaVerified) {
-      throw new ForbiddenException('MFA verification required')
+      throw new AuthException(AUTH_ERROR_CODES.MFA_REQUIRED)
     }
 
     return true
@@ -661,7 +658,7 @@ Attaches user data if a valid token is present, but does not reject unauthentica
 
 import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type { Request } from 'express'
 
@@ -669,7 +666,7 @@ import type { Request } from 'express'
 export class OptionalAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions
   ) {}
 
@@ -680,7 +677,7 @@ export class OptionalAuthGuard implements CanActivate {
     if (token) {
       try {
         const payload = await this.jwtService.verifyAsync(token, {
-          secret: this.options.jwt.accessSecret
+          secret: this.options.jwt.secret
         })
         request['user'] = payload
       } catch {
@@ -712,14 +709,14 @@ For WebSocket gateways, extract the token from the handshake:
 import { CanActivate, ExecutionContext, Injectable, Inject } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { WsException } from '@nestjs/websockets'
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 
 @Injectable()
 export class WsJwtGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions
   ) {}
 
@@ -735,7 +732,7 @@ export class WsJwtGuard implements CanActivate {
 
     try {
       const payload = await this.jwtService.verifyAsync(token, {
-        secret: this.options.jwt.accessSecret
+        secret: this.options.jwt.secret
       })
       client.data = { user: payload }
     } catch {
@@ -815,14 +812,14 @@ export class AppModule {}
 
 ### 3.10 Rules for Guards in This Project
 
-| Rule                          | Description                                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **No Passport**               | All guards implement `CanActivate` directly. Never import `@nestjs/passport`.                          |
-| **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                        |
-| **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                        |
-| **Throw specific exceptions** | Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403) — never generic errors.       |
-| **Attach payload to request** | After successful validation, assign `request['user'] = payload`. Use bracket notation for type safety. |
-| **Token extraction order**    | Cookie first, then `Authorization: Bearer` header. Cookie is preferred for security (HttpOnly).        |
+| Rule                          | Description                                                                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No Passport**               | All guards implement `CanActivate` directly. Never import `@nestjs/passport`.                                                                                       |
+| **No `APP_GUARD`**            | The library never registers global guards. It exports them for the host to use.                                                                                     |
+| **Reflector for metadata**    | Use `Reflector.getAllAndOverride()` to read decorator metadata.                                                                                                     |
+| **Throw specific exceptions** | Guards throw `AuthException` with an `AUTH_ERROR_CODES` code (e.g. `TOKEN_INVALID`, `INSUFFICIENT_ROLE`) — never Nest's built-in HTTP exceptions or generic errors. |
+| **Attach payload to request** | After successful validation, assign the payload to `request.user`.                                                                                                  |
+| **Token extraction order**    | In `both` delivery mode: cookie first, then `Authorization: Bearer`. The other modes read only their own source.                                                    |
 
 ---
 
@@ -1009,17 +1006,17 @@ Services in this package follow these principles:
 // services/example.service.ts
 
 import { Injectable, Inject } from '@nestjs/common'
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS, BYMAX_AUTH_USER_REPOSITORY } from '../bymax-auth.constants'
 import type { AuthModuleOptions } from '../interfaces/auth-module-options.interface'
 import type { IUserRepository } from '../interfaces/user-repository.interface'
 
 @Injectable()
 export class ExampleService {
   constructor(
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions,
 
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepository: IUserRepository
   ) {}
 
@@ -1042,8 +1039,8 @@ export class ExampleService {
     // Validation logic
   }
 
-  private async fetchData(id: string): Promise<RawData> {
-    return this.userRepository.findById(id)
+  private async fetchData(id: string, tenantId: string): Promise<RawData> {
+    return this.userRepository.findById({ id, tenantId })
   }
 
   private transformResult(data: RawData): SomeResult {
@@ -1082,9 +1079,9 @@ export class AuthService {
     private readonly tokenManager: TokenManagerService,
     private readonly tokenDelivery: TokenDeliveryService,
     private readonly bruteForce: BruteForceService,
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepository: IUserRepository,
-    @Inject(AUTH_HOOKS)
+    @Inject(BYMAX_AUTH_HOOKS)
     private readonly hooks: IAuthHooks
   ) {}
 }
@@ -1152,7 +1149,7 @@ export class AuthRedisService implements OnModuleInit {
   private readonly logger = new Logger(AuthRedisService.name)
 
   constructor(
-    @Inject(AUTH_REDIS_CLIENT)
+    @Inject(BYMAX_AUTH_REDIS_CLIENT)
     private readonly redis: Redis
   ) {}
 
@@ -1298,7 +1295,7 @@ async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
 
 ### 6.4 DTO Validation with Pipes
 
-Use `class-validator` and `class-transformer` for input validation. The host application must register the `ValidationPipe` globally:
+Use `class-validator` and `class-transformer` for input validation. The package does not register a global `ValidationPipe`. Its own controllers mount `createAuthValidationPipe()` (exported from the package root), which produces the `AUTH_ERROR_CODES` validation error shape with per-field `details`. The host registers a `ValidationPipe` for its own routes, and can reuse `createAuthValidationPipe()` to get the same error shape:
 
 ```typescript
 // dto/register.dto.ts
@@ -1339,7 +1336,7 @@ export class LoginDto {
 }
 ```
 
-> **Important:** This package does NOT register `ValidationPipe` globally. That is the host application's responsibility. Document this requirement for consumers.
+> **Important:** This package does NOT register `ValidationPipe` globally. The host decides how its own routes are validated; `createAuthValidationPipe()` is available for hosts that want the same error shape. Document this for consumers.
 
 ### 6.5 HTTP Status Codes
 
@@ -1353,7 +1350,7 @@ Use explicit status codes for every route:
 @HttpCode(HttpStatus.OK) // 200 (not 201 — login does not create a resource)
 
 @Post('logout')
-@HttpCode(HttpStatus.OK) // 200
+@HttpCode(HttpStatus.NO_CONTENT) // 204
 
 @Delete('sessions/:id')
 @HttpCode(HttpStatus.NO_CONTENT) // 204
@@ -1365,19 +1362,15 @@ Since this package is a library, controllers should be registerable selectively.
 
 ```typescript
 static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
-  // All controllers are registered. Each controller internally checks
-  // whether its feature is enabled. Alternatively, use a wrapper module:
   const controllers: Type[] = [];
 
-  // The consumer tells us which controllers to activate via options.
-  // However, since options are async, we use a different strategy:
-  // Register all controllers, and have a feature-gate guard.
+  // The consumer names the controllers to activate on the registerAsync() call itself,
+  // because the async factory result is not available when the module is built.
   return {
     module: BymaxAuthModule,
     controllers: [
-      AuthController,       // Always available
+      AuthController,       // Registered unless `controllers.auth` is false
       // Optional controllers added based on a sync flag
-      // or all registered with runtime gating
     ],
     // ...
   };
@@ -1386,7 +1379,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 
 ### 6.7 Route Prefix Configuration
 
-The package does not hardcode route prefixes. The host application can wrap the module in a `RouterModule` or use a global prefix:
+The host applies the route prefix (`RouterModule` or a global prefix); the controllers add no `auth` segment themselves. `routePrefix` (default `'auth'`) states the prefix the host uses: when it differs, set `cookies.refreshCookiePath` (startup refuses it otherwise) and align `cookies.mfaTempCookiePath`.
 
 ```typescript
 // Host application can namespace all auth routes
@@ -1403,14 +1396,14 @@ export class AppModule {}
 
 ### 6.8 Rules for Controllers in This Project
 
-| Rule                            | Description                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Thin controllers**            | Controllers only validate, call services, and return. No business logic in controllers.                 |
-| **Explicit `@HttpCode()`**      | Every route handler must have an explicit HTTP status code.                                             |
-| **`passthrough: true`**         | Always use `@Res({ passthrough: true })` when injecting the response object.                            |
-| **No global `ValidationPipe`**  | The package does not register global pipes. Document this for consumers.                                |
-| **No hardcoded route prefixes** | Do not use `@Controller('api/v1/auth')`. Use `@Controller('auth')` and let the host configure prefixes. |
-| **Type all return values**      | Every handler method must have an explicit return type annotation.                                      |
+| Rule                            | Description                                                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Thin controllers**            | Controllers only validate, call services, and return. No business logic in controllers.                    |
+| **Explicit `@HttpCode()`**      | Every route handler must have an explicit HTTP status code.                                                |
+| **`passthrough: true`**         | Always use `@Res({ passthrough: true })` when injecting the response object.                               |
+| **No global `ValidationPipe`**  | The package does not register global pipes; its controllers mount `createAuthValidationPipe()` themselves. |
+| **No hardcoded route prefixes** | Do not use `@Controller('api/v1/auth')`. Use `@Controller('auth')` and let the host configure prefixes.    |
+| **Type all return values**      | Every handler method must have an explicit return type annotation.                                         |
 
 ---
 
@@ -1426,7 +1419,7 @@ The package defines a custom exception for auth-specific errors. This extends `H
 import { HttpException, HttpStatus } from '@nestjs/common'
 
 export interface AuthErrorPayload {
-  /** Machine-readable error code (e.g., 'AUTH_INVALID_CREDENTIALS') */
+  /** Machine-readable error code (e.g., 'auth.invalid_credentials') */
   code: string
   /** Human-readable error message */
   message: string
@@ -1458,46 +1451,34 @@ Define all error codes as constants to ensure consistency:
 
 export const AUTH_ERROR_CODES = {
   // Authentication
-  INVALID_CREDENTIALS: 'AUTH_INVALID_CREDENTIALS',
-  ACCOUNT_LOCKED: 'AUTH_ACCOUNT_LOCKED',
-  ACCOUNT_SUSPENDED: 'AUTH_ACCOUNT_SUSPENDED',
-  EMAIL_NOT_VERIFIED: 'AUTH_EMAIL_NOT_VERIFIED',
-  TOKEN_EXPIRED: 'AUTH_TOKEN_EXPIRED',
-  TOKEN_INVALID: 'AUTH_TOKEN_INVALID',
-  REFRESH_TOKEN_REVOKED: 'AUTH_REFRESH_TOKEN_REVOKED',
+  INVALID_CREDENTIALS: 'auth.invalid_credentials',
+  ACCOUNT_LOCKED: 'auth.account_locked',
+  ACCOUNT_SUSPENDED: 'auth.account_suspended',
+  EMAIL_NOT_VERIFIED: 'auth.email_not_verified',
+  TOKEN_EXPIRED: 'auth.token_expired',
+  TOKEN_INVALID: 'auth.token_invalid',
+  TOKEN_REVOKED: 'auth.token_revoked',
 
   // Registration
-  EMAIL_ALREADY_EXISTS: 'AUTH_EMAIL_ALREADY_EXISTS',
-  REGISTRATION_DISABLED: 'AUTH_REGISTRATION_DISABLED',
+  EMAIL_ALREADY_EXISTS: 'auth.email_already_exists',
 
   // MFA
-  MFA_REQUIRED: 'AUTH_MFA_REQUIRED',
-  MFA_INVALID_CODE: 'AUTH_MFA_INVALID_CODE',
-  MFA_ALREADY_ENABLED: 'AUTH_MFA_ALREADY_ENABLED',
-  MFA_NOT_ENABLED: 'AUTH_MFA_NOT_ENABLED',
+  MFA_REQUIRED: 'auth.mfa_required',
+  MFA_INVALID_CODE: 'auth.mfa_invalid_code',
 
-  // Password Reset
-  RESET_TOKEN_INVALID: 'AUTH_RESET_TOKEN_INVALID',
-  RESET_TOKEN_EXPIRED: 'AUTH_RESET_TOKEN_EXPIRED',
-  PASSWORD_TOO_WEAK: 'AUTH_PASSWORD_TOO_WEAK',
+  // Password reset
+  PASSWORD_RESET_TOKEN_INVALID: 'auth.password_reset_token_invalid',
 
   // Sessions
-  SESSION_NOT_FOUND: 'AUTH_SESSION_NOT_FOUND',
-  MAX_SESSIONS_REACHED: 'AUTH_MAX_SESSIONS_REACHED',
+  SESSION_NOT_FOUND: 'auth.session_not_found',
 
   // Authorization
-  INSUFFICIENT_PERMISSIONS: 'AUTH_INSUFFICIENT_PERMISSIONS',
-  FORBIDDEN: 'AUTH_FORBIDDEN',
+  INSUFFICIENT_ROLE: 'auth.insufficient_role',
+  FORBIDDEN: 'auth.forbidden',
 
-  // Rate Limiting
-  TOO_MANY_ATTEMPTS: 'AUTH_TOO_MANY_ATTEMPTS',
-
-  // Platform
-  PLATFORM_ACCESS_DENIED: 'AUTH_PLATFORM_ACCESS_DENIED',
-
-  // Invitations
-  INVITATION_EXPIRED: 'AUTH_INVITATION_EXPIRED',
-  INVITATION_ALREADY_ACCEPTED: 'AUTH_INVITATION_ALREADY_ACCEPTED'
+  // Rate limiting
+  TOO_MANY_REQUESTS: 'auth.too_many_requests'
+  // ... the full catalog is in src/server/errors/auth-error-codes.ts
 } as const
 
 export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES]
@@ -1512,8 +1493,11 @@ import { AUTH_ERROR_CODES } from '../errors/auth-error-codes'
 
 @Injectable()
 export class AuthService {
-  async login(dto: LoginDto, res: Response): Promise<AuthResult> {
-    const user = await this.userRepository.findByEmail(dto.email)
+  async login(dto: LoginDto, req: Request, res: Response): Promise<AuthResult> {
+    // With a `tenantIdResolver` configured the resolver decides and a body `tenantId` is refused;
+    // without one the body's `tenantId` is required
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId })
 
     if (!user) {
       // Use constant-time flow — do not reveal if the email exists
@@ -1675,11 +1659,11 @@ export { PlatformRoles } from './decorators/platform-roles.decorator'
 
 // Constants (injection tokens)
 export {
-  AUTH_MODULE_OPTIONS,
-  USER_REPOSITORY,
-  EMAIL_PROVIDER,
-  AUTH_REDIS_CLIENT,
-  AUTH_HOOKS
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_EMAIL_PROVIDER,
+  BYMAX_AUTH_REDIS_CLIENT,
+  BYMAX_AUTH_HOOKS
 } from './bymax-auth.constants'
 
 // Interfaces (export type, not class)
@@ -1712,7 +1696,7 @@ export type { IUserRepository } from './interfaces/user-repository.interface'
 
 // CORRECT: Use 'export' (no 'type') for classes, functions, constants, decorators
 export { AuthService } from './services/auth.service'
-export { AUTH_MODULE_OPTIONS } from './bymax-auth.constants'
+export { BYMAX_AUTH_OPTIONS } from './bymax-auth.constants'
 export { Public } from './decorators/public.decorator'
 ```
 
@@ -1766,7 +1750,7 @@ export class BymaxAuthModule {
       ],
       exports: [
         // Export tokens and services that consumers need
-        AUTH_MODULE_OPTIONS,
+        BYMAX_AUTH_OPTIONS,
         AuthService,
         TokenManagerService,
         JwtAuthGuard,
@@ -1791,7 +1775,7 @@ private static createConditionalProviders(): Provider[] {
         // MfaService dependencies would also be injected here
         return new MfaService(options.mfa);
       },
-      inject: [AUTH_MODULE_OPTIONS],
+      inject: [BYMAX_AUTH_OPTIONS],
     },
     {
       provide: SessionService,
@@ -1799,7 +1783,7 @@ private static createConditionalProviders(): Provider[] {
         if (!options.sessions?.enabled) return null;
         return new SessionService(options.sessions, redis);
       },
-      inject: [AUTH_MODULE_OPTIONS, AuthRedisService],
+      inject: [BYMAX_AUTH_OPTIONS, AuthRedisService],
     },
   ];
 }
@@ -1876,7 +1860,11 @@ import { PasswordService } from './password.service'
 import { TokenManagerService } from './token-manager.service'
 import { BruteForceService } from './brute-force.service'
 import { TokenDeliveryService } from './token-delivery.service'
-import { AUTH_MODULE_OPTIONS, USER_REPOSITORY, AUTH_HOOKS } from '../bymax-auth.constants'
+import {
+  BYMAX_AUTH_OPTIONS,
+  BYMAX_AUTH_USER_REPOSITORY,
+  BYMAX_AUTH_HOOKS
+} from '../bymax-auth.constants'
 
 describe('AuthService', () => {
   let service: AuthService
@@ -1886,12 +1874,11 @@ describe('AuthService', () => {
 
   const mockOptions: AuthModuleOptions = {
     jwt: {
-      accessSecret: 'test-access-secret',
-      refreshSecret: 'test-refresh-secret',
+      secret: 'test-access-secret',
       accessExpiresIn: '15m',
-      refreshExpiresIn: '7d'
+      refreshExpiresInDays: 7
     },
-    tokenDelivery: 'body'
+    tokenDelivery: 'bearer'
   }
 
   beforeEach(async () => {
@@ -1899,11 +1886,11 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         {
-          provide: AUTH_MODULE_OPTIONS,
+          provide: BYMAX_AUTH_OPTIONS,
           useValue: mockOptions
         },
         {
-          provide: USER_REPOSITORY,
+          provide: BYMAX_AUTH_USER_REPOSITORY,
           useValue: {
             findByEmail: jest.fn(),
             findById: jest.fn(),
@@ -1912,7 +1899,7 @@ describe('AuthService', () => {
           }
         },
         {
-          provide: AUTH_HOOKS,
+          provide: BYMAX_AUTH_HOOKS,
           useValue: {
             afterRegister: jest.fn(),
             afterLogin: jest.fn(),
@@ -1953,7 +1940,7 @@ describe('AuthService', () => {
     }).compile()
 
     service = module.get<AuthService>(AuthService)
-    userRepository = module.get(USER_REPOSITORY)
+    userRepository = module.get(BYMAX_AUTH_USER_REPOSITORY)
     passwordService = module.get(PasswordService)
     tokenManager = module.get(TokenManagerService)
   })
@@ -1974,12 +1961,16 @@ describe('AuthService', () => {
       tokenManager.generateRefreshToken.mockResolvedValue('refresh-token')
 
       const result = await service.login(
-        { email: 'test@example.com', password: 'Password1' },
+        { email: 'test@example.com', password: 'Password1', tenantId: 'tenant-1' },
+        {} as Request,
         {} as Response
       )
 
       expect(result.accessToken).toBe('access-token')
-      expect(userRepository.findByEmail).toHaveBeenCalledWith('test@example.com')
+      expect(userRepository.findByEmail).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        tenantId: 'tenant-1'
+      })
       expect(passwordService.compare).toHaveBeenCalledWith('Password1', 'hashed-password')
     })
 
@@ -2009,11 +2000,12 @@ describe('AuthService', () => {
 // guards/jwt-auth.guard.spec.ts
 
 import { Test, TestingModule } from '@nestjs/testing'
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common'
+import { ExecutionContext } from '@nestjs/common'
+import { AuthException } from '../errors/auth-exception'
 import { Reflector } from '@nestjs/core'
 import { JwtService } from '@nestjs/jwt'
 import { JwtAuthGuard } from './jwt-auth.guard'
-import { AUTH_MODULE_OPTIONS } from '../bymax-auth.constants'
+import { BYMAX_AUTH_OPTIONS } from '../bymax-auth.constants'
 
 describe('JwtAuthGuard', () => {
   let guard: JwtAuthGuard
@@ -2031,9 +2023,9 @@ describe('JwtAuthGuard', () => {
           }
         },
         {
-          provide: AUTH_MODULE_OPTIONS,
+          provide: BYMAX_AUTH_OPTIONS,
           useValue: {
-            jwt: { accessSecret: 'test-secret' }
+            jwt: { secret: 'test-secret' }
           }
         },
         Reflector
@@ -2054,12 +2046,12 @@ describe('JwtAuthGuard', () => {
     expect(result).toBe(true)
   })
 
-  it('should throw UnauthorizedException when no token is present', async () => {
+  it('should throw AuthException when no token is present', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false)
 
     const context = createMockExecutionContext({ cookies: {}, headers: {} })
 
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException)
+    await expect(guard.canActivate(context)).rejects.toThrow(AuthException)
   })
 
   it('should attach user payload to request on valid token', async () => {
@@ -2101,7 +2093,7 @@ function createMockExecutionContext(request?: Partial<Request>): ExecutionContex
 ```typescript
 // Always use the actual Symbol token when mocking
 {
-  provide: USER_REPOSITORY,   // The Symbol from constants
+  provide: BYMAX_AUTH_USER_REPOSITORY,   // The Symbol from constants
   useValue: {
     findByEmail: jest.fn(),
     findById: jest.fn(),
@@ -2116,9 +2108,9 @@ function createMockExecutionContext(request?: Partial<Request>): ExecutionContex
 const module = await Test.createTestingModule({
   imports: [BymaxAuthModule.registerAsync({/* ... */})]
 })
-  .overrideProvider(USER_REPOSITORY)
+  .overrideProvider(BYMAX_AUTH_USER_REPOSITORY)
   .useValue(mockUserRepository)
-  .overrideProvider(AUTH_REDIS_CLIENT)
+  .overrideProvider(BYMAX_AUTH_REDIS_CLIENT)
   .useValue(mockRedisClient)
   .compile()
 ```
@@ -2151,21 +2143,20 @@ describe('AuthController (e2e)', () => {
         BymaxAuthModule.registerAsync({
           useFactory: () => ({
             jwt: {
-              accessSecret: 'e2e-access-secret',
-              refreshSecret: 'e2e-refresh-secret',
+              secret: 'e2e-access-secret',
               accessExpiresIn: '15m',
-              refreshExpiresIn: '7d'
+              refreshExpiresInDays: 7
             },
-            tokenDelivery: 'body'
+            tokenDelivery: 'bearer'
           })
         })
       ]
     })
-      .overrideProvider(USER_REPOSITORY)
+      .overrideProvider(BYMAX_AUTH_USER_REPOSITORY)
       .useValue(createInMemoryUserRepository())
-      .overrideProvider(EMAIL_PROVIDER)
+      .overrideProvider(BYMAX_AUTH_EMAIL_PROVIDER)
       .useValue(createNoOpEmailProvider())
-      .overrideProvider(AUTH_REDIS_CLIENT)
+      .overrideProvider(BYMAX_AUTH_REDIS_CLIENT)
       .useValue(createMockRedisClient())
       .compile()
 
@@ -2271,15 +2262,15 @@ export default {
 
 ### 9.7 Rules for Testing in This Project
 
-| Rule                               | Description                                                                          |
-| ---------------------------------- | ------------------------------------------------------------------------------------ |
-| **Test file collocation**          | Test files live next to source files as `*.spec.ts`.                                 |
-| **Use `Test.createTestingModule`** | Always use NestJS testing utilities, not manual instantiation.                       |
-| **Mock via injection tokens**      | Mock dependencies using their Symbol tokens, not by class reference.                 |
-| **No real Redis in unit tests**    | Always mock `AUTH_REDIS_CLIENT`. Use testcontainers for integration tests if needed. |
-| **No real JWT secrets**            | Use deterministic test secrets like `'test-access-secret'`.                          |
-| **Test error paths**               | Every service test must cover the error/exception paths, not just happy paths.       |
-| **100% coverage gate**             | The CI pipeline enforces 100% on all four metrics.                                   |
+| Rule                               | Description                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Test file collocation**          | Test files live next to source files as `*.spec.ts`.                                       |
+| **Use `Test.createTestingModule`** | Always use NestJS testing utilities, not manual instantiation.                             |
+| **Mock via injection tokens**      | Mock dependencies using their Symbol tokens, not by class reference.                       |
+| **No real Redis in unit tests**    | Always mock `BYMAX_AUTH_REDIS_CLIENT`. Use testcontainers for integration tests if needed. |
+| **No real JWT secrets**            | Use deterministic test secrets like `'test-access-secret'`.                                |
+| **Test error paths**               | Every service test must cover the error/exception paths, not just happy paths.             |
+| **100% coverage gate**             | The CI pipeline enforces 100% on all four metrics.                                         |
 
 ---
 
@@ -2304,7 +2295,7 @@ export class AuthService {
 @Injectable()
 export class AuthService {
   constructor(
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepository: IUserRepository
   ) {}
 }
@@ -2370,13 +2361,14 @@ this.logger.warn(`Failed login attempt for email: ${dto.email}`)
 ```typescript
 // WRONG: Bypasses TypeScript safety
 async login(dto: any): Promise<any> {
-  const user = await this.userRepository.findByEmail(dto.email) as any;
+  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId: dto.tenantId }) as any;
   return { token: user.token };
 }
 
 // CORRECT: Explicit types everywhere
-async login(dto: LoginDto): Promise<AuthResult> {
-  const user = await this.userRepository.findByEmail(dto.email);
+async login(dto: LoginDto, req: Request): Promise<AuthResult> {
+  const tenantId = await this.resolveTenantId(dto.tenantId, req);
+  const user = await this.userRepository.findByEmail({ email: dto.email, tenantId });
   if (!user) {
     throw new AuthException(AUTH_ERROR_CODES.INVALID_CREDENTIALS);
   }
@@ -2391,7 +2383,7 @@ async login(dto: LoginDto): Promise<AuthResult> {
 static register(options: AuthModuleOptions): DynamicModule {
   return {
     module: BymaxAuthModule,
-    providers: [{ provide: AUTH_MODULE_OPTIONS, useValue: options }],
+    providers: [{ provide: BYMAX_AUTH_OPTIONS, useValue: options }],
   };
 }
 
@@ -2400,7 +2392,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
   return {
     module: BymaxAuthModule,
     providers: [{
-      provide: AUTH_MODULE_OPTIONS,
+      provide: BYMAX_AUTH_OPTIONS,
       useFactory: options.useFactory,
       inject: options.inject ?? [],
     }],
@@ -2415,7 +2407,7 @@ static registerAsync(options: AuthModuleAsyncOptions): DynamicModule {
 @Injectable()
 export class AuthService {
   constructor(
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: AuthModuleOptions
   ) {
     // This mutates the singleton options for all consumers
@@ -2429,7 +2421,7 @@ export class AuthService {
   private readonly accessExpiresIn: string
 
   constructor(
-    @Inject(AUTH_MODULE_OPTIONS)
+    @Inject(BYMAX_AUTH_OPTIONS)
     private readonly options: Readonly<AuthModuleOptions>
   ) {
     this.accessExpiresIn = options.jwt.accessExpiresIn
@@ -2525,9 +2517,10 @@ import { scrypt, randomBytes, timingSafeEqual, createHmac } from 'node:crypto'
 // WRONG: Fail at first use — confusing error message
 @Injectable()
 export class AuthService {
-  async login(dto: LoginDto) {
-    // This will throw a cryptic NestJS error if USER_REPOSITORY was never provided
-    const user = await this.userRepository.findByEmail(dto.email)
+  async login(dto: LoginDto, req: Request) {
+    // This will throw a cryptic NestJS error if BYMAX_AUTH_USER_REPOSITORY was never provided
+    const tenantId = await this.resolveTenantId(dto.tenantId, req)
+    const user = await this.userRepository.findByEmail({ email: dto.email, tenantId })
   }
 }
 
@@ -2535,14 +2528,14 @@ export class AuthService {
 @Injectable()
 export class AuthService implements OnModuleInit {
   constructor(
-    @Inject(USER_REPOSITORY)
+    @Inject(BYMAX_AUTH_USER_REPOSITORY)
     private readonly userRepository: IUserRepository
   ) {}
 
   onModuleInit() {
     if (!this.userRepository) {
       throw new Error(
-        '@bymax-one/nest-auth: USER_REPOSITORY provider is required. ' +
+        '@bymax-one/nest-auth: BYMAX_AUTH_USER_REPOSITORY provider is required. ' +
           'Please provide an implementation of IUserRepository in your module configuration.'
       )
     }
@@ -2571,7 +2564,7 @@ Use this checklist when writing or reviewing NestJS code in this project:
 - [ ] No Passport — all guards implement `CanActivate` directly
 - [ ] No `APP_GUARD` registered by the library
 - [ ] Guards use `Reflector.getAllAndOverride()` for metadata
-- [ ] Guards throw `UnauthorizedException` (401) or `ForbiddenException` (403)
+- [ ] Guards throw `AuthException` with an `AUTH_ERROR_CODES` code (the `AuthExceptionFilter` maps it to 401/403)
 - [ ] JWT extracted from cookie first, then `Authorization` header
 - [ ] Validated payload attached to `request['user']`
 
