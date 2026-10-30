@@ -219,6 +219,12 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ### Fixed
 
+- **A request without a body to `POST …/mfa/setup` now behaves like an empty object instead of
+  answering 500.** The validation pipe returned a missing body as `undefined` to a handler that reads
+  `dto.password`; it now hands the handler an empty DTO, so the route answers exactly as it does for
+  `{}` (`auth.invalid_credentials` for an account with a password, success for an OAuth-only one).
+  The platform route and any DTO whose fields are all optional are covered by the same pipe.
+
 - **A served OpenAPI document described every request body as `{}`.** This package is built without
   the `@nestjs/swagger` CLI plugin, so `@nestjs/swagger` registered each of its DTOs as
   `{"type":"object","properties":{}}` — valid, resolvable, and invisible to a dangling-`$ref`
