@@ -108,9 +108,19 @@ describe('buildAuthOpenApiFragment request schemas', () => {
   // Scenario: nothing mounted. Expected: no schemas. Why: a deployment that mounts no controller
   // has no operation for a schema to describe.
   it('contributes nothing when no family is mounted', () => {
-    const none = Object.fromEntries(
-      Object.keys(DEFAULTS).map((flag) => [flag, false])
-    ) as unknown as RegisteredControllers
+    // Spelled out, so a registration switch added to `RegisteredControllers` is a compile error here
+    // instead of a fixture that silently leaves it unset.
+    const none: RegisteredControllers = {
+      auth: false,
+      passwordReset: false,
+      mfa: false,
+      sessions: false,
+      platform: false,
+      platformMfa: false,
+      invitations: false,
+      emailChange: false,
+      oauth: false
+    }
 
     expect(buildAuthOpenApiFragment(optionsFor('cookie'), none).components.schemas).toEqual({})
   })

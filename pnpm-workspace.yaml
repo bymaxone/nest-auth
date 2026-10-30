@@ -71,6 +71,9 @@ overrides:
   # `@eslint/eslintrc` (4.x). Remove once they require the fixed versions.
   'js-yaml@3': '^3.15.2'
   'js-yaml@4': '^4.3.2'
+  # GHSA-r3ph-w7gj-g6xm (5.3): fixed in 5.4.1. Pulled by `@nestjs/swagger` (dev only). Remove once it
+  # requires >=5.4.1.
+  'js-yaml@5': '^5.4.1'
   # Seven advisories up to 7.5 (GHSA-q7qp-rjg7-q26m, -535w-7cp7-47q4, -wc9g-mqfw-jrwm, -qfvm-cv95-jqjf,
   # -3pph-fpjx-jg34, -qvfw-j98x-7q72). Pulled by `@nestjs/platform-express`. Remove once it requires >=2.5.0.
   'multer@2': '^2.5.0'
