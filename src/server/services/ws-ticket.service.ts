@@ -106,8 +106,8 @@ export class WsTicketService {
    * @returns The identity the socket is authorized as.
    * @throws {@link AuthException} `auth.token_invalid` when the ticket is unknown, expired,
    *   already redeemed, or minted by a session that has since been revoked — a logout or a bulk
-   *   revocation between the mint and the upgrade. The four are deliberately indistinguishable to
-   *   the caller.
+   *   revocation between the mint and the upgrade. These are deliberately indistinguishable to the
+   *   caller.
    */
   async redeem(ticket: string): Promise<WsTicketSnapshot> {
     const snapshot = ticket ? await this.redis.redeemWsTicket(ticket) : null
@@ -121,8 +121,8 @@ export class WsTicketService {
 
     // The ticket outlives the request that minted it, and the socket it opens is authenticated
     // once and never revalidated, so the session behind it is checked here against the same two
-    // channels a bearer token is. Only a dashboard ticket exists today; the platform plane is
-    // named for a snapshot with no tenant, the way the epoch key itself is.
+    // channels a bearer token is. The platform plane is named for a snapshot with no tenant, the way
+    // the epoch key itself is.
     const revoked = await this.revocation.isAccessTokenRevoked(
       { jti: snapshot.jti, sub: snapshot.sub, epoch: snapshot.epoch, tenantId: snapshot.tenantId },
       snapshot.tenantId === undefined ? 'platform' : 'dashboard'
