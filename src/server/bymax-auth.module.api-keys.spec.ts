@@ -132,6 +132,10 @@ describe('BymaxAuthModule — service API keys', () => {
     class Auditing {
       onApiKeyRequest(): void {}
     }
+    // The hook as an instance field: it is on the constructed object, not on the prototype.
+    class AuditingByField {
+      onApiKeyRequest = (): void => {}
+    }
     class NotAuditing {}
 
     // Auditing was demanded and nothing is registered that could write it: a startup error, not a
@@ -139,8 +143,7 @@ describe('BymaxAuthModule — service API keys', () => {
     it.each([
       ['no hooks provider (the no-op fallback has no such hook)', []],
       ['a hooks object without the method', [{ provide: BYMAX_AUTH_HOOKS, useValue: {} }]],
-      ['a null hooks object', [{ provide: BYMAX_AUTH_HOOKS, useValue: null }]],
-      ['a hooks class without the method', [{ provide: BYMAX_AUTH_HOOKS, useClass: NotAuditing }]]
+      ['a null hooks object', [{ provide: BYMAX_AUTH_HOOKS, useValue: null }]]
     ])('is refused at startup with %s', async (_name, providers) => {
       await expect(compile(REQUIRED, [KEYS, ...providers])).rejects.toThrow(refusal)
     })
@@ -151,7 +154,18 @@ describe('BymaxAuthModule — service API keys', () => {
         { provide: BYMAX_AUTH_HOOKS, useValue: { onApiKeyRequest() {} } }
       ],
       ['a hooks class with the method', { provide: BYMAX_AUTH_HOOKS, useClass: Auditing }],
-      // Decided at runtime, where the guard denies when the hook is missing.
+      // A hooks object is fully visible, so a field on it counts too.
+      [
+        'a hooks object with the hook as a field',
+        { provide: BYMAX_AUTH_HOOKS, useValue: { onApiKeyRequest: () => undefined } }
+      ],
+      // A class cannot be inspected for instance fields before it is built, so it is decided at
+      // runtime, where the guard denies when the hook is missing.
+      [
+        'a hooks class with the hook as an instance field',
+        { provide: BYMAX_AUTH_HOOKS, useClass: AuditingByField }
+      ],
+      ['a hooks class without the method', { provide: BYMAX_AUTH_HOOKS, useClass: NotAuditing }],
       ['a factory the module cannot inspect', { provide: BYMAX_AUTH_HOOKS, useFactory: () => ({}) }]
     ])('boots with %s', async (_name, provider) => {
       await expect(compile(REQUIRED, [KEYS, provider])).resolves.toBeDefined()

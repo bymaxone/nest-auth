@@ -95,9 +95,11 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
 /**
  * Whether the hooks the host registers plainly lack `onApiKeyRequest`.
  *
- * Absent means the no-op fallback, which has none. A value or a class is inspected; a factory or
- * an alias cannot be inspected before it runs, so it is given the benefit of the doubt here and
- * the guard's own runtime check stands behind it.
+ * Only two shapes can be decided before anything is built: no hooks provider at all (the no-op
+ * fallback has no such hook) and a ready-made value, whose own members are all visible. A class
+ * is not one of them — the hook may be an instance field, which exists only on the constructed
+ * object — and neither is a factory or an alias. Those are given the benefit of the doubt here,
+ * and the guard's own runtime check denies a request when auditing is required and no hook exists.
  *
  * @param providers - The host's `extraProviders`.
  * @returns `true` when no registered hooks implementation can audit.
@@ -110,12 +112,6 @@ function cannotAuditApiKeys(providers: Provider[]): boolean {
   if ('useValue' in hooks) {
     return (
       typeof (hooks.useValue as { onApiKeyRequest?: unknown } | null)?.onApiKeyRequest !==
-      'function'
-    )
-  }
-  if ('useClass' in hooks) {
-    return (
-      typeof (hooks.useClass.prototype as { onApiKeyRequest?: unknown }).onApiKeyRequest !==
       'function'
     )
   }
