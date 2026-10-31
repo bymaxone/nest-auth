@@ -11,8 +11,9 @@
 /**
  * Lowercase names of the request headers the server code reads or derives a field from.
  *
- * `request-headers.spec.ts` walks the server sources and fails when a header literal is read that
- * is missing here, so a new read cannot be forgotten.
+ * An end-to-end walker over the server sources fails when a header literal is read that is
+ * missing here, so a new read cannot be forgotten. It runs there, not as a unit spec, because it
+ * parses source text and mutation testing instruments that text.
  */
 export const LIBRARY_READ_HEADERS: readonly string[] = [
   // The user JWT bearer, on HTTP and on the WebSocket handshake.
