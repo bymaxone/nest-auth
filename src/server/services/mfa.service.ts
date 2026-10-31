@@ -1206,15 +1206,19 @@ export class MfaService {
       )
 
       if (this.hooks.afterLogin) {
-        void Promise.resolve(
-          this.hooks.afterLogin(safeUser, {
-            plane: 'dashboard',
-            userId,
-            ip,
-            userAgent,
-            sanitizedHeaders: {}
-          })
-        ).catch(() => undefined)
+        const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+        runDetached(
+          this.logger,
+          () =>
+            afterLogin(safeUser, {
+              plane: 'dashboard',
+              userId,
+              ip,
+              userAgent,
+              sanitizedHeaders: {}
+            }),
+          'challenge: afterLogin hook threw'
+        )
       }
 
       return result
@@ -1237,15 +1241,19 @@ export class MfaService {
     )
 
     if (this.hooks.afterLogin) {
-      void Promise.resolve(
-        this.hooks.afterLogin(this.platformUserAsSafeUser(platformUser), {
-          plane: 'platform',
-          userId,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch(() => undefined)
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterLogin(this.platformUserAsSafeUser(platformUser), {
+            plane: 'platform',
+            userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'challenge: afterLogin hook threw'
+      )
     }
 
     return result

@@ -46,6 +46,16 @@ Nothing here is a breaking change, and nothing changes unless you opt in.
   linked to the provider identity, found by provider id, not by email; the documentation said the
   latter and is corrected.
 
+### Fixed
+
+- **An MFA account's last login was never recorded.** The password step stopped at the challenge
+  and the challenge completion did not write it, so `lastLoginAt` never moved for a password
+  account with MFA, on the dashboard or the platform plane. Completing the challenge now records
+  it and runs `afterLogin`, for password and OAuth sign-ins alike.
+- **A host `afterLogin` hook that threw synchronously could fail an MFA sign-in that had already
+  passed.** Completing the challenge now runs the hook detached, so neither a throw nor a
+  rejection changes the outcome, and the log line carries a label and the error's shape only.
+
 ### Added
 
 - **Scoped service API keys for machine callers.** `ApiKeyGuard` and the `@ServiceKey(...scopes)`

@@ -2478,6 +2478,56 @@ describe('MfaService', () => {
       )
     })
 
+    // A hook that throws SYNCHRONOUSLY must not undo a challenge that has already passed and
+    // issued its tokens, on either plane; the failure is logged by label only, never by the text
+    // the host's hook wrote.
+    it.each(['dashboard', 'platform'] as const)(
+      'should complete the %s challenge when afterLogin throws synchronously',
+      async (context) => {
+        const { encrypt } = await import('../crypto/aes-gcm')
+        const { generateTotpSecret, generateHotp } = await import('../crypto/totp')
+        const { base32 } = generateTotpSecret()
+        const validCode = generateHotp(base32, Math.floor(Date.now() / 1000 / 30))
+        mockRedis.setnx.mockResolvedValue(true)
+        mockUserRepo.updateLastLogin.mockResolvedValue(undefined)
+        mockPlatformUserRepo.updateLastLogin.mockResolvedValue(undefined)
+        const account = {
+          ...(context === 'dashboard' ? AUTH_USER_MFA_ENABLED : SAFE_ADMIN),
+          passwordHash: 'hash',
+          mfaEnabled: true,
+          mfaSecret: encrypt(base32, VALID_ENCRYPTION_KEY),
+          mfaRecoveryCodes: []
+        }
+        if (context === 'dashboard') {
+          mockUserRepo.findById.mockResolvedValue(account)
+        } else {
+          mockTokenManager.verifyMfaTempToken.mockResolvedValue({
+            userId: 'admin-1',
+            context: 'platform',
+            jti: 'jti-sync-throw'
+          })
+          mockPlatformUserRepo.findById.mockResolvedValue(account)
+          mockTokenManager.issuePlatformTokens.mockResolvedValue({
+            admin: SAFE_ADMIN,
+            accessToken: 'platform.jwt',
+            rawRefreshToken: 'token'
+          })
+        }
+        mockHooks.afterLogin.mockImplementation(() => {
+          throw new Error('host secret=XYZ')
+        })
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+
+        await expect(
+          service.challenge('mfa.temp', validCode, '1.2.3.4', 'Browser')
+        ).resolves.toBeDefined()
+
+        const lines = error.mock.calls.map((c) => String(c[0]))
+        expect(lines.some((l) => l.includes('challenge: afterLogin hook threw'))).toBe(true)
+        expect(lines.join('\n')).not.toContain('XYZ')
+      }
+    )
+
     // Verifies that errors thrown by the afterLogin hook (dashboard) are silently suppressed.
     it('should complete successfully even when afterLogin hook rejects (dashboard)', async () => {
       const { encrypt } = await import('../crypto/aes-gcm')
