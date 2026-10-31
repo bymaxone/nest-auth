@@ -7,9 +7,12 @@
  * @layer Module
  */
 import { DynamicModule, Module, type Provider, type Type } from '@nestjs/common'
+import { DiscoveryModule } from '@nestjs/core'
 import { JwtModule } from '@nestjs/jwt'
 
 import {
+  BYMAX_AUTH_API_KEY_CLOCK,
+  BYMAX_AUTH_API_KEY_REPOSITORY,
   BYMAX_AUTH_REGISTERED_CONTROLLERS,
   BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
@@ -28,6 +31,7 @@ import { PasswordResetController } from './controllers/password-reset.controller
 import { PlatformAuthController } from './controllers/platform-auth.controller'
 import { PlatformMfaController } from './controllers/platform-mfa.controller'
 import { SessionController } from './controllers/session.controller'
+import { ApiKeyGuard } from './guards/api-key.guard'
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { JwtPlatformGuard } from './guards/jwt-platform.guard'
@@ -49,6 +53,11 @@ import { CommonPasswordChecker } from './providers/common-password-checker.provi
 import { NoOpEmailProvider } from './providers/no-op-email.provider'
 import { AuthRedisService } from './redis/auth-redis.service'
 import { AccountStatusService } from './services/account-status.service'
+import { SystemApiKeyClock } from './services/api-key-clock'
+import { ApiKeyLastUsedService } from './services/api-key-last-used.service'
+import { ApiKeyScopeAuditService } from './services/api-key-scope-audit.service'
+import { ApiKeyVerifierService } from './services/api-key-verifier.service'
+import { ApiKeyService } from './services/api-key.service'
 import { AuthRevocationService } from './services/auth-revocation.service'
 import { AuthTokenVerifierService } from './services/auth-token-verifier.service'
 import { AuthService } from './services/auth.service'
@@ -81,6 +90,30 @@ function hasProviderToken(providers: Provider[], token: symbol): boolean {
     if (typeof p === 'function') return false
     return 'provide' in p && p.provide === token
   })
+}
+
+/**
+ * Whether the hooks the host registers plainly lack `onApiKeyRequest`.
+ *
+ * Only two shapes can be decided before anything is built: no hooks provider at all (the no-op
+ * fallback has no such hook) and a ready-made value, whose own members are all visible. A class
+ * is not one of them — the hook may be an instance field, which exists only on the constructed
+ * object — and neither is a factory or an alias. Those are given the benefit of the doubt here,
+ * and the guard's own runtime check denies a request when auditing is required and no hook exists.
+ *
+ * @param providers - The host's `extraProviders`.
+ * @returns `true` when no registered hooks implementation can audit.
+ */
+function cannotAuditApiKeys(providers: Provider[]): boolean {
+  const hooks = providers.find((p) => 'provide' in p && p.provide === BYMAX_AUTH_HOOKS)
+  if (hooks === undefined) return true
+  if ('useValue' in hooks) {
+    return (
+      typeof (hooks.useValue as { onApiKeyRequest?: unknown } | null)?.onApiKeyRequest !==
+      'function'
+    )
+  }
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +272,8 @@ export class BymaxAuthModule {
 
     // InvitationController — opt-in. Requires invitations.enabled: true in the resolved options.
     const includeInvitations = options.controllers?.invitations === true
+    // Service API keys have no controller: the host's repository provider is what opts in.
+    const includeApiKeys = hasProviderToken(extraProviders, BYMAX_AUTH_API_KEY_REPOSITORY)
 
     // EmailChangeController — opt-in. The service refuses to boot when the configured email
     // provider cannot deliver the verification token, so a deployment that enables the flow
@@ -335,10 +370,48 @@ export class BymaxAuthModule {
           )
         }
 
+        // Cross-validate: the service-key feature is registered by the repository provider and
+        // configured by `apiKeys.enabled`. One without the other is a half-configured feature
+        // that would either authenticate nothing or crash on first use, so it fails at startup.
+        if (includeApiKeys !== resolved.apiKeys.enabled) {
+          throw new Error(
+            includeApiKeys
+              ? '[BymaxAuthModule] BYMAX_AUTH_API_KEY_REPOSITORY is provided but apiKeys.enabled ' +
+                  'is not true. Enable apiKeys in the useFactory return value, or remove the provider.'
+              : '[BymaxAuthModule] apiKeys.enabled: true requires BYMAX_AUTH_API_KEY_REPOSITORY in ' +
+                  'extraProviders. Provide your IApiKeyRepository implementation.'
+          )
+        }
+
+        // Auditing every request was demanded: refuse a module that is plainly unable to write it.
+        // The guard denies at runtime too, which also covers what is not inspectable here.
+        if (resolved.apiKeys.auditMode === 'required' && cannotAuditApiKeys(extraProviders)) {
+          throw new Error(
+            "[BymaxAuthModule] apiKeys.auditMode: 'required' needs an onApiKeyRequest hook, and " +
+              'the BYMAX_AUTH_HOOKS provider has none. Implement it, or use ' +
+              "auditMode: 'best-effort'."
+          )
+        }
+
         return resolved
       },
       inject: options.inject ?? []
     }
+
+    // Service API keys — registered only when the host supplied the repository. The clock is a
+    // fallback, like the email provider: the host replaces it only to test a boundary instant.
+    const apiKeyProviders: Provider[] = includeApiKeys
+      ? [
+          ...(hasProviderToken(extraProviders, BYMAX_AUTH_API_KEY_CLOCK)
+            ? []
+            : [{ provide: BYMAX_AUTH_API_KEY_CLOCK, useClass: SystemApiKeyClock }]),
+          ApiKeyLastUsedService,
+          ApiKeyVerifierService,
+          ApiKeyService,
+          ApiKeyGuard,
+          ApiKeyScopeAuditService
+        ]
+      : []
 
     // Fallback email provider — only registered when the consumer has not supplied one.
     const emailProviders: Provider[] = hasProviderToken(extraProviders, BYMAX_AUTH_EMAIL_PROVIDER)
@@ -419,6 +492,8 @@ export class BymaxAuthModule {
       module: BymaxAuthModule,
       imports: [
         ...(options.imports ?? []),
+        // The bootstrap scope audit walks controllers through the discovery service.
+        ...(includeApiKeys ? [DiscoveryModule] : []),
         // JwtModule reads the secret directly from the consumer factory (without re-running
         // resolveOptions) to avoid double-validation on startup. Full validation happens once
         // in the BYMAX_AUTH_OPTIONS provider above.
@@ -510,7 +585,9 @@ export class BymaxAuthModule {
         // Invitation service — only when controllers.invitations: true.
         ...invitationProviders,
         // Address-change service — only when controllers.emailChange: true.
-        ...emailChangeProviders
+        ...emailChangeProviders,
+        // Service API keys — only when the host supplied the repository.
+        ...apiKeyProviders
       ],
       controllers,
       exports: [
@@ -596,6 +673,12 @@ export class BymaxAuthModule {
         // export BYMAX_AUTH_USER_REPOSITORY as the instance supplied by the consumer` test, which
         // is the one that fails without it.
         BYMAX_AUTH_USER_REPOSITORY,
+        // Service API keys: the guard is re-instantiated in the consumer's injector by
+        // `@ServiceKey()`, so its direct dependencies must be exported with it — the verifier and
+        // the hooks. The service is public surface for a host's own admin routes.
+        ...(includeApiKeys
+          ? [ApiKeyGuard, ApiKeyVerifierService, ApiKeyService, BYMAX_AUTH_HOOKS]
+          : []),
         // WsTicketService also stands on its own as public surface: single-use ticket
         // handshakes are the credential a realtime transport is meant to use, and a consumer
         // cannot mint one without injecting this service.

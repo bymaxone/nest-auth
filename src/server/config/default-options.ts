@@ -146,6 +146,18 @@ export const DEFAULT_OPTIONS = {
     tokenTtlSeconds: 172_800
   },
 
+  apiKeys: {
+    enabled: false,
+    // Placeholders: validation requires a real pepper and vocabulary before `enabled` can be
+    // true, so these values are never used to hash or admit anything.
+    pepper: '',
+    scopes: [],
+    header: 'x-api-key',
+    prefix: 'bak',
+    lastUsedFlushSeconds: 60,
+    auditMode: 'best-effort'
+  },
+
   controllers: {
     // auth and passwordReset are opt-out (enabled by default).
     // All other controllers are opt-in (disabled by default) — they require

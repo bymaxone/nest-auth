@@ -437,4 +437,60 @@ export interface IAuthHooks {
     evictedSessionHash: string,
     context: HookContext
   ): Promise<void> | void
+  /**
+   * Called once for every request guarded by a service API key, refusals included.
+   *
+   * The audit trail for machine callers: who (the key's label), what (method and route
+   * pattern) and how it ended. Fires for an admitted request, for every refused credential, for
+   * a key missing a scope, and for a route that declares no scopes at all.
+   *
+   * By default the call is fired without being awaited and a failure is only logged, as for
+   * every other hook. With `apiKeys.auditMode: 'required'` it is awaited and a failure DENIES
+   * the request, for hosts whose audit row is a record they must have.
+   *
+   * The event never carries the presented key or its secret. `reason` is for the operator: the
+   * caller is always given the same answer for a bad credential.
+   *
+   * @param event - What was asked, by whom, and how it ended.
+   * @param context - Request metadata (IP, user agent, sanitized headers).
+   */
+  onApiKeyRequest?(event: ApiKeyAccessEvent, context: HookContext): Promise<void> | void
+}
+
+/** Why a service-key request was refused. Absent on an admitted request. */
+export type ApiKeyDenyReason =
+  | 'missing'
+  | 'malformed'
+  | 'unknown'
+  | 'wrong_secret'
+  | 'revoked'
+  | 'expired'
+  | 'scope_insufficient'
+  | 'route_undeclared'
+  | 'store_error'
+
+/** One audited service-key request. See {@link IAuthHooks.onApiKeyRequest}. */
+export interface ApiKeyAccessEvent {
+  /** Whether the request was admitted. */
+  outcome: 'allowed' | 'denied'
+  /** Why it was refused; `null` when admitted. */
+  reason: ApiKeyDenyReason | null
+  /**
+   * The row id of the key, when the presented key named an existing row. Public by design: it
+   * is the half of the key that is not secret. `null` when no row was identified.
+   */
+  keyId: string | null
+  /** The label of the identified key, or `null` when none was. */
+  label: string | null
+  /** HTTP method. */
+  method: string
+  /**
+   * The route PATTERN (`/videos/:id`), never the concrete URL, so identifiers a caller put in
+   * the path do not reach the audit log. Empty when the framework matched no pattern.
+   */
+  route: string
+  /** The scopes the route declares. Empty when the route declares none. */
+  requiredScopes: readonly string[]
+  /** Client address as the host's trusted-proxy configuration resolves it. */
+  ip: string
 }

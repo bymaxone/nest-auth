@@ -77,3 +77,19 @@ export const BYMAX_AUTH_REDIS_CLIENT = Symbol('BYMAX_AUTH_REDIS_CLIENT')
  * than degrading.
  */
 export const BYMAX_AUTH_REGISTERED_CONTROLLERS = Symbol('BYMAX_AUTH_REGISTERED_CONTROLLERS')
+
+/**
+ * Injection token for the host's {@link IApiKeyRepository} implementation.
+ *
+ * Supplying it in `extraProviders` together with `apiKeys.enabled: true` is what registers the
+ * service-key feature; either one without the other is a startup error.
+ */
+export const BYMAX_AUTH_API_KEY_REPOSITORY = Symbol('BYMAX_AUTH_API_KEY_REPOSITORY')
+
+/**
+ * Injection token for the clock the service-key feature reads "now" from.
+ *
+ * Optional: the module registers the system clock when the host supplies none. It exists so
+ * that expiry and revocation can be tested at the exact boundary instant.
+ */
+export const BYMAX_AUTH_API_KEY_CLOCK = Symbol('BYMAX_AUTH_API_KEY_CLOCK')

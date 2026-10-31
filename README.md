@@ -830,26 +830,27 @@ refusal to reach the client as anything but `Internal server error` — see
 
 All options are configurable via `registerAsync()`. Here are the key configuration groups:
 
-| Group                 | Key Options                                                                                                                                         | Default                                   |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience` | `15m`, `7d`, `30d` cap, `HS256`, both off |
-| **identifierKey**     | Top-level secret the Redis account identifiers and MFA recovery-code digests derive from; pin it before rotating `jwt.secret`                       | `jwt.secret`                              |
-| **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                    | `'production'`                            |
-| **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                           | `15`, scrypt N=2¹⁷, r=8, p=1              |
-| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                | `'cookie'`                                |
-| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                     | `'lax'`, `[]` (see cookie section)        |
-| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                              | `totpWindow` `1`, `recoveryCodeCount` `8` |
-| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                              | `false`, `5`, —                           |
-| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                      | `5`, `900`                                |
-| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                              | `true`, **required**                      |
-| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                       | `'token'`                                 |
-| **platform**          | `enabled`                                                                                                                                           | `false`                                   |
-| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                        | `false`                                   |
-| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                         | —                                         |
-| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                   | —                                         |
-| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                         | `true`, `600`                             |
-| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                   | `[]`                                      |
-| **controllers**       | Toggle individual controllers on/off — passed to `registerAsync()` itself, never returned from `useFactory` (which refuses it at startup)           | `auth`, `passwordReset` on; rest opt-in   |
+| Group                 | Key Options                                                                                                                                                                    | Default                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| **jwt**               | `secret` (required), `previousSecrets`, `accessExpiresIn`, `refreshExpiresInDays`, `absoluteSessionLifetimeDays`, `algorithm`, `issuer`, `audience`                            | `15m`, `7d`, `30d` cap, `HS256`, both off              |
+| **identifierKey**     | Top-level secret the Redis account identifiers and MFA recovery-code digests derive from; pin it before rotating `jwt.secret`                                                  | `jwt.secret`                                           |
+| **environment**       | `'production'` \| `'development'` \| `'test'` — the only input that answers "is this production"                                                                               | `'production'`                                         |
+| **password**          | `minLength`, `costFactor`, `blockSize`, `parallelization`                                                                                                                      | `15`, scrypt N=2¹⁷, r=8, p=1                           |
+| **tokenDelivery**     | `'cookie'` \| `'bearer'` \| `'both'`                                                                                                                                           | `'cookie'`                                             |
+| **cookies**           | `accessTokenName`, `refreshTokenName`, `sessionSignalName`, `refreshCookiePath`, `sameSite`, `trustedOrigins`, `resolveDomains`                                                | `'lax'`, `[]` (see cookie section)                     |
+| **mfa**               | `encryptionKey`, `previousEncryptionKeys`, `issuer`, `totpWindow`, `recoveryCodeCount`                                                                                         | `totpWindow` `1`, `recoveryCodeCount` `8`              |
+| **sessions**          | `enabled`, `defaultMaxSessions`, `maxSessionsResolver`                                                                                                                         | `false`, `5`, —                                        |
+| **bruteForce**        | `maxAttempts`, `windowSeconds`                                                                                                                                                 | `5`, `900`                                             |
+| **rateLimit**         | `enabled`, `clientIpSource` (`'peer'` \| `'trusted-proxy'`) — per-IP limits over Redis                                                                                         | `true`, **required**                                   |
+| **passwordReset**     | `method` (`'token'` \| `'otp'`), `otpLength`, `otpTtlSeconds`                                                                                                                  | `'token'`                                              |
+| **platform**          | `enabled`                                                                                                                                                                      | `false`                                                |
+| **invitations**       | `enabled`, `tokenTtlSeconds`                                                                                                                                                   | `false`                                                |
+| **apiKeys**           | `enabled`, `pepper` and `scopes` (required when enabled), `header`, `prefix`, `lastUsedFlushSeconds`, `auditMode` — see [Service API keys](#-service-api-keys-machine-callers) | `false`, `'x-api-key'`, `'bak'`, `60`, `'best-effort'` |
+| **roles**             | `hierarchy` (required), `platformHierarchy`                                                                                                                                    | —                                                      |
+| **oauth**             | `google: { clientId, clientSecret, callbackUrl }`                                                                                                                              | —                                                      |
+| **emailVerification** | `required`, `otpTtlSeconds`                                                                                                                                                    | `true`, `600`                                          |
+| **password** (screen) | `blocklist` — extra words the default screen refuses, on top of the ones it ships                                                                                              | `[]`                                                   |
+| **controllers**       | Toggle individual controllers on/off — passed to `registerAsync()` itself, never returned from `useFactory` (which refuses it at startup)                                      | `auth`, `passwordReset` on; rest opt-in                |
 
 > [!NOTE]
 > When a feature is not enabled (e.g., `mfa`, `sessions`, `platform`), its controllers and services are **not registered** in the NestJS container — zero overhead. A feature is enabled by `controllers.<name>: true` on the `registerAsync()` call together with its configuration group (`mfa.encryptionKey` and `mfa.issuer`, `sessions.enabled`, `platform.enabled`); either half alone leaves it unregistered or fails at startup.
@@ -1048,6 +1049,270 @@ BymaxAuthModule.registerAsync({
 ```
 
 ---
+
+## 🔑 Service API keys (machine callers)
+
+For a caller that is a program, not a person: an automation service, a build agent, a partner
+integration. A key is stored only as a peppered HMAC digest, carries a set of scopes, is checked
+by a guard that has no dependency on user sessions, and every guarded request — refused ones
+included — reaches an audit hook. Nothing is registered until you opt in.
+
+### Enable it
+
+```typescript
+// app.module.ts
+import { BYMAX_AUTH_API_KEY_REPOSITORY, BymaxAuthModule } from '@bymax-one/nest-auth'
+
+BymaxAuthModule.registerAsync({
+  useFactory: () => ({
+    jwt: { secret: process.env.JWT_SECRET ?? '' },
+    roles: { hierarchy: { ADMIN: ['MEMBER'], MEMBER: [] } },
+    rateLimit: { clientIpSource: 'peer' },
+    apiKeys: {
+      enabled: true,
+      // A secret of its own, held apart from the database that stores the digests.
+      pepper: process.env.API_KEY_PEPPER ?? '',
+      // The closed vocabulary: issue() refuses anything else, and so does the startup scan.
+      scopes: ['read', 'operate', 'publish-claim', 'admin']
+    }
+  }),
+  extraProviders: [
+    // …BYMAX_AUTH_USER_REPOSITORY and BYMAX_AUTH_REDIS_CLIENT as usual
+    { provide: BYMAX_AUTH_API_KEY_REPOSITORY, useClass: PrismaApiKeyRepository }
+  ]
+})
+```
+
+The feature is registered by the repository provider **and** `apiKeys.enabled`. Either one alone
+fails at startup and says which is missing.
+
+| Option                 | Default         | Meaning                                                                                                                                                                                                                                         |
+| ---------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pepper`               | — (required)    | The HMAC key every digest is computed under. As strong as `jwt.secret`, and refused if it equals `jwt.secret` (current or retired), `identifierKey` or an MFA key.                                                                              |
+| `scopes`               | — (required)    | The closed vocabulary: letters, digits and `: . _ -`, up to 64 characters each.                                                                                                                                                                 |
+| `header`               | `'x-api-key'`   | Where the key is read from. Never the query string. Lowercased. Never a header the library reads, such as `authorization`, `cookie`, `user-agent`, `origin` or the forwarded-address headers; also avoid one your own `tenantIdResolver` reads. |
+| `prefix`               | `'bak'`         | Literal start of every issued key, for secret scanners. Lowercase letters and digits, 2 to 16, no underscore.                                                                                                                                   |
+| `lastUsedFlushSeconds` | `60`            | How often coalesced `lastUsedAt` values are written, in one batch. 1 to 3600.                                                                                                                                                                   |
+| `auditMode`            | `'best-effort'` | `'required'` awaits the audit hook and **denies** the request if it throws, and startup refuses it when the registered hooks plainly lack `onApiKeyRequest`. See [Audit](#audit).                                                               |
+
+### Protect a route
+
+```typescript
+// videos.controller.ts
+import { Controller, Get, Post } from '@nestjs/common'
+import { CurrentApiKey, ServiceKey } from '@bymax-one/nest-auth'
+import type { ApiKeyPrincipal } from '@bymax-one/nest-auth'
+
+@Controller('videos')
+export class VideosController {
+  @ServiceKey('read')
+  @Get()
+  list(@CurrentApiKey() key: ApiKeyPrincipal) {
+    // key.id, key.label and key.scopes — and nothing secret.
+    return { caller: key.label }
+  }
+
+  @ServiceKey('operate', 'publish-claim')
+  @Post()
+  publish() {
+    // The key must hold BOTH scopes.
+  }
+}
+```
+
+`@ServiceKey(...scopes)` does three things in one decorator so they cannot be separated by
+mistake: it declares the scopes, it lets the route past `JwtAuthGuard` and `JwtPlatformGuard`
+(which skip a route carrying the public marker), and it binds `ApiKeyGuard`. **"Public" here
+means "not a user route", never "unauthenticated"**: the key guard refuses a missing or invalid
+key on every request, even with a global `JwtAuthGuard` registered.
+
+- A key must hold **all** the scopes a route declares. There is no wildcard and no hierarchy:
+  `admin` does not imply `read`, so grant both.
+- The most specific declaration wins: a method's `@ApiKeyScopes` replaces its class's.
+- **A route with no scope declaration is refused** (`403 auth.forbidden`) before any credential
+  is read, so a forgotten declaration cannot become an open route. If you bind `ApiKeyGuard`
+  globally, every route without a declaration is refused: that is the strict mode.
+- A scope outside `apiKeys.scopes` stops the application at startup, not at the first request.
+- Verification attaches `request.apiKey` and never `request.user`, so no user-session guard can
+  mistake a machine for a person.
+
+### Issue, revoke and rotate
+
+The library mounts no controller: the admin surface is yours, and `ApiKeyService` is the
+mechanism behind it.
+
+```typescript
+// keys-admin.controller.ts
+import { Body, Controller, Delete, Param, Post } from '@nestjs/common'
+import { ApiKeyService, JwtAuthGuard, Roles, RolesGuard } from '@bymax-one/nest-auth'
+import { UseGuards } from '@nestjs/common'
+
+@Controller('admin/keys')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+export class KeysAdminController {
+  constructor(private readonly keys: ApiKeyService) {}
+
+  @Post()
+  async issue(@Body() body: { label: string; scopes: string[] }) {
+    const { key, record } = await this.keys.issue(body)
+    // `key` is the plaintext. It is returned this once and cannot be retrieved again.
+    return { key, record }
+  }
+
+  @Post(':id/rotate')
+  rotate(@Param('id') id: string) {
+    // The old key keeps working for an hour so the caller can switch without downtime.
+    return this.keys.rotate(id, { overlapSeconds: 3600 })
+  }
+
+  @Delete(':id')
+  revoke(@Param('id') id: string) {
+    return this.keys.revoke(id)
+  }
+}
+```
+
+- `issue({ label, scopes, expiresAt? })`: the label is 1 to 128 characters with no control
+  characters, `expiresAt` must be in the future, and every scope must come from the vocabulary.
+  Failures answer `auth.validation`.
+- Several active keys may share one label. **Rotation is that rule, not a special case**:
+  `rotate(id, { overlapSeconds })` issues a second key with the same label and scopes, then
+  retires the first after the overlap (`0` retires it at once; the maximum is
+  `API_KEY_MAX_OVERLAP_SECONDS`). The new key is issued before the old one is retired,
+  so a failure in between leaves both valid rather than neither. A revoked or expired key is
+  not rotated (`auth.api_key_not_found`): that would re-issue access nobody holds.
+- `revoke(id)` takes effect on the very next request: the row is read on every request, and
+  there is no verification cache.
+- **Who did it.** `issue`, `revoke` and `rotate` emit no hook of their own — they run inside
+  your admin route, which already knows the operator, so attribute them there (log or audit it
+  beside the call). The per-request hook below covers requests _made with_ a key. If you want
+  provenance stored with the key, add your own columns: `IApiKeyRepository.create` receives the
+  row and your implementation can persist whatever else it knows. That is why `issue()` takes
+  no `createdBy`.
+
+### The repository
+
+You implement `IApiKeyRepository`, as you do for users. The library supplies the `id` and the
+`digest`; the store only persists them.
+
+| Method                   | Contract                                                                                                                                                                                                         |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findById(id)`           | One primary-key read per request. Return revoked and expired rows too: the library decides validity.                                                                                                             |
+| `create(row)`            | Insert `{ id, label, digest, scopes, createdAt, expiresAt }`. Do not make `label` unique.                                                                                                                        |
+| `markRevoked(id, at)`    | `false` when unknown. Revoking twice is not an error. A row with `revokedAt` set is revoked at once on every instance, whatever instant it holds: a future date is not a schedule, so schedule with `expiresAt`. |
+| `setExpiry(id, at)`      | `false` when unknown. The scheduling field: a key stops verifying at `expiresAt`. Used by rotation to retire the old key after the overlap.                                                                      |
+| `touchLastUsed(entries)` | One batch. **Must be monotonic**: `GREATEST(last_used_at, :at)`, never backwards — several instances flush independently.                                                                                        |
+| `listByLabel(label)`     | Every key of a label, for your admin screen.                                                                                                                                                                     |
+
+### How a key is stored and checked
+
+A key looks like `bak_<keyId>_<secret>`: a literal prefix, the row's UUID (a public handle that
+makes verification an indexed read), and 43 base64url characters carrying 32 random bytes. Only
+`HMAC-SHA-256(pepper, secret)` is stored, as lowercase hex. Labels and scopes are not part of the
+digest, so editing them never invalidates a key. The grammar and the digest are pinned by
+[`conformance/wire-contract.json`](./conformance/wire-contract.json) with a vector, because
+`rust-auth` mints and verifies the same keys.
+
+**Why a fast HMAC rather than a slow password hash.** This is the library's own reasoning, not
+an OWASP rule: the OWASP Password Storage Cheat Sheet's case against fast hashes is about
+passwords, which people choose and which can be guessed. A key's secret is 256 bits from the
+CSPRNG, so the work factor of the hash adds nothing to its resistance, and a per-request scrypt
+would only hand an attacker a cheap way to burn CPU. The pepper is what the cheat sheet calls
+the HMAC key: kept apart from the database, so a leaked table of digests cannot be tested
+offline.
+
+**Every key takes the same steps.** Parse (substituting a dummy when it does not parse), read a
+row (always), compute the digest, compare two 32-byte buffers with `timingSafeEqual` (against a
+dummy digest when there is no row), and only then decide. An unknown, malformed, wrong, revoked
+or expired key all answer `401 auth.api_key_invalid` with the same body; the operator sees the
+real reason in the audit event. A key is valid strictly before its `expiresAt`, and not at all once `revokedAt` is set.
+
+Two things this does _not_ claim. The store round trip costs differently for a present and an
+absent row, and no library can hide that — put a per-address throttle in front (below). And the
+fail-closed branch (a bound route with no scopes) intentionally takes different steps: it
+depends on route configuration, not on the key, so there is nothing for the key to leak.
+
+**Changing the pepper makes every issued key unverifiable.** Digests are not portable across
+peppers, so a new pepper means re-issuing every key. There is no pepper rotation in this
+version.
+
+### Audit
+
+Implement `onApiKeyRequest` on your `IAuthHooks`. It fires once for every guarded request:
+
+```typescript
+import type { ApiKeyAccessEvent, HookContext, IAuthHooks } from '@bymax-one/nest-auth'
+
+export class AuditHooks implements IAuthHooks {
+  async onApiKeyRequest(event: ApiKeyAccessEvent, context: HookContext): Promise<void> {
+    // event.outcome: 'allowed' | 'denied'
+    // event.reason:  null, or missing | malformed | unknown | wrong_secret | revoked | expired
+    //                | scope_insufficient | route_undeclared | store_error
+    // event.label, event.keyId, event.method, event.route (the PATTERN, e.g. /videos/:id),
+    // event.requiredScopes, event.ip
+    await this.audit.write({ ...event, userAgent: context.userAgent })
+  }
+}
+```
+
+Every refused request reaches the hook too, so anonymous traffic can write audit rows: throttle by address before the guard. By default the hook is fired without being awaited and its failure is logged. With `apiKeys.auditMode: 'required'` it is awaited, and **if it throws the request is
+denied** (`500 auth.internal`): use that when the audit row is a record you must have.
+
+### Keep the key out of your logs
+
+The library never logs, throws or emits the presented key, and strips the key header from the
+hook's `sanitizedHeaders`. Your HTTP logger sits outside the library, so redact the header
+there, custom `apiKeys.header` included:
+
+```typescript
+// nest-logger
+LoggerModule.forRoot({ redactPaths: ['req.headers["x-machine-key"]'] })
+```
+
+```typescript
+// plain pino
+const logger = pino({ redact: ['req.headers["x-api-key"]'] })
+```
+
+### Rate limiting
+
+Rate limiting is deliberately not built in. Use `@nestjs/throttler` in two layers: a per-address
+limit in front of everything, which is the only protection for the pre-verification lookup; and
+a per-key limit placed **after** `ApiKeyGuard`, keyed on the verified key id:
+
+```typescript
+import { UseGuards, Get } from '@nestjs/common'
+import { ServiceKey } from '@bymax-one/nest-auth'
+import type { ApiKeyPrincipal } from '@bymax-one/nest-auth'
+import { ThrottlerGuard } from '@nestjs/throttler'
+
+export class KeyThrottlerGuard extends ThrottlerGuard {
+  protected override async getTracker(req: Record<string, unknown>): Promise<string> {
+    const key = req['apiKey'] as ApiKeyPrincipal | undefined
+    return key?.id ?? String(req['ip'])
+  }
+}
+
+export class LimitedController {
+  // @UseGuards sits ABOVE @ServiceKey: decorators run bottom-up and the guards run in that
+  // order, so the key guard verifies first and the tracker sees `request.apiKey`.
+  @UseGuards(KeyThrottlerGuard)
+  @ServiceKey('read')
+  @Get('limited')
+  limited() {}
+}
+```
+
+A request that fails verification never reaches the second guard, so garbage cannot spend a real
+key's budget. This example is exercised end to end in `test/e2e/api-keys.e2e-spec.ts`.
+
+### Last-used tracking, and what it costs
+
+A verified request does a map write, nothing else; every `lastUsedFlushSeconds` the values are
+written to your repository in one batch. With **N instances** a key is written up to N times
+per window instead of once, and a crash loses at most one window of `lastUsedAt`. The field is
+advisory: authorization never reads it.
 
 ## 🏗️ Architecture
 
@@ -1863,14 +2128,15 @@ conditional on nothing having invalidated in between, which this service does no
 
 ### Server Guards
 
-| Guard                | Decorator                       | Purpose                                                     |
-| -------------------- | ------------------------------- | ----------------------------------------------------------- |
-| `JwtAuthGuard`       | —                               | Validates JWT from cookie or `Authorization: Bearer` header |
-| `RolesGuard`         | `@Roles('admin')`               | Hierarchical role check                                     |
-| `UserStatusGuard`    | —                               | Blocks inactive/banned users (Redis-cached status)          |
-| `MfaRequiredGuard`   | `@SkipMfa()`                    | Enforces MFA verification on protected routes               |
-| `JwtPlatformGuard`   | —                               | Platform admin JWT validation (Bearer only)                 |
-| `PlatformRolesGuard` | `@PlatformRoles('super_admin')` | Platform role hierarchy enforcement                         |
+| Guard                | Decorator                       | Purpose                                                          |
+| -------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| `JwtAuthGuard`       | —                               | Validates JWT from cookie or `Authorization: Bearer` header      |
+| `RolesGuard`         | `@Roles('admin')`               | Hierarchical role check                                          |
+| `UserStatusGuard`    | —                               | Blocks inactive/banned users (Redis-cached status)               |
+| `MfaRequiredGuard`   | `@SkipMfa()`                    | Enforces MFA verification on protected routes                    |
+| `JwtPlatformGuard`   | —                               | Platform admin JWT validation (Bearer only)                      |
+| `PlatformRolesGuard` | `@PlatformRoles('super_admin')` | Platform role hierarchy enforcement                              |
+| `ApiKeyGuard`        | `@ServiceKey('read')`           | Service API key for machine callers; fails closed without scopes |
 
 > [!NOTE]
 > Three additional guards — `SelfOrAdminGuard` (ownership checks), `OptionalAuthGuard` (routes that behave differently for anonymous vs authenticated users), and `WsJwtGuard` (JWT authentication on WebSocket gateways) — are exported from the public `@bymax-one/nest-auth` barrel. Use them exactly like the core guards above.
@@ -1977,15 +2243,15 @@ chosen at the throw site — `AuthException` takes no status argument. A client 
 [`conformance/wire-contract.json`](./conformance/wire-contract.json) under
 `errorCatalog.statuses` and asserted by both suites against that file.
 
-| Status | Codes                                                                                                                                                                                                                                                             |
-| -----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-|  `400` | `auth.validation` · `auth.password_compromised` · `auth.password_reset_token_invalid` · `auth.email_change_token_invalid` · `auth.invalid_invitation_token` · `auth.mfa_not_enabled` · `auth.mfa_setup_required`                                                  |
-|  `401` | `auth.invalid_credentials` · `auth.token_invalid` · `auth.refresh_token_invalid` · `auth.mfa_invalid_code` · `auth.mfa_temp_token_invalid` · `auth.otp_invalid` · `auth.oauth_failed` · `auth.platform_auth_required`                                             |
-|  `403` | `auth.account_inactive` · `auth.account_suspended` · `auth.account_banned` · `auth.pending_approval` · `auth.email_not_verified` · `auth.mfa_required` · `auth.insufficient_role` · `auth.forbidden` · `auth.untrusted_origin` · `auth.reauthentication_required` |
-|  `404` | `auth.session_not_found`                                                                                                                                                                                                                                          |
-|  `409` | `auth.email_already_exists` · `auth.mfa_already_enabled` · `auth.mfa_state_conflict` · `auth.oauth_email_mismatch`                                                                                                                                                |
-|  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                  |
-|  `500` | `auth.internal`                                                                                                                                                                                                                                                   |
+| Status | Codes                                                                                                                                                                                                                                                                                                 |
+| -----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  `400` | `auth.validation` · `auth.password_compromised` · `auth.password_reset_token_invalid` · `auth.email_change_token_invalid` · `auth.invalid_invitation_token` · `auth.mfa_not_enabled` · `auth.mfa_setup_required`                                                                                      |
+|  `401` | `auth.invalid_credentials` · `auth.token_invalid` · `auth.refresh_token_invalid` · `auth.mfa_invalid_code` · `auth.mfa_temp_token_invalid` · `auth.otp_invalid` · `auth.oauth_failed` · `auth.platform_auth_required` · `auth.api_key_invalid`                                                        |
+|  `403` | `auth.account_inactive` · `auth.account_suspended` · `auth.account_banned` · `auth.pending_approval` · `auth.email_not_verified` · `auth.mfa_required` · `auth.insufficient_role` · `auth.forbidden` · `auth.untrusted_origin` · `auth.reauthentication_required` · `auth.api_key_scope_insufficient` |
+|  `404` | `auth.session_not_found` · `auth.api_key_not_found`                                                                                                                                                                                                                                                   |
+|  `409` | `auth.email_already_exists` · `auth.mfa_already_enabled` · `auth.mfa_state_conflict` · `auth.oauth_email_mismatch`                                                                                                                                                                                    |
+|  `429` | `auth.account_locked` · `auth.too_many_requests`                                                                                                                                                                                                                                                      |
+|  `500` | `auth.internal`                                                                                                                                                                                                                                                                                       |
 
 `AUTH_ERROR_STATUS` ships from `@bymax-one/nest-auth/shared`, beside `AUTH_ERROR_CODES`, if you
 need the mapping at runtime — for a typed client, an API document, or a test that asserts against
@@ -2034,6 +2300,9 @@ went one release stated and unenforced.
 | `@Roles(...roles)`         | Set required roles: `@Roles('admin', 'manager')`                             |
 | `@PlatformRoles(...roles)` | Set required platform roles: `@PlatformRoles('super_admin')`                 |
 | `@Public()`                | Mark route as public (skip JWT guard)                                        |
+| `@ServiceKey(...scopes)`   | Machine-caller route: scopes + JWT bypass + `ApiKeyGuard`, in one            |
+| `@ApiKeyScopes(...scopes)` | Declare required scopes only (when binding `ApiKeyGuard` yourself)           |
+| `@CurrentApiKey()`         | Inject the verified key: `@CurrentApiKey() key: ApiKeyPrincipal`             |
 | `@SkipMfa()`               | Skip MFA verification for this route                                         |
 
 ### React Hooks

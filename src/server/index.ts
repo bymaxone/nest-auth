@@ -11,6 +11,8 @@ export { BymaxAuthModule } from './bymax-auth.module'
 // ---------------------------------------------------------------------------
 
 export {
+  BYMAX_AUTH_API_KEY_CLOCK,
+  BYMAX_AUTH_API_KEY_REPOSITORY,
   BYMAX_AUTH_BREACH_CHECKER,
   BYMAX_AUTH_EMAIL_PROVIDER,
   BYMAX_AUTH_HOOKS,
@@ -100,6 +102,8 @@ export type {
 } from './interfaces/authenticated-request.interface'
 export type {
   BeforeRegisterResult,
+  ApiKeyAccessEvent,
+  ApiKeyDenyReason,
   HookContext,
   IAuthHooks,
   OAuthLoginResult
@@ -374,3 +378,25 @@ export {
 export type { IPasswordBreachChecker } from './interfaces/password-breach-checker.interface'
 export { AuthRateLimit } from './decorators/auth-rate-limit.decorator'
 export type { AuthRateLimitWindow } from './decorators/auth-rate-limit.decorator'
+
+// ---------------------------------------------------------------------------
+// Service API keys (machine callers)
+// ---------------------------------------------------------------------------
+
+export type {
+  ApiKeyPrincipal,
+  AuthApiKey,
+  AuthApiKeySummary,
+  IApiKeyRepository
+} from './interfaces/api-key-repository.interface'
+export { ApiKeyGuard } from './guards/api-key.guard'
+export { ApiKeyScopes } from './decorators/api-key-scopes.decorator'
+export { ServiceKey } from './decorators/service-key.decorator'
+export { CurrentApiKey } from './decorators/current-api-key.decorator'
+export {
+  API_KEY_MAX_LABEL_LENGTH,
+  API_KEY_MAX_OVERLAP_SECONDS,
+  ApiKeyService
+} from './services/api-key.service'
+export type { IssueApiKeyInput, IssuedApiKey, RotateApiKeyInput } from './services/api-key.service'
+export type { ApiKeyClock } from './services/api-key-clock'

@@ -34,11 +34,13 @@ import { encrypt } from './crypto/aes-gcm'
 import { userSubject } from './constants/user-subject'
 import { generateSecureToken, hmacSha256 } from './crypto/secure-token'
 import { fromBase32, generateTotpSecret } from './crypto/totp'
+import { DEFAULT_OPTIONS } from './config/default-options'
 import { resolveOptions } from './config/resolved-options'
 import type { ResolvedOptions } from './config/resolved-options'
 import { AUTH_THROTTLE_CONFIGS } from './constants/throttle-configs'
 import { AUTH_ERROR_CODES, AUTH_ERROR_MESSAGES, AUTH_ERROR_STATUS } from './errors/auth-error-codes'
 import { AuthException } from './errors/auth-exception'
+import { apiKeyDigest, formatApiKey, generateApiKeySecret, parseApiKey } from './crypto/api-key'
 import { WS_TICKET_TTL_SECONDS } from './interfaces/ws-ticket.interface'
 import { PasswordService } from './services/password.service'
 import { AuthRedisService } from './redis/auth-redis.service'
@@ -94,6 +96,18 @@ interface WireContract {
     statuses: Record<string, number>
   }
   errorEnvelope: { shape: { error: Record<string, string> } }
+  apiKeys: {
+    keyGrammar: {
+      separator: string
+      defaultPrefix: string
+      keyIdLength: number
+      secretLength: number
+      totalLengthWithDefaultPrefix: number
+    }
+    vector: { pepper: string; keyId: string; secret: string; key: string; digest: string }
+    auditEvent: { outcome: string[]; reason: string[]; fields: string[] }
+    refusals: Record<string, string>
+  }
   responseBodies: {
     login: { cookie: string[]; bearer: string[] }
     platformLogin: { bearer: string[] }
@@ -134,7 +148,7 @@ const contract = JSON.parse(contractSource) as WireContract
  * unavailable in the Stryker sandbox, and a check that skipped itself there would pass on the
  * broken state in the place the mutation gate runs.
  */
-const CONTRACT_SHA256 = 'f186512041069e99977cd442d56ed34d13dd1c9c2995d85f5f233c0b43262c79'
+const CONTRACT_SHA256 = '47143f4861a18efb42bf1139e2200fd01fdcfe4e3b41843fb1afb467a0536174'
 
 /** Minimal options accepted by resolveOptions; only the derivation is under test here. */
 const MINIMAL_OPTIONS = {
@@ -406,6 +420,78 @@ describe('cross-implementation conformance', () => {
   // -------------------------------------------------------------------------
   // Error catalog
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Service API keys
+  // -------------------------------------------------------------------------
+
+  describe('service API keys', () => {
+    const grammar = contract.apiKeys.keyGrammar
+    const vector = contract.apiKeys.vector
+
+    // Verifies the key grammar the contract states is the one this library mints and parses:
+    // a key issued by one backend must be accepted by the other, so lengths, separator and the
+    // default prefix are pinned, not restated.
+    it('mints keys of exactly the contract grammar', () => {
+      const key = formatApiKey(grammar.defaultPrefix, vector.keyId, generateApiKeySecret())
+      expect(key).toHaveLength(grammar.totalLengthWithDefaultPrefix)
+      expect(key.split(grammar.separator)[0]).toBe(grammar.defaultPrefix)
+      expect(vector.keyId).toHaveLength(grammar.keyIdLength)
+      expect(vector.secret).toHaveLength(grammar.secretLength)
+      expect(DEFAULT_OPTIONS.apiKeys.prefix).toBe(grammar.defaultPrefix)
+    })
+
+    // Verifies the vector: the digest function, and that the key splits into the id and secret
+    // the contract names. This is what a rust-auth implementation must reproduce byte for byte.
+    it('reproduces the contract vector', () => {
+      expect(apiKeyDigest(vector.secret, vector.pepper)).toBe(vector.digest)
+      expect(hmacSha256(vector.secret, vector.pepper)).toBe(vector.digest)
+      expect(formatApiKey(grammar.defaultPrefix, vector.keyId, vector.secret)).toBe(vector.key)
+      expect(parseApiKey(vector.key, grammar.defaultPrefix)).toEqual({
+        keyId: vector.keyId,
+        secret: vector.secret
+      })
+    })
+
+    // Verifies every refusal the contract names answers with a code the catalog carries, and that
+    // the audit vocabulary is the closed list the hook documents.
+    it('names refusals the catalog can answer and a closed audit vocabulary', () => {
+      expect(contract.errorCatalog.codes).toEqual(
+        expect.arrayContaining([
+          AUTH_ERROR_CODES.API_KEY_INVALID,
+          AUTH_ERROR_CODES.API_KEY_SCOPE_INSUFFICIENT,
+          AUTH_ERROR_CODES.API_KEY_NOT_FOUND
+        ])
+      )
+      expect(Object.keys(contract.apiKeys.refusals).sort()).toEqual([
+        'api_key_invalid',
+        'api_key_scope_insufficient',
+        'forbidden'
+      ])
+      expect(contract.apiKeys.auditEvent.outcome).toEqual(['allowed', 'denied'])
+      expect(contract.apiKeys.auditEvent.reason).toEqual([
+        'missing',
+        'malformed',
+        'unknown',
+        'wrong_secret',
+        'revoked',
+        'expired',
+        'scope_insufficient',
+        'route_undeclared',
+        'store_error'
+      ])
+      expect(contract.apiKeys.auditEvent.fields).toEqual([
+        'outcome',
+        'reason',
+        'keyId',
+        'label',
+        'method',
+        'route',
+        'requiredScopes',
+        'ip'
+      ])
+    })
+  })
 
   describe('error catalog', () => {
     // Verifies both libraries name exactly the same set of codes. They can back the same
