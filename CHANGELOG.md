@@ -18,6 +18,30 @@ what moves, and that note is the compatibility contract until strict SemVer begi
 
 ## [Unreleased]
 
+### Apply to a derived backend
+
+- **`enforceTenantBinding` now holds on WebSockets.** `WsJwtGuard` previously never consulted it, so
+  a ticket or token minted for tenant A opened a socket resolved to tenant B even though the HTTP
+  guard refused the same credential. It now calls your `tenantIdResolver` on both credential
+  channels and answers `auth.token_invalid` on a mismatch. No option changes. **Read your
+  resolver:** an upgrade has no Express request, so it receives a request-like object with only
+  `headers` (lowercased), `url` and `hostname` (from `Host`, port cut). `cookies`, `ip`, `ips` and
+  trust-proxy behaviour are absent, and a resolver that throws on their absence, or returns another
+  tenant, **refuses** the connection rather than binding it wrongly. If your resolver reads a
+  cookie or `req.ip`, it will now refuse every socket until it can resolve from `headers` or
+  `hostname`. Nothing changes when `enforceTenantBinding` is off.
+- **`AuthTokenVerifierService.verifyAccessToken` takes an optional `request`.** Pass the
+  handshake (or any object with `headers` and `url`, an Express request included) and, with
+  `enforceTenantBinding` on, the dashboard plane applies the same resolver check as `WsJwtGuard`,
+  with the same limited request and the same refusal (`auth.token_invalid`). Existing callers are
+  not broken: without `request` the token verifies as before, and with the binding on one warning
+  per service instance says it was not applied. To close the gap, pass `request: socket.handshake`.
+
+### Security
+
+- `WsJwtGuard` enforces `enforceTenantBinding` on the bearer-header and ticket paths, matching
+  `JwtAuthGuard`, and `verifyAccessToken` can now enforce it when given the request.
+
 ## [1.4.7] - 2026-10-31
 
 ### Apply to a derived backend

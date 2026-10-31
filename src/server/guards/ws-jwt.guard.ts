@@ -10,6 +10,7 @@ import type { DashboardJwtPayload } from '../interfaces/jwt-payload.interface'
 import type { WsTicketSnapshot } from '../interfaces/ws-ticket.interface'
 import { AuthRevocationService } from '../services/auth-revocation.service'
 import { WsTicketService } from '../services/ws-ticket.service'
+import { assertTenantBinding } from '../utils/assert-tenant-binding'
 import { verifyWithRotation } from '../utils/verify-with-rotation'
 import { assertTokenType, assertValidSub } from './utils/assert-token-type'
 
@@ -124,6 +125,7 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
     if (ticket !== undefined) {
       const snapshot = await this.wsTickets.redeem(ticket)
       assertDashboardSnapshot(snapshot)
+      await assertTenantBinding(this.options, handshake, snapshot.tenantId)
       // The socket is authorized as the snapshot the ticket was minted from — a frozen copy of
       // what the access token proved at mint time. It is deliberately not a token: it carries
       // no signature to re-verify, and its `jti` and `epoch` are identifiers that `redeem` has
@@ -166,6 +168,8 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
       throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
     }
 
+    await assertTenantBinding(this.options, handshake, payload.tenantId)
+
     client.data.user = payload
     return true
   }
@@ -193,7 +197,9 @@ export class WsJwtGuard implements CanActivate, OnModuleInit {
  * @throws AuthException `TOKEN_INVALID` when the snapshot is not a dashboard identity, matching
  *   the refusal a bad ticket already produces so the two stay indistinguishable.
  */
-function assertDashboardSnapshot(snapshot: WsTicketSnapshot): void {
+function assertDashboardSnapshot(
+  snapshot: WsTicketSnapshot
+): asserts snapshot is WsTicketSnapshot & { tenantId: string } {
   if (typeof snapshot.sub !== 'string' || snapshot.sub === '') {
     throw new AuthException(AUTH_ERROR_CODES.TOKEN_INVALID)
   }

@@ -989,6 +989,11 @@ export interface BymaxAuthModuleOptions {
    * (subdomain-per-tenant behind an edge that refuses a `Host` it does not serve), turning this on
    * closes that gap: the guard calls {@link tenantIdResolver} and refuses a mismatch.
    *
+   * `WsJwtGuard` enforces it too, on the bearer and the ticket path. An upgrade has no Express
+   * request, so the resolver is handed one carrying only `headers` (lowercased), `url` and
+   * `hostname` (the `Host` header, port cut); `cookies`, `ip`, `ips` and trust-proxy behaviour are
+   * absent. A resolver that throws on that, or answers another tenant, refuses the connection.
+   *
    * Off by default, and requires a resolver to have any effect: with no resolver there is nothing
    * to compare against. Leave it off where a token is legitimately used across hosts (a single API
    * origin serving many tenants by claim), because there the resolved host tenant and the token

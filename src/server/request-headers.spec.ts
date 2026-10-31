@@ -23,7 +23,8 @@ describe('LIBRARY_READ_HEADERS', () => {
       'x-forwarded-for',
       'x-forwarded-host',
       'x-real-ip',
-      'x-original-forwarded-for'
+      'x-original-forwarded-for',
+      'host'
     ])
   })
 

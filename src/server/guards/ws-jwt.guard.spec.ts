@@ -440,6 +440,138 @@ describe('WsJwtGuard', () => {
     })
   })
 
+  // ----------------- Tenant binding -----------------
+
+  describe('tenant binding', () => {
+    const snapshot = {
+      sub: 'user-7',
+      tenantId: 'tenant-a',
+      role: 'MEMBER',
+      status: 'ACTIVE',
+      mfaEnabled: false,
+      mfaVerified: false,
+      jti: 'jti-7',
+      epoch: 0
+    }
+    const resolver = jest.fn()
+
+    /** A handshake carrying a header credential or a ticket, plus the headers the resolver reads. */
+    function boundContext(via: 'header' | 'ticket') {
+      const client = {
+        handshake: {
+          headers: {
+            Host: 'tenant-b.example.com:3000',
+            ...(via === 'header' ? { authorization: 'Bearer good' } : {})
+          },
+          query: via === 'ticket' ? { ticket: 'raw-ticket' } : {},
+          url: '/socket.io/?EIO=4'
+        },
+        data: {} as Record<string, unknown>
+      }
+      return { client, context: { switchToWs: () => ({ getClient: () => client }) } }
+    }
+
+    beforeEach(() => {
+      resolver.mockReset()
+      Object.assign(mockOptions, { enforceTenantBinding: true, tenantIdResolver: resolver })
+      mockJwtService.verify.mockReturnValue(VALID_PAYLOAD)
+      mockRedis.get.mockResolvedValue(null)
+      mockWsTickets.redeem.mockResolvedValue(snapshot)
+    })
+
+    afterEach(() => {
+      delete (mockOptions as Record<string, unknown>)['enforceTenantBinding']
+      delete (mockOptions as Record<string, unknown>)['tenantIdResolver']
+    })
+
+    // Scenario: the resolved tenant equals the credential's. Expected: admitted, and the resolver
+    // saw the shim built from the handshake. Why: the same question HTTP asks, answered from the
+    // fields an upgrade has.
+    it.each([
+      ['header', VALID_PAYLOAD.tenantId],
+      ['ticket', snapshot.tenantId]
+    ] as const)(
+      'should admit a %s credential whose tenant the resolver confirms',
+      async (via, tenant) => {
+        resolver.mockResolvedValue(tenant)
+        const { client, context } = boundContext(via)
+
+        await expect(guard.canActivate(context as never)).resolves.toBe(true)
+        expect(client.data['user']).toBeDefined()
+        expect(resolver).toHaveBeenCalledTimes(1)
+        expect(resolver.mock.calls[0][0]).toMatchObject({
+          headers: { host: 'tenant-b.example.com:3000' },
+          hostname: 'tenant-b.example.com',
+          url: '/socket.io/?EIO=4'
+        })
+      }
+    )
+
+    // Scenario: the resolver names another tenant, or nothing usable. Expected: TOKEN_INVALID and
+    // no identity attached — the code HTTP answers with, so the two doors are indistinguishable.
+    it.each([
+      ['header', 'tenant-b'],
+      ['ticket', 'tenant-b'],
+      ['header', ''],
+      ['ticket', undefined]
+    ] as const)(
+      'should refuse a %s credential when the resolver answers %p',
+      async (via, answer) => {
+        resolver.mockResolvedValue(answer)
+        const { client, context } = boundContext(via)
+
+        await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+          response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+        })
+        expect(client.data['user']).toBeUndefined()
+      }
+    )
+
+    // Scenario: the resolver cannot answer from the shim (it throws, sync or async). Expected:
+    // refused, not propagated. Why: a binding that cannot be evaluated must not admit, and the
+    // resolver's own error text must not reach the socket.
+    it.each([
+      ['header', () => Promise.reject(new Error('no cookie'))],
+      ['ticket', () => Promise.reject(new Error('no cookie'))],
+      [
+        'header',
+        () => {
+          throw new Error('reads req.cookies')
+        }
+      ]
+    ] as const)('should refuse a %s credential when the resolver throws', async (via, impl) => {
+      resolver.mockImplementation(impl)
+      const { context } = boundContext(via)
+
+      await expect(guard.canActivate(context as never)).rejects.toMatchObject({
+        response: { error: { code: AUTH_ERROR_CODES.TOKEN_INVALID } }
+      })
+    })
+
+    // Scenario: the binding is off, or on without a resolver. Expected: the resolver is never
+    // called and the credential is admitted. Why: off is the default, and startup already refuses
+    // the second combination, so this arm is the same defensive no-op HTTP has.
+    it.each([
+      ['off', { enforceTenantBinding: false, tenantIdResolver: resolver }],
+      ['on without a resolver', { enforceTenantBinding: true, tenantIdResolver: undefined }]
+    ])('should not consult the resolver when the binding is %s', async (_why, patch) => {
+      Object.assign(mockOptions, patch)
+      const { context } = boundContext('header')
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
+      expect(resolver).not.toHaveBeenCalled()
+    })
+
+    // Scenario: only the exact `true` enables it. Expected: a truthy non-boolean does not.
+    it('should not treat a truthy non-boolean as enabling the binding', async () => {
+      Object.assign(mockOptions, { enforceTenantBinding: 'yes' })
+      const { context } = boundContext('header')
+
+      await expect(guard.canActivate(context as never)).resolves.toBe(true)
+      expect(resolver).not.toHaveBeenCalled()
+    })
+  })
+
   // ----------------- Single-use upgrade ticket -----------------
 
   describe('upgrade ticket', () => {
