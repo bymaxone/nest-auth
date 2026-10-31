@@ -44,6 +44,7 @@ import { AuthRedisService } from '../redis/auth-redis.service'
 import { assertNotBlocked } from '../utils/assert-not-blocked'
 import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
+import { runDetached } from '../utils/run-detached'
 import { safeLogLine } from '../utils/safe-log-line'
 
 // ---------------------------------------------------------------------------
@@ -1196,16 +1197,28 @@ export class MfaService {
         })
       }
 
+      // The login the password step (or the OAuth callback) stopped short of: for an MFA account
+      // this is the only place the last-login time can move.
+      runDetached(
+        this.logger,
+        () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
+        'challenge: updateLastLogin failed'
+      )
+
       if (this.hooks.afterLogin) {
-        void Promise.resolve(
-          this.hooks.afterLogin(safeUser, {
-            plane: 'dashboard',
-            userId,
-            ip,
-            userAgent,
-            sanitizedHeaders: {}
-          })
-        ).catch(() => undefined)
+        const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+        runDetached(
+          this.logger,
+          () =>
+            afterLogin(safeUser, {
+              plane: 'dashboard',
+              userId,
+              ip,
+              userAgent,
+              sanitizedHeaders: {}
+            }),
+          'challenge: afterLogin hook threw'
+        )
       }
 
       return result
@@ -1221,16 +1234,26 @@ export class MfaService {
       { mfaVerified: true }
     )
 
+    runDetached(
+      this.logger,
+      () => (this.platformUserRepo as IPlatformUserRepository).updateLastLogin(platformUser.id),
+      'challenge: platform updateLastLogin failed'
+    )
+
     if (this.hooks.afterLogin) {
-      void Promise.resolve(
-        this.hooks.afterLogin(this.platformUserAsSafeUser(platformUser), {
-          plane: 'platform',
-          userId,
-          ip,
-          userAgent,
-          sanitizedHeaders: {}
-        })
-      ).catch(() => undefined)
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () =>
+          afterLogin(this.platformUserAsSafeUser(platformUser), {
+            plane: 'platform',
+            userId,
+            ip,
+            userAgent,
+            sanitizedHeaders: {}
+          }),
+        'challenge: afterLogin hook threw'
+      )
     }
 
     return result

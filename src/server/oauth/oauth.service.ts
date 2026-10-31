@@ -53,6 +53,7 @@ import { describeChannelStatus } from '../utils/describe-error'
 import { logSafe } from '../utils/log-safe'
 import { maskEmail } from '../utils/mask-email'
 import { resolveTenantId } from '../utils/resolve-tenant-id'
+import { runDetached } from '../utils/run-detached'
 import { sanitizeHeaders } from '../utils/sanitize-headers'
 
 /** TTL for the OAuth CSRF state value stored in Redis (10 minutes). */
@@ -536,6 +537,23 @@ export class OAuthService {
     this.logger.log(
       `handleCallback: OAuth login success provider=${provider} userId=${logSafe(safeUser.id)} tenantId=${logSafe(tenantId)} action=${hookResult.action}`
     )
+
+    // The same non-blocking side effects a password login runs once it has succeeded. An MFA
+    // account reaches them from the challenge completion instead, so this is only the path that
+    // issued a session.
+    runDetached(
+      this.logger,
+      () => this.userRepo.updateLastLogin({ id: safeUser.id, tenantId: safeUser.tenantId }),
+      'oauth: updateLastLogin failed'
+    )
+    if (this.hooks?.afterLogin) {
+      const afterLogin = this.hooks.afterLogin.bind(this.hooks)
+      runDetached(
+        this.logger,
+        () => afterLogin(safeUser, { ...hookContext, userId: safeUser.id }),
+        'oauth: afterLogin hook threw'
+      )
+    }
     return result
   }
 

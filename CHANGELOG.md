@@ -35,6 +35,26 @@ Nothing here is a breaking change, and nothing changes unless you opt in.
 - **`rust-auth` is to mirror the key format, the digest, the scope rules, the audit event and the
   three codes.** They are pinned in the new `apiKeys` section of `conformance/wire-contract.json`,
   with a digest vector, so the two libraries cannot drift unnoticed.
+- **An OAuth sign-in now records the last login and runs `afterLogin`.** Until now only a password
+  login did. If your `afterLogin` hook sends a notification or writes an audit row, OAuth sign-ins
+  will now reach it; if you read `lastLoginAt`, OAuth sign-ins now move it. An account with MFA
+  gets both when the challenge completes, for password and OAuth sign-ins alike, on the dashboard
+  and the platform plane: before, an MFA account's last login never changed.
+- **The default `onOAuthLogin` no longer keeps a link when the provider has not verified the
+  address.** It answers `reject` (`Email not verified`) instead of `link`. Nothing changes if you
+  supply your own `onOAuthLogin`. The `existingUser` it receives was always the user already
+  linked to the provider identity, found by provider id, not by email; the documentation said the
+  latter and is corrected.
+
+### Fixed
+
+- **An MFA account's last login was never recorded.** The password step stopped at the challenge
+  and the challenge completion did not write it, so `lastLoginAt` never moved for a password
+  account with MFA, on the dashboard or the platform plane. Completing the challenge now records
+  it and runs `afterLogin`, for password and OAuth sign-ins alike.
+- **A host `afterLogin` hook that threw synchronously could fail an MFA sign-in that had already
+  passed.** Completing the challenge now runs the hook detached, so neither a throw nor a
+  rejection changes the outcome, and the log line carries a label and the error's shape only.
 
 ### Added
 

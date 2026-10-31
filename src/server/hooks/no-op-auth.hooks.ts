@@ -26,8 +26,8 @@ import type { SafeAuthUser } from '../interfaces/user-repository.interface'
  * @remarks
  * - {@link beforeRegister} returns `{ allowed: true }` unconditionally.
  * - {@link onOAuthLogin} applies the standard account-resolution strategy:
- *   link if an existing user matches the profile email, create if no existing
- *   user is found, and reject on email mismatch.
+ *   create if this provider identity is not linked yet, link if the linked user's
+ *   address equals the profile's and the provider verified it, and reject otherwise.
  * - All other hooks are no-ops (return `void`).
  *
  * Replace this with a custom `IAuthHooks` implementation to enforce domain
@@ -50,11 +50,11 @@ export class NoOpAuthHooks implements IAuthHooks {
   }
 
   /**
-   * Resolves OAuth login by linking to an existing account, creating a new one,
-   * or rejecting on email mismatch.
+   * Resolves OAuth login: creates an account for an unlinked identity, keeps an existing link
+   * when the address still matches and the provider vouches for it, and rejects otherwise.
    *
    * @param profile - Normalized OAuth profile from the provider.
-   * @param existingUser - Existing user found by the profile email, or `null`.
+   * @param existingUser - The user already linked to this provider identity, or `null`.
    * @param _context - Hook execution context carrying request metadata.
    * @returns An {@link OAuthLoginResult} controlling the account resolution strategy.
    */
@@ -67,10 +67,16 @@ export class NoOpAuthHooks implements IAuthHooks {
       return { action: 'create' }
     }
 
-    if (existingUser.email === profile.email) {
-      return { action: 'link' }
+    if (existingUser.email !== profile.email) {
+      return { action: 'reject', reason: 'Email mismatch' }
     }
 
-    return { action: 'reject', reason: 'Email mismatch' }
+    // A link is trusted on the address, so a provider that does not vouch for it never links.
+    // Strictly `true`: a missing or loosely truthy value is not a verification.
+    if (profile.emailVerified !== true) {
+      return { action: 'reject', reason: 'Email not verified' }
+    }
+
+    return { action: 'link' }
   }
 }

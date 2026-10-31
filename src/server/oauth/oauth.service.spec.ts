@@ -114,6 +114,7 @@ const mockPlugin = {
 }
 
 const mockUserRepo = {
+  updateLastLogin: jest.fn(),
   findByOAuthId: jest.fn(),
   findByEmail: jest.fn(),
   createWithOAuth: jest.fn(),
@@ -122,7 +123,8 @@ const mockUserRepo = {
 }
 
 const mockHooks = {
-  onOAuthLogin: jest.fn()
+  onOAuthLogin: jest.fn(),
+  afterLogin: jest.fn()
 }
 
 const mockRedis = {
@@ -223,6 +225,7 @@ describe('OAuthService', () => {
     // No email collision unless a test arranges one — `create` is the common arrangement here,
     // and every one of those cases assumes the address is free.
     mockUserRepo.findByEmail.mockResolvedValue(null)
+    mockUserRepo.updateLastLogin.mockResolvedValue(undefined)
 
     const module = await Test.createTestingModule({
       providers: [

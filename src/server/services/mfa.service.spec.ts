@@ -87,12 +87,14 @@ const SAFE_ADMIN = {
 
 const mockUserRepo = {
   findById: jest.fn(),
-  updateMfa: jest.fn()
+  updateMfa: jest.fn(),
+  updateLastLogin: jest.fn()
 }
 
 const mockPlatformUserRepo = {
   findById: jest.fn(),
-  updateMfa: jest.fn()
+  updateMfa: jest.fn(),
+  updateLastLogin: jest.fn()
 }
 
 const mockRedis = {

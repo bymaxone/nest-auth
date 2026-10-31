@@ -92,6 +92,26 @@ describe('NoOpAuthHooks', () => {
       expect(result).toEqual({ action: 'link' })
     })
 
+    // A provider that does not vouch for the address never links, whatever else matches: the
+    // address is what a link would be trusted on, so an unverified one is refused outright. The
+    // existing user here is found by provider id today, which makes this belt and braces, and it
+    // is exactly what keeps a future lookup by email from inheriting an unverified link.
+    it.each([false, undefined, null, 'true', 1])(
+      'should reject a link when the profile email is not verified (%s)',
+      (emailVerified) => {
+        const profile = { ...PROFILE, emailVerified } as unknown as OAuthProfile
+        const result = hooks.onOAuthLogin(profile, EXISTING_USER, CONTEXT)
+        expect(result).toEqual({ action: 'reject', reason: 'Email not verified' })
+      }
+    )
+
+    // An unverified address still creates nothing special here: with no existing user the hook
+    // answers `create`, and the service records what the provider asserted.
+    it('should still answer create for an unverified profile when there is no existing user', () => {
+      const result = hooks.onOAuthLogin({ ...PROFILE, emailVerified: false }, null, CONTEXT)
+      expect(result).toEqual({ action: 'create' })
+    })
+
     // Verifies that when the existing user email does not match the profile email, the hook returns { action: 'reject' }.
     it('should return { action: "reject" } when existing user email does not match profile email', () => {
       const mismatchedUser: SafeAuthUser = { ...EXISTING_USER, email: 'other@example.com' }
