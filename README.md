@@ -1196,14 +1196,14 @@ export class KeysAdminController {
 You implement `IApiKeyRepository`, as you do for users. The library supplies the `id` and the
 `digest`; the store only persists them.
 
-| Method                   | Contract                                                                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `findById(id)`           | One primary-key read per request. Return revoked and expired rows too: the library decides validity.                      |
-| `create(row)`            | Insert `{ id, label, digest, scopes, createdAt, expiresAt }`. Do not make `label` unique.                                 |
-| `markRevoked(id, at)`    | `false` when unknown. Revoking twice is not an error.                                                                     |
-| `setExpiry(id, at)`      | `false` when unknown. Used by rotation to retire the old key after the overlap.                                           |
-| `touchLastUsed(entries)` | One batch. **Must be monotonic**: `GREATEST(last_used_at, :at)`, never backwards — several instances flush independently. |
-| `listByLabel(label)`     | Every key of a label, for your admin screen.                                                                              |
+| Method                   | Contract                                                                                                                                                                                                         |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findById(id)`           | One primary-key read per request. Return revoked and expired rows too: the library decides validity.                                                                                                             |
+| `create(row)`            | Insert `{ id, label, digest, scopes, createdAt, expiresAt }`. Do not make `label` unique.                                                                                                                        |
+| `markRevoked(id, at)`    | `false` when unknown. Revoking twice is not an error. A row with `revokedAt` set is revoked at once on every instance, whatever instant it holds: a future date is not a schedule, so schedule with `expiresAt`. |
+| `setExpiry(id, at)`      | `false` when unknown. The scheduling field: a key stops verifying at `expiresAt`. Used by rotation to retire the old key after the overlap.                                                                      |
+| `touchLastUsed(entries)` | One batch. **Must be monotonic**: `GREATEST(last_used_at, :at)`, never backwards — several instances flush independently.                                                                                        |
+| `listByLabel(label)`     | Every key of a label, for your admin screen.                                                                                                                                                                     |
 
 ### How a key is stored and checked
 
